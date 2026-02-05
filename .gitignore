@@ -21,3 +21,7 @@ Package.resolved
 
 # dev app
 Miniti.app/
+
+# Build artifacts
+*.zip
+miniti-icon.png
