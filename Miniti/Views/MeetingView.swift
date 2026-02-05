@@ -246,7 +246,7 @@ struct APIStatusPill: View {
                             .foregroundStyle(Color(hex: "71717A").opacity(0.6))
                     }
                 }
-                .padding(.horizontal: 12)
+                .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(
                     Capsule()
