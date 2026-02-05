@@ -83,8 +83,8 @@ struct MeetingView: View {
 
 struct ReadyStateView: View {
     @EnvironmentObject var appState: AppState
-    @State private var showDeepgramKey = false
-    @State private var showOpenAIKey = false
+    @State private var editingDeepgram = false
+    @State private var editingOpenAI = false
     
     var body: some View {
         VStack(spacing: 24) {
@@ -106,23 +106,22 @@ struct ReadyStateView: View {
                     .tracking(2)
             }
             
-            // API Key inputs
-            VStack(spacing: 12) {
-                APIKeyInput(
+            // API Status pills (sexy connected indicators)
+            HStack(spacing: 12) {
+                APIStatusPill(
                     label: "deepgram",
                     key: $appState.deepgramApiKey,
-                    showKey: $showDeepgramKey,
+                    isEditing: $editingDeepgram,
                     placeholder: "dg_..."
                 )
                 
-                APIKeyInput(
+                APIStatusPill(
                     label: "openai",
                     key: $appState.openaiApiKey,
-                    showKey: $showOpenAIKey,
+                    isEditing: $editingOpenAI,
                     placeholder: "sk-..."
                 )
             }
-            .frame(width: 320)
             
             // Model selector
             VStack(spacing: 8) {
@@ -163,7 +162,7 @@ struct ReadyStateView: View {
             .disabled(appState.deepgramApiKey.isEmpty)
             
             // Keyboard shortcut hint
-            ShortcutHint(keys: "⌘/", label: "all shortcuts")
+            ShortcutHint(keys: "⌘/", label: "shortcuts")
             
             Spacer()
         }
@@ -171,71 +170,102 @@ struct ReadyStateView: View {
     }
 }
 
-// MARK: - API Key Input
+// MARK: - API Status Pill
 
-struct APIKeyInput: View {
+struct APIStatusPill: View {
     let label: String
     @Binding var key: String
-    @Binding var showKey: Bool
+    @Binding var isEditing: Bool
     let placeholder: String
     
     @FocusState private var isFocused: Bool
+    @State private var isHovering = false
+    
+    var isConnected: Bool { !key.isEmpty }
     
     var body: some View {
-        HStack(spacing: 12) {
-            // Label with status indicator
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(key.isEmpty ? Color(hex: "71717A") : Color(hex: "3FB950"))
-                    .frame(width: 6, height: 6)
-                
+        if isEditing {
+            // Edit mode - show input field
+            VStack(alignment: .leading, spacing: 6) {
                 Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "A1A1AA"))
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "71717A"))
+                
+                HStack(spacing: 8) {
+                    SecureField(placeholder, text: $key)
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "E6EDF3"))
+                        .textFieldStyle(.plain)
+                        .focused($isFocused)
+                    
+                    Button {
+                        isEditing = false
+                    } label: {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(isConnected ? Color(hex: "3FB950") : Color(hex: "71717A"))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(hex: "18181B"))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "3FB950").opacity(0.5), lineWidth: 1)
+                )
             }
-            .frame(width: 80, alignment: .leading)
-            
-            // Key input
-            HStack(spacing: 8) {
-                Group {
-                    if showKey {
-                        TextField(placeholder, text: $key)
+            .frame(width: 160)
+            .onAppear {
+                isFocused = true
+            }
+        } else {
+            // Status pill - click to edit
+            Button {
+                isEditing = true
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(isConnected ? Color(hex: "3FB950") : Color(hex: "71717A"))
+                        .frame(width: 6, height: 6)
+                    
+                    Text(label)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isConnected ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
+                    
+                    if isConnected {
+                        Text("connected")
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "3FB950").opacity(0.8))
                     } else {
-                        SecureField(placeholder, text: $key)
+                        Text("click to add")
+                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "71717A").opacity(0.6))
                     }
                 }
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color(hex: "E6EDF3"))
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-                
-                // Toggle visibility
-                Button {
-                    showKey.toggle()
-                } label: {
-                    Image(systemName: showKey ? "eye.slash" : "eye")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color(hex: "52525B"))
-                }
-                .buttonStyle(.plain)
-                
-                // Status checkmark
-                if !key.isEmpty {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color(hex: "3FB950"))
-                }
+                .padding(.horizontal: 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color(hex: "0F0F11"))
+                        .overlay(
+                            Capsule()
+                                .stroke(
+                                    isConnected 
+                                        ? Color(hex: "3FB950").opacity(isHovering ? 0.5 : 0.3) 
+                                        : Color(hex: "3F3F46").opacity(isHovering ? 0.8 : 0.5),
+                                    lineWidth: 1
+                                )
+                        )
+                )
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color(hex: "18181B"))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(isFocused ? Color(hex: "3FB950").opacity(0.5) : Color(hex: "27272A"), lineWidth: 1)
-            )
+            .buttonStyle(.plain)
+            .onHover { hovering in
+                isHovering = hovering
+            }
         }
     }
 }

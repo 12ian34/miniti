@@ -16,8 +16,8 @@ enum DeepgramModel: String, CaseIterable, Codable {
     
     var shortDescription: String {
         switch self {
-        case .nova2: return "Faster, proven"
-        case .nova3: return "Better accuracy"
+        case .nova2: return "faster"
+        case .nova3: return "smarter"
         }
     }
     
