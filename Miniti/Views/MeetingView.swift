@@ -83,6 +83,8 @@ struct MeetingView: View {
 
 struct ReadyStateView: View {
     @EnvironmentObject var appState: AppState
+    @State private var showDeepgramKey = false
+    @State private var showOpenAIKey = false
     
     var body: some View {
         VStack(spacing: 24) {
@@ -104,11 +106,23 @@ struct ReadyStateView: View {
                     .tracking(2)
             }
             
-            // Compact status indicators
-            HStack(spacing: 16) {
-                StatusPill(label: "deepgram", isReady: !appState.deepgramApiKey.isEmpty)
-                StatusPill(label: "openai", isReady: !appState.openaiApiKey.isEmpty)
+            // API Key inputs
+            VStack(spacing: 12) {
+                APIKeyInput(
+                    label: "deepgram",
+                    key: $appState.deepgramApiKey,
+                    showKey: $showDeepgramKey,
+                    placeholder: "dg_..."
+                )
+                
+                APIKeyInput(
+                    label: "openai",
+                    key: $appState.openaiApiKey,
+                    showKey: $showOpenAIKey,
+                    placeholder: "sk-..."
+                )
             }
+            .frame(width: 320)
             
             // Model selector
             VStack(spacing: 8) {
@@ -152,51 +166,81 @@ struct ReadyStateView: View {
             ShortcutHint(keys: "⌘/", label: "all shortcuts")
             
             Spacer()
-            
-            // Settings hint if no API key
-            if appState.deepgramApiKey.isEmpty {
-                HStack(spacing: 6) {
-                    Text("→")
-                        .foregroundStyle(Color(hex: "D29922"))
-                    Text("add API keys in settings (⌘,)")
-                        .foregroundStyle(Color(hex: "8B949E"))
-                }
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .padding(.bottom, 24)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
-// MARK: - Home Screen Components
+// MARK: - API Key Input
 
-struct StatusPill: View {
+struct APIKeyInput: View {
     let label: String
-    let isReady: Bool
+    @Binding var key: String
+    @Binding var showKey: Bool
+    let placeholder: String
+    
+    @FocusState private var isFocused: Bool
     
     var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(isReady ? Color(hex: "3FB950") : Color(hex: "A1A1AA"))
-                .frame(width: 6, height: 6)
+        HStack(spacing: 12) {
+            // Label with status indicator
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(key.isEmpty ? Color(hex: "71717A") : Color(hex: "3FB950"))
+                    .frame(width: 6, height: 6)
+                
+                Text(label)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "A1A1AA"))
+            }
+            .frame(width: 80, alignment: .leading)
             
-            Text(label)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(isReady ? Color(hex: "D4D4D8") : Color(hex: "A1A1AA"))
+            // Key input
+            HStack(spacing: 8) {
+                Group {
+                    if showKey {
+                        TextField(placeholder, text: $key)
+                    } else {
+                        SecureField(placeholder, text: $key)
+                    }
+                }
+                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+                .textFieldStyle(.plain)
+                .focused($isFocused)
+                
+                // Toggle visibility
+                Button {
+                    showKey.toggle()
+                } label: {
+                    Image(systemName: showKey ? "eye.slash" : "eye")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Color(hex: "52525B"))
+                }
+                .buttonStyle(.plain)
+                
+                // Status checkmark
+                if !key.isEmpty {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color(hex: "3FB950"))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color(hex: "18181B"))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(isFocused ? Color(hex: "3FB950").opacity(0.5) : Color(hex: "27272A"), lineWidth: 1)
+            )
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule()
-                .fill(Color(hex: "0F0F11"))
-                .overlay(
-                    Capsule()
-                        .stroke(isReady ? Color(hex: "3FB950").opacity(0.3) : Color(hex: "3F3F46"), lineWidth: 1)
-                )
-        )
     }
 }
+
+// MARK: - Home Screen Components
 
 struct ShortcutHint: View {
     let keys: String

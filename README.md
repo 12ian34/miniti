@@ -67,15 +67,14 @@ A high-performance macOS meeting transcription app with real-time speech-to-text
 
 ## Setup
 
-1. Copy `Miniti/Secrets.example.swift` to `Miniti/Secrets.swift`
-2. Add your API keys to `Secrets.swift`:
+1. Open `Miniti.xcodeproj` in Xcode
+2. Select your Development Team in the project settings
+3. Build and run (Cmd+R)
+4. Enter your API keys on the home screen:
    - **Deepgram API Key**: Get one at [console.deepgram.com](https://console.deepgram.com/signup)
    - **OpenAI API Key**: Get one at [platform.openai.com](https://platform.openai.com/api-keys)
-3. Open `Miniti.xcodeproj` in Xcode
-4. Select your Development Team in the project settings
-5. Build and run (Cmd+R)
 
-Alternatively, enter API keys in Settings (Cmd+,) after launching the app.
+Keys are securely stored locally and persist across app restarts.
 
 ## Permissions
 
