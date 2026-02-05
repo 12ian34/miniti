@@ -542,7 +542,7 @@ struct MeetingDetailView: View {
                         
                         SavedNotesView(meeting: meeting)
                     }
-                    .frame(minHeight: 50)
+                    .frame(minHeight: 44, maxHeight: 200)
                 }
                 .frame(minWidth: 400)
                 
