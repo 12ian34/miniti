@@ -33,6 +33,8 @@ struct APISettingsView: View {
     @State private var isTestingOpenAI = false
     @State private var deepgramStatus: TestStatus = .none
     @State private var openaiStatus: TestStatus = .none
+    @State private var showDeepgramInfo = false
+    @State private var showOpenAIInfo = false
     
     enum TestStatus {
         case none, success, failure
@@ -42,8 +44,59 @@ struct APISettingsView: View {
         Form {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Deepgram API Key")
-                        .font(.headline)
+                    HStack(alignment: .center, spacing: 6) {
+                        Text("Deepgram API Key")
+                            .font(.headline)
+                        
+                        Button {
+                            showDeepgramInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .popover(isPresented: $showDeepgramInfo, arrowEdge: .trailing) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("Deepgram")
+                                    .font(.headline)
+                                Text("Powers real-time speech-to-text transcription with speaker diarization (who said what).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                
+                                Divider()
+                                
+                                Text("How to get your key:")
+                                    .font(.caption.bold())
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("1. Create a free account at deepgram.com")
+                                    Text("2. Go to Settings → API Keys")
+                                    Text("3. Click \"Create a New API Key\"")
+                                    Text("4. Copy and paste it here")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                
+                                HStack(spacing: 12) {
+                                    Link(destination: URL(string: "https://console.deepgram.com/signup")!) {
+                                        Label("Sign Up", systemImage: "person.badge.plus")
+                                            .font(.caption.bold())
+                                    }
+                                    Link(destination: URL(string: "https://console.deepgram.com/project/keys")!) {
+                                        Label("API Keys", systemImage: "key")
+                                            .font(.caption.bold())
+                                    }
+                                }
+                                .padding(.top, 2)
+                                
+                                Text("Free tier includes $200 in credit.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(14)
+                            .frame(width: 260)
+                        }
+                    }
                     Text("Used for real-time speech-to-text transcription")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -86,15 +139,63 @@ struct APISettingsView: View {
                             .foregroundStyle(.red)
                             .font(.caption)
                     }
-                    
-                    Link("Get a Deepgram API key", destination: URL(string: "https://console.deepgram.com/signup")!)
-                        .font(.caption)
                 }
                 .padding(.bottom, 8)
                 
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("OpenAI API Key")
-                        .font(.headline)
+                    HStack(alignment: .center, spacing: 6) {
+                        Text("OpenAI API Key")
+                            .font(.headline)
+                        
+                        Button {
+                            showOpenAIInfo.toggle()
+                        } label: {
+                            Image(systemName: "info.circle")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .popover(isPresented: $showOpenAIInfo, arrowEdge: .trailing) {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Text("OpenAI")
+                                    .font(.headline)
+                                Text("Powers meeting insights — summaries, action items, key topics, and MEDDPICC analysis.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                
+                                Divider()
+                                
+                                Text("How to get your key:")
+                                    .font(.caption.bold())
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("1. Sign in at platform.openai.com")
+                                    Text("2. Go to API Keys in the sidebar")
+                                    Text("3. Click \"Create new secret key\"")
+                                    Text("4. Copy and paste it here")
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                
+                                HStack(spacing: 12) {
+                                    Link(destination: URL(string: "https://platform.openai.com/signup")!) {
+                                        Label("Sign Up", systemImage: "person.badge.plus")
+                                            .font(.caption.bold())
+                                    }
+                                    Link(destination: URL(string: "https://platform.openai.com/api-keys")!) {
+                                        Label("API Keys", systemImage: "key")
+                                            .font(.caption.bold())
+                                    }
+                                }
+                                .padding(.top, 2)
+                                
+                                Text("Optional — only needed for AI insights.")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(14)
+                            .frame(width: 260)
+                        }
+                    }
                     Text("Used for generating meeting insights")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -137,9 +238,6 @@ struct APISettingsView: View {
                             .foregroundStyle(.red)
                             .font(.caption)
                     }
-                    
-                    Link("Get an OpenAI API key", destination: URL(string: "https://platform.openai.com/api-keys")!)
-                        .font(.caption)
                 }
             }
         }
