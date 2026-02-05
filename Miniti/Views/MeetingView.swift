@@ -40,7 +40,7 @@ struct MeetingView: View {
                                 })
                                 NotesEditor()
                             }
-                            .frame(minHeight: 44, maxHeight: 200)
+                            .frame(minHeight: 20, maxHeight: 700)
                         }
                         .frame(minWidth: 400)
                         
