@@ -33,14 +33,14 @@ struct MeetingView: View {
                             }
                             .frame(minHeight: 300)
                             
-                            // Notes (bottom) - compact, resizable
+                            // Notes (bottom) - very compact (~3 lines), resizable
                             VStack(spacing: 0) {
                                 SectionHeader(title: "notes", icon: "✎", shortcut: "⌘⇧N", onCopy: {
                                     "## Notes\n\n\(appState.liveNotes)"
                                 })
                                 NotesEditor()
                             }
-                            .frame(minHeight: 70)
+                            .frame(minHeight: 44, maxHeight: 200)
                         }
                         .frame(minWidth: 400)
                         
@@ -435,7 +435,7 @@ struct NotesEditor: View {
         ZStack(alignment: .topLeading) {
             // Placeholder
             if appState.liveNotes.isEmpty && !isFocused {
-                Text("Add your notes here...")
+                Text("relax and take notes...")
                     .font(.system(size: 12, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .padding(.horizontal, 16)
