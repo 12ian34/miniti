@@ -67,9 +67,9 @@ final class AppState: ObservableObject {
     var deepgramService: DeepgramService?
     var insightsService: InsightsService?
     
-    // MARK: - Settings
-    @AppStorage("deepgramApiKey") var deepgramApiKey: String = Secrets.deepgramApiKey
-    @AppStorage("openaiApiKey") var openaiApiKey: String = Secrets.openaiApiKey
+    // MARK: - Settings (persisted via @AppStorage)
+    @AppStorage("deepgramApiKey") var deepgramApiKey: String = ""
+    @AppStorage("openaiApiKey") var openaiApiKey: String = ""
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
     @AppStorage("deepgramModel") var deepgramModel: String = DeepgramModel.nova3.rawValue
@@ -96,13 +96,6 @@ final class AppState: ObservableObject {
     }
     
     init() {
-        // Use secrets as defaults if AppStorage is empty
-        if deepgramApiKey.isEmpty {
-            deepgramApiKey = Secrets.deepgramApiKey
-        }
-        if openaiApiKey.isEmpty {
-            openaiApiKey = Secrets.openaiApiKey
-        }
         setupServices()
     }
     
