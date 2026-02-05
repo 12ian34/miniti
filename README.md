@@ -74,7 +74,9 @@ A high-performance macOS meeting transcription app with real-time speech-to-text
    - **Deepgram API Key**: Get one at [console.deepgram.com](https://console.deepgram.com/signup)
    - **OpenAI API Key**: Get one at [platform.openai.com](https://platform.openai.com/api-keys)
 
-Keys are securely stored locally and persist across app restarts.
+Keys are stored locally and persist across app restarts.
+
+**For developers**: Copy `Miniti/Secrets.example.swift` to `Miniti/Secrets.swift` and add your keys there - they'll be picked up as defaults.
 
 ## Permissions
 

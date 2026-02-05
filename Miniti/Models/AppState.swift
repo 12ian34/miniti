@@ -96,6 +96,13 @@ final class AppState: ObservableObject {
     }
     
     init() {
+        // Use Secrets.swift as defaults if @AppStorage is empty
+        if deepgramApiKey.isEmpty {
+            deepgramApiKey = Secrets.deepgramApiKey
+        }
+        if openaiApiKey.isEmpty {
+            openaiApiKey = Secrets.openaiApiKey
+        }
         setupServices()
     }
     
