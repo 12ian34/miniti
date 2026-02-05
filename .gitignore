@@ -19,3 +19,6 @@ xcuserdata/
 Packages/
 Package.resolved
 *.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+
+# dev app
+Miniti.app/
