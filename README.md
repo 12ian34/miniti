@@ -14,6 +14,34 @@ a high-performance macOS meeting transcription app with real-time speech-to-text
 4. Grant microphone + screen recording permissions when prompted
 5. Enter your API keys on the home screen
 
+## Requirements
+
+- macOS 14.0 or later
+- Apple Silicon or Intel Mac
+- Deepgram API key ([get one here](https://console.deepgram.com/signup))
+- OpenAI API key ([get one here](https://platform.openai.com/api-keys))
+
+## Permissions
+
+The app requires:
+
+- **Microphone**: To capture your voice during meetings
+- **Screen Recording**: To capture system audio from other applications
+
+Grant these permissions when prompted, or enable them in System Settings > Privacy & Security.
+
+## Usage
+
+1. Select your transcription model (Nova-2 or Nova-3) on the home screen
+2. Click "relax and take notes" or press `⌘⇧R` to start recording
+3. Speak or play audio from a video call
+4. Watch the live transcript and insights update in real-time
+5. Take notes in the notes panel below the transcript
+6. Switch insight modes with `⌘1` (Standard) or `⌘2` (MEDDPICC)
+7. Click "stop" or press `⌘⇧R` when the meeting ends
+8. Meeting automatically moves to history - browse with `↑`/`↓` or `J`/`K`
+9. Copy transcript, notes, or insights to markdown with the `md` buttons
+
 ## Features
 
 ### Core Transcription
@@ -54,7 +82,7 @@ a high-performance macOS meeting transcription app with real-time speech-to-text
 - **Resizable Panels**: VSplitView for transcript/notes, HSplitView for content/insights
 - **Session Management**: Meetings move to history immediately after stopping
 
-### Keyboard Shortcuts
+## Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
@@ -69,90 +97,6 @@ a high-performance macOS meeting transcription app with real-time speech-to-text
 | `↑` / `K` | Navigate History Up |
 | `↓` / `J` | Navigate History Down |
 | `Esc` | Close Overlay / Go Home |
-
-## Requirements
-
-- macOS 14.0 or later
-- Apple Silicon or Intel Mac
-- Deepgram API key ([get one here](https://console.deepgram.com/signup))
-- OpenAI API key ([get one here](https://platform.openai.com/api-keys))
-
-## Development
-
-To build from source:
-
-1. Clone the repo
-   ```bash
-   git clone https://github.com/12ian34/miniti.git
-   cd miniti
-   ```
-
-2. (Optional) Add default API keys for development:
-   ```bash
-   cp Miniti/Secrets.example.swift Miniti/Secrets.swift
-   # Edit Secrets.swift with your keys
-   ```
-
-3. Open in Xcode and run
-   ```bash
-   open Miniti.xcodeproj
-   # Select your Development Team in Signing & Capabilities
-   # Build and run (Cmd+R)
-   ```
-
-API keys can also be entered on the home screen at runtime.
-
-## Permissions
-
-The app requires:
-
-- **Microphone**: To capture your voice during meetings
-- **Screen Recording**: To capture system audio from other applications
-
-Grant these permissions when prompted, or enable them in System Settings > Privacy & Security.
-
-## Usage
-
-1. Select your transcription model (Nova-2 or Nova-3) on the home screen
-2. Click "relax and take notes" or press `⌘⇧R` to start recording
-3. Speak or play audio from a video call
-4. Watch the live transcript and insights update in real-time
-5. Take notes in the notes panel below the transcript
-6. Switch insight modes with `⌘1` (Standard) or `⌘2` (MEDDPICC)
-7. Click "stop" or press `⌘⇧R` when the meeting ends
-8. Meeting automatically moves to history - browse with `↑`/`↓` or `J`/`K`
-9. Copy transcript, notes, or insights to markdown with the `md` buttons
-
-## Architecture
-
-```
-Miniti/
-├── MinitiApp.swift              # App entry + MenuBarExtra
-├── Views/
-│   ├── MainWindow.swift         # Primary window with sidebar & history
-│   ├── MeetingView.swift        # Active meeting UI (transcript + notes + insights)
-│   ├── TranscriptView.swift     # Live transcript with speaker colors
-│   ├── InsightsView.swift       # AI insights panel
-│   ├── HistoryView.swift        # Past meetings detail view
-│   └── SettingsView.swift       # API keys & preferences
-├── Services/
-│   ├── AudioCaptureService.swift      # Mic + system audio capture
-│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram
-│   ├── InsightsService.swift          # OpenAI integration
-│   └── KeyboardShortcutsService.swift # Global keyboard shortcuts
-└── Models/
-    ├── Meeting.swift            # SwiftData models + markdown export
-    └── AppState.swift           # Observable app state + markdown export
-```
-
-## Tech Stack
-
-- **UI**: SwiftUI (macOS 14+)
-- **Audio Capture**: AVAudioEngine (mic) + ScreenCaptureKit (system audio)
-- **Speech-to-Text**: Deepgram Nova-2/Nova-3 Streaming API
-- **Insights**: OpenAI GPT-5-mini / GPT-5-nano
-- **Persistence**: SwiftData
-- **Menu Bar**: MenuBarExtra
 
 ## Transcription Models
 
@@ -230,6 +174,64 @@ Brief overview of the meeting...
 - Product roadmap
 - Pricing discussion
 ```
+
+---
+
+# Development
+
+## Building from Source
+
+1. Clone the repo
+   ```bash
+   git clone https://github.com/12ian34/miniti.git
+   cd miniti
+   ```
+
+2. (Optional) Add default API keys for development:
+   ```bash
+   cp Miniti/Secrets.example.swift Miniti/Secrets.swift
+   # Edit Secrets.swift with your keys
+   ```
+
+3. Open in Xcode and run
+   ```bash
+   open Miniti.xcodeproj
+   # Select your Development Team in Signing & Capabilities
+   # Build and run (Cmd+R)
+   ```
+
+API keys can also be entered on the home screen at runtime.
+
+## Architecture
+
+```
+Miniti/
+├── MinitiApp.swift              # App entry + MenuBarExtra
+├── Views/
+│   ├── MainWindow.swift         # Primary window with sidebar & history
+│   ├── MeetingView.swift        # Active meeting UI (transcript + notes + insights)
+│   ├── TranscriptView.swift     # Live transcript with speaker colors
+│   ├── InsightsView.swift       # AI insights panel
+│   ├── HistoryView.swift        # Past meetings detail view
+│   └── SettingsView.swift       # API keys & preferences
+├── Services/
+│   ├── AudioCaptureService.swift      # Mic + system audio capture
+│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram
+│   ├── InsightsService.swift          # OpenAI integration
+│   └── KeyboardShortcutsService.swift # Global keyboard shortcuts
+└── Models/
+    ├── Meeting.swift            # SwiftData models + markdown export
+    └── AppState.swift           # Observable app state + markdown export
+```
+
+## Tech Stack
+
+- **UI**: SwiftUI (macOS 14+)
+- **Audio Capture**: AVAudioEngine (mic) + ScreenCaptureKit (system audio)
+- **Speech-to-Text**: Deepgram Nova-2/Nova-3 Streaming API
+- **Insights**: OpenAI GPT-5-mini / GPT-5-nano
+- **Persistence**: SwiftData
+- **Menu Bar**: MenuBarExtra
 
 ## License
 
