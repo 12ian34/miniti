@@ -1,6 +1,8 @@
-# Miniti
+# miniti
 
-A high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights. Built with a terminal-aesthetic UI for developers and sales professionals.
+multi-dimensional meetings
+
+a high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
 
 ## Download
 
@@ -72,21 +74,33 @@ A high-performance macOS meeting transcription app with real-time speech-to-text
 
 - macOS 14.0 or later
 - Apple Silicon or Intel Mac
-- Deepgram API key (for transcription)
-- OpenAI API key (for insights)
+- Deepgram API key ([get one here](https://console.deepgram.com/signup))
+- OpenAI API key ([get one here](https://platform.openai.com/api-keys))
 
-## Setup
+## Development
 
-1. Open `Miniti.xcodeproj` in Xcode
-2. Select your Development Team in the project settings
-3. Build and run (Cmd+R)
-4. Enter your API keys on the home screen:
-   - **Deepgram API Key**: Get one at [console.deepgram.com](https://console.deepgram.com/signup)
-   - **OpenAI API Key**: Get one at [platform.openai.com](https://platform.openai.com/api-keys)
+To build from source:
 
-Keys are stored locally and persist across app restarts.
+1. Clone the repo
+   ```bash
+   git clone https://github.com/12ian34/miniti.git
+   cd miniti
+   ```
 
-**For developers**: Copy `Miniti/Secrets.example.swift` to `Miniti/Secrets.swift` and add your keys there - they'll be picked up as defaults.
+2. (Optional) Add default API keys for development:
+   ```bash
+   cp Miniti/Secrets.example.swift Miniti/Secrets.swift
+   # Edit Secrets.swift with your keys
+   ```
+
+3. Open in Xcode and run
+   ```bash
+   open Miniti.xcodeproj
+   # Select your Development Team in Signing & Capabilities
+   # Build and run (Cmd+R)
+   ```
+
+API keys can also be entered on the home screen at runtime.
 
 ## Permissions
 
