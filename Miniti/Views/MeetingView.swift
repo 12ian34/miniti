@@ -133,6 +133,9 @@ struct ReadyStateView: View {
                 HomeModelSelector()
             }
             
+            // Audio sources (pre-flight check with waveforms)
+            AudioSourcePanel()
+            
             // Start button
             Button(action: {
                 appState.startNewMeeting()
@@ -992,6 +995,9 @@ struct TerminalHeader: View {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                         if appState.isRecording {
                             appState.stopRecording()
+                        } else if appState.currentMeeting != nil {
+                            // Resume recording on the current session
+                            appState.startRecording()
                         } else {
                             appState.startNewMeeting()
                         }
@@ -1001,7 +1007,7 @@ struct TerminalHeader: View {
                         HStack(spacing: 6) {
                             Image(systemName: appState.isRecording ? "stop.fill" : "record.circle")
                                 .font(.system(size: 11, weight: .semibold))
-                            Text(appState.isRecording ? "stop" : "rec")
+                            Text(appState.isRecording ? "stop" : "cont")
                                 .font(.system(size: 12, weight: .semibold, design: .monospaced))
                         }
                         .foregroundStyle(appState.isRecording ? Color(hex: "F85149") : Color(hex: "3FB950"))
@@ -1023,9 +1029,43 @@ struct TerminalHeader: View {
                 }
                 .buttonStyle(.plain)
                 
-                // Audio waveform (next to record button when recording)
+                // Audio waveforms (next to record button when recording)
                 if appState.isRecording {
-                    TerminalAudioMeter()
+                    HStack(spacing: 8) {
+                        // Mic waveform
+                        if appState.captureMicrophone {
+                            HStack(spacing: 4) {
+                                Image(systemName: "mic.fill")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(Color(hex: "3FB950").opacity(0.7))
+                                SourceWaveform(
+                                    level: appState.microphoneLevel,
+                                    color: Color(hex: "3FB950"),
+                                    bandCount: 5,
+                                    barWidth: 3,
+                                    maxHeight: 20
+                                )
+                                .frame(width: 22, height: 20)
+                            }
+                        }
+                        
+                        // System audio waveform
+                        if appState.captureSystemAudio {
+                            HStack(spacing: 4) {
+                                Image(systemName: "speaker.wave.2.fill")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
+                                SourceWaveform(
+                                    level: appState.systemAudioLevel,
+                                    color: Color(hex: "58A6FF"),
+                                    bandCount: 5,
+                                    barWidth: 3,
+                                    maxHeight: 20
+                                )
+                                .frame(width: 22, height: 20)
+                            }
+                        }
+                    }
                 }
             }
             
@@ -1170,80 +1210,155 @@ struct DeepgramModelPopover: View {
     }
 }
 
-struct TerminalAudioMeter: View {
-    @EnvironmentObject var appState: AppState
+// MARK: - Source Waveform (per-source mini waveform)
+
+struct SourceWaveform: View {
+    let level: Float
+    let color: Color
+    let bandCount: Int
+    let barWidth: CGFloat
+    let maxHeight: CGFloat
     
-    // Frequency bands: sub-bass, bass, low-mid, mid, high-mid, presence, brilliance
-    @State private var bands: [CGFloat] = Array(repeating: 0.05, count: 7)
+    init(level: Float, color: Color, bandCount: Int = 5, barWidth: CGFloat = 3, maxHeight: CGFloat = 18) {
+        self.level = level
+        self.color = color
+        self.bandCount = bandCount
+        self.barWidth = barWidth
+        self.maxHeight = maxHeight
+    }
+    
+    @State private var bands: [CGFloat] = []
     @State private var previousLevel: CGFloat = 0
     
-    let timer = Timer.publish(every: 0.03, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 0.06, on: .main, in: .common).autoconnect()
     
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(0..<7, id: \.self) { index in
+            ForEach(0..<bandCount, id: \.self) { index in
                 RoundedRectangle(cornerRadius: 1)
-                    .fill(bandColor(for: index, level: bands[index]))
-                    .frame(width: 4, height: max(3, 24 * bands[index]))
+                    .fill(color.opacity(0.5 + (index < bands.count ? bands[index] : 0.05) * 0.5))
+                    .frame(width: barWidth, height: max(2, maxHeight * (index < bands.count ? bands[index] : 0.05)))
             }
         }
+        .onAppear {
+            bands = Array(repeating: 0.05, count: bandCount)
+        }
         .onReceive(timer) { _ in
-            if appState.isRecording {
-                withAnimation(.linear(duration: 0.03)) {
-                    let rawLevel = CGFloat(appState.audioLevel)
-                    // Much more sensitive - amplify significantly
-                    let amplified = min(1.0, rawLevel * 15.0)
-                    let delta = amplified - previousLevel
-                    previousLevel = amplified
-                    
-                    // Simulate frequency distribution based on level and variation
-                    // Lower frequencies (bass) respond more to sustained levels
-                    // Higher frequencies respond more to transients/changes
-                    bands[0] = smooth(bands[0], to: amplified * 0.9 + CGFloat.random(in: 0...0.15), factor: 0.4)  // Sub-bass
-                    bands[1] = smooth(bands[1], to: amplified * 0.95 + CGFloat.random(in: 0...0.1), factor: 0.35) // Bass
-                    bands[2] = smooth(bands[2], to: amplified + CGFloat.random(in: 0...0.12), factor: 0.3)       // Low-mid
-                    bands[3] = smooth(bands[3], to: amplified * 1.1 + abs(delta) * 2, factor: 0.25)              // Mid
-                    bands[4] = smooth(bands[4], to: amplified * 0.85 + abs(delta) * 3, factor: 0.2)              // High-mid
-                    bands[5] = smooth(bands[5], to: amplified * 0.7 + abs(delta) * 4, factor: 0.15)              // Presence
-                    bands[6] = smooth(bands[6], to: amplified * 0.5 + abs(delta) * 5, factor: 0.1)               // Brilliance
-                    
-                    // Clamp all values
-                    for i in 0..<bands.count {
-                        bands[i] = min(1.0, max(0.05, bands[i]))
-                    }
-                }
-            } else {
-                withAnimation(.linear(duration: 0.15)) {
-                    for i in 0..<bands.count {
-                        bands[i] = 0.05
-                    }
-                    previousLevel = 0
+            guard bands.count == bandCount else { return }
+            withAnimation(.linear(duration: 0.06)) {
+                let rawLevel = CGFloat(level)
+                let amplified = min(1.0, rawLevel * 15.0)
+                let delta = amplified - previousLevel
+                previousLevel = amplified
+                
+                // Distribute across bands with variation
+                for i in 0..<bandCount {
+                    let position = CGFloat(i) / CGFloat(bandCount - 1) // 0..1
+                    let bassWeight = 1.0 - position * 0.4
+                    let transientWeight = position * 3.0
+                    let smoothFactor = 0.4 - position * 0.25
+                    let target = amplified * bassWeight + abs(delta) * transientWeight + CGFloat.random(in: 0...0.1)
+                    bands[i] = smooth(bands[i], to: target, factor: max(0.1, smoothFactor))
+                    bands[i] = min(1.0, max(0.05, bands[i]))
                 }
             }
         }
     }
     
     private func smooth(_ current: CGFloat, to target: CGFloat, factor: CGFloat) -> CGFloat {
-        return current + (target - current) * factor
+        current + (target - current) * factor
     }
+}
+
+// MARK: - Audio Source Panel (home screen pre-flight)
+
+struct AudioSourcePanel: View {
+    @EnvironmentObject var appState: AppState
     
-    private func bandColor(for index: Int, level: CGFloat) -> Color {
-        // Gradient from green (bass) to yellow (mid) to orange/red (highs)
-        let colors: [Color] = [
-            Color(hex: "22C55E"),  // Green - sub-bass
-            Color(hex: "3FB950"),  // Green - bass
-            Color(hex: "84CC16"),  // Lime - low-mid
-            Color(hex: "EAB308"),  // Yellow - mid
-            Color(hex: "F59E0B"),  // Amber - high-mid
-            Color(hex: "F97316"),  // Orange - presence
-            Color(hex: "EF4444"),  // Red - brilliance
-        ]
-        
-        // Brighten based on level
-        if level > 0.7 {
-            return colors[index].opacity(1.0)
+    var body: some View {
+        HStack(spacing: 12) {
+            AudioSourcePill(
+                label: "mic",
+                icon: "mic.fill",
+                isEnabled: $appState.captureMicrophone,
+                isActive: appState.audioCaptureService?.isMicActive ?? false,
+                level: appState.microphoneLevel,
+                color: Color(hex: "3FB950")
+            )
+            
+            AudioSourcePill(
+                label: "system",
+                icon: "speaker.wave.2.fill",
+                isEnabled: $appState.captureSystemAudio,
+                isActive: appState.audioCaptureService?.isSystemAudioActive ?? false,
+                level: appState.systemAudioLevel,
+                color: Color(hex: "58A6FF")
+            )
         }
-        return colors[index].opacity(0.7 + level * 0.3)
+        .onAppear {
+            appState.startAudioMonitoring()
+        }
+        .onDisappear {
+            appState.stopAudioMonitoring()
+        }
+    }
+}
+
+struct AudioSourcePill: View {
+    let label: String
+    let icon: String
+    @Binding var isEnabled: Bool
+    let isActive: Bool
+    let level: Float
+    let color: Color
+    
+    @EnvironmentObject var appState: AppState
+    @State private var isHovering = false
+    
+    var body: some View {
+        Button {
+            isEnabled.toggle()
+            appState.restartAudioMonitoring()
+        } label: {
+            HStack(spacing: 6) {
+                // Waveform or status dot
+                if isEnabled && appState.isMonitoring && isActive {
+                    SourceWaveform(level: level, color: color, bandCount: 5, barWidth: 2, maxHeight: 12)
+                        .frame(width: 16, height: 12)
+                } else {
+                    Circle()
+                        .fill(isEnabled ? color.opacity(0.5) : Color(hex: "71717A"))
+                        .frame(width: 6, height: 6)
+                }
+                
+                Text(label)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isEnabled ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
+                
+                Text(isEnabled ? "on" : "off")
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(isEnabled ? color.opacity(0.8) : Color(hex: "71717A").opacity(0.6))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(Color(hex: "0F0F11"))
+                    .overlay(
+                        Capsule()
+                            .stroke(
+                                isEnabled
+                                    ? color.opacity(isHovering ? 0.5 : 0.3)
+                                    : Color(hex: "3F3F46").opacity(isHovering ? 0.8 : 0.5),
+                                lineWidth: 1
+                            )
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovering = hovering
+        }
     }
 }
 

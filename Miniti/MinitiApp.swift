@@ -124,6 +124,9 @@ struct MinitiApp: App {
     private func toggleRecording(appState: AppState) {
         if appState.isRecording {
             appState.stopRecording()
+        } else if appState.currentMeeting != nil {
+            // Resume recording on the current session
+            appState.startRecording()
         } else {
             appState.startNewMeeting()
         }
@@ -236,6 +239,9 @@ struct MenuBarView: View {
             Button {
                 if appState.isRecording {
                     appState.stopRecording()
+                } else if appState.currentMeeting != nil {
+                    // Resume recording on the current session
+                    appState.startRecording()
                 } else {
                     appState.startNewMeeting()
                 }

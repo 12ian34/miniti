@@ -49,11 +49,12 @@ struct TranscriptView: View {
                     
                     ScrollViewReader { proxy in
                         ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 0) {
+                            LazyVStack(alignment: .leading, spacing: 6) {
                                 ForEach(Array(visibleSegments.enumerated()), id: \.element.id) { index, segment in
                                     TerminalSegmentRow(
                                         segment: segment,
-                                        isNewTurn: isNewSpeakerTurn(at: index)
+                                        isNewTurn: isNewSpeakerTurn(at: index),
+                                        isFirst: index == 0
                                     )
                                     .id(segment.id)
                                 }
@@ -174,6 +175,7 @@ struct SpeakerLegend: View {
 struct TerminalSegmentRow: View {
     let segment: AppState.LiveSegment
     var isNewTurn: Bool = true
+    var isFirst: Bool = false
     
     private let speakerColors: [Color] = [
         Color(hex: "58A6FF"), // Blue
@@ -211,7 +213,7 @@ struct TerminalSegmentRow: View {
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(Color(hex: "484F58"))
                 }
-                .padding(.top, isNewTurn ? 12 : 0)
+                .padding(.top, isNewTurn && !isFirst ? 12 : 0)
                 .padding(.bottom, 4)
             }
             

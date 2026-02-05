@@ -26,7 +26,10 @@ final class AppState: ObservableObject {
     @Published var showHistory = false
     @Published var selectedTab: Tab = .transcript
     @Published var isGeneratingInsights = false
-    @Published var audioLevel: Float = 0  // Real-time audio level for visualization
+    @Published var audioLevel: Float = 0  // Combined audio level for visualization
+    @Published var microphoneLevel: Float = 0  // Mic-only level
+    @Published var systemAudioLevel: Float = 0  // System audio-only level
+    @Published var isMonitoring = false  // Audio monitoring active (home screen)
     
     // MARK: - Insights Mode
     @Published var insightsMode: InsightsMode = .standard
@@ -128,13 +131,26 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Subscribe to audio levels for visualization
+        // Subscribe to audio levels for visualization (separate + combined)
         if let audioService = audioCaptureService {
+            audioService.$microphoneLevel
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] level in
+                    self?.microphoneLevel = level
+                }
+                .store(in: &cancellables)
+            
+            audioService.$systemAudioLevel
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] level in
+                    self?.systemAudioLevel = level
+                }
+                .store(in: &cancellables)
+            
             audioService.$microphoneLevel
                 .combineLatest(audioService.$systemAudioLevel)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] micLevel, sysLevel in
-                    // Use the higher of the two levels
                     self?.audioLevel = max(micLevel, sysLevel)
                 }
                 .store(in: &cancellables)
@@ -492,8 +508,52 @@ final class AppState: ObservableObject {
         }
     }
     
+    // MARK: - Audio Monitoring (home screen pre-flight check)
+    
+    func startAudioMonitoring() {
+        guard let audioCaptureService else { return }
+        guard !isRecording else { return }
+        
+        isMonitoring = true
+        
+        // Monitor only - don't send data to Deepgram
+        audioCaptureService.onAudioBuffer = nil
+        
+        Task {
+            do {
+                try await audioCaptureService.startCapture(
+                    microphone: captureMicrophone,
+                    systemAudio: captureSystemAudio
+                )
+            } catch {
+                print("Audio monitoring failed: \(error)")
+            }
+        }
+    }
+    
+    func stopAudioMonitoring() {
+        guard isMonitoring else { return }
+        audioCaptureService?.stopCapture()
+        isMonitoring = false
+        microphoneLevel = 0
+        systemAudioLevel = 0
+        audioLevel = 0
+    }
+    
+    /// Restart monitoring after toggling an audio source
+    func restartAudioMonitoring() {
+        guard isMonitoring else { return }
+        stopAudioMonitoring()
+        startAudioMonitoring()
+    }
+    
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
+        
+        // Stop monitoring if active (clean transition)
+        if isMonitoring {
+            stopAudioMonitoring()
+        }
         
         isRecording = true
         
