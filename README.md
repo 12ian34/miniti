@@ -2,6 +2,16 @@
 
 A high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights. Built with a terminal-aesthetic UI for developers and sales professionals.
 
+## Download
+
+**[Download Miniti v1.0.0](https://github.com/12ian34/miniti/releases/latest)**
+
+1. Download `Miniti-1.0.0.zip` from the releases page
+2. Unzip and drag `Miniti.app` to Applications
+3. **First launch**: Right-click → "Open" → Click "Open" in the dialog
+4. Grant microphone + screen recording permissions when prompted
+5. Enter your API keys on the home screen
+
 ## Features
 
 ### Core Transcription
