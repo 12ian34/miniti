@@ -379,7 +379,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Miniti/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Miniti;
+				INFOPLIST_KEY_CFBundleDisplayName = miniti;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Miniti needs microphone access to transcribe your voice during meetings.";
@@ -389,7 +389,7 @@
 				);
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
@@ -416,7 +416,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Miniti/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Miniti;
+				INFOPLIST_KEY_CFBundleDisplayName = miniti;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Miniti needs microphone access to transcribe your voice during meetings.";
@@ -426,7 +426,7 @@
 				);
 				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;

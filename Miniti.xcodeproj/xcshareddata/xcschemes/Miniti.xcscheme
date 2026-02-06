@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A60000010000000000000001"
-               BuildableName = "Miniti.app"
+               BuildableName = "miniti.app"
                BlueprintName = "Miniti"
                ReferencedContainer = "container:Miniti.xcodeproj">
             </BuildableReference>
@@ -44,7 +44,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A60000010000000000000001"
-            BuildableName = "Miniti.app"
+            BuildableName = "miniti.app"
             BlueprintName = "Miniti"
             ReferencedContainer = "container:Miniti.xcodeproj">
          </BuildableReference>
@@ -61,7 +61,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A60000010000000000000001"
-            BuildableName = "Miniti.app"
+            BuildableName = "miniti.app"
             BlueprintName = "Miniti"
             ReferencedContainer = "container:Miniti.xcodeproj">
          </BuildableReference>
