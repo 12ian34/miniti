@@ -4,42 +4,59 @@ multi-dimensional meetings
 
 a high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
 
-## Download
+## Install
 
-**[Download Miniti v1.0.0](https://github.com/12ian34/miniti/releases/latest)**
+1. Unzip `Miniti.zip`
+2. Drag `Miniti.app` to your Applications folder
+3. **First launch** (app is not yet notarized):
+   - **Right-click** (or Control-click) the app → click **Open**
+   - You'll see a warning — click **Open** again
+   - If that doesn't work: try to open the app normally, then go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to the Miniti message
+4. Grant **Microphone** and **Screen Recording** permissions when prompted
+5. Choose your mode on first launch (see below)
 
-1. Download `Miniti-1.0.0.zip` from the releases page
-2. Unzip and drag `Miniti.app` to Applications
-3. **First launch**: Right-click → "Open" → Click "Open" in the dialog
-4. Grant microphone + screen recording permissions when prompted
-5. Enter your API keys on the home screen
+After the first open, the app launches normally from then on.
 
 ## Requirements
 
-- macOS 14.0 or later
+- macOS 14.0 (Sonoma) or later
 - Apple Silicon or Intel Mac
-- Deepgram API key ([get one here](https://console.deepgram.com/signup))
-- OpenAI API key ([get one here](https://platform.openai.com/api-keys))
+
+## Two Modes
+
+On first launch, you choose a mode. You can switch anytime in Settings (`⌘,`).
+
+### Early Adopter (Managed)
+- **No API keys needed** — just open and go
+- 500 free minutes per month of transcription + AI insights
+- Usage tracked per device; resets monthly
+
+### Bring Your Own Keys (BYOK)
+- Use your own API keys for unlimited usage
+- Requires:
+  - Deepgram API key ([get one here](https://console.deepgram.com/signup))
+  - OpenAI API key ([get one here](https://platform.openai.com/api-keys))
+- Enter keys on the home screen or in Settings
 
 ## Permissions
 
-The app requires:
+The app needs two macOS permissions:
 
 - **Microphone**: To capture your voice during meetings
-- **Screen Recording**: To capture system audio from other applications
+- **Screen Recording**: To capture system audio from video calls (Zoom, Meet, Teams, etc.)
 
-Grant these permissions when prompted, or enable them in System Settings > Privacy & Security.
+Grant these when prompted, or enable them in **System Settings > Privacy & Security**.
 
 ## Usage
 
 1. Select your transcription model (Nova-2 or Nova-3) on the home screen
-2. Click "relax and take notes" or press `⌘⇧R` to start recording
-3. Speak or play audio from a video call
+2. Toggle mic and/or system audio sources
+3. Click "relax and take notes" or press `⌘⇧R` to start recording
 4. Watch the live transcript and insights update in real-time
 5. Take notes in the notes panel below the transcript
 6. Switch insight modes with `⌘1` (Standard) or `⌘2` (MEDDPICC)
 7. Click "stop" or press `⌘⇧R` when the meeting ends
-8. Meeting automatically moves to history - browse with `↑`/`↓` or `J`/`K`
+8. Meeting automatically moves to history — browse with `↑`/`↓` or `J`/`K`
 9. Copy transcript, notes, or insights to markdown with the `md` buttons
 
 ## Features
