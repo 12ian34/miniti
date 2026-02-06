@@ -4,6 +4,11 @@ import ServiceManagement
 struct SettingsView: View {
     var body: some View {
         TabView {
+            AccountSettingsView()
+                .tabItem {
+                    Label("Account", systemImage: "person.crop.circle")
+                }
+            
             APISettingsView()
                 .tabItem {
                     Label("API Keys", systemImage: "key")
@@ -19,7 +24,96 @@ struct SettingsView: View {
                     Label("General", systemImage: "gear")
                 }
         }
-        .frame(width: 500, height: 350)
+        .frame(width: 500, height: 400)
+    }
+}
+
+// MARK: - Account Settings (Mode + Usage)
+
+struct AccountSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    
+    var body: some View {
+        Form {
+            Section("Mode") {
+                Picker("API Mode", selection: $appState.appModeRaw) {
+                    Text("Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
+                    Text("Bring Your Own Keys (unlimited)").tag(AppMode.byok.rawValue)
+                }
+                .pickerStyle(.radioGroup)
+                .onChange(of: appState.appModeRaw) { _, newValue in
+                    if newValue == AppMode.managed.rawValue {
+                        Task { await appState.refreshUsage() }
+                    }
+                }
+                
+                Text(appState.appMode == .managed
+                     ? "API calls routed through Miniti's backend. 500 free minutes per month."
+                     : "Use your own Deepgram & OpenAI API keys. No limits, no tracking.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            if appState.appMode == .managed {
+                Section("Usage") {
+                    if let usage = appState.usageInfo {
+                        HStack {
+                            Text("Minutes Used")
+                            Spacer()
+                            Text("\(Int(usage.minutesUsed.rounded())) / \(Int(usage.minutesLimit))")
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        ProgressView(value: usage.usagePercentage)
+                            .tint(usage.minutesRemaining < 60 ? .orange : .green)
+                        
+                        HStack {
+                            Text("Remaining")
+                            Spacer()
+                            Text(usage.formattedRemaining)
+                                .foregroundStyle(usage.minutesRemaining < 60 ? .orange : .green)
+                                .fontWeight(.medium)
+                        }
+                        
+                        HStack {
+                            Text("Resets")
+                            Spacer()
+                            Text(usage.resetsAt.formatted(date: .abbreviated, time: .omitted))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else if appState.isLoadingUsage {
+                        HStack {
+                            Text("Loading usage...")
+                            Spacer()
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    } else {
+                        HStack {
+                            Text("Usage data unavailable")
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Refresh") {
+                                Task { await appState.refreshUsage() }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            Section("Device") {
+                HStack {
+                    Text("Device ID")
+                    Spacer()
+                    Text(DeviceIdentifier.getOrCreateDeviceId())
+                        .foregroundStyle(.secondary)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
     }
 }
 

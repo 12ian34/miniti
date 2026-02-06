@@ -23,12 +23,18 @@ struct MinitiApp: App {
     
     var body: some Scene {
         WindowGroup {
-            MainWindow()
-                .environmentObject(appState)
-                .environmentObject(keyboardService)
-                .onAppear {
-                    setupKeyboardShortcuts()
+            Group {
+                if appState.hasCompletedOnboarding {
+                    MainWindow()
+                        .environmentObject(keyboardService)
+                        .onAppear {
+                            setupKeyboardShortcuts()
+                        }
+                } else {
+                    OnboardingView()
                 }
+            }
+            .environmentObject(appState)
         }
         .modelContainer(sharedModelContainer)
         .windowStyle(.hiddenTitleBar)
@@ -57,12 +63,6 @@ struct MinitiApp: App {
                 .disabled(appState.currentMeeting == nil || appState.liveSegments.isEmpty)
             }
             
-            CommandGroup(after: .appSettings) {
-                Button("Settings...") {
-                    appState.showSettings = true
-                }
-                .keyboardShortcut(",", modifiers: .command)
-            }
         }
         
         Settings {
