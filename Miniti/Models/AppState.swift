@@ -138,18 +138,37 @@ final class AppState: ObservableObject {
         let timestamp: TimeInterval
         var isFinal: Bool
         
+        /// Whether this segment came from the local microphone (vs system/remote audio).
+        var isLocalMic: Bool {
+            speaker == DeepgramService.micSpeakerID
+        }
+        
         var speakerLabel: String {
-            "Speaker \(speaker + 1)"
+            isLocalMic ? "You" : "Speaker \(speaker + 1)"
         }
     }
     
     init() {
-        // Use Secrets.swift as defaults if @AppStorage is empty
-        if deepgramApiKey.isEmpty {
-            deepgramApiKey = Secrets.deepgramApiKey
-        }
-        if openaiApiKey.isEmpty {
-            openaiApiKey = Secrets.openaiApiKey
+        // Seed default keys from Secrets.swift only in BYOK mode.
+        // In managed mode, API calls go through the backend — user should
+        // never see or need the app's own API keys.
+        if appMode == .byok {
+            if deepgramApiKey.isEmpty {
+                deepgramApiKey = Secrets.deepgramApiKey
+            }
+            if openaiApiKey.isEmpty {
+                openaiApiKey = Secrets.openaiApiKey
+            }
+        } else {
+            // Managed mode: strip out Secrets defaults if they were previously
+            // seeded (e.g., user started in BYOK, switched to managed).
+            // User-entered keys (different from Secrets) are left untouched.
+            if deepgramApiKey == Secrets.deepgramApiKey {
+                deepgramApiKey = ""
+            }
+            if openaiApiKey == Secrets.openaiApiKey {
+                openaiApiKey = ""
+            }
         }
         setupServices()
         
@@ -294,7 +313,7 @@ final class AppState: ObservableObject {
         
         let transcript = finalSegments
             .sorted { $0.timestamp < $1.timestamp }
-            .map { "[S\($0.speaker + 1)] \($0.text)" }
+            .map { "[\($0.speakerLabel)] \($0.text)" }
             .joined(separator: "\n")
         
         guard !transcript.isEmpty else { return }
@@ -478,7 +497,7 @@ final class AppState: ObservableObject {
         
         let transcript = finalSegments
             .sorted { $0.timestamp < $1.timestamp }
-            .map { "[S\($0.speaker + 1)] \($0.text)" }
+            .map { "[\($0.speakerLabel)] \($0.text)" }
             .joined(separator: "\n")
         
         guard !transcript.isEmpty else { return }
@@ -637,6 +656,13 @@ final class AppState: ObservableObject {
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
         
+        // In managed mode, if we don't have a temp key (e.g. resuming after stop),
+        // we must request a new one before connecting to Deepgram.
+        if appMode == .managed && tempDeepgramKey == nil {
+            Task { await startManagedRecording() }
+            return
+        }
+        
         // Stop monitoring if active (clean transition)
         if isMonitoring {
             stopAudioMonitoring()
@@ -655,6 +681,18 @@ final class AppState: ObservableObject {
         // Configure and start Deepgram with selected model
         let selectedModel = DeepgramModel(rawValue: deepgramModel) ?? .nova3
         deepgramService.configure(apiKey: apiKey)
+        
+        // Wire up source dominance tracking so Deepgram can separate mic vs system speakers.
+        // Only active when both mic and system audio are enabled.
+        if captureMicrophone && captureSystemAudio {
+            audioCaptureService.resetSourceTracking()
+            deepgramService.sourceLookup = { [weak audioCaptureService] start, end in
+                audioCaptureService?.dominantSource(from: start, to: end) ?? .unknown
+            }
+        } else {
+            deepgramService.sourceLookup = nil
+        }
+        
         deepgramService.connect(model: selectedModel)
         
         // Configure audio capture
@@ -827,7 +865,7 @@ final class AppState: ObservableObject {
         let transcript = liveSegments
             .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .sorted { $0.timestamp < $1.timestamp }
-            .map { "[S\($0.speaker + 1)] \($0.text)" }
+            .map { "[\($0.speakerLabel)] \($0.text)" }
             .joined(separator: "\n")
         
         guard !transcript.isEmpty else {
@@ -987,7 +1025,7 @@ final class AppState: ObservableObject {
         for segment in finalSegments {
             if segment.speaker != currentSpeaker {
                 currentSpeaker = segment.speaker
-                md += "\n**Speaker \(segment.speaker + 1):**\n"
+                md += "\n**\(segment.speakerLabel):**\n"
             }
             md += "\(segment.text) "
         }

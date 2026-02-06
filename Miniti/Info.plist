@@ -4,8 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Miniti needs microphone access to transcribe your voice during meetings.</string>
-	<key>NSScreenCaptureUsageDescription</key>
-	<string>Miniti needs screen recording permission to capture system audio from video calls and other applications.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>Miniti needs to capture system audio to transcribe video calls and other meeting applications.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Miniti</string>
 	<key>CFBundleIdentifier</key>
@@ -19,7 +19,7 @@
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.0</string>
+	<string>14.2</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026. All rights reserved.</string>
 </dict>

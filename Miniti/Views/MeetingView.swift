@@ -83,6 +83,7 @@ struct MeetingView: View {
 
 struct ReadyStateView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
     @State private var editingDeepgram = false
     @State private var editingOpenAI = false
     
@@ -211,12 +212,7 @@ struct ReadyStateView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
             Button {
-                // Open the SwiftUI Settings scene window
-                if #available(macOS 14.0, *) {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                } else {
-                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
-                }
+                openSettings()
             } label: {
                 Image(systemName: "gearshape")
                     .font(.system(size: 13, weight: .medium))
@@ -232,6 +228,7 @@ struct ReadyStateView: View {
                     )
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .padding(12)
         }
     }
