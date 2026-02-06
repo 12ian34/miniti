@@ -4,27 +4,55 @@ multi-dimensional meetings
 
 a high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
 
-## Install
+## Quick Start
+
+### 1. Install
 
 1. Unzip `Miniti.zip`
-2. Drag `Miniti.app` to your Applications folder
-3. **First launch** (app is not yet notarized):
+2. Drag `Miniti.app` to your **Applications** folder
+3. The app is **not notarized yet**, so macOS will block it on first launch:
    - **Right-click** (or Control-click) the app → click **Open**
-   - You'll see a warning — click **Open** again
-   - If that doesn't work: try to open the app normally, then go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway** next to the Miniti message
-4. Grant **Microphone** and **Screen Recording** permissions when prompted
-5. Choose your mode on first launch (see below)
+   - A warning appears — click **Open** again to confirm
+   - If that doesn't work: open the app normally, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
 
 After the first open, the app launches normally from then on.
 
+### 2. Permissions
+
+Miniti will ask for two permissions the first time you record. Here's what to expect:
+
+| Permission | When it appears | What to do |
+|---|---|---|
+| **Microphone** | First time you start recording with mic enabled | Click **Allow** in the system dialog |
+| **System Audio Recording** | First time you start recording with system audio enabled | Click **Allow** — this appears under **Privacy & Security → System Audio Recording** (not Screen Recording) |
+
+Both can be managed later in **System Settings → Privacy & Security**.
+
+> **Note**: Miniti only captures audio. It does **not** record your screen, despite macOS grouping audio permissions near screen recording settings.
+
+### 3. Choose your mode
+
+On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
+
+| Mode | What it means |
+|---|---|
+| **Early Adopter** (managed) | No API keys needed — 500 free minutes/month of transcription + AI insights |
+| **Bring Your Own Keys** (BYOK) | Use your own Deepgram + OpenAI API keys for unlimited usage |
+
+### 4. Record
+
+1. Toggle mic and/or system audio on the home screen
+2. Select your transcription model (Nova-2 or Nova-3)
+3. Click the start button or press `⌘⇧R`
+4. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
+5. Click stop or press `⌘⇧R` when done
+
 ## Requirements
 
-- macOS 14.0 (Sonoma) or later
+- **macOS 14.2** (Sonoma) or later
 - Apple Silicon or Intel Mac
 
 ## Two Modes
-
-On first launch, you choose a mode. You can switch anytime in Settings (`⌘,`).
 
 ### Early Adopter (Managed)
 - **No API keys needed** — just open and go
@@ -36,28 +64,7 @@ On first launch, you choose a mode. You can switch anytime in Settings (`⌘,`).
 - Requires:
   - Deepgram API key ([get one here](https://console.deepgram.com/signup))
   - OpenAI API key ([get one here](https://platform.openai.com/api-keys))
-- Enter keys on the home screen or in Settings
-
-## Permissions
-
-The app needs two macOS permissions:
-
-- **Microphone**: To capture your voice during meetings
-- **Screen Recording**: To capture system audio from video calls (Zoom, Meet, Teams, etc.)
-
-Grant these when prompted, or enable them in **System Settings > Privacy & Security**.
-
-## Usage
-
-1. Select your transcription model (Nova-2 or Nova-3) on the home screen
-2. Toggle mic and/or system audio sources
-3. Click "relax and take notes" or press `⌘⇧R` to start recording
-4. Watch the live transcript and insights update in real-time
-5. Take notes in the notes panel below the transcript
-6. Switch insight modes with `⌘1` (Standard) or `⌘2` (MEDDPICC)
-7. Click "stop" or press `⌘⇧R` when the meeting ends
-8. Meeting automatically moves to history — browse with `↑`/`↓` or `J`/`K`
-9. Copy transcript, notes, or insights to markdown with the `md` buttons
+- Enter keys on the home screen or in Settings → API Keys
 
 ## Features
 
@@ -65,7 +72,8 @@ Grant these when prompted, or enable them in **System Settings > Privacy & Secur
 - **Real-time Transcription**: Live speech-to-text using Deepgram Nova-2/Nova-3 with ~200ms latency
 - **System Audio Capture**: Record audio from video calls (Zoom, Meet, Teams, etc.)
 - **Microphone Capture**: Record your own voice
-- **Speaker Diarization**: Automatically identifies and color-codes different speakers
+- **Source-based Speaker Separation**: Mic audio is labeled "You", system audio is labeled "Speaker 1/2/..." — no more confusion about who said what
+- **Multi-speaker Diarization**: Remote speakers on system audio are still individually identified
 - **Live Transcript View**: See transcription appear in real-time with smooth auto-scrolling
 
 ### AI Insights
@@ -164,11 +172,11 @@ Click the `md` button on any section header to copy formatted markdown:
 ```markdown
 ## Transcript
 
-**Speaker 1:**
-Hello everyone, let's get started...
+**You:**
+I think we should prioritize the auth flow...
 
-**Speaker 2:**
-Thanks for joining...
+**Speaker 1:**
+Agreed, let's scope that out this week...
 ```
 
 **Insights** exports with structure:
@@ -230,11 +238,14 @@ Miniti/
 │   ├── TranscriptView.swift     # Live transcript with speaker colors
 │   ├── InsightsView.swift       # AI insights panel
 │   ├── HistoryView.swift        # Past meetings detail view
-│   └── SettingsView.swift       # API keys & preferences
+│   ├── SettingsView.swift       # Mode toggle, API keys (BYOK), audio, preferences
+│   └── OnboardingView.swift     # First-launch mode selection
 ├── Services/
-│   ├── AudioCaptureService.swift      # Mic + system audio capture
-│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram
+│   ├── AudioCaptureService.swift      # Mic (AVAudioEngine) + system audio (Core Audio Process Tap)
+│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram + source-based speaker tagging
 │   ├── InsightsService.swift          # OpenAI integration
+│   ├── MinitiAPIService.swift         # Backend communication (managed mode)
+│   ├── DeviceIdentifier.swift         # Keychain-based device UUID
 │   └── KeyboardShortcutsService.swift # Global keyboard shortcuts
 └── Models/
     ├── Meeting.swift            # SwiftData models + markdown export
@@ -243,8 +254,8 @@ Miniti/
 
 ## Tech Stack
 
-- **UI**: SwiftUI (macOS 14+)
-- **Audio Capture**: AVAudioEngine (mic) + ScreenCaptureKit (system audio)
+- **UI**: SwiftUI (macOS 14.2+)
+- **Audio Capture**: AVAudioEngine (mic) + Core Audio Process Tap (system audio)
 - **Speech-to-Text**: Deepgram Nova-2/Nova-3 Streaming API
 - **Insights**: OpenAI GPT-5-mini / GPT-5-nano
 - **Persistence**: SwiftData
