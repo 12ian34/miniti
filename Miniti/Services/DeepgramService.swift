@@ -55,6 +55,14 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     // Track speakers across the session
     private var speakerHistory: [Int: SpeakerInfo] = [:]
     
+    /// Optional callback to determine audio source for a time range.
+    /// When set, words from the microphone are assigned a dedicated speaker ID (1000)
+    /// to separate them from system audio speakers (Deepgram's own diarization).
+    var sourceLookup: ((Double, Double) -> AudioCaptureService.AudioSource)?
+    
+    /// Reserved speaker ID for the local microphone ("You").
+    nonisolated static let micSpeakerID = 1000
+    
     enum ConnectionState {
         case disconnected
         case connecting
@@ -164,10 +172,11 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
             guard isConnected else { return }
             
             let message = URLSessionWebSocketTask.Message.data(data)
-            webSocketTask?.send(message) { error in
+            webSocketTask?.send(message) { [weak self] error in
                 if let error {
-                    print("WebSocket send error: \(error)")
                     Task { @MainActor in
+                        guard let self, self.isConnected else { return }
+                        print("WebSocket send error: \(error)")
                         self.error = error
                     }
                 }
@@ -185,6 +194,8 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                     self.receiveMessages()
                     
                 case .failure(let error):
+                    // Ignore errors from intentional disconnect (socket cancelled)
+                    guard self.isConnected else { return }
                     print("WebSocket receive error: \(error)")
                     self.error = error
                     self.connectionState = .error
@@ -229,14 +240,28 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                     }
                 }
                 
-                // Parse words with speaker info
+                // Parse words with speaker info, overriding with source dominance
                 let words = alternative.words.map { word in
-                    TranscriptUpdate.Word(
+                    var speaker = word.speaker ?? 0
+                    
+                    // If source tracking is available, override speaker based on
+                    // which audio source was dominant during this word's timeframe.
+                    // Mic words → micSpeakerID ("You"), system words → keep Deepgram's ID.
+                    if let lookup = sourceLookup {
+                        let source = lookup(word.start, word.end)
+                        if source == .mic {
+                            speaker = DeepgramService.micSpeakerID
+                        }
+                        // .system → keep Deepgram's speaker (for multi-speaker remote diarization)
+                        // .unknown → keep Deepgram's speaker as fallback
+                    }
+                    
+                    return TranscriptUpdate.Word(
                         text: word.punctuatedWord ?? word.word,
                         start: word.start,
                         end: word.end,
                         confidence: word.confidence,
-                        speaker: word.speaker ?? 0
+                        speaker: speaker
                     )
                 }
                 

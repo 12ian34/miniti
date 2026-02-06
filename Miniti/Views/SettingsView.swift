@@ -2,6 +2,8 @@ import SwiftUI
 import ServiceManagement
 
 struct SettingsView: View {
+    @EnvironmentObject var appState: AppState
+    
     var body: some View {
         TabView {
             AccountSettingsView()
@@ -9,10 +11,14 @@ struct SettingsView: View {
                     Label("Account", systemImage: "person.crop.circle")
                 }
             
-            APISettingsView()
-                .tabItem {
-                    Label("API Keys", systemImage: "key")
-                }
+            // API Keys tab only shown in BYOK mode — managed users
+            // should never see or need the app's backend keys.
+            if appState.appMode == .byok {
+                APISettingsView()
+                    .tabItem {
+                        Label("API Keys", systemImage: "key")
+                    }
+            }
             
             AudioSettingsView()
                 .tabItem {
@@ -412,9 +418,11 @@ struct AudioSettingsView: View {
                 }
                 
                 HStack {
-                    Text("Screen Recording")
+                    Text("System Audio")
                     Spacer()
-                    PermissionStatusBadge(granted: CGPreflightScreenCaptureAccess())
+                    Text("Check in System Settings")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
                 
                 Button("Open System Settings") {

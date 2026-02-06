@@ -12,13 +12,18 @@ struct TranscriptView: View {
         !appState.interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
     
-    // Get unique speakers - combine from segments and detected speakers
+    // Get unique speakers - combine from segments and detected speakers.
+    // "You" (micSpeakerID=1000) sorts first, then remote speakers by number.
     private var uniqueSpeakers: [Int] {
         var speakers = appState.detectedSpeakers
         for segment in visibleSegments {
             speakers.insert(segment.speaker)
         }
-        return speakers.sorted()
+        return speakers.sorted { a, b in
+            if a == DeepgramService.micSpeakerID { return true }
+            if b == DeepgramService.micSpeakerID { return false }
+            return a < b
+        }
     }
     
     private func scrollToBottom(proxy: ScrollViewProxy) {
@@ -103,17 +108,6 @@ struct SpeakerLegend: View {
     let speakers: [Int]
     var isRecording: Bool = false
     
-    private let speakerColors: [Color] = [
-        Color(hex: "58A6FF"), // Blue
-        Color(hex: "A371F7"), // Purple  
-        Color(hex: "3FB950"), // Green
-        Color(hex: "D29922"), // Orange
-        Color(hex: "F778BA"), // Pink
-        Color(hex: "79C0FF"), // Cyan
-        Color(hex: "FFA657"), // Light orange
-        Color(hex: "7EE787"), // Light green
-    ]
-    
     var body: some View {
         HStack(spacing: 16) {
             // Recording indicator
@@ -138,13 +132,15 @@ struct SpeakerLegend: View {
                     .foregroundStyle(Color(hex: "484F58"))
             } else {
                 ForEach(speakers, id: \.self) { speaker in
+                    let label = speakerLabel(for: speaker)
+                    let color = speakerColor(for: speaker)
                     HStack(spacing: 4) {
                         Circle()
-                            .fill(speakerColors[speaker % speakerColors.count])
+                            .fill(color)
                             .frame(width: 6, height: 6)
-                        Text("S\(speaker + 1)")
+                        Text(label)
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(speakerColors[speaker % speakerColors.count])
+                            .foregroundStyle(color)
                     }
                 }
             }
@@ -152,8 +148,14 @@ struct SpeakerLegend: View {
             Spacer()
             
             // Show count
+            let remoteSpeakers = speakers.filter { $0 != DeepgramService.micSpeakerID }
             if speakers.count == 1 && !speakers.isEmpty {
-                Text("(single speaker)")
+                let isMic = speakers[0] == DeepgramService.micSpeakerID
+                Text(isMic ? "(mic only)" : "(single speaker)")
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+            } else if speakers.contains(DeepgramService.micSpeakerID) && remoteSpeakers.count == 1 {
+                Text("(you + 1 remote)")
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "484F58"))
             }
@@ -170,6 +172,43 @@ struct SpeakerLegend: View {
     }
 }
 
+// MARK: - Speaker Color & Label Helpers
+
+/// Palette for remote speakers (Deepgram-diarized). Index 0 = first remote speaker.
+private let remoteSpeakerColors: [Color] = [
+    Color(hex: "58A6FF"), // Blue
+    Color(hex: "A371F7"), // Purple
+    Color(hex: "D29922"), // Orange
+    Color(hex: "F778BA"), // Pink
+    Color(hex: "79C0FF"), // Cyan
+    Color(hex: "FFA657"), // Light orange
+    Color(hex: "7EE787"), // Light green
+]
+
+/// Distinct green for "You" (local mic).
+private let micSpeakerColor = Color(hex: "3FB950")
+
+func speakerColor(for speaker: Int) -> Color {
+    if speaker == DeepgramService.micSpeakerID {
+        return micSpeakerColor
+    }
+    return remoteSpeakerColors[speaker % remoteSpeakerColors.count]
+}
+
+func speakerLabel(for speaker: Int) -> String {
+    if speaker == DeepgramService.micSpeakerID {
+        return "You"
+    }
+    return "S\(speaker + 1)"
+}
+
+func speakerDisplayName(for speaker: Int) -> String {
+    if speaker == DeepgramService.micSpeakerID {
+        return "You"
+    }
+    return "Speaker \(speaker + 1)"
+}
+
 // MARK: - Terminal Style Components
 
 struct TerminalSegmentRow: View {
@@ -177,20 +216,7 @@ struct TerminalSegmentRow: View {
     var isNewTurn: Bool = true
     var isFirst: Bool = false
     
-    private let speakerColors: [Color] = [
-        Color(hex: "58A6FF"), // Blue
-        Color(hex: "A371F7"), // Purple
-        Color(hex: "3FB950"), // Green
-        Color(hex: "D29922"), // Orange
-        Color(hex: "F778BA"), // Pink
-        Color(hex: "79C0FF"), // Cyan
-        Color(hex: "FFA657"), // Light orange
-        Color(hex: "7EE787"), // Light green
-    ]
-    
-    private var speakerColor: Color {
-        speakerColors[segment.speaker % speakerColors.count]
-    }
+    private var color: Color { speakerColor(for: segment.speaker) }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -198,13 +224,13 @@ struct TerminalSegmentRow: View {
             if isNewTurn {
                 HStack(spacing: 6) {
                     Rectangle()
-                        .fill(speakerColor)
+                        .fill(color)
                         .frame(width: 3, height: 12)
                         .cornerRadius(1.5)
                     
-                    Text("Speaker \(segment.speaker + 1)")
+                    Text(speakerDisplayName(for: segment.speaker))
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(speakerColor)
+                        .foregroundStyle(color)
                     
                     Text("•")
                         .foregroundStyle(Color(hex: "1C1C1F"))
@@ -221,7 +247,7 @@ struct TerminalSegmentRow: View {
             HStack(alignment: .top, spacing: 0) {
                 // Left border indicator
                 Rectangle()
-                    .fill(speakerColor.opacity(0.3))
+                    .fill(color.opacity(0.3))
                     .frame(width: 2)
                     .padding(.leading, 0)
                 
@@ -254,20 +280,7 @@ struct TerminalInterimRow: View {
     
     @State private var cursorVisible = true
     
-    private let speakerColors: [Color] = [
-        Color(hex: "58A6FF"),
-        Color(hex: "A371F7"),
-        Color(hex: "3FB950"),
-        Color(hex: "D29922"),
-        Color(hex: "F778BA"),
-        Color(hex: "79C0FF"),
-        Color(hex: "FFA657"),
-        Color(hex: "7EE787"),
-    ]
-    
-    private var speakerColor: Color {
-        speakerColors[speaker % speakerColors.count]
-    }
+    private var color: Color { speakerColor(for: speaker) }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -275,13 +288,13 @@ struct TerminalInterimRow: View {
             if isNewTurn {
                 HStack(spacing: 6) {
                     Rectangle()
-                        .fill(speakerColor.opacity(0.6))
+                        .fill(color.opacity(0.6))
                         .frame(width: 3, height: 12)
                         .cornerRadius(1.5)
                     
-                    Text("Speaker \(speaker + 1)")
+                    Text(speakerDisplayName(for: speaker))
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(speakerColor.opacity(0.7))
+                        .foregroundStyle(color.opacity(0.7))
                     
                     Text("•")
                         .foregroundStyle(Color(hex: "1C1C1F"))
@@ -298,7 +311,7 @@ struct TerminalInterimRow: View {
             HStack(alignment: .top, spacing: 0) {
                 // Left border indicator (pulsing for interim)
                 Rectangle()
-                    .fill(speakerColor.opacity(0.5))
+                    .fill(color.opacity(0.5))
                     .frame(width: 2)
                 
                 // Live text with cursor
@@ -310,7 +323,7 @@ struct TerminalInterimRow: View {
                     // Blinking cursor
                     Text("▊")
                         .font(.system(size: 13, weight: .regular, design: .monospaced))
-                        .foregroundStyle(speakerColor)
+                        .foregroundStyle(color)
                         .opacity(cursorVisible ? 1 : 0)
                 }
                 .padding(.leading, 12)
@@ -335,13 +348,9 @@ struct EmptyTranscriptView: View {
                 .font(.system(size: 48, weight: .light, design: .monospaced))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             
-            Text("ready_to_transcribe")
+            Text("ready to transcribe")
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "8B949E"))
-            
-            Text("$ take notes --capture=audio")
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color(hex: "484F58"))
             
             if appState.deepgramApiKey.isEmpty {
                 VStack(spacing: 8) {
