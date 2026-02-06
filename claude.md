@@ -99,3 +99,21 @@ Two parallel modes, no conflicts:
 **Response types:** all snake_case JSON. Vercel KV returns numbers as strings — `UsageInfo` has a custom `init(from:)` decoder that accepts both `Double` and `String`. Minutes display uses `.rounded()` (not `Int()` truncation) across Settings, home banner, and remaining time formatter.
 
 **Rate limiting:** sliding-window counters in KV. New device registration rate-limited per IP (5/day). All errors follow `{ "error": "code", "message": "..." }` format. Key status codes: 402 = limit reached, 429 = rate limited.
+
+## Distribution
+
+Direct notarized distribution via DMG (not Mac App Store — sandbox restrictions block `AudioHardwareCreateProcessTap`).
+
+### Release workflow
+1. Bump version in `Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION`)
+2. Xcode: **Product → Archive → Distribute App → Developer ID → Upload** (notarizes automatically)
+3. Export the notarized `Miniti.app`
+4. Run `./scripts/build-dmg.sh /path/to/Miniti.app` → produces `Miniti-<version>.dmg`
+5. Upload DMG to website / GitHub Releases
+
+### `scripts/build-dmg.sh`
+- Requires `create-dmg` (auto-installed via Homebrew if missing)
+- Validates code signature and notarization before packaging
+- Creates a drag-to-Applications DMG (app on left, Applications symlink on right)
+- Staples the notarization ticket to the DMG
+- Version extracted automatically from the app's `Info.plist`
