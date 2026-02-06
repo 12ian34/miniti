@@ -106,21 +106,27 @@ struct ReadyStateView: View {
                     .tracking(2)
             }
             
-            // API Status pills (sexy connected indicators)
-            HStack(spacing: 12) {
-                APIStatusPill(
-                    label: "deepgram",
-                    key: $appState.deepgramApiKey,
-                    isEditing: $editingDeepgram,
-                    placeholder: "dg_..."
-                )
-                
-                APIStatusPill(
-                    label: "openai",
-                    key: $appState.openaiApiKey,
-                    isEditing: $editingOpenAI,
-                    placeholder: "sk-..."
-                )
+            // Mode-aware status section
+            if appState.appMode == .managed {
+                // Managed mode: show usage instead of API pills
+                ManagedStatusView()
+            } else {
+                // BYOK mode: API key pills
+                HStack(spacing: 12) {
+                    APIStatusPill(
+                        label: "deepgram",
+                        key: $appState.deepgramApiKey,
+                        isEditing: $editingDeepgram,
+                        placeholder: "dg_..."
+                    )
+                    
+                    APIStatusPill(
+                        label: "openai",
+                        key: $appState.openaiApiKey,
+                        isEditing: $editingOpenAI,
+                        placeholder: "sk-..."
+                    )
+                }
             }
             
             // Model selector
@@ -136,33 +142,66 @@ struct ReadyStateView: View {
             // Audio sources (pre-flight check with waveforms)
             AudioSourcePanel()
             
-            // Start button
-            Button(action: {
-                appState.startNewMeeting()
-            }) {
-                HStack(spacing: 12) {
-                    HStack(spacing: 10) {
-                        Circle()
-                            .fill(Color(hex: "09090B"))
-                            .frame(width: 8, height: 8)
-                        Text("relax and take notes")
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    }
-                    
-                    Text("⌘⇧R")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "09090B").opacity(0.5))
-                }
-                .foregroundStyle(Color(hex: "09090B"))
-                .padding(.horizontal, 28)
-                .padding(.vertical, 14)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(appState.deepgramApiKey.isEmpty ? Color(hex: "484F58") : Color(hex: "3FB950"))
-                )
+            // Limit reached warning (managed mode)
+            if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
+                LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
-            .buttonStyle(.plain)
-            .disabled(appState.deepgramApiKey.isEmpty)
+            
+            // Start button or limit reached
+            if appState.isLimitReached {
+                // Show inline limit message
+                VStack(spacing: 8) {
+                    Text("limit reached")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "F85149"))
+                    
+                    Button {
+                        appState.appModeRaw = AppMode.byok.rawValue
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 10))
+                            Text("switch to BYOK")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundStyle(Color(hex: "58A6FF"))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(hex: "58A6FF").opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Button(action: {
+                    appState.startNewMeeting()
+                }) {
+                    HStack(spacing: 12) {
+                        HStack(spacing: 10) {
+                            Circle()
+                                .fill(Color(hex: "09090B"))
+                                .frame(width: 8, height: 8)
+                            Text("relax and take notes")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        }
+                        
+                        Text("⌘⇧R")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                    }
+                    .foregroundStyle(Color(hex: "09090B"))
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(appState.canStartRecording ? Color(hex: "3FB950") : Color(hex: "484F58"))
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(!appState.canStartRecording)
+            }
             
             // Keyboard shortcut hint
             ShortcutHint(keys: "⌘/", label: "shortcuts")
@@ -170,6 +209,31 @@ struct ReadyStateView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .topTrailing) {
+            Button {
+                // Open the SwiftUI Settings scene window
+                if #available(macOS 14.0, *) {
+                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                } else {
+                    NSApp.sendAction(Selector(("showPreferencesWindow:")), to: nil, from: nil)
+                }
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color(hex: "52525B"))
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(hex: "0F0F11"))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(hex: "27272A"), lineWidth: 1)
+                    )
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+        }
     }
 }
 
@@ -971,23 +1035,18 @@ struct TerminalHeader: View {
                     .buttonStyle(.plain)
                 }
                 
-                // Status indicator
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(appState.isRecording ? Color(hex: "F85149") : Color(hex: "1C1C1F"))
-                        .frame(width: 8, height: 8)
-                        .shadow(color: appState.isRecording ? Color(hex: "F85149").opacity(0.5) : .clear, radius: 4)
-                    
-                    if appState.isRecording {
+                // Status indicator (only when recording)
+                if appState.isRecording {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(Color(hex: "F85149"))
+                            .frame(width: 8, height: 8)
+                            .shadow(color: Color(hex: "F85149").opacity(0.5), radius: 4)
+                        
                         Text(appState.formattedDuration)
                             .font(.system(size: 13, weight: .medium, design: .monospaced))
                             .foregroundStyle(Color(hex: "F85149"))
                     }
-                }
-                
-                // Model selector (only before recording)
-                if !appState.isRecording {
-                    DeepgramModelSelector()
                 }
                 
                 // Record button
@@ -1030,6 +1089,10 @@ struct TerminalHeader: View {
                 .buttonStyle(.plain)
                 
                 // Audio waveforms (next to record button when recording)
+                // Model selector (only when not recording, after record button so button stays in place)
+                if !appState.isRecording {
+                    DeepgramModelSelector()
+                }
                 if appState.isRecording {
                     HStack(spacing: 8) {
                         // Mic waveform
@@ -1246,8 +1309,10 @@ struct SourceWaveform: View {
         .onReceive(timer) { _ in
             guard bands.count == bandCount else { return }
             withAnimation(.linear(duration: 0.06)) {
-                let rawLevel = CGFloat(level)
-                let amplified = min(1.0, rawLevel * 15.0)
+                let rawLevel = CGFloat(max(level, 0.0001))
+                // Aggressive power curve for quiet mics (~0.003 RMS typical)
+                // 0.003 → 0.44, 0.01 → 0.54, 0.05 → 0.66, 0.1 → 0.72, 0.3 → 0.84
+                let amplified = min(1.0, pow(rawLevel, 0.15))
                 let delta = amplified - previousLevel
                 previousLevel = amplified
                 

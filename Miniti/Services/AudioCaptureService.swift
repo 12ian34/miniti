@@ -25,7 +25,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // receives a single coherent audio stream (required for diarization).
     // Pre-allocated Int16 ring buffer avoids Data allocations in the hot path.
     
-    private let ringCapacity = 3200  // ~200ms at 16kHz mono (samples, not bytes)
+    private let ringCapacity = 8000  // ~500ms at 16kHz mono (samples, not bytes)
     nonisolated(unsafe) private var ringBuffer: UnsafeMutablePointer<Int16>!
     nonisolated(unsafe) private var ringWriteIndex = 0
     nonisolated(unsafe) private var ringReadIndex = 0
@@ -172,8 +172,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         config.excludesCurrentProcessAudio = true
         config.sampleRate = Int(targetSampleRate)
         config.channelCount = Int(targetChannels)
-        config.width = 2
-        config.height = 2
+        config.width = 32
+        config.height = 32
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
         config.showsCursor = false
         
@@ -262,8 +262,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // MARK: - Audio Processing (vDSP accelerated)
     
     nonisolated(unsafe) private var lastMicLevelUpdate: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastMixDebugLog: CFAbsoluteTime = 0
     // Scratch buffer for mixing (avoids per-call allocation)
-    nonisolated(unsafe) private lazy var mixScratch: UnsafeMutablePointer<Int16> = {
+    nonisolated(unsafe) private let mixScratch: UnsafeMutablePointer<Int16> = {
         let ptr = UnsafeMutablePointer<Int16>.allocate(capacity: 4096)
         ptr.initialize(repeating: 0, count: 4096)
         return ptr
@@ -301,10 +302,20 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let sysDrained = drainRingBuffer(into: mixScratch, maxSamples: micSamples)
         
         if sysDrained > 0 {
-            // Gain normalization: scale system audio to match mic level
-            let gainFactor = max(0.1, min(5.0, runningMicRMS / max(runningSysRMS, 0.001)))
+            // Soft AGC mixing: boost mic to target RMS, reduce system, so mic
+            // is always ~2x louder than system — critical for diarization.
+            // Mic is naturally ~30x quieter than direct digital system audio.
+            let micTargetRMS: Float = 0.06
+            var micBoost = min(15.0, max(1.0, micTargetRMS / max(runningMicRMS, 0.0005)))
+            let systemGain: Float = 0.25
             
-            // Mix using vDSP: convert both to Float32, scale sys, add, convert back
+            // Debug: log mixing stats every 5 seconds
+            if now - lastMixDebugLog > 5.0 {
+                lastMixDebugLog = now
+                print("[AudioMix] drained=\(sysDrained) micSamples=\(micSamples) micBoost=\(String(format: "%.1f", micBoost)) sysGain=\(String(format: "%.2f", systemGain)) micRMS=\(String(format: "%.4f", runningMicRMS)) sysRMS=\(String(format: "%.4f", runningSysRMS))")
+            }
+            
+            // Mix using vDSP: convert both to Float32, boost mic, scale sys, add, convert back
             let mixCount = min(micSamples, sysDrained)
             var micFloat = [Float](repeating: 0, count: mixCount)
             var sysFloat = [Float](repeating: 0, count: mixCount)
@@ -314,9 +325,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             vDSP_vflt16(micPtr, 1, &micFloat, 1, vDSP_Length(mixCount))
             vDSP_vflt16(mixScratch, 1, &sysFloat, 1, vDSP_Length(mixCount))
             
-            // Scale system audio by gain factor
-            var gain = gainFactor
-            vDSP_vsmul(sysFloat, 1, &gain, &sysFloat, 1, vDSP_Length(mixCount))
+            // Boost mic signal (soft AGC)
+            vDSP_vsmul(micFloat, 1, &micBoost, &micFloat, 1, vDSP_Length(mixCount))
+            
+            // Scale system audio down
+            var sGain = systemGain
+            vDSP_vsmul(sysFloat, 1, &sGain, &sysFloat, 1, vDSP_Length(mixCount))
             
             // Add
             vDSP_vadd(micFloat, 1, sysFloat, 1, &mixedFloat, 1, vDSP_Length(mixCount))
@@ -435,27 +449,48 @@ private final class ScreenCaptureDelegate: NSObject, SCStreamOutput, @unchecked 
             }
         }
         
-        // Convert to PCM16 for Deepgram / mixing buffer
+        // Convert to mono PCM16 for Deepgram / mixing buffer
+        // Always downmix to mono using first-channel extraction (stride = channelCount)
         if isFloat && bitsPerChannel == 32 {
             let floatPtr = UnsafeRawPointer(dataPointer).assumingMemoryBound(to: Float.self)
-            let sampleCount = length / MemoryLayout<Float>.size
+            let totalSamples = length / MemoryLayout<Float>.size
+            let frameCount = totalSamples / channelCount  // Mono frame count
+            guard frameCount > 0 else { return }
             
-            // vDSP: scale Float32 [-1,1] -> Int16 range, then convert
-            var scaled = [Float](repeating: 0, count: sampleCount)
+            // vDSP: scale Float32 [-1,1] -> Int16 range
+            // Use stride of channelCount to extract first channel only (downmix)
+            var scaled = [Float](repeating: 0, count: frameCount)
             var scale: Float = 32767
-            vDSP_vsmul(floatPtr, 1, &scale, &scaled, 1, vDSP_Length(sampleCount))
+            vDSP_vsmul(floatPtr, vDSP_Stride(channelCount), &scale, &scaled, 1, vDSP_Length(frameCount))
             
             // Clamp
             var lo: Float = -32768
             var hi: Float = 32767
-            vDSP_vclip(scaled, 1, &lo, &hi, &scaled, 1, vDSP_Length(sampleCount))
+            vDSP_vclip(scaled, 1, &lo, &hi, &scaled, 1, vDSP_Length(frameCount))
             
             // Float -> Int16
-            var int16Samples = [Int16](repeating: 0, count: sampleCount)
-            vDSP_vfix16(scaled, 1, &int16Samples, 1, vDSP_Length(sampleCount))
+            var int16Samples = [Int16](repeating: 0, count: frameCount)
+            vDSP_vfix16(scaled, 1, &int16Samples, 1, vDSP_Length(frameCount))
             
-            let data = Data(bytes: int16Samples, count: sampleCount * MemoryLayout<Int16>.size)
+            let data = Data(bytes: int16Samples, count: frameCount * MemoryLayout<Int16>.size)
             onAudioData(data)
+        } else if !isFloat && bitsPerChannel == 16 {
+            // Int16 — extract first channel if multi-channel
+            if channelCount > 1 {
+                let int16Ptr = UnsafeRawPointer(dataPointer).assumingMemoryBound(to: Int16.self)
+                let totalSamples = length / MemoryLayout<Int16>.size
+                let frameCount = totalSamples / channelCount
+                guard frameCount > 0 else { return }
+                var monoSamples = [Int16](repeating: 0, count: frameCount)
+                for i in 0..<frameCount {
+                    monoSamples[i] = int16Ptr[i * channelCount]
+                }
+                let data = Data(bytes: monoSamples, count: frameCount * MemoryLayout<Int16>.size)
+                onAudioData(data)
+            } else {
+                let data = Data(bytes: dataPointer, count: length)
+                onAudioData(data)
+            }
         } else {
             let data = Data(bytes: dataPointer, count: length)
             onAudioData(data)

@@ -22,6 +22,11 @@
 		A10000010000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000013 /* Assets.xcassets */; };
 		A10000010000000000000014 /* KeyboardShortcutsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000016 /* KeyboardShortcutsService.swift */; };
 		A10000010000000000000015 /* Secrets.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000017 /* Secrets.swift */; };
+		A10000010000000000000016 /* DeviceIdentifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000018 /* DeviceIdentifier.swift */; };
+		A10000010000000000000017 /* MinitiAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000019 /* MinitiAPIService.swift */; };
+		A10000010000000000000018 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000020 /* OnboardingView.swift */; };
+		A10000010000000000000019 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
+		A10000010000000000000020 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +47,11 @@
 		A20000010000000000000015 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A20000010000000000000016 /* KeyboardShortcutsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcutsService.swift; sourceTree = "<group>"; };
 		A20000010000000000000017 /* Secrets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Secrets.swift; sourceTree = "<group>"; };
+		A20000010000000000000018 /* DeviceIdentifier.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceIdentifier.swift; sourceTree = "<group>"; };
+		A20000010000000000000019 /* MinitiAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiAPIService.swift; sourceTree = "<group>"; };
+		A20000010000000000000020 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		A20000010000000000000021 /* UsageBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBanner.swift; sourceTree = "<group>"; };
+		A20000010000000000000022 /* LimitReachedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitReachedView.swift; sourceTree = "<group>"; };
 		A30000010000000000000001 /* Miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -96,6 +106,9 @@
 				A20000010000000000000005 /* InsightsView.swift */,
 				A20000010000000000000006 /* HistoryView.swift */,
 				A20000010000000000000007 /* SettingsView.swift */,
+				A20000010000000000000020 /* OnboardingView.swift */,
+				A20000010000000000000021 /* UsageBanner.swift */,
+				A20000010000000000000022 /* LimitReachedView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -116,6 +129,8 @@
 				A20000010000000000000011 /* DeepgramService.swift */,
 				A20000010000000000000012 /* InsightsService.swift */,
 				A20000010000000000000016 /* KeyboardShortcutsService.swift */,
+				A20000010000000000000018 /* DeviceIdentifier.swift */,
+				A20000010000000000000019 /* MinitiAPIService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -211,6 +226,11 @@
 				A10000010000000000000012 /* InsightsService.swift in Sources */,
 				A10000010000000000000014 /* KeyboardShortcutsService.swift in Sources */,
 				A10000010000000000000015 /* Secrets.swift in Sources */,
+				A10000010000000000000016 /* DeviceIdentifier.swift in Sources */,
+				A10000010000000000000017 /* MinitiAPIService.swift in Sources */,
+				A10000010000000000000018 /* OnboardingView.swift in Sources */,
+				A10000010000000000000019 /* UsageBanner.swift in Sources */,
+				A10000010000000000000020 /* LimitReachedView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

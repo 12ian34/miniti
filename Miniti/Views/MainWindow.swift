@@ -253,14 +253,33 @@ struct TerminalSidebar: View {
                 GradientDivider()
                 
                 HStack(spacing: 8) {
-                    Circle()
-                        .fill(appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B") : Theme.accent)
-                        .frame(width: 6, height: 6)
-                        .shadow(color: appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B").opacity(0.5) : Theme.accent.opacity(0.5), radius: 4)
-                    
-                    Text(appState.deepgramApiKey.isEmpty ? "no_api_key" : "connected")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Theme.textDim)
+                    if appState.appMode == .managed {
+                        // Managed mode status
+                        Circle()
+                            .fill(appState.isLimitReached ? Color(hex: "F85149") : Theme.accent)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: (appState.isLimitReached ? Color(hex: "F85149") : Theme.accent).opacity(0.5), radius: 4)
+                        
+                        if let usage = appState.usageInfo {
+                            Text("free • \(usage.formattedRemaining) left")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+                        } else {
+                            Text("free")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                    } else {
+                        // BYOK mode status
+                        Circle()
+                            .fill(appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B") : Theme.accent)
+                            .frame(width: 6, height: 6)
+                            .shadow(color: appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B").opacity(0.5) : Theme.accent.opacity(0.5), radius: 4)
+                        
+                        Text(appState.deepgramApiKey.isEmpty ? "byok • no_api_key" : "byok • connected")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
