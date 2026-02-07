@@ -21,8 +21,26 @@ macOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system
 - **Miniti/Views/OnboardingView.swift** – First-launch mode selection (managed vs BYOK)
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
 - **Miniti/Views/LimitReachedView.swift** – Hard block when 500 min exhausted, offers BYOK switch
+- **Miniti/Models/ColorPalette.swift** – Global color palette: backgrounds, borders, text, accents, status, speaker colors, MEDDPICC colors
 
 ## Key patterns
+
+## Color Palette
+
+Centralized color system via `ColorPalette` struct. All colors should reference this palette instead of hardcoded hex values.
+
+- **Backgrounds**: `ColorPalette.Background.primary/secondary/tertiary/panel/card`
+- **Borders**: `ColorPalette.Border.primary/light/hover/subtle`
+- **Text**: `ColorPalette.Text.primary/secondary/muted/dim/disabled/placeholder/subtle/meta`
+- **Accents**: `ColorPalette.Accent.green/blue/purple/red/amber/yellow/pink/cyan/orange` (with GitHub-style variants)
+- **Status**: `ColorPalette.Status.success/error/warning/info/recording/connected/disconnected/limitReached/noApiKey`
+- **Speakers**: `ColorPalette.Speaker.mic` (green for "You") and `ColorPalette.Speaker.remote` array (blue/purple palette)
+- **MEDDPICC**: `ColorPalette.MEDDPICC.metrics/economicBuyer/decisionCriteria/...` with helper `color(for:)` method
+- **Insights**: `ColorPalette.Insights.summary/discussion/actions/topics/meddpicc`
+
+The `Theme` struct in `MainWindow.swift` provides convenient aliases for common colors (e.g., `Theme.bg`, `Theme.text`) but all colors ultimately reference `ColorPalette`.
+
+`Color(hex:)` extension is defined in `ColorPalette.swift` for creating colors from hex strings when needed.
 
 - `AppState` is the single source of truth, injected via `@EnvironmentObject`
 - `AppMode` enum (`.byok` / `.managed`) stored in `@AppStorage("appMode")` — purely a routing toggle
@@ -32,6 +50,8 @@ macOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()` all branch on `appMode`
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
+- **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
+- **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
 
 ## Audio flow
 

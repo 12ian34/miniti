@@ -27,6 +27,7 @@
 		A10000010000000000000018 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000020 /* OnboardingView.swift */; };
 		A10000010000000000000019 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
 		A10000010000000000000020 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
+		A10000010000000000000023 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -52,6 +53,7 @@
 		A20000010000000000000020 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A20000010000000000000021 /* UsageBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBanner.swift; sourceTree = "<group>"; };
 		A20000010000000000000022 /* LimitReachedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitReachedView.swift; sourceTree = "<group>"; };
+		A20000010000000000000023 /* ColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPalette.swift; sourceTree = "<group>"; };
 		A30000010000000000000001 /* Miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -118,6 +120,7 @@
 			children = (
 				A20000010000000000000008 /* Meeting.swift */,
 				A20000010000000000000009 /* AppState.swift */,
+				A20000010000000000000023 /* ColorPalette.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -231,6 +234,7 @@
 				A10000010000000000000018 /* OnboardingView.swift in Sources */,
 				A10000010000000000000019 /* UsageBanner.swift in Sources */,
 				A10000010000000000000020 /* LimitReachedView.swift in Sources */,
+				A10000010000000000000023 /* ColorPalette.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -387,7 +391,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -424,7 +428,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.2.0;
+				MARKETING_VERSION = 1.3.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;

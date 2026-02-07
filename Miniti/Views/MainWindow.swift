@@ -2,19 +2,28 @@ import SwiftUI
 import SwiftData
 import AppKit
 
-// MARK: - Dark Theme Colors
+// MARK: - Theme (using ColorPalette)
+/// Theme struct provides convenient access to the global color palette.
+/// All colors reference ColorPalette for consistency.
 struct Theme {
-    static let bg = Color(hex: "09090B")           // Near black
-    static let bgSecondary = Color(hex: "0C0C0E")  // Slightly lighter
-    static let bgTertiary = Color(hex: "111113")   // Card backgrounds
-    static let border = Color(hex: "1C1C1F")       // Subtle borders
-    static let borderLight = Color(hex: "27272A")  // Lighter borders
-    static let text = Color(hex: "FAFAFA")         // Primary text
-    static let textMuted = Color(hex: "D4D4D8")    // Muted text (much brighter)
-    static let textDim = Color(hex: "A1A1AA")      // Dim text (brighter)
-    static let accent = Color(hex: "22C55E")       // Green accent
-    static let accentRed = Color(hex: "EF4444")    // Red for recording
-    static let accentBlue = Color(hex: "3B82F6")   // Blue accent
+    // Backgrounds
+    static let bg = ColorPalette.Background.primary
+    static let bgSecondary = ColorPalette.Background.secondary
+    static let bgTertiary = ColorPalette.Background.tertiary
+    
+    // Borders
+    static let border = ColorPalette.Border.primary
+    static let borderLight = ColorPalette.Border.light
+    
+    // Text
+    static let text = ColorPalette.Text.primary
+    static let textMuted = ColorPalette.Text.muted
+    static let textDim = ColorPalette.Text.dim
+    
+    // Accents
+    static let accent = ColorPalette.Accent.green
+    static let accentRed = ColorPalette.Accent.red
+    static let accentBlue = ColorPalette.Accent.blue
 }
 
 struct MainWindow: View {
@@ -256,9 +265,9 @@ struct TerminalSidebar: View {
                     if appState.appMode == .managed {
                         // Managed mode status
                         Circle()
-                            .fill(appState.isLimitReached ? Color(hex: "F85149") : Theme.accent)
+                            .fill(appState.isLimitReached ? ColorPalette.Status.limitReached : Theme.accent)
                             .frame(width: 6, height: 6)
-                            .shadow(color: (appState.isLimitReached ? Color(hex: "F85149") : Theme.accent).opacity(0.5), radius: 4)
+                            .shadow(color: (appState.isLimitReached ? ColorPalette.Status.limitReached : Theme.accent).opacity(0.5), radius: 4)
                         
                         if let usage = appState.usageInfo {
                             Text("free • \(usage.formattedRemaining) left")
@@ -272,9 +281,9 @@ struct TerminalSidebar: View {
                     } else {
                         // BYOK mode status
                         Circle()
-                            .fill(appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B") : Theme.accent)
+                            .fill(appState.deepgramApiKey.isEmpty ? ColorPalette.Status.noApiKey : Theme.accent)
                             .frame(width: 6, height: 6)
-                            .shadow(color: appState.deepgramApiKey.isEmpty ? Color(hex: "F59E0B").opacity(0.5) : Theme.accent.opacity(0.5), radius: 4)
+                            .shadow(color: appState.deepgramApiKey.isEmpty ? ColorPalette.Status.noApiKey.opacity(0.5) : Theme.accent.opacity(0.5), radius: 4)
                         
                         Text(appState.deepgramApiKey.isEmpty ? "byok • no_api_key" : "byok • connected")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -349,6 +358,7 @@ struct SidebarHistoryItem: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .focusable(false)
             
             // Delete button (show on hover)
             if isHovering {
@@ -362,6 +372,7 @@ struct SidebarHistoryItem: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
         }
@@ -438,6 +449,7 @@ struct SidebarItem: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -488,6 +500,7 @@ struct SidebarSessionItem: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -497,12 +510,12 @@ struct MeetingDetailView: View {
     let meeting: Meeting
     
     private let speakerColors: [Color] = [
-        Color(hex: "3B82F6"),
-        Color(hex: "A855F7"),
-        Color(hex: "22C55E"),
-        Color(hex: "F59E0B"),
-        Color(hex: "EC4899"),
-        Color(hex: "06B6D4"),
+        ColorPalette.Accent.blue,
+        ColorPalette.Accent.purple,
+        ColorPalette.Accent.green,
+        ColorPalette.Accent.amber,
+        ColorPalette.Accent.pink,
+        ColorPalette.Accent.cyan,
     ]
     
     var body: some View {
@@ -643,13 +656,13 @@ struct MeetingDetailView: View {
                 
                 // Discussion Flow
                 if !meeting.discussionFlow.isEmpty {
-                    DetailInsightBlock(title: "discussion", color: Color(hex: "F59E0B")) {
+                    DetailInsightBlock(title: "discussion", color: ColorPalette.Accent.yellow) {
                         VStack(alignment: .leading, spacing: 4) {
                             ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
                                 HStack(alignment: .top, spacing: 8) {
                                     Text("\(index + 1).")
                                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "F59E0B").opacity(0.7))
+                                        .foregroundStyle(ColorPalette.Accent.yellow.opacity(0.7))
                                         .frame(width: 16, alignment: .trailing)
                                     Text(item)
                                         .font(.system(size: 11, weight: .regular, design: .monospaced))
@@ -679,15 +692,15 @@ struct MeetingDetailView: View {
                 
                 // Topics
                 if !meeting.topics.isEmpty {
-                    DetailInsightBlock(title: "topics", color: Color(hex: "A855F7")) {
+                    DetailInsightBlock(title: "topics", color: ColorPalette.Accent.purple) {
                         FlowLayout(spacing: 6) {
                             ForEach(meeting.topics, id: \.self) { topic in
                                 Text("#\(topic.lowercased().replacingOccurrences(of: " ", with: "_"))")
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(Color(hex: "A855F7"))
+                                    .foregroundStyle(ColorPalette.Accent.purple)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
-                                    .background(Color(hex: "A855F7").opacity(0.15))
+                                    .background(ColorPalette.Accent.purple.opacity(0.15))
                                     .cornerRadius(4)
                             }
                         }
@@ -838,12 +851,12 @@ struct SavedMEDDPICCSection: View {
             // Header
             HStack(spacing: 6) {
                 Rectangle()
-                    .fill(Color(hex: "F59E0B"))
+                    .fill(ColorPalette.Accent.amber)
                     .frame(width: 3, height: 12)
                     .cornerRadius(1.5)
                 Text("MEDDPICC")
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "F59E0B"))
+                    .foregroundStyle(ColorPalette.Accent.amber)
             }
             
             // Fields
@@ -889,7 +902,7 @@ struct MEDDPICCSavedRow: View {
                     
                     Text(title)
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color(hex: "FAFAFA"))
+                        .foregroundStyle(ColorPalette.Text.primary)
                 }
                 
                 Text(value)
