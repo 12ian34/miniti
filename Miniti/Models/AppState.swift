@@ -563,8 +563,14 @@ final class AppState: ObservableObject {
         
         print("[Save] Saving meeting: \(meeting.title) with \(finalSegments.count) segments")
         
-        // Add segments to meeting if not already done
-        if meeting.segments.isEmpty {
+        // Sync all live segments to meeting (handles resumed sessions adding new segments)
+        if finalSegments.count != meeting.segments.count {
+            // Clear stale persisted segments
+            for existingSeg in meeting.segments {
+                modelContext.delete(existingSeg)
+            }
+            meeting.segments.removeAll()
+            
             for segment in finalSegments {
                 let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !text.isEmpty else { continue }
