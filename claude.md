@@ -120,6 +120,46 @@ Two parallel modes, no conflicts:
 
 **Rate limiting:** sliding-window counters in KV. New device registration rate-limited per IP (5/day). All errors follow `{ "error": "code", "message": "..." }` format. Key status codes: 402 = limit reached, 429 = rate limited.
 
+## Future: Local Mode (research notes)
+
+Optional third `AppMode.local` — fully offline, no API keys or backend. Runs transcription and LLM inference on-device via Apple Silicon. Target audience: privacy-focused users, air-gapped environments, cost-sensitive power users.
+
+### Transcription: whisper.cpp
+- **Why whisper.cpp over WhisperKit**: more mature, battle-tested in many macOS apps (e.g. MacWhisper), C API callable from Swift via bridging header, no CoreML model conversion step — just download a GGML model file. SPM-compatible (`whisper.spm` branch).
+- **Integration**: feeds directly from existing PCM16 16kHz mono buffers (same format whisper.cpp expects). Process audio in chunks (5-30s), display results as they complete.
+- **Models**: `whisper-large-v3-turbo` is the sweet spot (~1.5GB VRAM, very good quality). `whisper-small` for lower-end machines.
+- **Latency vs Deepgram**: whisper.cpp is **not real-time streaming**. Expect 7-13s behind on M1, 5-8s on M3 Pro with large-v3-turbo. Acceptable for most users since live transcript isn't the primary interaction during a meeting. Final transcript quality is equivalent.
+
+### LLM for insights: Ollama (easiest) or mlx-swift (native)
+- **Ollama**: exposes OpenAI-compatible API at `localhost:11434`. `InsightsService` barely changes — swap base URL and model name. Users install Ollama separately. Supports Llama 3, Mistral, Phi-3, Qwen, etc.
+- **mlx-swift**: Apple's official Swift MLX bindings. Run LLMs in-process, no external dependency. More complex to integrate but fully self-contained.
+- **Quality**: 8B models (Llama 3.1 8B Q4, ~5GB) are good for standard summaries. Noticeably weaker than GPT-4o for nuanced analysis (MEDDPICC). 70B models match GPT-4o quality but need ~40GB RAM.
+
+### Diarization in local mode
+- **Whisper has no diarization** — it's transcription only. All variants (whisper.cpp, WhisperKit, mlx-whisper) are the same.
+- **Current approach works**: mic/system energy-based source dominance tracking already separates "You" vs "Others" without any model. Covers 90%+ of the use case (turn-based meetings).
+- **Multi-speaker within system audio**: lost in local mode (Deepgram provides this in cloud mode). Acceptable tradeoff for MVP.
+- **Future multi-speaker diarization**: see Roadmap. Options: sherpa-onnx (C++ library, C API, has speaker diarization built in, no Python), or CoreML-converted ECAPA-TDNN speaker embeddings + clustering. pyannote is gold standard but Python-only — ruled out to keep the app dependency-free.
+
+### Hardware requirements
+- **Minimum**: M1, 16GB RAM (Whisper Turbo + 8B LLM Q4)
+- **Comfortable**: M1 Pro+, 16GB+
+- **Ideal**: M2/M3/M4 Pro/Max, 32GB+ (larger/better models)
+
+### Not pursuing
+- **exo**: distributed inference across multiple Apple devices. Overkill — a single Mac handles 8B LLM + Whisper fine. Only relevant for 70B+ models.
+- **Python dependencies**: no pyannote, no mlx-whisper, no whisperX. Pure Swift/C/C++ only.
+
+## Roadmap
+
+- [ ] **Local mode MVP** — whisper.cpp transcription + Ollama LLM insights, mic/system diarization only, new `AppMode.local`
+- [ ] **Suggested follow-up questions** — new insight type: after generating summary/action items, LLM proposes 3-5 contextual follow-up questions the user could ask in the meeting (e.g. "You mentioned timeline — have you confirmed the go-live date with engineering?"). Useful for sales calls, interviews, and discovery meetings.
+- [ ] **Proper multi-speaker mic diarization** — when multiple people are speaking on the same physical mic (in-room meetings), distinguish between them. Current energy-based approach can't do this. Requires speaker embedding model (ECAPA-TDNN via CoreML or sherpa-onnx) to extract voice fingerprints per audio segment, then cluster into speaker identities. Would benefit both local and cloud modes. sherpa-onnx is the leading candidate (C API, no Python, proven diarization pipeline).
+- [ ] **Docs MCP for technical sales** — integrate an MCP (Model Context Protocol) server that indexes product documentation, API specs, and knowledge base articles. During a live sales call, the LLM can query this context to suggest accurate technical answers in real-time — effectively an AI sales engineer copilot. The user would configure a docs source (folder, URL, or Notion/Confluence), which gets indexed and made available as MCP resources. Insights prompts would be augmented with relevant doc snippets retrieved via semantic search. This turns Miniti from a passive recorder into an active meeting assistant for technical sales teams.
+- [ ] **Multi-speaker diarization within system audio (local mode)** — match Deepgram's cloud capability
+- [ ] **On-device model management UI** — download, select, and delete whisper.cpp / LLM models from Settings
+- [ ] **Hybrid mode** — use local transcription but cloud LLM (or vice versa) for best quality/cost balance
+
 ## Distribution
 
 Direct notarized distribution via DMG (not Mac App Store — sandbox restrictions block `AudioHardwareCreateProcessTap`).
