@@ -155,7 +155,7 @@ private struct ModeCard: View {
                 }
             }
             .padding(20)
-            .frame(width: 260, height: 300)
+            .frame(maxWidth: 280, minHeight: 280)
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color(hex: "0F0F11"))

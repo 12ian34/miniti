@@ -135,6 +135,7 @@ struct LiveInsightsContent: View {
 
 struct MEDDPICCContent: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.horizontalSizeClass) private var sizeClass
     
     private let meddpiccItems: [(key: String, title: String, color: String, icon: String)] = [
         ("metrics", "Metrics", "3B82F6", "📊"),
@@ -145,6 +146,14 @@ struct MEDDPICCContent: View {
         ("champion", "Champion", "22C55E", "⭐"),
         ("competition", "Competition", "6366F1", "⚔"),
     ]
+    
+    private var gridColumns: [GridItem] {
+        if sizeClass == .compact {
+            return [GridItem(.flexible())]
+        } else {
+            return [GridItem(.flexible()), GridItem(.flexible())]
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -158,8 +167,8 @@ struct MEDDPICCContent: View {
                     .foregroundStyle(Color(hex: "F59E0B"))
             }
             
-            // Grid of MEDDPICC items
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+            // Grid of MEDDPICC items — single column on compact (iPhone), 2 columns on regular (Mac/iPad)
+            LazyVGrid(columns: gridColumns, spacing: 10) {
                 MEDDPICCItem(title: "Metrics", value: appState.liveMetrics, color: "3B82F6")
                 MEDDPICCItem(title: "Economic Buyer", value: appState.liveEconomicBuyer, color: "8B5CF6")
                 MEDDPICCItem(title: "Decision Criteria", value: appState.liveDecisionCriteria, color: "EC4899")

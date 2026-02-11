@@ -352,7 +352,7 @@ struct EmptyTranscriptView: View {
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "8B949E"))
             
-            if appState.deepgramApiKey.isEmpty {
+            if appState.appMode == .byok && appState.deepgramApiKey.isEmpty {
                 VStack(spacing: 8) {
                     HStack(spacing: 6) {
                         Text("⚠")
