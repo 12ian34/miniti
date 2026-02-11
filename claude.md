@@ -296,4 +296,5 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 - Background audio: `UIBackgroundModes: [audio]` + `AVAudioSession` category `.playAndRecord` enables recording while backgrounded
 - Live Activity: `MinitiLiveActivityExtension` widget extension (bundle ID: `com.miniti.mobile.live-activity`), embedded in MinitiMobile via "Embed App Extensions" build phase. Shows recording on Dynamic Island + Lock Screen.
 - No system audio capture — iOS sandbox prevents it entirely
+- Export compliance: `ITSAppUsesNonExemptEncryption: NO` in Info.plist — app only uses HTTPS (OS-provided TLS), which is exempt. This key bypasses the App Store Connect encryption compliance dialog and unblocks TestFlight distribution.
 - Xcode targets: `MinitiMobile` (app) + `MinitiLiveActivityExtension` (widget extension) in same project as macOS `Miniti` target
