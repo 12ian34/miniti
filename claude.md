@@ -1,11 +1,72 @@
 # Miniti
 
-macOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio, streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Two modes: managed (500 free min/month) or BYOK (own API keys, unlimited).
+macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Two modes: managed (500 free min/month) or BYOK (own API keys, unlimited).
+
+## Features
+
+### macOS — native AI meeting assistant
+
+- mic + system audio recording
+- live transcription with deepgram
+- live speaker identification
+- live AI-generated summaries and action items
+- live MEDDPICC analysis
+- meeting history browser
+- native menu bar controls
+- keyboard shortcuts for everything
+
+### iOS — mobile AI meeting assistant
+
+- mic recording with background support
+- live transcription with deepgram
+- live AI-generated summaries and action items
+- live MEDDPICC analysis
+- meeting history browser
+- Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
+- dark mode terminal-style UI
+
+## Changelog
+
+### 2026-02-10 - v1.4.0 (current)
+- iOS app (MinitiMobile): mic-only recording, live transcription, AI insights, meeting history
+- Live Activity with Dynamic Island and Lock Screen: recording status, elapsed timer, live transcript line
+- Background recording support on iOS
+- Date-based recording timer (fixes background timer drift on iOS)
+- Responsive MEDDPICC grid (1 column on iPhone, 2 on iPad/Mac)
+- Shared codebase: models, services, and views between macOS and iOS targets
+
+### 2026-02-07 - v1.3.0
+- Centralized color palette (ColorPalette.swift) with Theme aliases
+- Fix transcript save bug: resumed sessions ("cont") now correctly persist all segments, not just those from the first recording
+- Fix sidebar focus rings: buttons use .focusable(false) since all navigation is keyboard-shortcut-driven
+
+### 2026-02-06 - v1.2.0
+- Implement onboarding flow and app mode selection (Early Adopter / BYOK)
+- Refactor audio capture: Core Audio Process Tap replaces ScreenCaptureKit, adaptive dual AGC, source dominance tracking, mic/system speaker separation
+- Revise README for clarity and detail
+- Rename app display name to lowercase "miniti"
+- Add DMG build script and distribution workflow docs
+
+### 2026-02-05 - v1.1.0
+- README: add download section, restructure with user content at top / dev at bottom
+- Code signing identity for macOS distribution
+- Add empty Secrets.swift for Xcode Cloud builds
+- Enhance audio recording and monitoring (home screen pre-flight waveforms)
+- Add info popovers for API keys in settings
+
+### 2026-02-05 - v1.0.0
+- Initial commit: core app with SwiftUI + SwiftData, Deepgram streaming transcription, OpenAI insights, meeting persistence
+- Add API key inputs to home screen
+- Restore Secrets.swift fallback for default API keys
+- API status pills on home screen (click-to-edit)
+- Fix padding syntax error
+- Make notes section compact (~3 lines default, resizable)
+- Add macOS app icon (all sizes/scales)
 
 ## Architecture
 
 - **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts
-- **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking
+- **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, Live Activity lifecycle (`#if os(iOS)` guarded)
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback
@@ -22,6 +83,37 @@ macOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
 - **Miniti/Views/LimitReachedView.swift** – Hard block when 500 min exhausted, offers BYOK switch
 - **Miniti/Models/ColorPalette.swift** – Global color palette: backgrounds, borders, text, accents, status, speaker colors, MEDDPICC colors
+
+### iOS Target (MinitiMobile)
+
+Separate iOS target in the same Xcode project. Mic-only recording (no system audio on iOS). Shares models, services, and several views with macOS target.
+
+- **MinitiMobile/MinitiApp_iOS.swift** – `@main` iOS entry point, `WindowGroup` + `ModelContainer`, onboarding gate, forces `.preferredColorScheme(.dark)` app-wide
+- **MinitiMobile/AudioCaptureService_iOS.swift** – Mic-only `AudioCaptureService` (same class name/interface as macOS). Uses `AVAudioSession` for iOS audio session management. Stubs system audio properties (always false/0). `dominantSource()` always returns `.mic`.
+- **MinitiMobile/Views/MainTabView.swift** – `TabView` with Record / History / Settings tabs; wires `@Environment(\.modelContext)` → `appState.modelContext` on appear (critical for SwiftData saves)
+- **MinitiMobile/Views/MeetingView_iOS.swift** – Mobile recording UI: terminal-style buttons (stop/resume/save/home matching macOS), custom section picker, `UIPasteboard` for copy, `SourceWaveform_iOS`
+- **MinitiMobile/Views/SettingsView_iOS.swift** – `NavigationStack` + `Form`, no launch-at-login / system audio toggle / radio picker
+- **MinitiMobile/Views/HistoryView_iOS.swift** – `NavigationStack` + `List` with drill-down to meeting detail
+- **MinitiMobile/Info.plist** – `NSMicrophoneUsageDescription`, `UIBackgroundModes: [audio]`, `NSSupportsLiveActivities: YES`, `UILaunchScreen` (empty dict, required for iOS launch)
+- **MinitiMobile/MinitiMobile.entitlements** – Empty dict (iOS is always sandboxed; macOS sandbox keys like `com.apple.security.app-sandbox` are invalid on iOS and prevent launch)
+
+### Live Activity Extension (MinitiLiveActivityExtension)
+
+Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Island and Lock Screen.
+
+- **Shared/RecordingActivityAttributes.swift** – `ActivityAttributes` struct shared between MinitiMobile and the extension. Static: `startTime: Date`. Dynamic `ContentState`: `meetingTitle: String`, `isRecording: Bool`, `currentTranscript: String`.
+- **MinitiLiveActivity/MinitiLiveActivityBundle.swift** – `@main` widget bundle entry point
+- **MinitiLiveActivity/MinitiLiveActivityLiveActivity.swift** – All Live Activity UI: Dynamic Island (compact leading: red dot, compact trailing: green timer, expanded: REC label + timer + title + live transcript line + branding), Lock Screen banner (recording status + timer + title + live transcript). Uses `Text(timerInterval:countsDown: false)` for auto-updating timer with zero ActivityKit updates.
+- **MinitiLiveActivity/Info.plist** – `NSExtension` with `com.apple.widgetkit-extension` point identifier
+- Bundle ID: `com.miniti.mobile.live-activity`, deployment target iOS 17.0
+
+**Shared files** (macOS + iOS + extension where noted): `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`, `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `Secrets.swift`, `TranscriptView.swift`, `InsightsView.swift`, `OnboardingView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`, `Assets.xcassets`, `RecordingActivityAttributes.swift` (iOS app + extension only)
+
+**macOS-only files**: `MinitiApp.swift`, `AudioCaptureService.swift`, `KeyboardShortcutsService.swift`, `MainWindow.swift`, `MeetingView.swift`, `SettingsView.swift`, `HistoryView.swift`
+
+**Key design**: Minimal `#if os(iOS)` guards — only in `AppState.swift` for `import ActivityKit` and Live Activity start/update/end calls. Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout (e.g. MEDDPICC grid: 1 column on compact/iPhone, 2 columns on regular/Mac).
+
+**Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
 
 ## Key patterns
 
@@ -52,6 +144,8 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
+- **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). The `recordingStartDate` persists across stop/resume cycles within a session, and is cleared on `goHome()`.
+- **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer. `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`.
 
 ## Audio flow
 
@@ -65,7 +159,14 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 8. Levels flow independently: AudioCaptureService → Combine → AppState → SwiftUI views (throttled to ~20Hz, waveforms at 16Hz)
 9. **Level display**: `SourceWaveform` uses `pow(level, 0.2)` power curve (not linear) so quiet mic signals (~0.003 RMS) show visible bar movement.
 
-### System Audio permission
+### iOS audio flow (mic-only)
+1. `AVAudioSession` configured with `.playAndRecord` category, `.defaultToSpeaker` + `.allowBluetoothA2DP` options
+2. `AVAudioEngine` with input node tap → AVAudioConverter → 16kHz mono PCM16 (same format as macOS mic path)
+3. `onAudioBuffer` callback → DeepgramService
+4. No system audio, no mixing, no ring buffer, no source dominance tracking (all stubs)
+5. `dominantSource()` always returns `.mic` — all speakers tagged as "You" unless Deepgram's native diarization separates them
+
+### System Audio permission (macOS only)
 - Uses `AudioHardwareCreateProcessTap` (Core Audio, macOS 14.2+) instead of ScreenCaptureKit. This lands the app in **"System Audio Recording Only"** permission category (like Granola) rather than "Screen Recording".
 - ScreenCaptureKit was previously used but **always** triggers Screen Recording permission — even with `.audio`-only output — because `SCShareableContent.excludingDesktopWindows()` itself requires screen recording TCC access.
 - Info.plist key: `NSAudioCaptureUsageDescription` (not `NSScreenCaptureUsageDescription`)
@@ -79,6 +180,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 
 ## UI states
 
+### macOS
 - **Onboarding** (first launch): Mode selection — "Early Adopter" (managed, 500 min/month) or "Bring Your Own Keys"
 - **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; model selector, audio source panel, start button; cog button (top-right) opens settings
 - **Home (limit reached)**: In managed mode when 500 min used — inline "switch to BYOK" prompt, start button disabled
@@ -86,6 +188,15 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Stopped session**: Same layout; rec button shows "cont" (same position as stop — model selector sits after the button, status dot hidden when not recording). Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
 - **History**: Sidebar list → detail view
 - **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘,, or menu bar
+
+### iOS
+- **Onboarding** (first launch): Same as macOS (shared `OnboardingView`)
+- **Home** (`ReadyStateView_iOS`): Logo, mode status pill, mic waveform monitor, start button. Mic-only (no system audio toggle)
+- **Recording**: Header with timer, mic waveform, terminal-style stop button (red), custom section picker for transcript/insights/notes
+- **Stopped session**: Terminal-style buttons: home, resume (green), save (blue), copy. "save" and "home" both call `goHome()` (saves + clears)
+- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with transcript/insights/notes segments
+- **Settings tab**: `Form` with mode picker, usage (managed), API keys (BYOK), audio permissions, model selection, device ID, version
+- **Tab bar**: Record / History / Settings — standard iOS tab navigation
 
 ## Monetization architecture
 
@@ -162,10 +273,11 @@ Optional third `AppMode.local` — fully offline, no API keys or backend. Runs t
 
 ## Distribution
 
+### macOS
 Direct notarized distribution via DMG (not Mac App Store — sandbox restrictions block `AudioHardwareCreateProcessTap`).
 
 ### Release workflow
-1. Bump version in `Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION`)
+1. Bump version in `Miniti/Info.plist`, `MinitiMobile/Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION` — 6 places: 2 per target × 3 targets, Debug + Release). All targets share the same version number.
 2. Xcode: **Product → Archive → Distribute App → Developer ID → Upload** (notarizes automatically)
 3. Export the notarized `Miniti.app`
 4. Run `./scripts/build-dmg.sh /path/to/Miniti.app` → produces `Miniti-<version>.dmg`
@@ -177,3 +289,11 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 - Creates a drag-to-Applications DMG (app on left, Applications symlink on right)
 - Staples the notarization ticket to the DMG
 - Version extracted automatically from the app's `Info.plist`
+
+### iOS (MinitiMobile)
+- Bundle ID: `com.miniti.mobile`, deployment target iOS 17.0
+- Distribution: App Store (no sandbox restrictions for mic-only recording)
+- Background audio: `UIBackgroundModes: [audio]` + `AVAudioSession` category `.playAndRecord` enables recording while backgrounded
+- Live Activity: `MinitiLiveActivityExtension` widget extension (bundle ID: `com.miniti.mobile.live-activity`), embedded in MinitiMobile via "Embed App Extensions" build phase. Shows recording on Dynamic Island + Lock Screen.
+- No system audio capture — iOS sandbox prevents it entirely
+- Xcode targets: `MinitiMobile` (app) + `MinitiLiveActivityExtension` (widget extension) in same project as macOS `Miniti` target

@@ -2,6 +2,9 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Combine
+#if os(iOS)
+import ActivityKit
+#endif
 
 // MARK: - App Mode
 
@@ -124,7 +127,14 @@ final class AppState: ObservableObject {
     @AppStorage("openaiModel") var openaiModel: String = OpenAIModel.gpt5Mini.rawValue
     
     private var recordingTimer: Timer?
+    private var recordingStartDate: Date?
     private var cancellables = Set<AnyCancellable>()
+    
+    #if os(iOS)
+    private var currentActivity: Activity<RecordingActivityAttributes>?
+    private var lastLiveActivityUpdate: Date = .distantPast
+    private let liveActivityUpdateInterval: TimeInterval = 3 // Throttle: max 1 update per 3s
+    #endif
     
     enum Tab: String, CaseIterable {
         case transcript = "Transcript"
@@ -243,6 +253,11 @@ final class AppState: ObservableObject {
             
             // Track detected speakers
             detectedSpeakers.insert(update.speaker)
+            
+            // Push to Live Activity (throttled)
+            #if os(iOS)
+            updateLiveActivityTranscript()
+            #endif
         }
     }
     
@@ -287,6 +302,11 @@ final class AppState: ObservableObject {
         // Clear interim
         interimText = ""
         interimSpeaker = nil
+        
+        // Push final segment to Live Activity (throttled)
+        #if os(iOS)
+        updateLiveActivityTranscript()
+        #endif
         
         // Check if we should update live insights
         let finalCount = liveSegments.filter { 
@@ -393,6 +413,9 @@ final class AppState: ObservableObject {
                 meeting.title = "\(meetingTimestamp) - \(newSuffix)"
                 lastTitleUpdateCount = segmentCount
                 print("[AppState] Updated meeting title to: \(meeting.title)")
+                #if os(iOS)
+                updateLiveActivityState(isRecording: isRecording)
+                #endif
             }
         }
     }
@@ -459,6 +482,11 @@ final class AppState: ObservableObject {
     
     /// Go back to home screen (clears current session after saving)
     func goHome() {
+        // End Live Activity
+        #if os(iOS)
+        endLiveActivity()
+        #endif
+        
         // Save current meeting if there's content
         saveCurrentMeetingIfNeeded()
         
@@ -719,12 +747,21 @@ final class AppState: ObservableObject {
             }
         }
         
-        // Start duration timer
+        // Start duration timer (date-based for reliable background timing)
+        if recordingStartDate == nil {
+            recordingStartDate = Date()
+        }
+        let startDate = recordingStartDate!
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.recordingDuration += 1
+                self?.recordingDuration = Date().timeIntervalSince(startDate)
             }
         }
+        
+        // Start Live Activity
+        #if os(iOS)
+        startLiveActivity()
+        #endif
     }
     
     /// Managed mode: request a temp Deepgram key from backend, then start recording.
@@ -765,6 +802,11 @@ final class AppState: ObservableObject {
         isRecording = false
         recordingTimer?.invalidate()
         recordingTimer = nil
+        
+        // Update Live Activity to show paused state (keep it alive for resume)
+        #if os(iOS)
+        updateLiveActivityState(isRecording: false)
+        #endif
         
         audioCaptureService?.stopCapture()
         deepgramService?.disconnect()
@@ -821,6 +863,7 @@ final class AppState: ObservableObject {
         interimSpeaker = nil
         detectedSpeakers = []
         recordingDuration = 0
+        recordingStartDate = nil
         hasUnsavedSession = false
         
         // Reset live notes and insights
@@ -915,6 +958,9 @@ final class AppState: ObservableObject {
                 currentTitleSuffix = suggestedTitle
                 meeting.title = "\(meetingTimestamp) - \(suggestedTitle)"
                 print("[AppState] Final title: \(meeting.title)")
+                #if os(iOS)
+                updateLiveActivityState(isRecording: isRecording)
+                #endif
             }
         } catch {
             print("[AppState] Failed to generate standard insights: \(error)")
@@ -1017,6 +1063,90 @@ final class AppState: ObservableObject {
         let seconds = Int(recordingDuration) % 60
         return String(format: "%02d:%02d", minutes, seconds)
     }
+    
+    // MARK: - Live Activity
+    
+    #if os(iOS)
+    private func startLiveActivity() {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            print("[AppState] Live Activities not enabled")
+            return
+        }
+        
+        // End any existing activity first
+        if let existing = currentActivity {
+            Task {
+                await existing.end(nil, dismissalPolicy: .immediate)
+            }
+            currentActivity = nil
+        }
+        
+        let startTime = recordingStartDate ?? Date()
+        let attributes = RecordingActivityAttributes(startTime: startTime)
+        let state = RecordingActivityAttributes.ContentState(
+            meetingTitle: currentMeeting?.title ?? "",
+            isRecording: true,
+            currentTranscript: ""
+        )
+        
+        do {
+            currentActivity = try Activity.request(
+                attributes: attributes,
+                content: .init(state: state, staleDate: nil),
+                pushType: nil
+            )
+            print("[AppState] Live Activity started")
+        } catch {
+            print("[AppState] Failed to start Live Activity: \(error)")
+        }
+    }
+    
+    private func updateLiveActivityState(isRecording: Bool) {
+        guard let activity = currentActivity else { return }
+        let state = RecordingActivityAttributes.ContentState(
+            meetingTitle: currentMeeting?.title ?? "",
+            isRecording: isRecording,
+            currentTranscript: currentTranscriptLine
+        )
+        lastLiveActivityUpdate = Date()
+        Task {
+            await activity.update(.init(state: state, staleDate: nil))
+        }
+    }
+    
+    /// Push transcript text to the Live Activity, throttled to avoid exceeding update budget.
+    private func updateLiveActivityTranscript() {
+        guard currentActivity != nil else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastLiveActivityUpdate) >= liveActivityUpdateInterval else { return }
+        updateLiveActivityState(isRecording: isRecording)
+    }
+    
+    /// The most recent transcript line — interim text if available, otherwise the last finalized segment.
+    private var currentTranscriptLine: String {
+        if !interimText.isEmpty {
+            return interimText
+        }
+        if let last = liveSegments.last(where: { $0.isFinal && !$0.text.isEmpty }) {
+            return last.text
+        }
+        return ""
+    }
+    
+    private func endLiveActivity() {
+        guard let activity = currentActivity else { return }
+        let finalState = RecordingActivityAttributes.ContentState(
+            meetingTitle: currentMeeting?.title ?? "",
+            isRecording: false,
+            currentTranscript: ""
+        )
+        Task {
+            await activity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+        }
+        currentActivity = nil
+        print("[AppState] Live Activity ended")
+    }
+    #endif
     
     // MARK: - Markdown Export
     

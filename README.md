@@ -2,7 +2,7 @@
 
 multi-dimensional meetings
 
-a high-performance macOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
+a high-performance macOS + iOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
 
 ## Quick Start
 
@@ -49,8 +49,13 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 
 ## Requirements
 
+### macOS
 - **macOS 14.2** (Sonoma) or later
 - Apple Silicon or Intel Mac
+
+### iOS
+- **iOS 17.0** or later
+- iPhone or iPad
 
 ## Two Modes
 
@@ -66,7 +71,18 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
   - OpenAI API key ([get one here](https://platform.openai.com/api-keys))
 - Enter keys on the home screen or in Settings → API Keys
 
-## Features
+## macOS Features
+
+### native macOS AI meeting assistant
+
+- mic + system audio recording
+- live transcription with deepgram
+- live speaker identification
+- live AI-generated summaries and action items
+- live MEDDPICC analysis
+- meeting history browser
+- native menu bar controls
+- keyboard shortcuts for everything
 
 ### Core Transcription
 - **Real-time Transcription**: Live speech-to-text using Deepgram Nova-2/Nova-3 with ~200ms latency
@@ -200,6 +216,78 @@ Brief overview of the meeting...
 - Pricing discussion
 ```
 
+## iOS Features
+
+### mobile AI meeting assistant
+
+- mic recording with background support
+- live transcription with deepgram
+- live AI-generated summaries and action items
+- live MEDDPICC analysis
+- meeting history browser
+- Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
+- dark mode terminal-style UI
+
+### Recording
+- **Microphone Capture**: Record your voice on iPhone or iPad
+- **Background Recording**: Keeps recording when you switch apps or lock your phone
+- **Live Activity**: Dynamic Island shows recording dot and elapsed timer; Lock Screen shows recording status, meeting title, and live transcript line
+- **Live Transcript**: Same real-time transcription as macOS, powered by Deepgram
+
+### AI Insights
+- **Live Insights**: Summaries, action items, topics, and discussion flow — same engine as macOS
+- **MEDDPICC Mode**: Full sales qualification analysis on mobile
+- **Configurable AI Model**: GPT-5 Mini or GPT-5 Nano
+
+### Meeting History
+- **Browse Past Meetings**: Searchable list with swipe-to-delete
+- **Meeting Detail**: Drill into transcript, insights, and notes for any meeting
+- **Persisted with SwiftData**: Shared data model with macOS
+
+### Notes
+- **Live Notes**: Take notes during meetings
+- **Copy to Clipboard**: Export transcript, insights, or full meeting as markdown
+
+---
+
+## Changelog
+
+### 2026-02-10 - v1.4.0 (current)
+- iOS app (MinitiMobile): mic-only recording, live transcription, AI insights, meeting history
+- Live Activity with Dynamic Island and Lock Screen: recording status, elapsed timer, live transcript line
+- Background recording support on iOS
+- Date-based recording timer (fixes background timer drift on iOS)
+- Responsive MEDDPICC grid (1 column on iPhone, 2 on iPad/Mac)
+- Shared codebase: models, services, and views between macOS and iOS targets
+
+### 2026-02-07 - v1.3.0
+- Centralized color palette (ColorPalette.swift) with Theme aliases
+- Fix transcript save bug: resumed sessions ("cont") now correctly persist all segments, not just those from the first recording
+- Fix sidebar focus rings: buttons use .focusable(false) since all navigation is keyboard-shortcut-driven
+
+### 2026-02-06 - v1.2.0
+- Implement onboarding flow and app mode selection (Early Adopter / BYOK)
+- Refactor audio capture: Core Audio Process Tap replaces ScreenCaptureKit, adaptive dual AGC, source dominance tracking, mic/system speaker separation
+- Revise README for clarity and detail
+- Rename app display name to lowercase "miniti"
+- Add DMG build script and distribution workflow docs
+
+### 2026-02-05 - v1.1.0
+- README: add download section, restructure with user content at top / dev at bottom
+- Code signing identity for macOS distribution
+- Add empty Secrets.swift for Xcode Cloud builds
+- Enhance audio recording and monitoring (home screen pre-flight waveforms)
+- Add info popovers for API keys in settings
+
+### 2026-02-05 - v1.0.0
+- Initial commit: core app with SwiftUI + SwiftData, Deepgram streaming transcription, OpenAI insights, meeting persistence
+- Add API key inputs to home screen
+- Restore Secrets.swift fallback for default API keys
+- API status pills on home screen (click-to-edit)
+- Fix padding syntax error
+- Make notes section compact (~3 lines default, resizable)
+- Add macOS app icon (all sizes/scales)
+
 ---
 
 # Development
@@ -230,36 +318,58 @@ API keys can also be entered on the home screen at runtime.
 ## Architecture
 
 ```
-Miniti/
+Miniti/                          # macOS target
 ├── MinitiApp.swift              # App entry + MenuBarExtra
 ├── Views/
 │   ├── MainWindow.swift         # Primary window with sidebar & history
 │   ├── MeetingView.swift        # Active meeting UI (transcript + notes + insights)
-│   ├── TranscriptView.swift     # Live transcript with speaker colors
-│   ├── InsightsView.swift       # AI insights panel
+│   ├── TranscriptView.swift     # Live transcript with speaker colors (shared)
+│   ├── InsightsView.swift       # AI insights panel (shared)
 │   ├── HistoryView.swift        # Past meetings detail view
 │   ├── SettingsView.swift       # Mode toggle, API keys (BYOK), audio, preferences
-│   └── OnboardingView.swift     # First-launch mode selection
+│   ├── OnboardingView.swift     # First-launch mode selection (shared)
+│   ├── UsageBanner.swift        # Usage display for managed mode (shared)
+│   └── LimitReachedView.swift   # Hard block at 500 min (shared)
 ├── Services/
 │   ├── AudioCaptureService.swift      # Mic (AVAudioEngine) + system audio (Core Audio Process Tap)
-│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram + source-based speaker tagging
-│   ├── InsightsService.swift          # OpenAI integration
-│   ├── MinitiAPIService.swift         # Backend communication (managed mode)
-│   ├── DeviceIdentifier.swift         # Keychain-based device UUID
+│   ├── DeepgramService.swift          # WebSocket streaming to Deepgram (shared)
+│   ├── InsightsService.swift          # OpenAI integration (shared)
+│   ├── MinitiAPIService.swift         # Backend communication (shared)
+│   ├── DeviceIdentifier.swift         # Keychain-based device UUID (shared)
 │   └── KeyboardShortcutsService.swift # Global keyboard shortcuts
 └── Models/
-    ├── Meeting.swift            # SwiftData models + markdown export
-    └── AppState.swift           # Observable app state + markdown export
+    ├── Meeting.swift            # SwiftData models (shared)
+    ├── AppState.swift           # Observable app state (shared)
+    └── ColorPalette.swift       # Centralized color system (shared)
+
+MinitiMobile/                    # iOS target
+├── MinitiApp_iOS.swift          # iOS app entry point
+├── AudioCaptureService_iOS.swift # Mic-only audio capture
+├── Views/
+│   ├── MainTabView.swift        # Tab navigation (Record / History / Settings)
+│   ├── MeetingView_iOS.swift    # Mobile recording UI
+│   ├── SettingsView_iOS.swift   # iOS settings
+│   └── HistoryView_iOS.swift    # Meeting history browser
+└── Info.plist
+
+MinitiLiveActivity/              # Widget extension (embedded in iOS app)
+├── MinitiLiveActivityBundle.swift
+├── MinitiLiveActivityLiveActivity.swift  # Dynamic Island + Lock Screen UI
+└── Info.plist
+
+Shared/
+└── RecordingActivityAttributes.swift    # ActivityKit attributes (iOS + extension)
 ```
 
 ## Tech Stack
 
-- **UI**: SwiftUI (macOS 14.2+)
-- **Audio Capture**: AVAudioEngine (mic) + Core Audio Process Tap (system audio)
+- **UI**: SwiftUI (macOS 14.2+ / iOS 17.0+)
+- **Audio Capture**: AVAudioEngine (mic) + Core Audio Process Tap (system audio, macOS only)
 - **Speech-to-Text**: Deepgram Nova-2/Nova-3 Streaming API
 - **Insights**: OpenAI GPT-5-mini / GPT-5-nano
 - **Persistence**: SwiftData
-- **Menu Bar**: MenuBarExtra
+- **Menu Bar**: MenuBarExtra (macOS)
+- **Live Activity**: ActivityKit + WidgetKit (iOS)
 
 ## License
 
