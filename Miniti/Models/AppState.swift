@@ -36,7 +36,6 @@ final class AppState: ObservableObject {
     
     // MARK: - UI State
     @Published var showSettings = false
-    @Published var showHistory = false
     @Published var selectedTab: Tab = .transcript
     @Published var isGeneratingInsights = false
     @Published var audioLevel: Float = 0  // Combined audio level for visualization
@@ -266,6 +265,12 @@ final class AppState: ObservableObject {
         let finalSegments = segments.filter { $0.isFinal }
         guard !finalSegments.isEmpty else { return }
         
+        // Build new array state atomically to avoid multiple @Published mutations.
+        // Previously, removeAll + append fired per iteration, causing SwiftUI's
+        // AttributeGraph to see intermediate states and corrupt weak references
+        // during ForEach diffing (EXC_BAD_ACCESS in AGGraphGetWeakValue).
+        var updated = liveSegments.filter { $0.isFinal } // Strip interims once
+        
         for segment in finalSegments {
             // Skip empty segments
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -283,23 +288,21 @@ final class AppState: ObservableObject {
                 isFinal: true
             )
             
-            // Remove interim segments
-            liveSegments.removeAll { !$0.isFinal }
-            
             // Check for duplicates (same speaker and very similar text)
-            let isDuplicate = liveSegments.suffix(3).contains { existing in
+            let isDuplicate = updated.suffix(3).contains { existing in
                 existing.isFinal && 
                 existing.speaker == segment.speaker &&
                 (existing.text == text || existing.text.contains(text) || text.contains(existing.text))
             }
             
             if !isDuplicate {
-                liveSegments.append(liveSegment)
+                updated.append(liveSegment)
                 print("[AppState] Added segment - Speaker \(segment.speaker): \"\(text.prefix(50))...\"")
             }
         }
         
-        // Clear interim
+        // Single atomic mutation — one @Published change instead of N
+        liveSegments = updated
         interimText = ""
         interimSpeaker = nil
         
@@ -1005,24 +1008,46 @@ final class AppState: ObservableObject {
     }
     
     func generateInsights() async {
-        guard let meeting = currentMeeting,
-              let insightsService,
-              !openaiApiKey.isEmpty else { return }
+        guard let meeting = currentMeeting else { return }
+        
+        // Mode-aware capability check
+        let canGenerate: Bool
+        if appMode == .managed {
+            canGenerate = minitiAPIService != nil
+        } else {
+            canGenerate = insightsService != nil && !openaiApiKey.isEmpty
+        }
+        guard canGenerate else { return }
         
         isGeneratingInsights = true
         
         do {
             let selectedModel = OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
-            let insights = try await insightsService.generateInsights(
-                transcript: meeting.fullTranscript,
-                model: selectedModel,
-                apiKey: openaiApiKey
-            )
             
-            meeting.summaryText = insights.summary
-            meeting.actionItems = insights.actionItems
-            meeting.keyDecisions = insights.decisions
-            meeting.topics = insights.topics
+            if appMode == .managed, let minitiAPIService {
+                // Managed mode: proxy through backend
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await minitiAPIService.generateInsights(
+                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    existingSummary: nil, existingTitle: nil,
+                    mode: InsightsMode.standard.rawValue, model: selectedModel.rawValue
+                )
+                let insights = response.toLiveInsights()
+                meeting.summaryText = insights.summary
+                meeting.actionItems = insights.actionItems
+                meeting.topics = insights.topics
+            } else {
+                // BYOK mode: direct OpenAI call
+                let insights = try await insightsService!.generateInsights(
+                    transcript: meeting.fullTranscript,
+                    model: selectedModel,
+                    apiKey: openaiApiKey
+                )
+                meeting.summaryText = insights.summary
+                meeting.actionItems = insights.actionItems
+                meeting.keyDecisions = insights.decisions
+                meeting.topics = insights.topics
+            }
         } catch {
             print("Failed to generate insights: \(error)")
         }

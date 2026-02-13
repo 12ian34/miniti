@@ -49,6 +49,7 @@ final class MinitiAPIService: @unchecked Sendable {
         request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
         
         if let body {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)

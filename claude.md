@@ -27,41 +27,43 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-10 - v1.4.0 (current)
-- iOS app (MinitiMobile): mic-only recording, live transcription, AI insights, meeting history
-- Live Activity with Dynamic Island and Lock Screen: recording status, elapsed timer, live transcript line
-- Background recording support on iOS
-- Date-based recording timer (fixes background timer drift on iOS)
-- Responsive MEDDPICC grid (1 column on iPhone, 2 on iPad/Mac)
-- Shared codebase: models, services, and views between macOS and iOS targets
+### 2026-10-13 - v1.5.0 (current)
+- App version now sent with all backend requests for better diagnostics
+- Fix "Generate Insights" button not working for Early Adopter users
+- Fix keyboard navigation (K) in meeting history starting from the wrong end of the list
+- Fix saved meetings and transcript exports showing "Speaker 1001" instead of "You" for your microphone
+- Fix crash during long recordings caused by rapid transcript updates overwhelming the UI
+- Reduce main thread load during recording by sending audio data without blocking the UI
+
+### 2026-02-10 - v1.4.0
+- iPhone and iPad app with live transcription, AI insights, and meeting history
+- Live Activity on Dynamic Island and Lock Screen showing recording status, timer, and latest transcript
+- Record meetings in the background while using other apps on iOS
+- Fix recording timer drifting when the app is backgrounded
+- MEDDPICC grid adapts to screen size (1 column on iPhone, 2 on iPad/Mac)
 
 ### 2026-02-07 - v1.3.0
-- Centralized color palette (ColorPalette.swift) with Theme aliases
-- Fix transcript save bug: resumed sessions ("cont") now correctly persist all segments, not just those from the first recording
-- Fix sidebar focus rings: buttons use .focusable(false) since all navigation is keyboard-shortcut-driven
+- Unified color system across the entire app
+- Fix transcript not saving correctly when resuming a paused recording
+- Remove distracting focus rings from sidebar buttons
 
 ### 2026-02-06 - v1.2.0
-- Implement onboarding flow and app mode selection (Early Adopter / BYOK)
-- Refactor audio capture: Core Audio Process Tap replaces ScreenCaptureKit, adaptive dual AGC, source dominance tracking, mic/system speaker separation
-- Revise README for clarity and detail
-- Rename app display name to lowercase "miniti"
-- Add DMG build script and distribution workflow docs
+- First-launch setup: choose Early Adopter (500 free min/month) or Bring Your Own Keys mode
+- Improved audio capture with better mic/system audio separation and automatic volume balancing
+- Renamed app to lowercase "miniti"
+- DMG installer for easy macOS distribution
 
 ### 2026-02-05 - v1.1.0
-- README: add download section, restructure with user content at top / dev at bottom
-- Code signing identity for macOS distribution
-- Add empty Secrets.swift for Xcode Cloud builds
-- Enhance audio recording and monitoring (home screen pre-flight waveforms)
-- Add info popovers for API keys in settings
+- Live audio waveforms on the home screen to verify mic and system audio before recording
+- Info tooltips explaining what each API key is used for in settings
+- macOS code signing for distribution
 
 ### 2026-02-05 - v1.0.0
-- Initial commit: core app with SwiftUI + SwiftData, Deepgram streaming transcription, OpenAI insights, meeting persistence
-- Add API key inputs to home screen
-- Restore Secrets.swift fallback for default API keys
-- API status pills on home screen (click-to-edit)
-- Fix padding syntax error
-- Make notes section compact (~3 lines default, resizable)
-- Add macOS app icon (all sizes/scales)
+- Initial release: record meetings with live transcription and AI-generated summaries, action items, and topics
+- API key setup on the home screen with status indicators
+- Meeting history browser
+- Resizable notes section during recording
+- macOS app icon
 
 ## Architecture
 
@@ -72,7 +74,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
-- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` headers on every request; device ID never sent in body/query.
+- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` headers on every request; device ID never sent in body/query.
 - **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
 - **Miniti/Views/MainWindow.swift** – Window chrome: sidebar, content area, status bar
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette
@@ -117,6 +119,10 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 ## Key patterns
 
+## Changelog style
+
+Changelog entries (in both `claude.md` and `README.md`) should be written as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`". Keep both changelogs in sync.
+
 ## Color Palette
 
 Centralized color system via `ColorPalette` struct. All colors should reference this palette instead of hardcoded hex values.
@@ -140,12 +146,14 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - Audio monitoring: home screen starts lightweight capture (no Deepgram) to verify sources before recording
 - `@AppStorage` persists API keys, model selection, audio source toggles, app mode, and onboarding state
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
-- Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()` all branch on `appMode`
+- Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). The `recordingStartDate` persists across stop/resume cycles within a session, and is cleared on `goHome()`.
 - **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer. `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`.
+- **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
+- **Avoid main actor hops from audio threads**: `nonisolated func sendAudio()` on `@MainActor` services should NOT use `Task { @MainActor }` to access properties — this creates a new main-thread task per audio buffer (~4/sec), competing with SwiftUI layout passes. Instead, use `nonisolated(unsafe)` shadow properties (e.g., `_sendTask`, `_sendConnected`) written from `@MainActor` context (connect/disconnect) and read from audio threads. `URLSessionWebSocketTask.send` is thread-safe and doesn't need the main thread.
 
 ## Audio flow
 
@@ -214,7 +222,7 @@ Two parallel modes, no conflicts:
 ### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
 - Stack: Next.js 14 (App Router, edge runtime), TypeScript, Vercel, Upstash Redis via `@vercel/kv`
-- All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers
+- All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.4.0") tracked per device in Redis
 - API key is XOR-obfuscated in `MinitiAPIService.swift` (not plain text in source/binary)
 - Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
