@@ -143,6 +143,11 @@ struct ReadyStateView: View {
             // Audio sources (pre-flight check with waveforms)
             AudioSourcePanel()
             
+            // Update available banner
+            if let update = appState.availableUpdate {
+                UpdateAvailableBanner(versionInfo: update)
+            }
+            
             // Limit reached warning (managed mode)
             if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
@@ -1421,6 +1426,49 @@ struct AudioSourcePill: View {
         .onHover { hovering in
             isHovering = hovering
         }
+    }
+}
+
+// MARK: - Update Available Banner
+
+struct UpdateAvailableBanner: View {
+    let versionInfo: MinitiAPIService.VersionInfo
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(ColorPalette.Accent.blue)
+            
+            Text("v\(versionInfo.latestVersion) available")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Accent.blue)
+            
+            if let notes = versionInfo.releaseNotes, !notes.isEmpty {
+                Text("— \(notes)")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            Link(destination: URL(string: versionInfo.downloadUrl)!) {
+                Text("download")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(hex: "58A6FF").opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 }
 

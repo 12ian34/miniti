@@ -88,6 +88,9 @@ final class AppState: ObservableObject {
         set { appModeRaw = newValue.rawValue }
     }
     
+    // MARK: - Update Check
+    @Published var availableUpdate: MinitiAPIService.VersionInfo?
+    
     // MARK: - Managed Mode State
     @Published var usageInfo: MinitiAPIService.UsageInfo?
     @Published var isLoadingUsage = false
@@ -185,6 +188,9 @@ final class AppState: ObservableObject {
         if appMode == .managed {
             Task { await refreshUsage() }
         }
+        
+        // Check for app updates (all modes)
+        Task { await checkForUpdates() }
     }
     
     private func setupServices() {
@@ -1053,6 +1059,42 @@ final class AppState: ObservableObject {
         }
         
         isGeneratingInsights = false
+    }
+    
+    // MARK: - Update Check
+    
+    /// Check if a newer version is available. Runs on launch for all modes.
+    func checkForUpdates() async {
+        guard let minitiAPIService else { return }
+        
+        do {
+            let versionInfo = try await minitiAPIService.checkVersion()
+            let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
+            
+            if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
+                availableUpdate = versionInfo
+                print("[AppState] Update available: \(versionInfo.latestVersion) (current: \(currentVersion))")
+            } else {
+                print("[AppState] App is up to date (\(currentVersion))")
+            }
+        } catch {
+            // Silent failure — update check is non-critical
+            print("[AppState] Version check failed: \(error)")
+        }
+    }
+    
+    /// Simple semver comparison: returns true if `remote` is newer than `local`.
+    private static func isNewer(remote: String, than local: String) -> Bool {
+        let remoteParts = remote.split(separator: ".").compactMap { Int($0) }
+        let localParts = local.split(separator: ".").compactMap { Int($0) }
+        
+        for i in 0..<max(remoteParts.count, localParts.count) {
+            let r = i < remoteParts.count ? remoteParts[i] : 0
+            let l = i < localParts.count ? localParts[i] : 0
+            if r > l { return true }
+            if r < l { return false }
+        }
+        return false
     }
     
     // MARK: - Managed Mode Usage
