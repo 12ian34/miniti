@@ -1,0 +1,19 @@
+{
+  "extends": "./node_modules/electron-vite/tsconfig.web.json",
+  "include": [
+    "src/renderer/src/**/*",
+    "src/renderer/src/**/*.tsx"
+  ],
+  "compilerOptions": {
+    "composite": true,
+    "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/renderer/src/*"]
+    },
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
+  }
+}

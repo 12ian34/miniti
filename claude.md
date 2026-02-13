@@ -1,6 +1,6 @@
 # Miniti
 
-macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Two modes: managed (500 free min/month) or BYOK (own API keys, unlimited).
+macOS + iOS + Windows meeting assistant app. macOS/iOS built with SwiftUI + SwiftData, Windows built with Electron + React + TypeScript. Records mic + system audio (macOS/Windows) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Two modes: managed (500 free min/month) or BYOK (own API keys, unlimited).
 
 ## Features
 
@@ -15,6 +15,17 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - native menu bar controls
 - keyboard shortcuts for everything
 
+### Windows — Electron AI meeting assistant
+
+- mic + system audio recording (WASAPI loopback via desktopCapturer)
+- live transcription with deepgram
+- live speaker identification
+- live AI-generated summaries and action items
+- live MEDDPICC analysis
+- meeting history browser (SQLite)
+- dark terminal-style UI (matching macOS aesthetic)
+- keyboard shortcuts (Ctrl+N, Ctrl+,, Escape)
+
 ### iOS — mobile AI meeting assistant
 
 - mic recording with background support
@@ -27,7 +38,14 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-10 - v1.4.0 (current)
+### 2026-02-12 - v1.4.1 (current)
+- Windows app (Electron + React + TypeScript): mic + system audio recording, live transcription, AI insights, meeting history
+- Same dark terminal UI, same BYOK/managed modes, same backend API
+- System audio capture via Electron desktopCapturer (WASAPI loopback on Windows)
+- Meeting persistence via SQLite (better-sqlite3), settings via electron-store
+- Zustand for state management, Tailwind CSS for styling
+
+### 2026-02-10 - v1.4.0
 - iOS app (MinitiMobile): mic-only recording, live transcription, AI insights, meeting history
 - Live Activity with Dynamic Island and Lock Screen: recording status, elapsed timer, live transcript line
 - Background recording support on iOS
@@ -114,6 +132,40 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 **Key design**: Minimal `#if os(iOS)` guards — only in `AppState.swift` for `import ActivityKit` and Live Activity start/update/end calls. Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout (e.g. MEDDPICC grid: 1 column on compact/iPhone, 2 columns on regular/Mac).
 
 **Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
+
+### Windows Target (Electron)
+
+Separate Electron + React + TypeScript app in the `windows/` directory. Same features and UI aesthetic as macOS, different tech stack. Shares the same backend API and XOR-obfuscated API key.
+
+- **windows/src/main/index.ts** – Electron main process entry: window creation, `desktopCapturer` IPC, title bar overlay config
+- **windows/src/main/ipc.ts** – All IPC handler registration: Deepgram, Insights, Storage, API, Settings. Wires Deepgram events to renderer.
+- **windows/src/main/services/DeepgramService.ts** – WebSocket streaming to Deepgram (ws library), speaker segmentation with lookahead, same protocol as macOS
+- **windows/src/main/services/InsightsService.ts** – OpenAI API client for live/final insights, standard + MEDDPICC modes
+- **windows/src/main/services/MinitiAPIService.ts** – Backend API client (same XOR-obfuscated key, same endpoints as macOS)
+- **windows/src/main/services/StorageService.ts** – SQLite meeting persistence via `better-sqlite3` (equivalent to SwiftData)
+- **windows/src/main/services/DeviceIdentifier.ts** – UUID file in `%APPDATA%/.miniti/` (equivalent to macOS Keychain)
+- **windows/src/preload/index.ts** – Context bridge: exposes safe `window.api` to renderer
+- **windows/src/renderer/src/App.tsx** – Root component: routing, keyboard shortcuts, Deepgram event subscriptions
+- **windows/src/renderer/src/store.ts** – Zustand store: all app state + actions (equivalent to AppState.swift), audio capture via Web Audio API
+- **windows/src/renderer/src/colors.ts** – Color palette matching macOS `ColorPalette.swift` exactly (same hex values)
+- **windows/src/renderer/src/views/HomeView.tsx** – Home screen: mode status, API pills, audio source toggles + waveforms, model selectors, start button
+- **windows/src/renderer/src/views/RecordingView.tsx** – Active recording: header (REC/PAUSED + timer + title), waveforms, tab selector, transcript/insights panels, notes
+- **windows/src/renderer/src/views/HistoryView.tsx** – Meeting list + detail with transcript/insights/notes sections
+- **windows/src/renderer/src/views/SettingsView.tsx** – Tabbed settings: Account (mode toggle, usage), API Keys, Audio, General
+- **windows/src/renderer/src/views/OnboardingView.tsx** – First-launch mode selection (shared aesthetic with macOS)
+- **windows/src/renderer/src/components/TranscriptView.tsx** – Live transcript with speaker colors, interim text with blinking cursor
+- **windows/src/renderer/src/components/InsightsView.tsx** – AI insights panel (standard + MEDDPICC grid)
+- **windows/src/renderer/src/components/Waveform.tsx** – Canvas-based audio level visualization
+- **windows/src/renderer/src/components/Sidebar.tsx** – Navigation sidebar
+
+**Key design**: Audio capture runs in the renderer (Web Audio API for mic, Electron desktopCapturer for system). PCM16 data sent to main process via IPC, where Deepgram WebSocket runs. Transcript updates flow main→renderer via IPC events. State management via Zustand (single store). Settings persisted via `electron-store`. Meetings persisted via SQLite.
+
+**Audio pipeline (Windows)**:
+1. Mic: `getUserMedia({ audio: true })` → AudioContext @ 16kHz → ScriptProcessorNode → float32→int16 → IPC → main → Deepgram WebSocket
+2. System: `desktopCapturer.getSources({ types: ['screen'] })` → `getUserMedia({ chromeMediaSource: 'desktop' })` → same AudioContext pipeline → IPC → main → Deepgram
+3. On Windows, desktopCapturer uses WASAPI loopback — no special permissions needed (unlike macOS Screen Recording)
+
+**Build**: `electron-vite` handles main/preload/renderer builds. `electron-builder` packages as NSIS installer or portable .exe.
 
 ## Key patterns
 
@@ -298,3 +350,12 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 - No system audio capture — iOS sandbox prevents it entirely
 - Export compliance: `ITSAppUsesNonExemptEncryption: NO` in Info.plist — app only uses HTTPS (OS-provided TLS), which is exempt. This key bypasses the App Store Connect encryption compliance dialog and unblocks TestFlight distribution.
 - Xcode targets: `MinitiMobile` (app) + `MinitiLiveActivityExtension` (widget extension) in same project as macOS `Miniti` target
+
+### Windows
+- Separate Electron app in `windows/` directory
+- Build: `npm run package` produces NSIS installer + portable .exe via `electron-builder`
+- App ID: `com.miniti.windows`
+- Data stored in `%APPDATA%/miniti-windows/` (settings JSON, SQLite DB, device UUID)
+- No code signing yet — users may see SmartScreen warning on first run
+- System audio capture via Electron `desktopCapturer` (WASAPI loopback) — no special permissions needed on Windows
+- Dev: `cd windows && npm install && npm run dev`
