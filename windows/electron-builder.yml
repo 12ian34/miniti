@@ -1,0 +1,23 @@
+appId: com.miniti.windows
+productName: miniti
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!electron.vite.config.*'
+  - '!{.eslintignore,.eslintrc.cjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!{postcss.config.js,tailwind.config.js}'
+win:
+  executableName: miniti
+  target:
+    - nsis
+    - portable
+nsis:
+  artifactName: miniti-${version}-setup.${ext}
+  shortcutName: miniti
+  uninstallDisplayName: miniti
+  createDesktopShortcut: always
+portable:
+  artifactName: miniti-${version}-portable.${ext}

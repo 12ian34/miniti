@@ -2,7 +2,7 @@
 
 multi-dimensional meetings
 
-a high-performance macOS + iOS meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
+a high-performance macOS + iOS + Windows meeting transcription app with real-time speech-to-text and AI-powered insights, built for sales
 
 ## Quick Start
 
@@ -56,6 +56,11 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 ### iOS
 - **iOS 17.0** or later
 - iPhone or iPad
+
+### Windows
+- **Windows 10** or later
+- Setup: `cd windows && npm install && npm run dev`
+- Build: `cd windows && npm run package` (produces NSIS installer + portable .exe)
 
 ## Two Modes
 
