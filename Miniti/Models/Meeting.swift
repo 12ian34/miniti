@@ -232,7 +232,7 @@ final class TranscriptSegment {
     }
     
     var speakerLabel: String {
-        "Speaker \(speaker + 1)"
+        speaker == DeepgramService.micSpeakerID ? "You" : "Speaker \(speaker + 1)"
     }
     
     var formattedTimestamp: String {

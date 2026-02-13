@@ -47,6 +47,11 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     private var apiKey: String = ""
     private var isConnected = false
     
+    // Concurrent-safe references for sendAudio (avoids main actor hop per buffer).
+    // Written from @MainActor (connect/disconnect), read from audio thread (sendAudio).
+    nonisolated(unsafe) private var _sendTask: URLSessionWebSocketTask?
+    nonisolated(unsafe) private var _sendConnected = false
+    
     @Published var transcriptUpdate: TranscriptUpdate?
     @Published var speakerSegments: [SpeakerSegment] = []  // Multiple segments per response
     @Published var connectionState: ConnectionState = .disconnected
@@ -154,12 +159,16 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         webSocketTask?.resume()
         
         isConnected = true
+        _sendConnected = true
+        _sendTask = webSocketTask
         connectionState = .connected
         
         receiveMessages()
     }
     
     func disconnect() {
+        _sendConnected = false
+        _sendTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
         urlSession = nil
@@ -168,17 +177,15 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     }
     
     nonisolated func sendAudio(_ data: Data) {
-        Task { @MainActor in
-            guard isConnected else { return }
-            
-            let message = URLSessionWebSocketTask.Message.data(data)
-            webSocketTask?.send(message) { [weak self] error in
-                if let error {
-                    Task { @MainActor in
-                        guard let self, self.isConnected else { return }
-                        print("WebSocket send error: \(error)")
-                        self.error = error
-                    }
+        // Use nonisolated refs to avoid creating a Task { @MainActor } per audio
+        // buffer (~4/sec). URLSessionWebSocketTask.send is thread-safe.
+        guard _sendConnected, let task = _sendTask else { return }
+        task.send(.data(data)) { [weak self] error in
+            if let error {
+                Task { @MainActor in
+                    guard let self, self.isConnected else { return }
+                    print("WebSocket send error: \(error)")
+                    self.error = error
                 }
             }
         }

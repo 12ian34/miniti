@@ -118,7 +118,7 @@ struct MainWindow: View {
             if direction > 0 {
                 selectedMeeting = historicalMeetings.first
             } else {
-                selectedMeeting = historicalMeetings.first // Start from top when pressing up with no selection
+                selectedMeeting = historicalMeetings.last
             }
         }
     }
