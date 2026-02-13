@@ -337,6 +337,11 @@ struct ReadyStateView_iOS: View {
                 .padding(.horizontal, 40)
             }
             
+            // Update available banner
+            if let update = appState.availableUpdate {
+                UpdateAvailableBanner_iOS(versionInfo: update)
+            }
+            
             // Start button
             if appState.isLimitReached {
                 VStack(spacing: 8) {
@@ -450,6 +455,49 @@ struct StatusPill: View {
                         .strokeBorder(ColorPalette.Border.subtle, lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Update Available Banner (iOS)
+
+struct UpdateAvailableBanner_iOS: View {
+    let versionInfo: MinitiAPIService.VersionInfo
+    @Environment(\.openURL) private var openURL
+    
+    var body: some View {
+        Button {
+            if let url = URL(string: versionInfo.downloadUrl) {
+                openURL(url)
+            }
+        } label: {
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.down.circle.fill")
+                        .font(.system(size: 11))
+                    Text("v\(versionInfo.latestVersion) available")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(ColorPalette.Accent.blue)
+                
+                if let notes = versionInfo.releaseNotes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(ColorPalette.Accent.blue.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
     }
 }
 

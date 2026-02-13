@@ -27,6 +27,9 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
+### Unreleased - v1.5.1
+- Notify users when a new version is available with a download link on the home screen
+
 ### 2026-10-13 - v1.5.0 (current)
 - App version now sent with all backend requests for better diagnostics
 - Fix "Generate Insights" button not working for Early Adopter users
@@ -74,7 +77,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
-- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` headers on every request; device ID never sent in body/query.
+- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required).
 - **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
 - **Miniti/Views/MainWindow.swift** – Window chrome: sidebar, content area, status bar
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette
@@ -118,6 +121,8 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 **Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
 
 ## Key patterns
+
+- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, release notes, and a download link (currently Proton Drive). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
 
 ## Changelog style
 
@@ -228,12 +233,13 @@ Two parallel modes, no conflicts:
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
 
 **Endpoints:**
+- `GET /api/version` — returns `{ latest_version, download_url, release_notes }`. No device ID required, just `X-API-Key`. Hardcoded JSON — update when publishing a new release.
 - `GET /api/usage` — check device minutes used/remaining (30 req/min)
 - `POST /api/session` — start session, returns temp Deepgram key (4hr TTL, `usage:write` scope); returns 402 if limit reached (5 req/min)
 - `POST /api/session/end` — report duration, increment usage counter; server caps at wall-clock elapsed (10 req/min)
 - `POST /api/insights` — OpenAI proxy for transcript analysis; modes: `standard` or `meddpicc`; transcript capped at 100KB (10 req/min)
 
-**Session flow:** launch → `GET /usage` → `POST /session` (get temp key) → connect directly to Deepgram WebSocket with temp key → periodic `POST /insights` → stop → `POST /session/end` → final `POST /insights`
+**Session flow:** launch → `GET /api/version` (update check) + `GET /usage` (managed only) → `POST /session` (get temp key) → connect directly to Deepgram WebSocket with temp key → periodic `POST /insights` → stop → `POST /session/end` → final `POST /insights`
 
 **Response types:** all snake_case JSON. Vercel KV returns numbers as strings — `UsageInfo` has a custom `init(from:)` decoder that accepts both `Double` and `String`. Minutes display uses `.rounded()` (not `Int()` truncation) across Settings, home banner, and remaining time formatter.
 

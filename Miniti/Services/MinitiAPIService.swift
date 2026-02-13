@@ -192,6 +192,34 @@ final class MinitiAPIService: @unchecked Sendable {
         return encoder
     }()
     
+    // MARK: - Version Check
+    
+    struct VersionInfo: Decodable {
+        let latestVersion: String
+        let downloadUrl: String
+        let releaseNotes: String?
+        
+        enum CodingKeys: String, CodingKey {
+            case latestVersion = "latest_version"
+            case downloadUrl = "download_url"
+            case releaseNotes = "release_notes"
+        }
+    }
+    
+    /// Check if a newer version is available. Lightweight — no device ID needed.
+    func checkVersion() async throws -> VersionInfo {
+        var request = URLRequest(url: URL(string: "\(Self.baseURL)/version")!)
+        request.httpMethod = "GET"
+        request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
+        
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        
+        return try Self.decoder.decode(VersionInfo.self, from: data)
+    }
+    
     // MARK: - API Methods
     
     /// Check current usage for a device.
