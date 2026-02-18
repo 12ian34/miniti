@@ -8,14 +8,9 @@ a high-performance macOS + iOS meeting transcription app with real-time speech-t
 
 ### 1. Install
 
-1. Unzip `Miniti.zip`
-2. Drag `Miniti.app` to your **Applications** folder
-3. The app is **not notarized yet**, so macOS will block it on first launch:
-   - **Right-click** (or Control-click) the app → click **Open**
-   - A warning appears — click **Open** again to confirm
-   - If that doesn't work: open the app normally, then go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway**
-
-After the first open, the app launches normally from then on.
+1. Download the DMG from the link provided
+2. Open the DMG and drag `miniti.app` to your **Applications** folder
+3. Launch from Applications — the app is signed and notarized
 
 ### 2. Permissions
 
@@ -120,7 +115,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 - **Terminal-style Design**: Dark, monospace aesthetic for developers
 - **Linear-style Shortcuts**: Keyboard shortcuts displayed directly on buttons
 - **Side-by-side View**: Transcript and insights displayed together
-- **Resizable Panels**: VSplitView for transcript/notes, HSplitView for content/insights
+- **Resizable Panels**: Drag handle for transcript/notes split, HSplitView for content/insights
 - **Session Management**: Meetings move to history immediately after stopping
 
 ## Keyboard Shortcuts

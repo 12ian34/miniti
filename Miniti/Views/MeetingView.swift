@@ -22,8 +22,8 @@ struct MeetingView: View {
                     
                     // Main content - split view with transcript+notes and live insights
                     HSplitView {
-                        // Left side - transcript and notes (vertically split)
-                        VSplitView {
+                        // Left side - transcript and notes
+                        ResizableNotesLayout {
                             // Transcript (top) - takes most of the space
                             VStack(spacing: 0) {
                                 SectionHeader(title: "transcript", icon: "¶", onCopy: {
@@ -31,16 +31,14 @@ struct MeetingView: View {
                                 })
                                 TranscriptView()
                             }
-                            .frame(minHeight: 300)
-                            
-                            // Notes (bottom) - very compact (~3 lines), resizable
+                        } notes: {
+                            // Notes (bottom) - starts compact, drag to expand
                             VStack(spacing: 0) {
                                 SectionHeader(title: "notes", icon: "✎", shortcut: "⌘⇧N", onCopy: {
                                     "## Notes\n\n\(appState.liveNotes)"
                                 })
                                 NotesEditor()
                             }
-                            .frame(minHeight: 20, maxHeight: 700)
                         }
                         .frame(minWidth: 400)
                         
@@ -153,9 +151,18 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
             
-            // Start button or limit reached
-            if appState.isLimitReached {
-                // Show inline limit message
+            // Start button or blocked state
+            if appState.isDeviceDisabled {
+                VStack(spacing: 8) {
+                    Text("account disabled")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "F85149"))
+                    
+                    Text("contact support for help")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "A1A1AA"))
+                }
+            } else if appState.isLimitReached {
                 VStack(spacing: 8) {
                     Text("limit reached")
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -491,6 +498,68 @@ struct SectionHeader: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(Color(hex: "0F0F11"))
+    }
+}
+
+// MARK: - Resizable Notes Layout
+
+/// Custom vertical split: transcript fills available space, notes starts compact
+/// with a drag handle to resize. Replaces VSplitView which can't control initial size.
+struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
+    let transcript: Transcript
+    let notes: Notes
+    
+    @State private var notesHeight: CGFloat = 100
+    @GestureState private var dragOffset: CGFloat = 0
+    private let minNotesHeight: CGFloat = 50
+    private let maxNotesHeight: CGFloat = 500
+    
+    init(@ViewBuilder transcript: () -> Transcript, @ViewBuilder notes: () -> Notes) {
+        self.transcript = transcript()
+        self.notes = notes()
+    }
+    
+    private var effectiveHeight: CGFloat {
+        min(max(notesHeight - dragOffset, minNotesHeight), maxNotesHeight)
+    }
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            transcript
+                .frame(maxHeight: .infinity)
+            
+            // Drag handle
+            Rectangle()
+                .fill(Color(hex: "1C1C1F"))
+                .frame(height: 8)
+                .frame(maxWidth: .infinity)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(Color(hex: "3F3F46"))
+                        .frame(width: 32, height: 2)
+                )
+                .contentShape(Rectangle())
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.resizeUpDown.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .updating($dragOffset) { value, state, _ in
+                            state = value.translation.height
+                        }
+                        .onEnded { value in
+                            notesHeight = min(max(notesHeight - value.translation.height, minNotesHeight), maxNotesHeight)
+                        }
+                )
+            
+            notes
+                .frame(height: effectiveHeight)
+                .clipped()
+        }
     }
 }
 

@@ -27,10 +27,20 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### Unreleased - v1.5.1
+### 2026-02-18 - v1.6.0 (current)
+- Send platform identifier (macOS/iOS) with all backend requests for admin dashboard tracking
+- Show "account disabled" message when a device has been disabled by admin
+- Fix iOS transcription showing all speakers as "You" instead of using Deepgram's native speaker diarization
+- Notes section now starts compact and is resizable via drag handle instead of taking half the screen
+- Privacy & Terms link in Settings on both macOS and iOS
+- Fix iOS mic indicator staying active after closing the app when not recording
+- Cleaner Dynamic Island and Lock Screen Live Activity layout
+- Fix Live Activity showing active recording after stopping — timer now freezes and everything goes gray
+
+### 2026-02-13 - v1.5.1
 - Notify users when a new version is available with a download link on the home screen
 
-### 2026-10-13 - v1.5.0 (current)
+### 2026-10-13 - v1.5.0
 - App version now sent with all backend requests for better diagnostics
 - Fix "Generate Insights" button not working for Early Adopter users
 - Fix keyboard navigation (K) in meeting history starting from the wrong end of the list
@@ -74,10 +84,10 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, Live Activity lifecycle (`#if os(iOS)` guarded)
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
-- **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback
+- **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization)
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
-- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required).
+- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
 - **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
 - **Miniti/Views/MainWindow.swift** – Window chrome: sidebar, content area, status bar
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette
@@ -106,9 +116,9 @@ Separate iOS target in the same Xcode project. Mic-only recording (no system aud
 
 Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Island and Lock Screen.
 
-- **Shared/RecordingActivityAttributes.swift** – `ActivityAttributes` struct shared between MinitiMobile and the extension. Static: `startTime: Date`. Dynamic `ContentState`: `meetingTitle: String`, `isRecording: Bool`, `currentTranscript: String`.
+- **Shared/RecordingActivityAttributes.swift** – `ActivityAttributes` struct shared between MinitiMobile and the extension. Static: `startTime: Date`. Dynamic `ContentState`: `meetingTitle: String`, `isRecording: Bool`, `currentTranscript: String`, `elapsedSeconds: Int?` (set when stopped to freeze the timer).
 - **MinitiLiveActivity/MinitiLiveActivityBundle.swift** – `@main` widget bundle entry point
-- **MinitiLiveActivity/MinitiLiveActivityLiveActivity.swift** – All Live Activity UI: Dynamic Island (compact leading: red dot, compact trailing: green timer, expanded: REC label + timer + title + live transcript line + branding), Lock Screen banner (recording status + timer + title + live transcript). Uses `Text(timerInterval:countsDown: false)` for auto-updating timer with zero ActivityKit updates.
+- **MinitiLiveActivity/MinitiLiveActivityLiveActivity.swift** – All Live Activity UI: Dynamic Island (compact leading: red dot, compact trailing: green timer; expanded: REC/STOPPED label + timer + title + live transcript + branding), Lock Screen banner (status + timer + title + transcript). Timer freezes when stopped via `elapsedSeconds`; all elements switch to gray. Compact DI width is system-controlled (not adjustable by apps).
 - **MinitiLiveActivity/Info.plist** – `NSExtension` with `com.apple.widgetkit-extension` point identifier
 - Bundle ID: `com.miniti.mobile.live-activity`, deployment target iOS 17.0
 
@@ -116,7 +126,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 **macOS-only files**: `MinitiApp.swift`, `AudioCaptureService.swift`, `KeyboardShortcutsService.swift`, `MainWindow.swift`, `MeetingView.swift`, `SettingsView.swift`, `HistoryView.swift`
 
-**Key design**: Minimal `#if os(iOS)` guards — only in `AppState.swift` for `import ActivityKit` and Live Activity start/update/end calls. Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout (e.g. MEDDPICC grid: 1 column on compact/iPhone, 2 columns on regular/Mac).
+**Key design**: Minimal `#if os()` guards — only in `AppState.swift` for `import ActivityKit`, Live Activity start/update/end calls, and `#if os(macOS)` for source dominance `sourceLookup` wiring (iOS skips it to preserve Deepgram's native diarization). Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout (e.g. MEDDPICC grid: 1 column on compact/iPhone, 2 columns on regular/Mac).
 
 **Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
 
@@ -156,7 +166,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). The `recordingStartDate` persists across stop/resume cycles within a session, and is cleared on `goHome()`.
-- **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer. `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`.
+- **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer when recording; when stopped, `elapsedSeconds` is set and the timer switches to a static `Text(formatDuration(_:))` so it freezes. All visual elements (dot, status, title, timer) switch to `pausedGray` when stopped, and transcript is replaced with "tap to return to miniti". `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`. Note: compact Dynamic Island width is system-controlled and cannot be reduced by apps.
 - **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
 - **Avoid main actor hops from audio threads**: `nonisolated func sendAudio()` on `@MainActor` services should NOT use `Task { @MainActor }` to access properties — this creates a new main-thread task per audio buffer (~4/sec), competing with SwiftUI layout passes. Instead, use `nonisolated(unsafe)` shadow properties (e.g., `_sendTask`, `_sendConnected`) written from `@MainActor` context (connect/disconnect) and read from audio threads. `URLSessionWebSocketTask.send` is thread-safe and doesn't need the main thread.
 
@@ -177,7 +187,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 2. `AVAudioEngine` with input node tap → AVAudioConverter → 16kHz mono PCM16 (same format as macOS mic path)
 3. `onAudioBuffer` callback → DeepgramService
 4. No system audio, no mixing, no ring buffer, no source dominance tracking (all stubs)
-5. `dominantSource()` always returns `.mic` — all speakers tagged as "You" unless Deepgram's native diarization separates them
+5. `sourceLookup` is never set on iOS — Deepgram's native diarization handles multi-speaker separation. Speakers show as "Speaker 1", "Speaker 2", etc. (no "You" label since mic/system separation isn't possible)
 
 ### System Audio permission (macOS only)
 - Uses `AudioHardwareCreateProcessTap` (Core Audio, macOS 14.2+) instead of ScreenCaptureKit. This lands the app in **"System Audio Recording Only"** permission category (like Granola) rather than "Screen Recording".
@@ -197,6 +207,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Onboarding** (first launch): Mode selection — "Early Adopter" (managed, 500 min/month) or "Bring Your Own Keys"
 - **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; model selector, audio source panel, start button; cog button (top-right) opens settings
 - **Home (limit reached)**: In managed mode when 500 min used — inline "switch to BYOK" prompt, start button disabled
+- **Home (device disabled)**: In managed mode when admin has disabled the device — shows "account disabled" message, start button hidden
 - **Recording**: TerminalHeader with red dot + timer, stop button, dual labeled waveforms (mic green, system blue), transcript, notes, live insights
 - **Stopped session**: Same layout; rec button shows "cont" (same position as stop — model selector sits after the button, status dot hidden when not recording). Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
 - **History**: Sidebar list → detail view
@@ -227,7 +238,8 @@ Two parallel modes, no conflicts:
 ### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
 - Stack: Next.js 14 (App Router, edge runtime), TypeScript, Vercel, Upstash Redis via `@vercel/kv`
-- All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.4.0") tracked per device in Redis
+- All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.5.0") and `X-Platform` header (`"macos"` / `"ios"`) tracked per device in Redis
+- Device disable/enable via admin dashboard — disabled devices get 403 `device_disabled` on all endpoints; app shows "account disabled" message and blocks recording
 - API key is XOR-obfuscated in `MinitiAPIService.swift` (not plain text in source/binary)
 - Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
@@ -291,11 +303,25 @@ Optional third `AppMode.local` — fully offline, no API keys or backend. Runs t
 Direct notarized distribution via DMG (not Mac App Store — sandbox restrictions block `AudioHardwareCreateProcessTap`).
 
 ### Release workflow
+
+#### macOS
 1. Bump version in `Miniti/Info.plist`, `MinitiMobile/Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION` — 6 places: 2 per target × 3 targets, Debug + Release). All targets share the same version number.
 2. Xcode: **Product → Archive → Distribute App → Developer ID → Upload** (notarizes automatically)
-3. Export the notarized `Miniti.app`
-4. Run `./scripts/build-dmg.sh /path/to/Miniti.app` → produces `Miniti-<version>.dmg`
-5. Upload DMG to website / GitHub Releases
+3. Export the notarized `miniti.app`
+4. Run `./scripts/build-dmg.sh miniti.app` → produces `miniti-<version>.dmg`
+5. replace proton drive dmg
+
+#### iOS
+1. Bump version (same step as macOS — shared version across all targets)
+2. Xcode: **Product → Archive → Distribute App → App Store Connect → Upload**
+3. Wait for Apple to process the build (~5–15 min)
+4. Go to [App Store Connect](https://appstoreconnect.apple.com) → MinitiMobile → TestFlight → External Testing
+5. Add the new build to the external testers group
+6. Add test instructions describing what changed and what to test
+7. Submit for review — wait for Apple's TestFlight review (can take a few days). The TestFlight link stays the same; testers get the new build automatically once approved.
+
+#### After both platforms
+1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
 
 ### `scripts/build-dmg.sh`
 - Requires `create-dmg` (auto-installed via Homebrew if missing)

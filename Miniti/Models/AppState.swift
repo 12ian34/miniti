@@ -95,6 +95,7 @@ final class AppState: ObservableObject {
     @Published var usageInfo: MinitiAPIService.UsageInfo?
     @Published var isLoadingUsage = false
     @Published var managedSessionError: String?
+    @Published var isDeviceDisabled = false
     private var currentSessionId: String?
     private var tempDeepgramKey: String?
     
@@ -110,7 +111,7 @@ final class AppState: ObservableObject {
         case .byok:
             return !deepgramApiKey.isEmpty
         case .managed:
-            return !(usageInfo?.isLimitReached ?? false)
+            return !isDeviceDisabled && !(usageInfo?.isLimitReached ?? false)
         }
     }
     
@@ -726,7 +727,9 @@ final class AppState: ObservableObject {
         deepgramService.configure(apiKey: apiKey)
         
         // Wire up source dominance tracking so Deepgram can separate mic vs system speakers.
-        // Only active when both mic and system audio are enabled.
+        // Only active on macOS when both mic and system audio are enabled.
+        // On iOS there's no system audio — let Deepgram's native diarization handle speakers.
+        #if os(macOS)
         if captureMicrophone && captureSystemAudio {
             audioCaptureService.resetSourceTracking()
             deepgramService.sourceLookup = { [weak audioCaptureService] start, end in
@@ -735,6 +738,9 @@ final class AppState: ObservableObject {
         } else {
             deepgramService.sourceLookup = nil
         }
+        #else
+        deepgramService.sourceLookup = nil
+        #endif
         
         deepgramService.connect(model: selectedModel)
         
@@ -794,8 +800,10 @@ final class AppState: ObservableObject {
         } catch let error as MinitiAPIService.ServiceError {
             switch error {
             case .limitReached(_, _):
-                // Refresh usage to get current state
                 await refreshUsage()
+                managedSessionError = error.localizedDescription
+            case .deviceDisabled:
+                isDeviceDisabled = true
                 managedSessionError = error.localizedDescription
             default:
                 managedSessionError = error.localizedDescription
@@ -1108,10 +1116,13 @@ final class AppState: ObservableObject {
         
         do {
             usageInfo = try await minitiAPIService.checkUsage(deviceId: deviceId)
+            isDeviceDisabled = false
             print("[AppState] Usage: \(usageInfo?.minutesUsed ?? 0)/\(usageInfo?.minutesLimit ?? 0) min")
+        } catch MinitiAPIService.ServiceError.deviceDisabled {
+            isDeviceDisabled = true
+            print("[AppState] Device is disabled")
         } catch {
             print("[AppState] Failed to check usage: \(error)")
-            // Don't block usage on network errors — allow recording and let backend reject if needed
         }
         
         isLoadingUsage = false
@@ -1153,7 +1164,8 @@ final class AppState: ObservableObject {
         let state = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.title ?? "",
             isRecording: true,
-            currentTranscript: ""
+            currentTranscript: "",
+            elapsedSeconds: nil
         )
         
         do {
@@ -1173,7 +1185,8 @@ final class AppState: ObservableObject {
         let state = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.title ?? "",
             isRecording: isRecording,
-            currentTranscript: currentTranscriptLine
+            currentTranscript: currentTranscriptLine,
+            elapsedSeconds: isRecording ? nil : Int(recordingDuration)
         )
         lastLiveActivityUpdate = Date()
         Task {
@@ -1205,7 +1218,8 @@ final class AppState: ObservableObject {
         let finalState = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.title ?? "",
             isRecording: false,
-            currentTranscript: ""
+            currentTranscript: "",
+            elapsedSeconds: Int(recordingDuration)
         )
         Task {
             await activity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)

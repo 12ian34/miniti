@@ -28,7 +28,6 @@
 		A10000010000000000000019 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
 		A10000010000000000000020 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
 		A10000010000000000000023 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
-/* iOS target build files — shared sources */
 		C10000010000000000000001 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		C10000010000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		C10000010000000000000003 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
@@ -42,22 +41,17 @@
 		C10000010000000000000011 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000020 /* OnboardingView.swift */; };
 		C10000010000000000000012 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
 		C10000010000000000000013 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
-/* iOS target build files — iOS-only sources */
 		C10000010000000000000014 /* MinitiApp_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000001 /* MinitiApp_iOS.swift */; };
 		C10000010000000000000015 /* AudioCaptureService_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000002 /* AudioCaptureService_iOS.swift */; };
 		C10000010000000000000016 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000003 /* MainTabView.swift */; };
 		C10000010000000000000017 /* MeetingView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000004 /* MeetingView_iOS.swift */; };
 		C10000010000000000000018 /* SettingsView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000005 /* SettingsView_iOS.swift */; };
 		C10000010000000000000019 /* HistoryView_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000006 /* HistoryView_iOS.swift */; };
-/* iOS target resources */
 		C10000010000000000000020 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000013 /* Assets.xcassets */; };
-/* Shared file build refs */
 		E10000010000000000000001 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000001 /* RecordingActivityAttributes.swift */; };
 		E10000010000000000000002 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000001 /* RecordingActivityAttributes.swift */; };
-/* Live Activity extension build files */
 		E10000010000000000000003 /* MinitiLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000002 /* MinitiLiveActivityBundle.swift */; };
 		E10000010000000000000004 /* MinitiLiveActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */; };
-/* Embed extension in MinitiMobile */
 		E10000010000000000000005 /* MinitiLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E30000010000000000000001 /* MinitiLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -109,8 +103,7 @@
 		A20000010000000000000021 /* UsageBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBanner.swift; sourceTree = "<group>"; };
 		A20000010000000000000022 /* LimitReachedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitReachedView.swift; sourceTree = "<group>"; };
 		A20000010000000000000023 /* ColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPalette.swift; sourceTree = "<group>"; };
-		A30000010000000000000001 /* Miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
-/* iOS target file references */
+		A30000010000000000000001 /* Miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = Miniti.app; path = miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000002 /* AudioCaptureService_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000003 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -120,9 +113,7 @@
 		C20000010000000000000007 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		C20000010000000000000008 /* MinitiMobile.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = MinitiMobile.entitlements; sourceTree = "<group>"; };
 		C30000010000000000000001 /* MinitiMobile.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinitiMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
-/* Shared file references */
 		E20000010000000000000001 /* RecordingActivityAttributes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingActivityAttributes.swift; sourceTree = "<group>"; };
-/* Live Activity extension file references */
 		E20000010000000000000002 /* MinitiLiveActivityBundle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiLiveActivityBundle.swift; sourceTree = "<group>"; };
 		E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiLiveActivityLiveActivity.swift; sourceTree = "<group>"; };
 		E20000010000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -237,7 +228,6 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
-/* iOS target groups */
 		C50000010000000000000001 /* MinitiMobile */ = {
 			isa = PBXGroup;
 			children = (
@@ -261,7 +251,6 @@
 			path = Views;
 			sourceTree = "<group>";
 		};
-/* Live Activity extension group */
 		E50000010000000000000001 /* MinitiLiveActivity */ = {
 			isa = PBXGroup;
 			children = (
@@ -272,7 +261,6 @@
 			path = MinitiLiveActivity;
 			sourceTree = "<group>";
 		};
-/* Shared group */
 		E50000010000000000000002 /* Shared */ = {
 			isa = PBXGroup;
 			children = (
@@ -436,7 +424,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-/* Shared sources */
 				C10000010000000000000001 /* Meeting.swift in Sources */,
 				C10000010000000000000002 /* AppState.swift in Sources */,
 				C10000010000000000000003 /* ColorPalette.swift in Sources */,
@@ -450,9 +437,7 @@
 				C10000010000000000000011 /* OnboardingView.swift in Sources */,
 				C10000010000000000000012 /* UsageBanner.swift in Sources */,
 				C10000010000000000000013 /* LimitReachedView.swift in Sources */,
-/* Shared sources — Live Activity */
 				E10000010000000000000001 /* RecordingActivityAttributes.swift in Sources */,
-/* iOS-only sources */
 				C10000010000000000000014 /* MinitiApp_iOS.swift in Sources */,
 				C10000010000000000000015 /* AudioCaptureService_iOS.swift in Sources */,
 				C10000010000000000000016 /* MainTabView.swift in Sources */,
@@ -462,7 +447,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-/* Live Activity extension sources */
 		E70000010000000000000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -474,6 +458,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EA0000010000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E60000010000000000000001 /* MinitiLiveActivityExtension */;
+			targetProxy = E90000010000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		B10000010000000000000001 /* Debug */ = {
@@ -598,7 +590,6 @@
 			};
 			name = Release;
 		};
-/* macOS target configs (unchanged) */
 		B10000010000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -627,7 +618,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -664,7 +655,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -673,7 +664,6 @@
 			};
 			name = Release;
 		};
-/* iOS target configs */
 		D10000010000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -687,11 +677,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = miniti;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Miniti needs microphone access to transcribe your voice during meetings.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -699,12 +690,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
@@ -725,11 +717,12 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = miniti;
+				INFOPLIST_KEY_ITSAppUsesNonExemptEncryption = NO;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.productivity";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Miniti needs microphone access to transcribe your voice during meetings.";
+				INFOPLIST_KEY_NSSupportsLiveActivities = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -737,12 +730,13 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
+				MARKETING_VERSION = 1.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
@@ -751,7 +745,6 @@
 			};
 			name = Release;
 		};
-/* Live Activity extension configs */
 		F10000010000000000000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -768,8 +761,8 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.live-activity;
+				MARKETING_VERSION = 1.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -796,8 +789,8 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.5.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.live-activity;
+				MARKETING_VERSION = 1.6.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
@@ -810,14 +803,6 @@
 			name = Release;
 		};
 /* End XCBuildConfiguration section */
-
-/* Begin PBXTargetDependency section */
-		EA0000010000000000000001 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = E60000010000000000000001 /* MinitiLiveActivityExtension */;
-			targetProxy = E90000010000000000000001 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin XCConfigurationList section */
 		A80000010000000000000001 /* Build configuration list for PBXNativeTarget "Miniti" */ = {

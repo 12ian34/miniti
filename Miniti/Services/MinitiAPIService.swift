@@ -50,6 +50,11 @@ final class MinitiAPIService: @unchecked Sendable {
         request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
+        #if os(iOS)
+        request.setValue("ios", forHTTPHeaderField: "X-Platform")
+        #else
+        request.setValue("macos", forHTTPHeaderField: "X-Platform")
+        #endif
         
         if let body {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -157,6 +162,7 @@ final class MinitiAPIService: @unchecked Sendable {
     
     enum ServiceError: LocalizedError {
         case limitReached(minutesUsed: Double, resetsAt: Date?)
+        case deviceDisabled
         case networkError(Error)
         case invalidResponse
         case serverError(String)
@@ -166,6 +172,8 @@ final class MinitiAPIService: @unchecked Sendable {
             switch self {
             case .limitReached(let used, _):
                 return "Monthly limit reached (\(Int(used)) min used)."
+            case .deviceDisabled:
+                return "Your account has been disabled. Contact support."
             case .networkError(let error):
                 return "Network error: \(error.localizedDescription)"
             case .invalidResponse:
@@ -213,6 +221,11 @@ final class MinitiAPIService: @unchecked Sendable {
         request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
+        #if os(iOS)
+        request.setValue("ios", forHTTPHeaderField: "X-Platform")
+        #else
+        request.setValue("macos", forHTTPHeaderField: "X-Platform")
+        #endif
         
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
@@ -308,7 +321,6 @@ final class MinitiAPIService: @unchecked Sendable {
         case 200...299:
             return // OK
         case 402:
-            // Payment required — limit reached
             if let apiError = try? Self.decoder.decode(APIError.self, from: data) {
                 throw ServiceError.limitReached(
                     minutesUsed: apiError.minutesUsed ?? 500,
@@ -316,6 +328,12 @@ final class MinitiAPIService: @unchecked Sendable {
                 )
             }
             throw ServiceError.limitReached(minutesUsed: 500, resetsAt: nil)
+        case 403:
+            if let apiError = try? Self.decoder.decode(APIError.self, from: data),
+               apiError.error == "device_disabled" {
+                throw ServiceError.deviceDisabled
+            }
+            throw ServiceError.serverError("Access denied")
         case 429:
             throw ServiceError.rateLimited
         default:

@@ -13,5 +13,7 @@ struct RecordingActivityAttributes: ActivityAttributes {
         var isRecording: Bool
         /// The most recent transcript line (interim or last finalized segment).
         var currentTranscript: String
+        /// Elapsed seconds when recording was stopped. Used to show frozen timer instead of live counter.
+        var elapsedSeconds: Int?
     }
 }

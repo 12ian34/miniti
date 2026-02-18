@@ -2,117 +2,142 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
+private let recordingRed = "F85149"
+private let pausedGray = "6E7681"
+private let timerGreen = "3FB950"
+
 struct MinitiLiveActivityLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: RecordingActivityAttributes.self) { context in
-            // MARK: - Lock Screen / Banner UI
             lockScreenView(context: context)
         } dynamicIsland: { context in
             DynamicIsland {
                 // MARK: - Expanded Dynamic Island
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: 5) {
                         Circle()
-                            .fill(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
-                            .frame(width: 8, height: 8)
-                        Text(context.state.isRecording ? "REC" : "PAUSED")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
+                            .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
+                            .frame(width: 7, height: 7)
+                        Text(context.state.isRecording ? "REC" : "STOPPED")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                     }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
-                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color(hex: "3FB950"))
-                        .monospacedDigit()
+                    timerView(context: context, size: 15, weight: .bold)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                DynamicIslandExpandedRegion(.center) {
-                    if !context.state.meetingTitle.isEmpty {
-                        Text(context.state.meetingTitle)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.white)
-                            .lineLimit(1)
-                    }
-                }
                 DynamicIslandExpandedRegion(.bottom) {
-                    if !context.state.currentTranscript.isEmpty {
-                        Text(context.state.currentTranscript)
-                            .font(.system(size: 12, weight: .regular))
-                            .foregroundStyle(Color(hex: "8B949E"))
-                            .lineLimit(2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.top, 2)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if !context.state.meetingTitle.isEmpty {
+                            Text(context.state.meetingTitle)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Color(hex: context.state.isRecording ? "E6EDF3" : pausedGray))
+                                .lineLimit(1)
+                        }
+                        if !context.state.isRecording {
+                            Text("tap to return to miniti")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "3F3F46"))
+                        } else if !context.state.currentTranscript.isEmpty {
+                            Text(context.state.currentTranscript)
+                                .font(.system(size: 12, weight: .regular))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                                .lineLimit(2)
+                        }
+                        HStack {
+                            Spacer()
+                            Text("miniti")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "3F3F46"))
+                        }
                     }
-                    Text("miniti")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "484F58"))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } compactLeading: {
-                // MARK: - Compact Leading: Red recording dot
                 Circle()
-                    .fill(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
-                    .frame(width: 8, height: 8)
+                    .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
+                    .frame(width: 6, height: 6)
+                    .padding(.leading, 4)
             } compactTrailing: {
-                // MARK: - Compact Trailing: Elapsed timer
-                Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "3FB950"))
-                    .monospacedDigit()
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    timerView(context: context, size: 12, weight: .semibold)
+                }
             } minimal: {
-                // MARK: - Minimal: Just the red dot
                 Circle()
-                    .fill(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
+                    .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                     .frame(width: 8, height: 8)
             }
         }
+    }
+
+    // MARK: - Timer View
+
+    /// Shows live counting timer when recording, frozen static time when stopped.
+    @ViewBuilder
+    private func timerView(context: ActivityViewContext<RecordingActivityAttributes>, size: CGFloat, weight: Font.Weight) -> some View {
+        if context.state.isRecording {
+            Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
+                .font(.system(size: size, weight: weight, design: .monospaced))
+                .foregroundStyle(Color(hex: timerGreen))
+        } else if let elapsed = context.state.elapsedSeconds {
+            Text(formatDuration(elapsed))
+                .font(.system(size: size, weight: weight, design: .monospaced))
+                .foregroundStyle(Color(hex: pausedGray))
+        } else {
+            Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
+                .font(.system(size: size, weight: weight, design: .monospaced))
+                .foregroundStyle(Color(hex: pausedGray))
+        }
+    }
+
+    private func formatDuration(_ seconds: Int) -> String {
+        let m = seconds / 60
+        let s = seconds % 60
+        return String(format: "%d:%02d", m, s)
     }
 
     // MARK: - Lock Screen Banner
 
     @ViewBuilder
     private func lockScreenView(context: ActivityViewContext<RecordingActivityAttributes>) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 0) {
-                // Left side: recording indicator + title
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
-                            .frame(width: 8, height: 8)
-                        Text(context.state.isRecording ? "Recording" : "Paused")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(context.state.isRecording ? Color(hex: "F85149") : Color(hex: "6E7681"))
-                    }
-                    if !context.state.meetingTitle.isEmpty {
-                        Text(context.state.meetingTitle)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(Color(hex: "C9D1D9"))
-                            .lineLimit(1)
-                    }
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
+                        .frame(width: 8, height: 8)
+                    Text(context.state.isRecording ? "Recording" : "Stopped")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                 }
-
-                Spacer()
-
-                // Right side: elapsed timer
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color(hex: "3FB950"))
-                        .monospacedDigit()
-                    Text("miniti")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "484F58"))
+                if !context.state.meetingTitle.isEmpty {
+                    Text(context.state.meetingTitle)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color(hex: context.state.isRecording ? "C9D1D9" : pausedGray))
+                        .lineLimit(1)
+                }
+                if !context.state.isRecording {
+                    Text("tap to return to miniti")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "3F3F46"))
+                } else if !context.state.currentTranscript.isEmpty {
+                    Text(context.state.currentTranscript)
+                        .font(.system(size: 12, weight: .regular))
+                        .foregroundStyle(Color(hex: "8B949E"))
+                        .lineLimit(2)
+                        .padding(.top, 2)
                 }
             }
 
-            // Live transcript line
-            if !context.state.currentTranscript.isEmpty {
-                Text(context.state.currentTranscript)
-                    .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(Color(hex: "8B949E"))
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer()
+
+            VStack(alignment: .trailing, spacing: 2) {
+                timerView(context: context, size: 22, weight: .bold)
+                Text("miniti")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "3F3F46"))
             }
         }
         .padding(.horizontal, 16)
