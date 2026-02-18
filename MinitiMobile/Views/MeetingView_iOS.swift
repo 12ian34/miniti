@@ -487,7 +487,7 @@ struct UpdateAvailableBanner_iOS: View {
     
     var body: some View {
         Button {
-            if let url = URL(string: versionInfo.downloadUrl) {
+            if let url = URL(string: "itms-beta://") {
                 openURL(url)
             }
         } label: {
@@ -500,12 +500,9 @@ struct UpdateAvailableBanner_iOS: View {
                 }
                 .foregroundStyle(ColorPalette.Accent.blue)
                 
-                if let notes = versionInfo.releaseNotes, !notes.isEmpty {
-                    Text(notes)
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                        .lineLimit(1)
-                }
+                Text("update via TestFlight")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
