@@ -139,6 +139,15 @@ struct SettingsView_iOS: View {
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                             .foregroundStyle(.secondary)
                     }
+                    Link(destination: URL(string: "https://ianahuja.com/miniti/privacy/")!) {
+                        HStack {
+                            Text("Privacy & Terms")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .navigationTitle("Settings")

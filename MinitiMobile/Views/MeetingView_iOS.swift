@@ -294,6 +294,8 @@ struct MeetingView_iOS: View {
 
 struct ReadyStateView_iOS: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var wasMonitoringBeforeBackground = false
     
     var body: some View {
         VStack(spacing: 24) {
@@ -342,8 +344,18 @@ struct ReadyStateView_iOS: View {
                 UpdateAvailableBanner_iOS(versionInfo: update)
             }
             
-            // Start button
-            if appState.isLimitReached {
+            // Start button or blocked state
+            if appState.isDeviceDisabled {
+                VStack(spacing: 8) {
+                    Text("account disabled")
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Status.limitReached)
+                    
+                    Text("contact support for help")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            } else if appState.isLimitReached {
                 VStack(spacing: 8) {
                     Text("Monthly limit reached")
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
@@ -383,6 +395,15 @@ struct ReadyStateView_iOS: View {
         .padding()
         .onAppear { appState.startAudioMonitoring() }
         .onDisappear { appState.stopAudioMonitoring() }
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .active, wasMonitoringBeforeBackground {
+                appState.startAudioMonitoring()
+                wasMonitoringBeforeBackground = false
+            } else if newPhase == .background, appState.isMonitoring {
+                wasMonitoringBeforeBackground = true
+                appState.stopAudioMonitoring()
+            }
+        }
     }
 }
 
