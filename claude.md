@@ -27,6 +27,9 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
+### Unreleased - v1.6.1
+- Fix iOS update banner linking to Proton Drive DMG instead of TestFlight
+
 ### 2026-02-18 - v1.6.0 (current)
 - Send platform identifier (macOS/iOS) with all backend requests for admin dashboard tracking
 - Show "account disabled" message when a device has been disabled by admin
@@ -296,6 +299,9 @@ Optional third `AppMode.local` — fully offline, no API keys or backend. Runs t
 - [ ] **Multi-speaker diarization within system audio (local mode)** — match Deepgram's cloud capability
 - [ ] **On-device model management UI** — download, select, and delete whisper.cpp / LLM models from Settings
 - [ ] **Hybrid mode** — use local transcription but cloud LLM (or vice versa) for best quality/cost balance
+- [ ] **CRM integration** — auto-update CRM fields (starting with Attio) after meetings. Map MEDDPICC insights and action items to CRM opportunity fields, push call notes and next steps automatically. Reduces manual data entry for sales reps.
+- [ ] **Windows app** — native Windows client to reach non-Apple users. Likely C++/Qt or Electron with same backend services. System audio capture via WASAPI loopback.
+- [ ] **Custom insight templates** — user-defined templates beyond Standard and MEDDPICC. Examples: BANT, SPIN Selling, customer success check-in, interview scorecard, standup notes. Template editor in Settings with customizable sections and prompts.
 
 ## Distribution
 
