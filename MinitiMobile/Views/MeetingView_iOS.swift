@@ -5,20 +5,21 @@ struct MeetingView_iOS: View {
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
     @State private var activeSection: MeetingSection = .transcript
+    @State private var showDiscardConfirmation = false
     
     enum MeetingSection: String, CaseIterable {
-        case transcript = "Transcript"
-        case insights = "Insights"
-        case notes = "Notes"
+        case transcript = "transcript"
+        case insights = "insights"
+        case notes = "notes"
     }
     
     var body: some View {
         NavigationStack {
             Group {
-                if appState.currentMeeting == nil && !appState.isRecording {
-                    ReadyStateView_iOS()
-                } else {
+                if appState.isRecording || (appState.currentMeeting != nil && !appState.isStartingMeeting) {
                     activeSessionView
+                } else {
+                    ReadyStateView_iOS()
                 }
             }
             .background(ColorPalette.Background.primary)
@@ -29,13 +30,9 @@ struct MeetingView_iOS: View {
     
     private var activeSessionView: some View {
         VStack(spacing: 0) {
-            // Recording header
             recordingHeader
-            
-            // Section picker
             sectionPicker
             
-            // Content
             Group {
                 switch activeSection {
                 case .transcript:
@@ -47,8 +44,18 @@ struct MeetingView_iOS: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            
+            controlBar
         }
         .background(ColorPalette.Background.primary)
+        .alert("Discard recording?", isPresented: $showDiscardConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Discard", role: .destructive) {
+                appState.discardCurrentMeeting()
+            }
+        } message: {
+            Text("This can't be undone.")
+        }
         .onAppear {
             meetingTitle = appState.currentMeeting?.title ?? ""
         }
@@ -62,143 +69,167 @@ struct MeetingView_iOS: View {
     // MARK: - Recording Header
     
     private var recordingHeader: some View {
-        VStack(spacing: 12) {
-            // Status + timer (only when recording)
-            if appState.isRecording {
+        let isStopped = !appState.isRecording
+        
+        return VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Color.clear.frame(width: 60, height: 1)
+                
+                Spacer()
+                
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(Color(hex: "F85149"))
+                        .fill(isStopped ? ColorPalette.Text.disabled : Color(hex: "F85149"))
                         .frame(width: 8, height: 8)
                     
                     Text(appState.formattedDuration)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .foregroundStyle(isStopped ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
                 }
-            }
-            
-            // Waveform
-            if appState.isRecording || appState.isMonitoring {
-                SourceWaveform_iOS(
-                    level: appState.microphoneLevel,
-                    color: ColorPalette.Speaker.mic
-                )
-                .frame(height: 24)
-                .padding(.horizontal)
-            }
-            
-            // Control buttons — centered layout matching macOS terminal style
-            HStack(spacing: 12) {
-                // Home button (stopped state only)
-                if appState.currentMeeting != nil && !appState.isRecording {
+                
+                Spacer()
+                
+                HStack(spacing: 4) {
                     Button {
                         appState.goHome()
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "house")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("home")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        }
-                        .foregroundStyle(ColorPalette.Text.secondary)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "1C1C1F"))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color(hex: "30363D"), lineWidth: 1)
-                        )
+                        Image(systemName: "house")
+                            .font(.system(size: 14))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .padding(6)
                     }
-                }
-                
-                // Main record/stop/resume button — terminal style
-                Button {
-                    toggleRecording()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: appState.isRecording ? "stop.fill" : "record.circle")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text(recordButtonLabel)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    }
-                    .foregroundStyle(recordButtonColor)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(recordButtonColor.opacity(0.15))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(recordButtonColor.opacity(0.3), lineWidth: 1)
-                    )
-                }
-                
-                // Save button (stopped state only)
-                if appState.currentMeeting != nil && !appState.isRecording {
-                    Button {
-                        appState.goHome()
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("save")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        }
-                        .foregroundStyle(Color(hex: "58A6FF"))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "58A6FF").opacity(0.12))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color(hex: "58A6FF").opacity(0.3), lineWidth: 1)
-                        )
-                    }
-                }
-                
-                // Copy button
-                if !appState.liveSegments.isEmpty && !appState.isRecording {
+                    
                     Button {
                         copyToClipboard(appState.fullMeetingAsMarkdown())
                     } label: {
                         Image(systemName: "doc.on.doc")
                             .font(.system(size: 14))
                             .foregroundStyle(ColorPalette.Text.muted)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(hex: "1C1C1F"))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color(hex: "30363D"), lineWidth: 1)
-                            )
+                            .padding(6)
                     }
                 }
+                .frame(width: 60, alignment: .trailing)
+                .opacity(isStopped ? 1 : 0)
+                .allowsHitTesting(isStopped)
             }
+            .padding(.horizontal, 12)
+            
+            SourceWaveform_iOS(
+                level: appState.isRecording ? appState.microphoneLevel : 0,
+                color: ColorPalette.Speaker.mic
+            )
+            .frame(height: 24)
+            .opacity(appState.isRecording ? 1 : 0)
+            .padding(.horizontal)
         }
         .padding(.vertical, 12)
         .background(ColorPalette.Background.secondary)
     }
     
-    private var recordButtonLabel: String {
-        if appState.isRecording {
-            return "stop"
-        } else if appState.currentMeeting != nil {
-            return "resume"
-        } else {
-            return "rec"
+    // MARK: - Control Bar (bottom)
+    
+    private var controlBar: some View {
+        let isStopped = appState.currentMeeting != nil && !appState.isRecording
+        
+        return ZStack {
+            // Stop button (always laid out, visible when recording)
+            stopButton
+                .opacity(appState.isRecording ? 1 : 0)
+                .allowsHitTesting(appState.isRecording)
+            
+            // Resume button (always laid out, visible when stopped)
+            resumeButton
+                .opacity(isStopped ? 1 : 0)
+                .allowsHitTesting(isStopped)
+            
+            // Discard + save (always laid out, visible when stopped)
+            HStack {
+                terminalButton(icon: "trash", label: "discard", color: Color(hex: "F85149"), bgColor: Color(hex: "F85149").opacity(0.12), borderColor: Color(hex: "F85149").opacity(0.3)) {
+                    showDiscardConfirmation = true
+                }
+                
+                Spacer()
+                
+                terminalButton(icon: "checkmark", label: "save", color: Color(hex: "58A6FF"), bgColor: Color(hex: "58A6FF").opacity(0.12), borderColor: Color(hex: "58A6FF").opacity(0.3)) {
+                    appState.goHome()
+                }
+            }
+            .opacity(isStopped ? 1 : 0)
+            .allowsHitTesting(isStopped)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Background.secondary)
+    }
+    
+    private var stopButton: some View {
+        Button {
+            appState.stopRecording()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "stop.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("stop")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            }
+            .foregroundStyle(Color(hex: "F85149"))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(hex: "F85149").opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color(hex: "F85149").opacity(0.3), lineWidth: 1)
+            )
         }
     }
     
-    private var recordButtonColor: Color {
-        appState.isRecording ? Color(hex: "F85149") : Color(hex: "3FB950")
+    private var resumeButton: some View {
+        Button {
+            appState.startRecording()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "record.circle")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("resume")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+            }
+            .foregroundStyle(Color(hex: "3FB950"))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color(hex: "3FB950").opacity(0.15))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color(hex: "3FB950").opacity(0.3), lineWidth: 1)
+            )
+        }
+    }
+    
+    private func terminalButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(bgColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(borderColor, lineWidth: 1)
+            )
+        }
     }
     
     // MARK: - Section Picker
@@ -240,25 +271,46 @@ struct MeetingView_iOS: View {
     private var liveInsightsContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Mode selector
-                HStack {
-                    Text("Mode:")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                    
-                    Picker("Insights Mode", selection: $appState.insightsMode) {
-                        Text("Standard").tag(InsightsMode.standard)
-                        Text("MEDDPICC").tag(InsightsMode.meddpicc)
-                    }
-                    .pickerStyle(.segmented)
-                }
-                .padding(.horizontal)
+                insightsModePicker
                 
                 InsightsView()
                     .padding(.horizontal)
             }
             .padding(.vertical)
         }
+    }
+    
+    private var insightsModePicker: some View {
+        HStack(spacing: 0) {
+            ForEach(InsightsMode.allCases, id: \.self) { mode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        appState.switchInsightsMode(to: mode)
+                    }
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.system(size: 12, weight: appState.insightsMode == mode ? .bold : .medium, design: .monospaced))
+                        .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            appState.insightsMode == mode
+                                ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
+                                : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
+                        )
+                }
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(hex: "09090B"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "27272A"), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal)
     }
     
     // MARK: - Notes Editor
@@ -275,16 +327,6 @@ struct MeetingView_iOS: View {
     
     // MARK: - Actions
     
-    private func toggleRecording() {
-        if appState.isRecording {
-            appState.stopRecording()
-        } else if appState.currentMeeting != nil {
-            appState.startRecording()
-        } else {
-            appState.startNewMeeting()
-        }
-    }
-    
     private func copyToClipboard(_ text: String) {
         UIPasteboard.general.string = text
     }
@@ -295,10 +337,22 @@ struct MeetingView_iOS: View {
 struct ReadyStateView_iOS: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
-    @State private var wasMonitoringBeforeBackground = false
+    @State private var isMicTesting = false
     
     var body: some View {
         VStack(spacing: 24) {
+            // Settings gear (top right)
+            HStack {
+                Spacer()
+                NavigationLink(destination: SettingsView_iOS()) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(8)
+                }
+            }
+            .padding(.horizontal)
+            
             Spacer()
             
             // Logo
@@ -319,24 +373,59 @@ struct ReadyStateView_iOS: View {
                 BYOKStatusPills()
             }
             
-            // Mic waveform (monitoring)
-            if appState.isMonitoring {
-                VStack(spacing: 4) {
-                    HStack(spacing: 6) {
-                        Circle()
-                            .fill(ColorPalette.Speaker.mic)
-                            .frame(width: 6, height: 6)
-                        Text("mic")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.muted)
+            // Test mic button with waveform overlay above it
+            VStack(spacing: 6) {
+                // Waveform sits in a fixed-height slot that's always reserved
+                ZStack {
+                    if isMicTesting && appState.isMonitoring {
+                        VStack(spacing: 4) {
+                            HStack(spacing: 6) {
+                                Circle()
+                                    .fill(ColorPalette.Speaker.mic)
+                                    .frame(width: 6, height: 6)
+                                Text("mic")
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.muted)
+                            }
+                            SourceWaveform_iOS(
+                                level: appState.microphoneLevel,
+                                color: ColorPalette.Speaker.mic
+                            )
+                            .frame(height: 20)
+                        }
+                        .transition(.opacity)
                     }
-                    SourceWaveform_iOS(
-                        level: appState.microphoneLevel,
-                        color: ColorPalette.Speaker.mic
-                    )
-                    .frame(height: 20)
                 }
+                .frame(height: 36)
                 .padding(.horizontal, 40)
+                
+                Button {
+                    if isMicTesting {
+                        isMicTesting = false
+                        appState.stopAudioMonitoring()
+                    } else {
+                        isMicTesting = true
+                        appState.startAudioMonitoring()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isMicTesting ? "mic.fill" : "mic")
+                            .font(.system(size: 12))
+                        Text(isMicTesting ? "stop test" : "test mic")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(isMicTesting ? ColorPalette.Speaker.mic : ColorPalette.Text.muted)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(isMicTesting ? ColorPalette.Speaker.mic.opacity(0.12) : ColorPalette.Background.secondary)
+                            .overlay(
+                                Capsule()
+                                    .strokeBorder(isMicTesting ? ColorPalette.Speaker.mic.opacity(0.3) : ColorPalette.Border.subtle, lineWidth: 1)
+                            )
+                    )
+                }
             }
             
             // Update available banner
@@ -369,38 +458,52 @@ struct ReadyStateView_iOS: View {
                 }
             } else {
                 Button {
-                    appState.startNewMeeting()
+                    if !appState.isStartingMeeting {
+                        appState.startNewMeeting()
+                    }
                 } label: {
                     HStack(spacing: 8) {
-                        Image(systemName: "record.circle")
-                            .font(.system(size: 18))
-                        Text("start")
-                            .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        if appState.isStartingMeeting {
+                            ProgressView()
+                                .tint(.white)
+                                .scaleEffect(0.8)
+                            Text("starting...")
+                                .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        } else {
+                            Image(systemName: "record.circle")
+                                .font(.system(size: 18))
+                            Text("start")
+                                .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                        }
                     }
                     .foregroundStyle(.white)
                     .padding(.horizontal, 32)
                     .padding(.vertical, 14)
                     .background(
                         Capsule()
-                            .fill(appState.canStartRecording
-                                  ? ColorPalette.Accent.green
-                                  : ColorPalette.Text.disabled)
+                            .fill(appState.isStartingMeeting
+                                  ? ColorPalette.Text.muted
+                                  : appState.canStartRecording
+                                      ? ColorPalette.Accent.green
+                                      : ColorPalette.Text.disabled)
                     )
                 }
-                .disabled(!appState.canStartRecording)
+                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
             }
             
             Spacer()
         }
         .padding()
-        .onAppear { appState.startAudioMonitoring() }
-        .onDisappear { appState.stopAudioMonitoring() }
+        .onDisappear {
+            if isMicTesting {
+                isMicTesting = false
+                appState.stopAudioMonitoring()
+            }
+        }
         .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active, wasMonitoringBeforeBackground {
+            if newPhase == .active, isMicTesting, !appState.isMonitoring {
                 appState.startAudioMonitoring()
-                wasMonitoringBeforeBackground = false
             } else if newPhase == .background, appState.isMonitoring {
-                wasMonitoringBeforeBackground = true
                 appState.stopAudioMonitoring()
             }
         }

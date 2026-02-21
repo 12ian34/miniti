@@ -5,16 +5,17 @@ struct InsightsView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Mode Selector
+            #if os(macOS)
+            // Mode Selector (macOS only — iOS has its own mode picker in MeetingView_iOS)
             InsightsModeSelector()
             
             Divider()
                 .background(Color(hex: "1C1C1F"))
+            #endif
             
             // Content
             Group {
                 if appState.isRecording || !appState.liveSummary.isEmpty {
-                    // Show live insights during/after recording
                     LiveInsightsContent()
                 } else if let meeting = appState.currentMeeting, meeting.hasInsights {
                     TerminalInsightsContent(meeting: meeting)
@@ -272,12 +273,11 @@ struct TerminalInsightsContent: View {
                 // Topics
                 if !meeting.topics.isEmpty {
                     TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
-                        HStack(spacing: 8) {
+                        FlowLayout(spacing: 8) {
                             ForEach(meeting.topics, id: \.self) { topic in
                                 TerminalTag(text: topic)
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -368,7 +368,7 @@ struct TerminalTag: View {
     let text: String
     
     var body: some View {
-        Text("#\(text.lowercased().replacingOccurrences(of: " ", with: "_"))")
+        Text("[\(text.lowercased().replacingOccurrences(of: " ", with: "_"))]")
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(Color(hex: "A371F7"))
             .padding(.horizontal, 8)

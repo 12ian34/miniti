@@ -9,7 +9,6 @@ struct MainTabView: View {
     enum MobileTab: String {
         case record = "Record"
         case history = "History"
-        case settings = "Settings"
     }
     
     var body: some View {
@@ -25,12 +24,6 @@ struct MainTabView: View {
                     Label("History", systemImage: "clock")
                 }
                 .tag(MobileTab.history)
-            
-            SettingsView_iOS()
-                .tabItem {
-                    Label("Settings", systemImage: "gear")
-                }
-                .tag(MobileTab.settings)
         }
         .tint(ColorPalette.Accent.green)
         .onAppear {
