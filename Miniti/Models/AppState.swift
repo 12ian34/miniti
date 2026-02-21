@@ -20,6 +20,7 @@ enum AppMode: String {
 final class AppState: ObservableObject {
     // MARK: - Recording State
     @Published var isRecording = false
+    @Published var isStartingMeeting = false
     @Published var currentMeeting: Meeting?
     @Published var recordingDuration: TimeInterval = 0
     
@@ -409,15 +410,17 @@ final class AppState: ObservableObject {
         liveTopics = insights.topics
         liveDiscussionFlow = insights.discussionFlow
         
-        // MEDDPICC fields
-        liveMetrics = insights.metrics
-        liveEconomicBuyer = insights.economicBuyer
-        liveDecisionCriteria = insights.decisionCriteria
-        liveDecisionProcess = insights.decisionProcess
-        livePaperProcess = insights.paperProcess
-        liveIdentifiedPain = insights.identifiedPain
-        liveChampion = insights.champion
-        liveCompetition = insights.competition
+        // Only overwrite MEDDPICC fields when in MEDDPICC mode (standard mode returns nil for these)
+        if insightsMode == .meddpicc {
+            liveMetrics = insights.metrics
+            liveEconomicBuyer = insights.economicBuyer
+            liveDecisionCriteria = insights.decisionCriteria
+            liveDecisionProcess = insights.decisionProcess
+            livePaperProcess = insights.paperProcess
+            liveIdentifiedPain = insights.identifiedPain
+            liveChampion = insights.champion
+            liveCompetition = insights.competition
+        }
         
         // Update meeting title if we got a suggestion
         if let suggestedTitle = insights.suggestedTitle,
@@ -446,10 +449,11 @@ final class AppState: ObservableObject {
             }
         case .managed:
             guard !isLimitReached else {
-                // Limit reached — UI should already show LimitReachedView
                 return
             }
         }
+        
+        isStartingMeeting = true
         
         // Save previous meeting if exists and has content
         saveCurrentMeetingIfNeeded()
@@ -514,6 +518,97 @@ final class AppState: ObservableObject {
         
         // Reset insights mode to standard for fresh start
         insightsMode = .standard
+    }
+    
+    /// Discard current meeting without saving — deletes from SwiftData and clears session
+    func discardCurrentMeeting() {
+        #if os(iOS)
+        endLiveActivity()
+        #endif
+        
+        if let meeting = currentMeeting, let modelContext {
+            modelContext.delete(meeting)
+            try? modelContext.save()
+        }
+        
+        clearCurrentSession()
+        insightsMode = .standard
+    }
+    
+    /// Generate standard + MEDDPICC insights for a saved meeting (used from history detail)
+    func generateInsightsForMeeting(_ meeting: Meeting) async {
+        let canGenerate: Bool
+        if appMode == .managed {
+            canGenerate = minitiAPIService != nil
+        } else {
+            canGenerate = insightsService != nil && !openaiApiKey.isEmpty
+        }
+        guard canGenerate else { return }
+        guard !meeting.fullTranscript.isEmpty else { return }
+        
+        isGeneratingInsights = true
+        let selectedModel = OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
+        
+        // Generate standard insights
+        do {
+            if appMode == .managed, let minitiAPIService {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await minitiAPIService.generateInsights(
+                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    existingSummary: nil, existingTitle: nil,
+                    mode: InsightsMode.standard.rawValue, model: selectedModel.rawValue
+                )
+                let insights = response.toLiveInsights()
+                meeting.summaryText = insights.summary
+                meeting.actionItems = insights.actionItems
+                meeting.topics = insights.topics
+                meeting.discussionFlow = insights.discussionFlow
+            } else {
+                let insights = try await insightsService!.generateInsights(
+                    transcript: meeting.fullTranscript,
+                    model: selectedModel, apiKey: openaiApiKey
+                )
+                meeting.summaryText = insights.summary
+                meeting.actionItems = insights.actionItems
+                meeting.keyDecisions = insights.decisions
+                meeting.topics = insights.topics
+            }
+        } catch {
+            print("[AppState] Failed to generate standard insights for history meeting: \(error)")
+        }
+        
+        // Generate MEDDPICC insights
+        do {
+            let meddpiccInsights: InsightsService.LiveInsights
+            if appMode == .managed, let minitiAPIService {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await minitiAPIService.generateInsights(
+                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    existingSummary: meeting.summaryText, existingTitle: nil,
+                    mode: InsightsMode.meddpicc.rawValue, model: selectedModel.rawValue
+                )
+                meddpiccInsights = response.toLiveInsights()
+            } else {
+                meddpiccInsights = try await insightsService!.generateLiveInsights(
+                    transcript: meeting.fullTranscript, existingSummary: meeting.summaryText,
+                    existingTitle: nil, mode: .meddpicc,
+                    model: selectedModel, apiKey: openaiApiKey
+                )
+            }
+            meeting.meddpiccMetrics = meddpiccInsights.metrics
+            meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
+            meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
+            meeting.meddpiccDecisionProcess = meddpiccInsights.decisionProcess
+            meeting.meddpiccPaperProcess = meddpiccInsights.paperProcess
+            meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
+            meeting.meddpiccChampion = meddpiccInsights.champion
+            meeting.meddpiccCompetition = meddpiccInsights.competition
+        } catch {
+            print("[AppState] Failed to generate MEDDPICC insights for history meeting: \(error)")
+        }
+        
+        try? modelContext?.save()
+        isGeneratingInsights = false
     }
     
     /// Restore an interrupted meeting (endTime == nil) from SwiftData on launch.
@@ -788,6 +883,8 @@ final class AppState: ObservableObject {
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
         
+        isStartingMeeting = false
+        
         // In managed mode, if we don't have a temp key (e.g. resuming after stop),
         // we must request a new one before connecting to Deepgram.
         if appMode == .managed && tempDeepgramKey == nil {
@@ -879,6 +976,7 @@ final class AppState: ObservableObject {
     private func startManagedRecording() async {
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
+            isStartingMeeting = false
             return
         }
         
@@ -894,6 +992,7 @@ final class AppState: ObservableObject {
             // Now start recording with the temp key
             startRecording()
         } catch let error as MinitiAPIService.ServiceError {
+            isStartingMeeting = false
             switch error {
             case .limitReached(_, _):
                 await refreshUsage()
@@ -906,6 +1005,7 @@ final class AppState: ObservableObject {
             }
             print("[AppState] Managed session failed: \(error)")
         } catch {
+            isStartingMeeting = false
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
             print("[AppState] Managed session failed: \(error)")
         }
@@ -950,17 +1050,15 @@ final class AppState: ObservableObject {
             tempDeepgramKey = nil
         }
         
-        // Finalize meeting (but keep as current session so user can resume)
+        // Finalize meeting (keep as current session so user can resume/save/discard)
         if let meeting = currentMeeting {
             meeting.endTime = Date()
             
-            // If we have content but no insights yet, generate them before saving
             let hasContent = !liveSegments.filter { 
                 $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
             }.isEmpty
             
-            if hasContent && liveSummary.isEmpty {
-                // Generate final insights then save
+            if hasContent {
                 Task {
                     await generateFinalInsightsAndSave()
                 }
@@ -975,6 +1073,7 @@ final class AppState: ObservableObject {
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
         currentMeeting = nil
+        isStartingMeeting = false
         liveSegments = []
         interimText = ""
         interimSpeaker = nil

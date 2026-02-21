@@ -236,7 +236,9 @@ Brief overview of the meeting...
 
 ### Meeting History
 - **Browse Past Meetings**: Searchable list with swipe-to-delete
-- **Meeting Detail**: Drill into transcript, insights, and notes for any meeting
+- **Meeting Detail**: Drill into transcript, insights (including MEDDPICC), and notes for any meeting
+- **Generate Insights**: Generate AI insights for past meetings that don't have them
+- **Editable Notes**: Add or edit notes on saved meetings
 - **Persisted with SwiftData**: Shared data model with macOS
 
 ### Notes

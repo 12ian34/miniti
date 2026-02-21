@@ -27,7 +27,33 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-20 - v1.6.1 (current)
+### 2026-02-22 - v1.7.1 (current)
+- Fix mic test on iOS home screen causing layout jump — waveform area always reserves space
+- Start button on iOS shows "starting..." with spinner instead of flashing the recording screen
+- Fix iOS recording header and controls jumping when toggling stop/resume — all elements stay in place using opacity transitions
+- Rearrange iOS controls: stop and resume share the same center position, discard on left, save on right; home and copy in the header
+- Display topics in square brackets instead of hashtags
+
+### 2026-02-21 - v1.7.0
+- Move iOS recording controls to bottom of the screen for easier thumb reach
+- Fix iOS buttons jumping when stop/resume changes — main action button stays centered
+- Fix momentary flash of stopped-state buttons when starting a new recording
+- Add discard button with confirmation when a recording is stopped
+- Fix MEDDPICC insights not saving on iOS — standard mode no longer overwrites MEDDPICC data, and both standard + MEDDPICC are always generated on stop
+- Generate insights for past meetings — "generate" button on history recordings that have no insights
+- Show MEDDPICC data in meeting history detail view
+- Collapse consecutive same-speaker segments into one block in saved meeting transcripts
+- Remove sparkles badge from iOS history meeting rows
+- Fix topics display on iOS — proper wrapping layout with consistent terminal-style tags
+- Edit notes on saved meetings in history
+- Remove Settings tab on iOS — settings accessible via gear icon on home screen
+- Replace iOS insights mode picker with custom tab bar matching the section picker style (lowercase, no descriptions)
+- Replace always-on mic waveform on iOS home with optional "test mic" button
+- Make all iOS section picker labels lowercase (transcript/insights/notes)
+- Replace native segmented picker in iOS history detail with custom dark tab bar
+- Fix iOS history navigation sometimes redirecting back to active recording
+
+### 2026-02-20 - v1.6.1
 - Fix iOS update banner linking to Proton Drive DMG instead of TestFlight
 - Auto-save recording every 30 seconds so transcript, insights, and notes are continuously preserved
 - Resume interrupted recordings on launch — if the app was killed while recording, reopening restores your session (transcript, insights, notes) so you can continue or save
@@ -178,6 +204,11 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **iOS background recording & kill recovery**: iOS can terminate backgrounded apps at any time (memory pressure, battery, etc.); there is no way to prevent this. Mitigations: (1) `UIBackgroundModes: [audio]` keeps the app running longer while recording. (2) Periodic auto-save (every 30s) continuously persists transcript to SwiftData. (3) `saveCurrentMeetingIfNeeded()` is also called when the app enters background (`scenePhase == .background`). (4) On launch, `cleanupOrphanedLiveActivities()` ends stale Live Activities, then `resumeInterruptedMeeting()` restores the session from SwiftData so the user lands directly in the stopped-session view with their transcript.
 - **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
 - **Avoid main actor hops from audio threads**: `nonisolated func sendAudio()` on `@MainActor` services should NOT use `Task { @MainActor }` to access properties — this creates a new main-thread task per audio buffer (~4/sec), competing with SwiftUI layout passes. Instead, use `nonisolated(unsafe)` shadow properties (e.g., `_sendTask`, `_sendConnected`) written from `@MainActor` context (connect/disconnect) and read from audio threads. `URLSessionWebSocketTask.send` is thread-safe and doesn't need the main thread.
+- **Discard meeting**: `discardCurrentMeeting()` deletes the current meeting from SwiftData, ends Live Activity (iOS), and clears the session without saving. Used from the "discard" button (with confirmation alert) when a recording is stopped.
+- **Generate insights for history**: `generateInsightsForMeeting(_ meeting: Meeting)` generates standard + MEDDPICC insights for a saved meeting and writes directly to the `Meeting` model. Used from the history detail view's "generate" button.
+- **MEDDPICC save safety**: `applyInsights()` only overwrites MEDDPICC fields when `insightsMode == .meddpicc`. In standard mode, the API returns nil for MEDDPICC fields — writing those nils would erase previously generated MEDDPICC data. `stopRecording()` always calls `generateFinalInsightsAndSave()` (which generates both standard + MEDDPICC) regardless of whether insights already exist.
+- **isStartingMeeting**: Transient flag set in `startNewMeeting()`, cleared when `startRecording()` succeeds or on failure. iOS shows a "starting..." spinner during this phase. macOS hides the session view.
+- **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
 
 ## Audio flow
 
@@ -224,12 +255,13 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 
 ### iOS
 - **Onboarding** (first launch): Same as macOS (shared `OnboardingView`)
-- **Home** (`ReadyStateView_iOS`): Logo, mode status pill, mic waveform monitor, start button. Mic-only (no system audio toggle)
-- **Recording**: Header with timer, mic waveform, terminal-style stop button (red), custom section picker for transcript/insights/notes
-- **Stopped session**: Terminal-style buttons: home, resume (green), save (blue), copy. "save" and "home" both call `goHome()` (saves + clears)
-- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with transcript/insights/notes segments
-- **Settings tab**: `Form` with mode picker, usage (managed), API keys (BYOK), audio permissions, model selection, device ID, version
-- **Tab bar**: Record / History / Settings — standard iOS tab navigation
+- **Home** (`ReadyStateView_iOS`): Logo, mode status pill, "test mic" button (opt-in waveform), gear icon for settings, start button. Mic-only (no system audio toggle)
+- **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup
+- **Recording**: Header with red dot + timer (center) + waveform, custom lowercase section picker (transcript/insights/notes), stop button at bottom center
+- **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), resume (center, same position as stop), save (right)
+- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes, lowercase). Transcript collapses consecutive same-speaker segments. Insights shows standard + MEDDPICC + "generate" button for past meetings. Notes are editable.
+- **Settings**: Accessible via gear icon on home screen (no dedicated tab)
+- **Tab bar**: Record / History — two-tab navigation
 
 ## Monetization
 

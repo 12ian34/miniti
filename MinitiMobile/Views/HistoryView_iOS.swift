@@ -52,16 +52,15 @@ struct HistoryView_iOS: View {
     private var meetingsList: some View {
         List {
             ForEach(filteredMeetings) { meeting in
-                NavigationLink(value: meeting) {
+                NavigationLink {
+                    MeetingDetail_iOS(meeting: meeting)
+                } label: {
                     MeetingRow_iOS(meeting: meeting)
                 }
             }
             .onDelete(perform: deleteMeetings)
         }
         .listStyle(.plain)
-        .navigationDestination(for: Meeting.self) { meeting in
-            MeetingDetail_iOS(meeting: meeting)
-        }
     }
     
     private func deleteMeetings(at offsets: IndexSet) {
@@ -97,14 +96,6 @@ struct MeetingRow_iOS: View {
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
-                
-                if meeting.summaryText != nil {
-                    Text("·")
-                        .foregroundStyle(ColorPalette.Text.disabled)
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 10))
-                        .foregroundStyle(ColorPalette.Accent.blue)
-                }
             }
         }
         .padding(.vertical, 4)
@@ -114,25 +105,20 @@ struct MeetingRow_iOS: View {
 // MARK: - Meeting Detail
 
 struct MeetingDetail_iOS: View {
-    let meeting: Meeting
+    @Bindable var meeting: Meeting
+    @EnvironmentObject var appState: AppState
     @State private var activeSection: DetailSection = .transcript
     
     enum DetailSection: String, CaseIterable {
-        case transcript = "Transcript"
-        case insights = "Insights"
-        case notes = "Notes"
+        case transcript = "transcript"
+        case insights = "insights"
+        case notes = "notes"
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Section picker
-            Picker("Section", selection: $activeSection) {
-                ForEach(DetailSection.allCases, id: \.self) { section in
-                    Text(section.rawValue).tag(section)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding()
+            // Custom section picker (matching recording screen style)
+            sectionPicker
             
             // Content
             Group {
@@ -159,35 +145,87 @@ struct MeetingDetail_iOS: View {
         }
     }
     
-    // MARK: - Transcript
+    // MARK: - Section Picker
+    
+    private var sectionPicker: some View {
+        HStack(spacing: 0) {
+            ForEach(DetailSection.allCases, id: \.self) { section in
+                Button {
+                    activeSection = section
+                } label: {
+                    Text(section.rawValue)
+                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .monospaced))
+                        .foregroundStyle(activeSection == section ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            activeSection == section
+                                ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
+                                : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
+                        )
+                }
+            }
+        }
+        .padding(3)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(hex: "09090B"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "27272A"), lineWidth: 1)
+                )
+        )
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+    
+    // MARK: - Transcript (collapsed same-speaker segments)
     
     private var transcriptContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 if meeting.segments.isEmpty {
                     Text("No transcript available")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding()
                 } else {
-                    ForEach(meeting.segments.sorted(by: { $0.timestamp < $1.timestamp })) { segment in
-                        let isMic = segment.speaker == DeepgramService.micSpeakerID
+                    ForEach(collapsedSegments) { group in
+                        let isMic = group.speaker == DeepgramService.micSpeakerID
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(isMic ? "You" : segment.speakerLabel)
+                            Text(isMic ? "You" : group.speakerLabel)
                                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(isMic ? ColorPalette.Speaker.mic : speakerColor(segment.speaker))
+                                .foregroundStyle(isMic ? ColorPalette.Speaker.mic : speakerColor(group.speaker))
                             
-                            Text(segment.text)
+                            Text(group.text)
                                 .font(.system(size: 14))
                                 .foregroundStyle(ColorPalette.Text.primary)
                         }
                         .padding(.horizontal)
-                        .padding(.vertical, 4)
                     }
                 }
             }
             .padding(.vertical)
         }
+    }
+    
+    private var collapsedSegments: [CollapsedSegment] {
+        let sorted = meeting.segments.sorted { $0.timestamp < $1.timestamp }
+        var result: [CollapsedSegment] = []
+        
+        for segment in sorted {
+            if let last = result.last, last.speaker == segment.speaker {
+                result[result.count - 1].text += " " + segment.text
+            } else {
+                result.append(CollapsedSegment(
+                    id: segment.id,
+                    speaker: segment.speaker,
+                    speakerLabel: segment.speakerLabel,
+                    text: segment.text
+                ))
+            }
+        }
+        return result
     }
     
     // MARK: - Insights
@@ -196,85 +234,107 @@ struct MeetingDetail_iOS: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 if let summary = meeting.summaryText, !summary.isEmpty {
-                    DetailBlock(title: "Summary", content: summary)
+                    TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
+                        Text(summary)
+                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                            .lineSpacing(6)
+                    }
                 }
                 
                 if !meeting.discussionFlow.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Discussion Flow")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.secondary)
-                        
-                        ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
-                            HStack(alignment: .top, spacing: 6) {
-                                Text("\(index + 1).")
-                                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(ColorPalette.Text.muted)
-                                Text(item)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(ColorPalette.Text.primary)
+                    TerminalSection(title: "discussion", color: Color(hex: "D29922")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
+                                TerminalListItem(index: index, text: item, style: .arrow)
                             }
                         }
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(ColorPalette.Background.secondary)
-                    )
                 }
                 
                 if !meeting.actionItems.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Action Items")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.secondary)
-                        
-                        ForEach(meeting.actionItems, id: \.self) { item in
-                            HStack(alignment: .top, spacing: 6) {
-                                Image(systemName: "circle")
-                                    .font(.system(size: 8))
-                                    .foregroundStyle(ColorPalette.Accent.blue)
-                                    .padding(.top, 4)
-                                Text(item)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(ColorPalette.Text.primary)
+                    TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(meeting.actionItems.enumerated()), id: \.offset) { index, item in
+                                TerminalListItem(index: index, text: item, style: .checkbox)
                             }
                         }
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(ColorPalette.Background.secondary)
-                    )
+                }
+                
+                if !meeting.keyDecisions.isEmpty {
+                    TerminalSection(title: "decisions", color: Color(hex: "D29922")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(meeting.keyDecisions.enumerated()), id: \.offset) { index, decision in
+                                TerminalListItem(index: index, text: decision, style: .arrow)
+                            }
+                        }
+                    }
                 }
                 
                 if !meeting.topics.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Topics")
-                            .font(.system(size: 12, weight: .bold, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.secondary)
-                        
-                        FlowLayout_iOS(items: meeting.topics) { topic in
-                            Text(topic)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(ColorPalette.Text.secondary)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    Capsule()
-                                        .fill(ColorPalette.Background.tertiary)
-                                )
+                    TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
+                        FlowLayout(spacing: 8) {
+                            ForEach(meeting.topics, id: \.self) { topic in
+                                TerminalTag(text: topic)
+                            }
                         }
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(ColorPalette.Background.secondary)
-                    )
                 }
                 
-                if !hasInsights {
-                    Text("No insights available")
+                // MEDDPICC grid
+                if meeting.hasMEDDPICC {
+                    SavedMEDDPICCContent(meeting: meeting)
+                }
+                
+                // No insights — offer to generate
+                if !hasInsights && !meeting.segments.isEmpty {
+                    VStack(spacing: 16) {
+                        Text("◇")
+                            .font(.system(size: 40, weight: .ultraLight, design: .monospaced))
+                            .foregroundStyle(Color(hex: "1C1C1F"))
+                        
+                        Text("no_insights")
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                        
+                        Button {
+                            Task {
+                                await appState.generateInsightsForMeeting(meeting)
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Text("⚡")
+                                Text("generate")
+                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundStyle(Color(hex: "58A6FF"))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(Color(hex: "58A6FF").opacity(0.15))
+                            .cornerRadius(6)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(hex: "58A6FF").opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(appState.isGeneratingInsights)
+                        
+                        if appState.isGeneratingInsights {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                Text("generating...")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "8B949E"))
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 20)
+                } else if !hasInsights && meeting.segments.isEmpty {
+                    Text("No transcript to generate insights from")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -289,26 +349,18 @@ struct MeetingDetail_iOS: View {
         (meeting.summaryText != nil && !meeting.summaryText!.isEmpty) ||
         !meeting.actionItems.isEmpty ||
         !meeting.topics.isEmpty ||
-        !meeting.discussionFlow.isEmpty
+        !meeting.discussionFlow.isEmpty ||
+        meeting.hasMEDDPICC
     }
     
-    // MARK: - Notes
+    // MARK: - Notes (editable)
     
     private var notesContent: some View {
-        ScrollView {
-            if !meeting.notes.isEmpty {
-                Text(meeting.notes)
-                    .font(.system(size: 14))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                    .padding()
-            } else {
-                Text("No notes")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.muted)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 40)
-            }
-        }
+        TextEditor(text: $meeting.notes)
+            .font(.system(size: 14, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .background(ColorPalette.Background.primary)
+            .padding()
     }
     
     // MARK: - Helpers
@@ -352,44 +404,59 @@ struct MeetingDetail_iOS: View {
     }
 }
 
-// MARK: - Detail Block
+// MARK: - Collapsed Segment
 
-struct DetailBlock: View {
-    let title: String
-    let content: String
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(ColorPalette.Text.secondary)
-            
-            Text(content)
-                .font(.system(size: 13))
-                .foregroundStyle(ColorPalette.Text.primary)
-        }
-        .padding()
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.Background.secondary)
-        )
-    }
+struct CollapsedSegment: Identifiable {
+    let id: UUID
+    let speaker: Int
+    let speakerLabel: String
+    var text: String
 }
 
-// MARK: - Flow Layout
+// MARK: - Saved MEDDPICC Content (reads from Meeting model)
 
-struct FlowLayout_iOS<Item: Hashable, Content: View>: View {
-    let items: [Item]
-    let content: (Item) -> Content
+struct SavedMEDDPICCContent: View {
+    let meeting: Meeting
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    
+    private var gridColumns: [GridItem] {
+        if sizeClass == .compact {
+            return [GridItem(.flexible())]
+        } else {
+            return [GridItem(.flexible()), GridItem(.flexible())]
+        }
+    }
     
     var body: some View {
-        // Simple wrapping layout using ViewThatFits isn't available pre-iOS 16.
-        // Use a basic VStack with HStacks for simplicity.
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 80))], alignment: .leading, spacing: 6) {
-            ForEach(items, id: \.self) { item in
-                content(item)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Text("##")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color(hex: "F59E0B"))
+                Text("MEDDPICC")
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(Color(hex: "F59E0B"))
+            }
+            
+            LazyVGrid(columns: gridColumns, spacing: 10) {
+                MEDDPICCItem(title: "Metrics", value: meeting.meddpiccMetrics, color: "3B82F6")
+                MEDDPICCItem(title: "Economic Buyer", value: meeting.meddpiccEconomicBuyer, color: "8B5CF6")
+                MEDDPICCItem(title: "Decision Criteria", value: meeting.meddpiccDecisionCriteria, color: "EC4899")
+                MEDDPICCItem(title: "Decision Process", value: meeting.meddpiccDecisionProcess, color: "F59E0B")
+                MEDDPICCItem(title: "Paper Process", value: meeting.meddpiccPaperProcess, color: "F97316")
+                MEDDPICCItem(title: "Identified Pain", value: meeting.meddpiccIdentifiedPain, color: "EF4444")
+                MEDDPICCItem(title: "Champion", value: meeting.meddpiccChampion, color: "22C55E")
+                MEDDPICCItem(title: "Competition", value: meeting.meddpiccCompetition, color: "6366F1")
             }
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "F59E0B").opacity(0.3), lineWidth: 1)
+                )
+        )
     }
 }
