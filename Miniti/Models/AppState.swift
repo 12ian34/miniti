@@ -130,6 +130,7 @@ final class AppState: ObservableObject {
     @AppStorage("openaiModel") var openaiModel: String = OpenAIModel.gpt5Mini.rawValue
     
     private var recordingTimer: Timer?
+    private var periodicSaveTimer: Timer?
     private var recordingStartDate: Date?
     private var cancellables = Set<AnyCancellable>()
     
@@ -192,6 +193,11 @@ final class AppState: ObservableObject {
         
         // Check for app updates (all modes)
         Task { await checkForUpdates() }
+        
+        #if os(iOS)
+        // Clean up orphaned Live Activities (app was killed while recording, state lost)
+        Task { await cleanupOrphanedLiveActivities() }
+        #endif
     }
     
     private func setupServices() {
@@ -497,6 +503,9 @@ final class AppState: ObservableObject {
         endLiveActivity()
         #endif
         
+        // Finalize endTime (stopRecording already sets it; this covers edge cases)
+        currentMeeting?.endTime = currentMeeting?.endTime ?? Date()
+        
         // Save current meeting if there's content
         saveCurrentMeetingIfNeeded()
         
@@ -505,6 +514,84 @@ final class AppState: ObservableObject {
         
         // Reset insights mode to standard for fresh start
         insightsMode = .standard
+    }
+    
+    /// Restore an interrupted meeting (endTime == nil) from SwiftData on launch.
+    /// Sets currentMeeting and rebuilds in-memory state so the UI shows the stopped-session view.
+    func resumeInterruptedMeeting() {
+        guard let modelContext else { return }
+        guard currentMeeting == nil, !isRecording else { return }
+        
+        let descriptor = FetchDescriptor<Meeting>(
+            predicate: #Predicate<Meeting> { $0.endTime == nil },
+            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
+        )
+        
+        guard let interrupted = try? modelContext.fetch(descriptor).first else { return }
+        guard !interrupted.segments.isEmpty else { return }
+        
+        print("[Resume] Restoring interrupted meeting: \(interrupted.title) (\(interrupted.segments.count) segments)")
+        
+        currentMeeting = interrupted
+        
+        // Reconstruct liveSegments from persisted TranscriptSegments
+        liveSegments = interrupted.segments
+            .sorted { $0.timestamp < $1.timestamp }
+            .map { seg in
+                LiveSegment(
+                    id: seg.id,
+                    text: seg.text,
+                    speaker: seg.speaker,
+                    timestamp: seg.timestamp,
+                    isFinal: seg.isFinal
+                )
+            }
+        
+        // Restore insights
+        liveSummary = interrupted.summaryText ?? ""
+        liveActionItems = interrupted.actionItems
+        liveTopics = interrupted.topics
+        liveDiscussionFlow = interrupted.discussionFlow
+        liveNotes = interrupted.notes
+        
+        // Restore MEDDPICC
+        liveMetrics = interrupted.meddpiccMetrics
+        liveEconomicBuyer = interrupted.meddpiccEconomicBuyer
+        liveDecisionCriteria = interrupted.meddpiccDecisionCriteria
+        liveDecisionProcess = interrupted.meddpiccDecisionProcess
+        livePaperProcess = interrupted.meddpiccPaperProcess
+        liveIdentifiedPain = interrupted.meddpiccIdentifiedPain
+        liveChampion = interrupted.meddpiccChampion
+        liveCompetition = interrupted.meddpiccCompetition
+        
+        if interrupted.hasMEDDPICC {
+            insightsMode = .meddpicc
+        }
+        
+        // Restore duration from last segment timestamp (actual recorded duration, not wall clock)
+        if let lastSegment = liveSegments.last {
+            recordingDuration = lastSegment.timestamp
+        }
+        
+        // Restore detected speakers
+        detectedSpeakers = Set(liveSegments.map(\.speaker))
+        
+        // Restore title tracking
+        let parts = interrupted.title.split(separator: " — ", maxSplits: 1)
+        if parts.count == 2 {
+            meetingTimestamp = String(parts[0])
+            currentTitleSuffix = String(parts[1])
+        }
+        
+        // Track segment counts so insight generation doesn't re-trigger unnecessarily
+        let finalCount = liveSegments.filter { $0.isFinal && !$0.text.isEmpty }.count
+        lastInsightSegmentCount = finalCount
+        lastMEDDPICCSegmentCount = finalCount
+        lastTitleUpdateCount = finalCount
+        
+        hasUnsavedSession = true
+        
+        print("[Resume] Session restored with \(liveSegments.count) segments, duration \(formattedDuration)")
     }
     
     /// Switch insights mode and re-analyze transcript if switching to MEDDPICC
@@ -582,7 +669,11 @@ final class AppState: ObservableObject {
         isGeneratingInsights = false
     }
     
-    private func saveCurrentMeetingIfNeeded() {
+    /// Save current meeting to SwiftData if it has transcript content.
+    /// Called periodically during recording, on background transition, and on goHome/stopRecording.
+    /// Does NOT set endTime — callers (stopRecording, goHome) set it explicitly so that
+    /// meetings with endTime == nil can be identified as interrupted and resumed on next launch.
+    func saveCurrentMeetingIfNeeded() {
         guard let meeting = currentMeeting,
               let modelContext = modelContext else {
             print("[Save] No meeting or context to save")
@@ -643,8 +734,6 @@ final class AppState: ObservableObject {
         meeting.meddpiccIdentifiedPain = liveIdentifiedPain
         meeting.meddpiccChampion = liveChampion
         meeting.meddpiccCompetition = liveCompetition
-        
-        meeting.endTime = meeting.endTime ?? Date()
         
         // Insert into context (SwiftData handles if already inserted)
         modelContext.insert(meeting)
@@ -773,6 +862,14 @@ final class AppState: ObservableObject {
             }
         }
         
+        // Periodic auto-save every 30s so transcript is preserved if app is killed
+        periodicSaveTimer?.invalidate()
+        periodicSaveTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.saveCurrentMeetingIfNeeded()
+            }
+        }
+        
         // Start Live Activity
         #if os(iOS)
         startLiveActivity()
@@ -819,6 +916,8 @@ final class AppState: ObservableObject {
         isRecording = false
         recordingTimer?.invalidate()
         recordingTimer = nil
+        periodicSaveTimer?.invalidate()
+        periodicSaveTimer = nil
         
         // Update Live Activity to show paused state (keep it alive for resume)
         #if os(iOS)
@@ -874,6 +973,8 @@ final class AppState: ObservableObject {
     
     /// Clears current session state (moves meeting to history)
     private func clearCurrentSession() {
+        periodicSaveTimer?.invalidate()
+        periodicSaveTimer = nil
         currentMeeting = nil
         liveSegments = []
         interimText = ""
@@ -1226,6 +1327,18 @@ final class AppState: ObservableObject {
         }
         currentActivity = nil
         print("[AppState] Live Activity ended")
+    }
+    
+    /// On launch, if we have no session but Live Activities exist, the app was killed while recording.
+    /// End those orphaned activities and inform the user.
+    func cleanupOrphanedLiveActivities() async {
+        let activities = Activity<RecordingActivityAttributes>.activities
+        guard !activities.isEmpty else { return }
+        guard currentMeeting == nil, !isRecording else { return }
+        for activity in activities {
+            await activity.end(nil, dismissalPolicy: .immediate)
+        }
+        print("[AppState] Cleaned up \(activities.count) orphaned Live Activity(ies)")
     }
     #endif
     
