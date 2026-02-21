@@ -522,13 +522,12 @@ final class AppState: ObservableObject {
         guard let modelContext else { return }
         guard currentMeeting == nil, !isRecording else { return }
         
-        let descriptor = FetchDescriptor<Meeting>(
-            predicate: #Predicate<Meeting> { $0.endTime == nil },
-            sortBy: [SortDescriptor(\.startTime, order: .reverse)]
-        )
-        
-        guard let interrupted = try? modelContext.fetch(descriptor).first else { return }
-        guard !interrupted.segments.isEmpty else { return }
+        let descriptor = FetchDescriptor<Meeting>()
+        guard let meetings = try? modelContext.fetch(descriptor) else { return }
+        guard let interrupted = meetings
+            .filter({ $0.endTime == nil && !$0.segments.isEmpty })
+            .max(by: { $0.startTime < $1.startTime })
+        else { return }
         
         print("[Resume] Restoring interrupted meeting: \(interrupted.title) (\(interrupted.segments.count) segments)")
         
