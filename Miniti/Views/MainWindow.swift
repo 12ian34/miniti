@@ -82,6 +82,7 @@ struct MainWindow: View {
         .background(Theme.bg)
         .onAppear {
             appState.modelContext = modelContext
+            appState.resumeInterruptedMeeting()
             setupNavigationHandlers()
         }
         .onChange(of: appState.currentMeeting) { _, newMeeting in

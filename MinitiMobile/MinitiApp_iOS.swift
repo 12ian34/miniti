@@ -4,6 +4,7 @@ import SwiftData
 @main
 struct MinitiMobileApp: App {
     @StateObject private var appState = AppState()
+    @Environment(\.scenePhase) private var scenePhase
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -32,5 +33,10 @@ struct MinitiMobileApp: App {
             .preferredColorScheme(.dark)
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background {
+                appState.saveCurrentMeetingIfNeeded()
+            }
+        }
     }
 }

@@ -14,7 +14,7 @@ a high-performance macOS + iOS meeting transcription app with real-time speech-t
 
 ### 2. Permissions
 
-Miniti will ask for two permissions the first time you record. Here's what to expect:
+miniti will ask for two permissions the first time you record. Here's what to expect:
 
 | Permission | When it appears | What to do |
 |---|---|---|
@@ -23,7 +23,7 @@ Miniti will ask for two permissions the first time you record. Here's what to ex
 
 Both can be managed later in **System Settings → Privacy & Security**.
 
-> **Note**: Miniti only captures audio. It does **not** record your screen, despite macOS grouping audio permissions near screen recording settings.
+> **Note**: miniti only captures audio. It does **not** record your screen, despite macOS grouping audio permissions near screen recording settings.
 
 ### 3. Choose your mode
 
@@ -247,7 +247,7 @@ Brief overview of the meeting...
 
 ## License
 
-Copyright (c) 2026 Miniti. All rights reserved.
+Copyright (c) 2026 miniti. All rights reserved.
 
 This software is proprietary and confidential. No part of this software may be reproduced, distributed, modified, reverse engineered, decompiled, or used to create derivative works without the prior written permission of the copyright holder.
 

@@ -27,10 +27,13 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### Unreleased - v1.6.1
+### 2026-02-20 - v1.6.1 (current)
 - Fix iOS update banner linking to Proton Drive DMG instead of TestFlight
+- Auto-save recording every 30 seconds so transcript, insights, and notes are continuously preserved
+- Resume interrupted recordings on launch — if the app was killed while recording, reopening restores your session (transcript, insights, notes) so you can continue or save
+- Fix orphaned Live Activity when app was killed while recording — stale Live Activities are cleaned up on launch
 
-### 2026-02-18 - v1.6.0 (current)
+### 2026-02-18 - v1.6.0
 - Send platform identifier (macOS/iOS) with all backend requests for admin dashboard tracking
 - Show "account disabled" message when a device has been disabled by admin
 - Fix iOS transcription showing all speakers as "You" instead of using Deepgram's native speaker diarization
@@ -169,7 +172,10 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). The `recordingStartDate` persists across stop/resume cycles within a session, and is cleared on `goHome()`.
+- **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. This syncs `liveSegments`, insights, notes, and MEDDPICC to SwiftData continuously. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
+- **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS.
 - **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer when recording; when stopped, `elapsedSeconds` is set and the timer switches to a static `Text(formatDuration(_:))` so it freezes. All visual elements (dot, status, title, timer) switch to `pausedGray` when stopped, and transcript is replaced with "tap to return to miniti". `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`. Note: compact Dynamic Island width is system-controlled and cannot be reduced by apps.
+- **iOS background recording & kill recovery**: iOS can terminate backgrounded apps at any time (memory pressure, battery, etc.); there is no way to prevent this. Mitigations: (1) `UIBackgroundModes: [audio]` keeps the app running longer while recording. (2) Periodic auto-save (every 30s) continuously persists transcript to SwiftData. (3) `saveCurrentMeetingIfNeeded()` is also called when the app enters background (`scenePhase == .background`). (4) On launch, `cleanupOrphanedLiveActivities()` ends stale Live Activities, then `resumeInterruptedMeeting()` restores the session from SwiftData so the user lands directly in the stopped-session view with their transcript.
 - **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
 - **Avoid main actor hops from audio threads**: `nonisolated func sendAudio()` on `@MainActor` services should NOT use `Task { @MainActor }` to access properties — this creates a new main-thread task per audio buffer (~4/sec), competing with SwiftUI layout passes. Instead, use `nonisolated(unsafe)` shadow properties (e.g., `_sendTask`, `_sendConnected`) written from `@MainActor` context (connect/disconnect) and read from audio threads. `URLSessionWebSocketTask.send` is thread-safe and doesn't need the main thread.
 
@@ -225,9 +231,118 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Settings tab**: `Form` with mode picker, usage (managed), API keys (BYOK), audio permissions, model selection, device ID, version
 - **Tab bar**: Record / History / Settings — standard iOS tab navigation
 
-## Monetization architecture
+## Monetization
 
-Two parallel modes, no conflicts:
+> **Note:** Strategy below is planning/aspirational; may be outdated. Current implementation is two-mode only (Free/BYOK), no Pro tier yet.
+
+### Commercial model
+
+| | Free | Pro | BYOK |
+|---|---|---|---|
+| **Price** | $0 | $14/mo or $120/yr | $0 (forever) |
+| **Minutes** | 500/month | Unlimited | Unlimited |
+| **Transcription** | Deepgram Nova-2 | Deepgram Nova-3 | User's own |
+| **LLM** | GPT-5 Nano | GPT-5 Mini | User's own |
+| **AI insights** | Summary, timeline, action items, topics | All free insights + MEDDPICC + future methodologies | All (user pays own API) |
+| **History** | Full | Full | Full |
+
+- **BYOK** is always free and unlimited — zero cost, pure evangelists
+- **Free** is generous (500 min) to build habit and word-of-mouth; conversion lever is quality (Nova-3 transcription, GPT-5 Mini analysis, MEDDPICC)
+- **Pro** annual plan (~29% discount vs monthly) drives commitment and reduces churn
+- No team/enterprise tier yet — nail individual experience first
+
+### Payment implementation
+
+**iOS (App Store):**
+- StoreKit 2 for subscription management (auto-renewable subscriptions)
+- Apple handles billing, receipts, renewals, refunds
+- Apple commission: 15% (Small Business Program, <$1M/year proceeds)
+- Receipt validation server-side via App Store Server API
+- Backend tracks entitlements by device ID (existing infrastructure)
+
+**macOS (direct DMG):**
+- Paddle or LemonSqueezy as Merchant of Record (handles global VAT/tax)
+- LemonSqueezy fee: ~5.5% + $0.50/transaction (+1.5% international, +0.5% subscription)
+- License key or account-based activation via device ID
+- No Mac App Store (sandbox blocks `AudioHardwareCreateProcessTap`)
+
+**Blended platform fee estimate:** ~12% (weighted ~60% iOS at 15% / ~40% macOS at ~7%)
+
+### UK business structure
+
+No company required to start — operate as sole trader:
+- Apple Developer Program accepts individual enrollment
+- Paddle/LemonSqueezy handle VAT collection for macOS sales as Merchant of Record
+- Register for Self Assessment with HMRC for income tax
+- VAT registration required only if UK taxable turnover exceeds £90K/year
+- Form a Ltd company when revenue justifies it (£12 at Companies House, better liability protection)
+
+### Financial model
+
+#### Service pricing (as of Feb 2026, pay-as-you-go)
+
+| Service | PAYG rate | Growth rate (~$4K+/yr spend) |
+|---|---|---|
+| Deepgram Nova-2 streaming | $0.0059/min | ~$0.0043/min |
+| Deepgram Nova-3 streaming | $0.0077/min | ~$0.0065/min |
+| GPT-5 Nano | $0.05 / $0.40 per 1M tokens (in/out) | — |
+| GPT-5 Mini | $0.25 / $2.00 per 1M tokens (in/out) | — |
+
+**LLM cost per meeting** (30 min avg, ~5 insight calls × ~8.5K input + ~2K output tokens):
+- GPT-5 Nano (free): ~$0.006/meeting
+- GPT-5 Mini + MEDDPICC (pro): ~$0.037/meeting
+
+#### Unit economics per user
+
+| User type | Avg usage | Deepgram | LLM | Total cost/mo |
+|---|---|---|---|---|
+| **Free (typical)** | 150 min, ~5 meetings | $0.89 (PAYG) / $0.65 (Growth) | $0.03 | **$0.92** / **$0.68** |
+| **Free (at cap)** | 500 min, ~17 meetings | $2.95 / $2.15 | $0.10 | **$3.05** / **$2.25** |
+| **Pro (typical)** | 1000 min, ~33 meetings | $7.70 / $6.50 | $1.22 | **$8.92** / **$7.72** |
+| **Pro (heavy)** | 2000 min, ~67 meetings | $15.40 / $13.00 | $2.48 | **$17.88** / **$15.48** |
+| **BYOK** | any | $0 | $0 | **$0** |
+
+**Revenue per pro user:** $14/mo blended (mix of $14/mo monthly + $120/yr annual subscribers)
+**Net revenue after platform fees:** ~$12.32/mo per pro user (at 12% blended fee)
+**Net margin per pro user:** $3.40/mo (PAYG) → $4.60/mo (Growth pricing)
+
+#### Scale scenarios
+
+Assumptions: 75% free / 15% pro / 10% BYOK split. Free users average 150 min/mo. Pro users average 1000 min/mo. Infrastructure = Vercel Pro + Upstash Redis, scales with usage.
+
+| | **100 users** | **1,000 users** | **5,000 users** | **25,000 users** |
+|---|---|---|---|---|
+| Free / Pro / BYOK | 75 / 15 / 10 | 750 / 150 / 100 | 3,750 / 750 / 500 | 18,750 / 3,750 / 2,500 |
+| Deepgram pricing | PAYG | Growth | Growth | Growth+ (negotiated) |
+| Free user costs | $69 | $510 | $2,550 | $12,750 |
+| Pro user costs | $134 | $1,158 | $5,790 | $28,950 |
+| Infrastructure | $30 | $50 | $100 | $200 |
+| **Total costs/mo** | **$233** | **$1,718** | **$8,440** | **$41,900** |
+| Pro revenue (gross) | $210 | $2,100 | $10,500 | $52,500 |
+| Platform fees (~12%) | -$25 | -$252 | -$1,260 | -$6,300 |
+| **Net revenue/mo** | **$185** | **$1,848** | **$9,240** | **$46,200** |
+| **Profit (loss)/mo** | **-$48** | **+$130** | **+$800** | **+$4,300** |
+| **Annualized** | **-$576** | **+$1,560** | **+$9,600** | **+$51,600** |
+
+#### Breakeven analysis
+
+- **PAYG pricing:** each pro user generates ~$3.40/mo margin, each free user costs ~$0.92/mo → 1 pro covers ~3.7 free users → **~21% conversion needed** to break even
+- **Growth pricing:** each pro user generates ~$4.60/mo margin, each free user costs ~$0.68/mo → 1 pro covers ~6.8 free users → **~13% conversion needed** to break even
+- At 15% conversion with Growth pricing, the model is profitable from ~500 users onward
+- BYOK users are net neutral — they cost nothing and drive word-of-mouth
+
+#### Key observations
+
+- **Free tier is the main cost driver** — 500 min at Nova-2 costs $0.68-$0.92/user/mo even at typical (not max) usage. This is the price of a generous free tier.
+- **Deepgram is ~90% of API costs** — LLM costs are nearly negligible (GPT-5 Nano at $0.006/meeting). Transcription is the expensive part.
+- **Growth plan pricing is critical** — the ~27% Deepgram discount at $4K+/yr spend drops break-even conversion from ~21% to ~13%. Negotiate early.
+- **Pro heavy users are margin-negative at PAYG** — a 2000 min/mo user costs $17.88 but only generates $12.32 net. Volume pricing and the mix of light/heavy users makes the average work.
+- **Price sensitivity:** at $12/mo the model barely works (razor-thin margins). At $16/mo break-even drops to ~10% conversion. $14/mo is the sweet spot — undercuts Otter ($16.99), Fireflies ($19), Granola ($18) while staying viable.
+- **Path to profitability:** reach ~1,000 users with 15% conversion → profitable. Scale to 25K users → ~$50K/yr profit. Real money comes from eventual team/enterprise tier (per-seat pricing, shared libraries, CRM integrations).
+
+### Monetization architecture (current implementation)
+
+Two parallel modes, to be extended with Pro tier:
 
 - **BYOK Mode**: User's own API keys, unlimited, no backend, no tracking
 - **Managed Mode**: 500 free min/month, Deepgram via temp API keys (backend issues short-lived scoped keys), OpenAI proxied through backend, hard-blocked at limit
@@ -238,7 +353,8 @@ Two parallel modes, no conflicts:
 - At limit: user must switch to BYOK or wait for monthly reset — no paid tiers yet
 - Cost: ~$3.75/user/month at full 500 min usage
 - Backend is a separate repo (`miniti-api`), deployed at `https://miniti-api.vercel.app`; full spec in `BACKEND_SPEC.md`
-### Backend API (`miniti-api`)
+
+#### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
 - Stack: Next.js 14 (App Router, edge runtime), TypeScript, Vercel, Upstash Redis via `@vercel/kv`
 - All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.5.0") and `X-Platform` header (`"macos"` / `"ios"`) tracked per device in Redis

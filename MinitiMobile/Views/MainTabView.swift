@@ -35,6 +35,7 @@ struct MainTabView: View {
         .tint(ColorPalette.Accent.green)
         .onAppear {
             appState.modelContext = modelContext
+            appState.resumeInterruptedMeeting()
         }
     }
 }

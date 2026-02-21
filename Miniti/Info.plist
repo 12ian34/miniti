@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Miniti needs microphone access to transcribe your voice during meetings.</string>
+	<string>miniti needs microphone access to transcribe your voice during meetings.</string>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Miniti needs to capture system audio to transcribe video calls and other meeting applications.</string>
+	<string>miniti needs to capture system audio to transcribe video calls and other meeting applications.</string>
 	<key>CFBundleDisplayName</key>
 	<string>miniti</string>
 	<key>CFBundleIdentifier</key>
@@ -15,7 +15,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.6.0</string>
+	<string>1.6.1</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
 	<key>LSMinimumSystemVersion</key>
