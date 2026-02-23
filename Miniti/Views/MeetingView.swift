@@ -6,10 +6,7 @@ struct MeetingView: View {
     
     var body: some View {
         Group {
-            if appState.currentMeeting == nil && !appState.isRecording {
-                // Ready state - no active session
-                ReadyStateView()
-            } else {
+            if appState.isRecording || (appState.currentMeeting != nil && !appState.isStartingMeeting) {
                 // Active session view
                 VStack(spacing: 0) {
                     // Header
@@ -52,6 +49,9 @@ struct MeetingView: View {
                         .frame(minWidth: 280, maxWidth: 350)
                     }
                 }
+            } else {
+                // Ready state - no active session (or starting)
+                ReadyStateView()
             }
         }
         .background(Color(hex: "09090B"))
@@ -128,16 +128,6 @@ struct ReadyStateView: View {
                 }
             }
             
-            // Model selector
-            VStack(spacing: 8) {
-                Text("model")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "484F58"))
-                    .tracking(1)
-                
-                HomeModelSelector()
-            }
-            
             // Audio sources (pre-flight check with waveforms)
             AudioSourcePanel()
             
@@ -186,34 +176,48 @@ struct ReadyStateView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
                 }
             } else {
                 Button(action: {
-                    appState.startNewMeeting()
+                    if !appState.isStartingMeeting {
+                        appState.startNewMeeting()
+                    }
                 }) {
                     HStack(spacing: 12) {
                         HStack(spacing: 10) {
-                            Circle()
-                                .fill(Color(hex: "09090B"))
-                                .frame(width: 8, height: 8)
-                            Text("relax and take notes")
+                            if appState.isStartingMeeting {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(Color(hex: "09090B"))
+                            } else {
+                                Circle()
+                                    .fill(Color(hex: "09090B"))
+                                    .frame(width: 8, height: 8)
+                            }
+                            Text(appState.isStartingMeeting ? "starting..." : "relax and take notes")
                                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                         }
                         
-                        Text("⌘⇧R")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                        if !appState.isStartingMeeting {
+                            Text("⌘⇧R")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                        }
                     }
                     .foregroundStyle(Color(hex: "09090B"))
                     .padding(.horizontal, 28)
                     .padding(.vertical, 14)
                     .background(
                         RoundedRectangle(cornerRadius: 8)
-                            .fill(appState.canStartRecording ? Color(hex: "3FB950") : Color(hex: "484F58"))
+                            .fill(appState.isStartingMeeting
+                                  ? Color(hex: "484F58")
+                                  : appState.canStartRecording ? Color(hex: "3FB950") : Color(hex: "484F58"))
                     )
                 }
                 .buttonStyle(.plain)
-                .disabled(!appState.canStartRecording)
+                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
+                .focusable(false)
             }
             
             // Keyboard shortcut hint
@@ -282,6 +286,7 @@ struct APIStatusPill: View {
                             .foregroundStyle(isConnected ? Color(hex: "3FB950") : Color(hex: "71717A"))
                     }
                     .buttonStyle(.plain)
+                    .focusable(false)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
@@ -339,6 +344,7 @@ struct APIStatusPill: View {
                 )
             }
             .buttonStyle(.plain)
+            .focusable(false)
             .onHover { hovering in
                 isHovering = hovering
             }
@@ -401,6 +407,7 @@ struct HomeModelSelector: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             }
         }
         .padding(4)
@@ -601,7 +608,7 @@ struct InsightsSectionHeader: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            // Top row: insights label + model selector + copy
+            // Top row: insights label + copy
             HStack(spacing: 8) {
                 Text("◇")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -644,8 +651,6 @@ struct InsightsSectionHeader: View {
                     .buttonStyle(.plain)
                 }
                 
-                // OpenAI Model selector (sexier)
-                OpenAIModelSelector()
             }
             
             // Mode selector - centered, larger
@@ -655,11 +660,11 @@ struct InsightsSectionHeader: View {
                         withAnimation(.easeInOut(duration: 0.15)) {
                             appState.switchInsightsMode(to: mode)
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            Text(mode.displayName)
-                                .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .monospaced))
-                                .foregroundStyle(appState.insightsMode == mode ? Color(hex: "FAFAFA") : Color(hex: "71717A"))
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(mode.displayName)
+                            .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .monospaced))
+                            .foregroundStyle(appState.insightsMode == mode ? Color(hex: "FAFAFA") : Color(hex: "71717A"))
                             
                             Text("⌘\(index + 1)")
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -671,6 +676,7 @@ struct InsightsSectionHeader: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .fill(appState.insightsMode == mode ? Color(hex: "22C55E").opacity(0.15) : Color.clear)
                         )
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
                     }
                     .buttonStyle(.plain)
                 }
@@ -821,116 +827,171 @@ struct OpenAIModelPopover: View {
 struct LiveInsightsPanel: View {
     @EnvironmentObject var appState: AppState
     
+    private var canUpdateInsights: Bool {
+        appState.currentMeeting != nil && !appState.liveSegments.isEmpty
+    }
+    
+    private var showsUpdateButton: Bool {
+        appState.insightsMode != .training
+    }
+    
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Status indicator
-                if appState.isGeneratingInsights {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(appState.insightsMode == .meddpicc ? "analyzing with MEDDPICC..." : "updating...")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "58A6FF"))
+                HStack(spacing: 8) {
+                    if showsUpdateButton {
+                        Button {
+                            Task { @MainActor in
+                                await appState.generateInsights()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text("update")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                Text("⌘⇧I")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "52525B"))
+                            }
+                            .foregroundStyle(Color(hex: "D4D4D8"))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(hex: "18181B"))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(hex: "27272A"), lineWidth: 1)
+                            )
+                            .contentShape(RoundedRectangle(cornerRadius: 6))
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canUpdateInsights || appState.isGeneratingInsights)
+                        .opacity((!canUpdateInsights || appState.isGeneratingInsights) ? 0.5 : 1.0)
                     }
-                    .padding(.horizontal, 16)
+                    
+                    Spacer()
                 }
+                .padding(.horizontal, 16)
                 
-                // Summary (always shown)
-                if !appState.liveSummary.isEmpty {
-                    LiveInsightSection(title: "summary", color: Color(hex: "58A6FF")) {
-                        Text(appState.liveSummary)
-                            .font(.system(size: 12, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                            .lineSpacing(4)
+                if appState.insightsMode == .training {
+                    // Training mode: locally-computed speech metrics
+                    if let metrics = appState.trainingMetrics {
+                        LiveTrainingInsightsContent(metrics: metrics)
+                    } else {
+                        TrainingEmptyState()
                     }
-                }
-                
-                // Discussion Flow (chronological)
-                if !appState.liveDiscussionFlow.isEmpty && appState.insightsMode == .standard {
-                    LiveInsightSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(appState.liveDiscussionFlow.enumerated()), id: \.offset) { index, item in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("\(index + 1).")
+                } else {
+                    // Status indicator
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(appState.insightsMode == .meddpicc ? "analyzing with MEDDPICC..." : "updating...")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "58A6FF"))
+                        }
+                        .padding(.horizontal, 16)
+                    }
+                    
+                    // Summary (always shown)
+                    if !appState.liveSummary.isEmpty {
+                        LiveInsightSection(title: "summary", color: Color(hex: "58A6FF")) {
+                            Text(appState.liveSummary)
+                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                .foregroundStyle(Color(hex: "E6EDF3"))
+                                .lineSpacing(4)
+                        }
+                    }
+                    
+                    // Discussion Flow (chronological)
+                    if !appState.liveDiscussionFlow.isEmpty && appState.insightsMode == .standard {
+                        LiveInsightSection(title: "discussion", color: Color(hex: "F59E0B")) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(Array(appState.liveDiscussionFlow.enumerated()), id: \.offset) { index, item in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text("\(index + 1).")
+                                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "F59E0B").opacity(0.7))
+                                            .frame(width: 16, alignment: .trailing)
+                                        Text(item)
+                                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "D4D4D8"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // MEDDPICC Framework (only in meddpicc mode)
+                    if appState.insightsMode == .meddpicc {
+                        LiveMEDDPICCGrid()
+                    }
+                    
+                    // Action Items
+                    if !appState.liveActionItems.isEmpty {
+                        LiveInsightSection(title: "actions", color: Color(hex: "3FB950")) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(appState.liveActionItems, id: \.self) { item in
+                                    HStack(alignment: .top, spacing: 8) {
+                                        Text("→")
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "3FB950"))
+                                        Text(item)
+                                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "E6EDF3"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Topics
+                    if !appState.liveTopics.isEmpty {
+                        LiveInsightSection(title: "topics", color: Color(hex: "A371F7")) {
+                            FlowLayout(spacing: 6) {
+                                ForEach(appState.liveTopics, id: \.self) { topic in
+                                    Text("#\(topic.lowercased().replacingOccurrences(of: " ", with: "_"))")
                                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "F59E0B").opacity(0.7))
-                                        .frame(width: 16, alignment: .trailing)
-                                    Text(item)
-                                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "D4D4D8"))
+                                        .foregroundStyle(Color(hex: "A371F7"))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color(hex: "A371F7").opacity(0.15))
+                                        .cornerRadius(3)
                                 }
                             }
                         }
                     }
-                }
-                
-                // MEDDPICC Framework (only in meddpicc mode)
-                if appState.insightsMode == .meddpicc {
-                    LiveMEDDPICCGrid()
-                }
-                
-                // Action Items
-                if !appState.liveActionItems.isEmpty {
-                    LiveInsightSection(title: "actions", color: Color(hex: "3FB950")) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(appState.liveActionItems, id: \.self) { item in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("→")
-                                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "3FB950"))
-                                    Text(item)
-                                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "E6EDF3"))
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Topics
-                if !appState.liveTopics.isEmpty {
-                    LiveInsightSection(title: "topics", color: Color(hex: "A371F7")) {
-                        FlowLayout(spacing: 6) {
-                            ForEach(appState.liveTopics, id: \.self) { topic in
-                                Text("#\(topic.lowercased().replacingOccurrences(of: " ", with: "_"))")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(Color(hex: "A371F7"))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 3)
-                                    .background(Color(hex: "A371F7").opacity(0.15))
-                                    .cornerRadius(3)
-                            }
-                        }
-                    }
-                }
-                
-                // Empty state
-                if appState.liveSummary.isEmpty && !appState.isGeneratingInsights {
-                    VStack(spacing: 12) {
-                        Text("◇")
-                            .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
-                            .foregroundStyle(Color(hex: "1C1C1F"))
-                        
-                        if appState.isRecording {
-                            Text("listening...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "484F58"))
-                            Text("insights after 5 sentences")
-                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    
+                    // Empty state
+                    if appState.liveSummary.isEmpty && !appState.isGeneratingInsights {
+                        VStack(spacing: 12) {
+                            Text("◇")
+                                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                                 .foregroundStyle(Color(hex: "1C1C1F"))
-                        } else if appState.openaiApiKey.isEmpty {
-                            Text("openai_key_missing")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "D29922"))
-                        } else {
-                            Text("start recording")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "484F58"))
+                            
+                            if appState.isRecording {
+                                Text("listening...")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "484F58"))
+                                Text("insights after 5 sentences")
+                                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "1C1C1F"))
+                            } else if appState.openaiApiKey.isEmpty {
+                                Text("openai_key_missing")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "D29922"))
+                            } else {
+                                Text("start recording")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "484F58"))
+                            }
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 40)
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 40)
                 }
                 
                 Spacer(minLength: 20)
@@ -1034,6 +1095,233 @@ struct MEDDPICCRow: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(hasValue ? Color(hex: color).opacity(0.25) : Color(hex: "1C1C1F"), lineWidth: 1)
                 )
+        )
+    }
+}
+
+struct LiveTrainingInsightsContent: View {
+    let metrics: TrainingMetrics
+    
+    private let externalSpeakerGroupingThreshold = 3
+    
+    private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
+        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+            return metrics.speakers
+        }
+        
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
+        var fillerCounts: [String: Int] = [:]
+        
+        let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
+        let totalExternalSegments = externalSpeakers.reduce(0) { $0 + $1.segmentCount }
+        let totalExternalQuestions = externalSpeakers.reduce(0) { $0 + $1.questionsAsked }
+        let totalExternalFillers = externalSpeakers.reduce(0) { $0 + $1.totalFillers }
+        let longestExternalMonologue = externalSpeakers.map(\.longestMonologueWords).max() ?? 0
+        
+        for speaker in externalSpeakers {
+            for filler in speaker.fillers {
+                fillerCounts[filler.word, default: 0] += filler.count
+            }
+        }
+        
+        let mergedFillers = fillerCounts
+            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count { return $0.word < $1.word }
+                return $0.count > $1.count
+            }
+        
+        let others = TrainingMetrics.SpeakerStats(
+            speakerLabel: "Others",
+            isLocalMic: false,
+            wordCount: totalExternalWords,
+            segmentCount: totalExternalSegments,
+            fillers: mergedFillers,
+            totalFillers: totalExternalFillers,
+            fillersPerMinute: Double(totalExternalFillers) / max(metrics.durationMinutes, 0.01),
+            wordsPerMinute: Double(totalExternalWords) / max(metrics.durationMinutes, 0.01),
+            longestMonologueWords: longestExternalMonologue,
+            questionsAsked: totalExternalQuestions,
+            avgWordsPerTurn: totalExternalSegments > 0 ? Double(totalExternalWords) / Double(totalExternalSegments) : 0
+        )
+        
+        return localSpeakers + [others]
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            LiveTrainingFillersSection(speakers: displaySpeakers)
+            
+            if metrics.speakers.count > 1 {
+                LiveInsightSection(title: "talk_ratio", color: Color(hex: "58A6FF")) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        GeometryReader { geo in
+                            HStack(spacing: 0) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color(hex: "3FB950"))
+                                    .frame(width: max(4, geo.size.width * metrics.talkRatioYou))
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(Color(hex: "58A6FF").opacity(0.5))
+                                    .frame(width: max(4, geo.size.width * (1 - metrics.talkRatioYou)))
+                            }
+                        }
+                        .frame(height: 12)
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                        
+                        HStack {
+                            Text("you \(Int(metrics.talkRatioYou * 100))%")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "D4D4D8"))
+                            Spacer()
+                            Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "D4D4D8"))
+                        }
+                    }
+                }
+            }
+            
+            LiveInsightSection(title: "pace", color: Color(hex: "A371F7")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        LiveTrainingMetricRow(
+                            speaker: speaker,
+                            value: "\(Int(speaker.wordsPerMinute)) wpm",
+                            trailing: "\(speaker.wordCount) words"
+                        )
+                    }
+                }
+            }
+            
+            LiveInsightSection(title: "longest_monologue", color: Color(hex: "EC4899")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        if speaker.longestMonologueWords > 0 {
+                            LiveTrainingMetricRow(
+                                speaker: speaker,
+                                value: "\(speaker.longestMonologueWords) words"
+                            )
+                        }
+                    }
+                }
+            }
+            
+            LiveInsightSection(title: "questions_asked", color: Color(hex: "3FB950")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        LiveTrainingMetricRow(
+                            speaker: speaker,
+                            value: "\(speaker.questionsAsked)"
+                        )
+                    }
+                }
+            }
+            
+            LiveInsightSection(title: "clarity", color: Color(hex: "D29922")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        LiveTrainingMetricRow(
+                            speaker: speaker,
+                            value: String(format: "%.1f", speaker.avgWordsPerTurn),
+                            trailing: "avg words/turn"
+                        )
+                    }
+                    
+                    Text("shorter turns = more focused communication")
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "3F3F46"))
+                }
+            }
+        }
+    }
+}
+
+private struct LiveTrainingFillersSection: View {
+    let speakers: [TrainingMetrics.SpeakerStats]
+    
+    var body: some View {
+        LiveInsightSection(title: "fillers", color: Color(hex: "F59E0B")) {
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(speakers) { speaker in
+                    if speaker.totalFillers > 0 || speaker.isLocalMic {
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 10) {
+                                Text(speaker.speakerLabel.lowercased())
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                                    .frame(width: 64, alignment: .leading)
+                                
+                                HStack(spacing: 6) {
+                                    LiveTrainingPill(label: "total", value: "\(speaker.totalFillers)")
+                                    LiveTrainingPill(label: "per min", value: String(format: "%.1f", speaker.fillersPerMinute))
+                                }
+                            }
+                            
+                            if !speaker.fillers.isEmpty {
+                                Text(
+                                    speaker.fillers
+                                        .prefix(4)
+                                        .map { "\($0.word) \($0.count)" }
+                                        .joined(separator: "   ")
+                                )
+                                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                                .foregroundStyle(Color(hex: "71717A"))
+                                .padding(.leading, 74)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct LiveTrainingMetricRow: View {
+    let speaker: TrainingMetrics.SpeakerStats
+    let value: String
+    var trailing: String? = nil
+    
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(speaker.speakerLabel.lowercased())
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                .frame(width: 72, alignment: .leading)
+            
+            Text(value)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+            
+            Spacer()
+            
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+            }
+        }
+    }
+}
+
+private struct LiveTrainingPill: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 8, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "71717A"))
+            Text(value)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color(hex: "18181B"))
         )
     }
 }
@@ -1160,10 +1448,6 @@ struct TerminalHeader: View {
                 .buttonStyle(.plain)
                 
                 // Audio waveforms (next to record button when recording)
-                // Model selector (only when not recording, after record button so button stays in place)
-                if !appState.isRecording {
-                    DeepgramModelSelector()
-                }
                 if appState.isRecording {
                     HStack(spacing: 8) {
                         // Mic waveform
@@ -1492,6 +1776,7 @@ struct AudioSourcePill: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .onHover { hovering in
             isHovering = hovering
         }
@@ -1522,10 +1807,14 @@ struct UpdateAvailableBanner: View {
             
             Spacer()
             
-            Link(destination: URL(string: versionInfo.downloadUrl)!) {
-                Text("download")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue)
+            if let url = URL(string: versionInfo.downloadUrl),
+               url.scheme?.lowercased() == "https" {
+                Link(destination: url) {
+                    Text("download")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Accent.blue)
+                }
+                .focusable(false)
             }
         }
         .padding(.horizontal, 12)

@@ -27,7 +27,7 @@ final class Meeting {
     
     init(
         id: UUID = UUID(),
-        title: String = "New Meeting",
+        title: String = "new",
         startTime: Date = Date(),
         endTime: Date? = nil,
         segments: [TranscriptSegment] = [],

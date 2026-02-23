@@ -76,61 +76,405 @@ struct LiveInsightsContent: View {
     @EnvironmentObject var appState: AppState
     
     var body: some View {
+        #if os(iOS)
+        LiveInsightsContent_iOSPlain()
+        #else
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                // Summary (always shown)
-                if !appState.liveSummary.isEmpty {
-                    TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                        Text(appState.liveSummary)
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                            .lineSpacing(6)
+                if appState.insightsMode == .training {
+                    if let metrics = appState.trainingMetrics {
+                        TrainingContent(metrics: metrics)
+                    } else {
+                        TrainingEmptyState()
                     }
-                }
-                
-                // MEDDPICC sections (only in meddpicc mode)
-                if appState.insightsMode == .meddpicc {
+                } else if appState.insightsMode == .meddpicc {
                     MEDDPICCContent()
-                }
-                
-                // Action Items
-                if !appState.liveActionItems.isEmpty {
-                    TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
-                                TerminalListItem(index: index, text: item, style: .checkbox)
+                    
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text("updating...")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                        }
+                        .padding(.top, 8)
+                    }
+                } else {
+                    // Summary (always shown)
+                    if !appState.liveSummary.isEmpty {
+                        TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
+                            Text(appState.liveSummary)
+                                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                                .foregroundStyle(Color(hex: "E6EDF3"))
+                                .lineSpacing(6)
+                        }
+                    }
+                    
+                    // Action Items
+                    if !appState.liveActionItems.isEmpty {
+                        TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
+                                    TerminalListItem(index: index, text: item, style: .checkbox)
+                                }
                             }
                         }
                     }
-                }
-                
-                // Topics
-                if !appState.liveTopics.isEmpty {
-                    TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
-                        FlowLayout(spacing: 8) {
-                            ForEach(appState.liveTopics, id: \.self) { topic in
-                                TerminalTag(text: topic)
+                    
+                    // Topics
+                    if !appState.liveTopics.isEmpty {
+                        TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
+                            FlowLayout(spacing: 8) {
+                                ForEach(appState.liveTopics, id: \.self) { topic in
+                                    TerminalTag(text: topic)
+                                }
                             }
                         }
                     }
-                }
-                
-                // Loading indicator
-                if appState.isGeneratingInsights {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                        Text("updating...")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "8B949E"))
+                    
+                    // Loading indicator
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text("updating...")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                        }
+                        .padding(.top, 8)
                     }
-                    .padding(.top, 8)
+                }
+            }
+            .padding(20)
+        }
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct LiveInsightsContent_iOSPlain: View {
+    @EnvironmentObject var appState: AppState
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                if appState.insightsMode == .training {
+                    if let metrics = appState.trainingMetrics {
+                        LiveTrainingContent_iOSPlain(metrics: metrics)
+                    } else {
+                        TrainingEmptyState()
+                    }
+                } else if appState.insightsMode == .meddpicc {
+                    LiveMEDDPICCContent_iOSPlain()
+                    
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text("updating...")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                        }
+                        .padding(.top, 8)
+                    }
+                } else {
+                    if !appState.liveSummary.isEmpty {
+                        InsightsPlainBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
+                            Text(appState.liveSummary)
+                                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                                .foregroundStyle(Color(hex: "E6EDF3"))
+                                .lineSpacing(6)
+                        }
+                    }
+                    
+                    if !appState.liveDiscussionFlow.isEmpty {
+                        InsightsPlainBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(appState.liveDiscussionFlow.enumerated()), id: \.offset) { index, item in
+                                    TerminalListItem(index: index, text: item, style: .arrow)
+                                }
+                            }
+                        }
+                    }
+
+                    if !appState.liveActionItems.isEmpty {
+                        InsightsPlainBlock_iOS(title: "action_items", color: Color(hex: "3FB950")) {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
+                                    TerminalListItem(index: index, text: item, style: .checkbox)
+                                }
+                            }
+                        }
+                    }
+                    
+                    if !appState.liveTopics.isEmpty {
+                        InsightsPlainBlock_iOS(title: "topics", color: Color(hex: "A371F7")) {
+                            FlowLayout(spacing: 8) {
+                                ForEach(appState.liveTopics, id: \.self) { topic in
+                                    TerminalTag(text: topic)
+                                }
+                            }
+                        }
+                    }
+                    
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                            Text("updating...")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                        }
+                        .padding(.top, 8)
+                    }
                 }
             }
             .padding(20)
         }
     }
 }
+
+private struct LiveMEDDPICCContent_iOSPlain: View {
+    @EnvironmentObject var appState: AppState
+    
+    var body: some View {
+        InsightsPlainBlock_iOS(title: "MEDDPICC", color: Color(hex: "F59E0B")) {
+            VStack(alignment: .leading, spacing: 10) {
+                MEDDPICCLiveRow_iOS(letter: "M", title: "Metrics", value: appState.liveMetrics, color: "3B82F6")
+                MEDDPICCLiveRow_iOS(letter: "E", title: "Economic Buyer", value: appState.liveEconomicBuyer, color: "8B5CF6")
+                MEDDPICCLiveRow_iOS(letter: "D", title: "Decision Criteria", value: appState.liveDecisionCriteria, color: "EC4899")
+                MEDDPICCLiveRow_iOS(letter: "D", title: "Decision Process", value: appState.liveDecisionProcess, color: "F59E0B")
+                MEDDPICCLiveRow_iOS(letter: "P", title: "Paper Process", value: appState.livePaperProcess, color: "F97316")
+                MEDDPICCLiveRow_iOS(letter: "I", title: "Identified Pain", value: appState.liveIdentifiedPain, color: "EF4444")
+                MEDDPICCLiveRow_iOS(letter: "C", title: "Champion", value: appState.liveChampion, color: "22C55E")
+                MEDDPICCLiveRow_iOS(letter: "C", title: "Competition", value: appState.liveCompetition, color: "6366F1")
+            }
+        }
+    }
+}
+
+private struct MEDDPICCLiveRow_iOS: View {
+    let letter: String
+    let title: String
+    let value: String?
+    let color: String
+    
+    private var hasValue: Bool {
+        guard let value else { return false }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !trimmed.isEmpty && trimmed != "null" && trimmed != "n/a" && trimmed != "none"
+    }
+    
+    var body: some View {
+        if hasValue, let value {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Text(letter)
+                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Color(hex: color))
+                        .frame(width: 16, height: 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color(hex: color).opacity(0.15))
+                        )
+                    
+                    Text(title)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "E6EDF3"))
+                }
+                
+                Text(value)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                    .lineSpacing(3)
+                    .padding(.leading, 22)
+            }
+        }
+    }
+}
+
+private struct LiveTrainingContent_iOSPlain: View {
+    let metrics: TrainingMetrics
+    private let externalSpeakerGroupingThreshold = 3
+    
+    private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
+        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+            return metrics.speakers
+        }
+        
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
+        var fillerCounts: [String: Int] = [:]
+        
+        let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
+        let totalExternalSegments = externalSpeakers.reduce(0) { $0 + $1.segmentCount }
+        let totalExternalQuestions = externalSpeakers.reduce(0) { $0 + $1.questionsAsked }
+        let totalExternalFillers = externalSpeakers.reduce(0) { $0 + $1.totalFillers }
+        let longestExternalMonologue = externalSpeakers.map(\.longestMonologueWords).max() ?? 0
+        
+        for speaker in externalSpeakers {
+            for filler in speaker.fillers {
+                fillerCounts[filler.word, default: 0] += filler.count
+            }
+        }
+        
+        let mergedFillers = fillerCounts
+            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count { return $0.word < $1.word }
+                return $0.count > $1.count
+            }
+        
+        let others = TrainingMetrics.SpeakerStats(
+            speakerLabel: "Others",
+            isLocalMic: false,
+            wordCount: totalExternalWords,
+            segmentCount: totalExternalSegments,
+            fillers: mergedFillers,
+            totalFillers: totalExternalFillers,
+            fillersPerMinute: Double(totalExternalFillers) / max(metrics.durationMinutes, 0.01),
+            wordsPerMinute: Double(totalExternalWords) / max(metrics.durationMinutes, 0.01),
+            longestMonologueWords: longestExternalMonologue,
+            questionsAsked: totalExternalQuestions,
+            avgWordsPerTurn: totalExternalSegments > 0 ? Double(totalExternalWords) / Double(totalExternalSegments) : 0
+        )
+        
+        return localSpeakers + [others]
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            InsightsPlainBlock_iOS(title: "fillers", color: Color(hex: "F59E0B")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        if speaker.totalFillers > 0 || speaker.isLocalMic {
+                            TrainingMetricRow_iOS(
+                                speaker: speaker,
+                                value: "total \(speaker.totalFillers)",
+                                trailing: "per min \(String(format: "%.1f", speaker.fillersPerMinute))"
+                            )
+                        }
+                    }
+                }
+            }
+            
+            if metrics.speakers.count > 1 {
+                InsightsPlainBlock_iOS(title: "talk_ratio", color: Color(hex: "58A6FF")) {
+                    HStack(spacing: 8) {
+                        Text("you \(Int(metrics.talkRatioYou * 100))%")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                        Text("•")
+                            .foregroundStyle(Color(hex: "484F58"))
+                        Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
+                }
+            }
+            
+            InsightsPlainBlock_iOS(title: "pace", color: Color(hex: "A371F7")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        TrainingMetricRow_iOS(
+                            speaker: speaker,
+                            value: "\(Int(speaker.wordsPerMinute)) wpm",
+                            trailing: "\(speaker.wordCount) words"
+                        )
+                    }
+                }
+            }
+            
+            InsightsPlainBlock_iOS(title: "longest_monologue", color: Color(hex: "EC4899")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        if speaker.longestMonologueWords > 0 {
+                            TrainingMetricRow_iOS(
+                                speaker: speaker,
+                                value: "\(speaker.longestMonologueWords) words"
+                            )
+                        }
+                    }
+                }
+            }
+            
+            InsightsPlainBlock_iOS(title: "questions_asked", color: Color(hex: "3FB950")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        TrainingMetricRow_iOS(
+                            speaker: speaker,
+                            value: "\(speaker.questionsAsked)"
+                        )
+                    }
+                }
+            }
+            
+            InsightsPlainBlock_iOS(title: "clarity", color: Color(hex: "D29922")) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        TrainingMetricRow_iOS(
+                            speaker: speaker,
+                            value: String(format: "%.1f", speaker.avgWordsPerTurn),
+                            trailing: "avg words/turn"
+                        )
+                    }
+                    Text("shorter turns = more focused communication")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "484F58"))
+                }
+            }
+        }
+    }
+}
+
+private struct TrainingMetricRow_iOS: View {
+    let speaker: TrainingMetrics.SpeakerStats
+    let value: String
+    var trailing: String? = nil
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(speaker.speakerLabel.lowercased())
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                .frame(width: 62, alignment: .leading)
+            Text(value)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+            Spacer(minLength: 6)
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+            }
+        }
+    }
+}
+
+private struct InsightsPlainBlock_iOS<Content: View>: View {
+    let title: String
+    let color: Color
+    @ViewBuilder let content: () -> Content
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(color)
+                    .frame(width: 3, height: 12)
+                    .cornerRadius(1.5)
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(color)
+            }
+            
+            content()
+                .padding(.leading, 12)
+        }
+    }
+}
+#endif
 
 // MARK: - MEDDPICC Content
 
@@ -232,6 +576,346 @@ struct MEDDPICCItem: View {
     }
 }
 
+// MARK: - Training Content
+
+struct TrainingContent: View {
+    let metrics: TrainingMetrics
+    
+    private let accentColor = Color(hex: "22C55E")
+    private let externalSpeakerGroupingThreshold = 3
+    
+    private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
+        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+            return metrics.speakers
+        }
+        
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
+        var fillerCounts: [String: Int] = [:]
+        
+        let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
+        let totalExternalSegments = externalSpeakers.reduce(0) { $0 + $1.segmentCount }
+        let totalExternalQuestions = externalSpeakers.reduce(0) { $0 + $1.questionsAsked }
+        let totalExternalFillers = externalSpeakers.reduce(0) { $0 + $1.totalFillers }
+        let longestExternalMonologue = externalSpeakers.map(\.longestMonologueWords).max() ?? 0
+        
+        for speaker in externalSpeakers {
+            for filler in speaker.fillers {
+                fillerCounts[filler.word, default: 0] += filler.count
+            }
+        }
+        
+        let mergedFillers = fillerCounts
+            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count { return $0.word < $1.word }
+                return $0.count > $1.count
+            }
+        
+        let others = TrainingMetrics.SpeakerStats(
+            speakerLabel: "Others",
+            isLocalMic: false,
+            wordCount: totalExternalWords,
+            segmentCount: totalExternalSegments,
+            fillers: mergedFillers,
+            totalFillers: totalExternalFillers,
+            fillersPerMinute: Double(totalExternalFillers) / max(metrics.durationMinutes, 0.01),
+            wordsPerMinute: Double(totalExternalWords) / max(metrics.durationMinutes, 0.01),
+            longestMonologueWords: longestExternalMonologue,
+            questionsAsked: totalExternalQuestions,
+            avgWordsPerTurn: totalExternalSegments > 0 ? Double(totalExternalWords) / Double(totalExternalSegments) : 0
+        )
+        
+        return localSpeakers + [others]
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if metrics.speakers.isEmpty {
+                TrainingEmptyState()
+            } else {
+                // Filler words (You first, then others)
+                ForEach(displaySpeakers) { speaker in
+                    if speaker.totalFillers > 0 || speaker.isLocalMic {
+                        FillerWordsSection(speaker: speaker, durationMinutes: metrics.durationMinutes)
+                    }
+                }
+                
+                // Talk ratio (only when multiple speakers)
+                if metrics.speakers.count > 1 {
+                    TalkRatioSection(metrics: metrics)
+                }
+                
+                // Pace
+                PaceSection(speakers: displaySpeakers)
+                
+                // Monologue
+                MonologueSection(speakers: displaySpeakers)
+                
+                // Questions
+                QuestionsSection(speakers: displaySpeakers)
+                
+                // Clarity
+                ClaritySection(speakers: displaySpeakers)
+            }
+        }
+    }
+}
+
+struct TrainingEmptyState: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("◇")
+                .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                .foregroundStyle(Color(hex: "1C1C1F"))
+            Text("waiting for speech...")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "484F58"))
+            Text("training metrics update as you speak")
+                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "3F3F46"))
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 30)
+    }
+}
+
+private struct FillerWordsSection: View {
+    let speaker: TrainingMetrics.SpeakerStats
+    let durationMinutes: Double
+    
+    var body: some View {
+        TerminalSection(
+            title: "fillers — \(speaker.speakerLabel.lowercased())",
+            color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+            headerStyle: .plain
+        ) {
+            VStack(alignment: .leading, spacing: 10) {
+                // Summary line
+                HStack(spacing: 16) {
+                    StatPill(label: "total", value: "\(speaker.totalFillers)")
+                    StatPill(label: "per min", value: String(format: "%.1f", speaker.fillersPerMinute))
+                }
+                
+                // Per-word breakdown with bars
+                if !speaker.fillers.isEmpty {
+                    let maxCount = speaker.fillers.first?.count ?? 1
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(speaker.fillers) { entry in
+                            HStack(spacing: 8) {
+                                Text(entry.word)
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "D4D4D8"))
+                                    .frame(width: 70, alignment: .trailing)
+                                
+                                GeometryReader { geo in
+                                    let width = max(4, geo.size.width * CGFloat(entry.count) / CGFloat(max(maxCount, 1)))
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(Color(hex: "F59E0B").opacity(0.6))
+                                        .frame(width: width, height: 14)
+                                }
+                                .frame(height: 14)
+                                
+                                Text("\(entry.count)")
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "8B949E"))
+                                    .frame(width: 24, alignment: .trailing)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct TalkRatioSection: View {
+    let metrics: TrainingMetrics
+    
+    var body: some View {
+        TerminalSection(title: "talk_ratio", color: Color(hex: "58A6FF"), headerStyle: .plain) {
+            VStack(alignment: .leading, spacing: 8) {
+                // Bar
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(hex: "3FB950"))
+                            .frame(width: max(4, geo.size.width * metrics.talkRatioYou))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color(hex: "58A6FF").opacity(0.5))
+                            .frame(width: max(4, geo.size.width * (1 - metrics.talkRatioYou)))
+                    }
+                }
+                .frame(height: 16)
+                .clipShape(RoundedRectangle(cornerRadius: 2))
+                
+                // Labels
+                HStack {
+                    HStack(spacing: 4) {
+                        Circle().fill(Color(hex: "3FB950")).frame(width: 6, height: 6)
+                        Text("you \(Int(metrics.talkRatioYou * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "D4D4D8"))
+                    }
+                    Spacer()
+                    HStack(spacing: 4) {
+                        Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "D4D4D8"))
+                        Circle().fill(Color(hex: "58A6FF").opacity(0.5)).frame(width: 6, height: 6)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct PaceSection: View {
+    let speakers: [TrainingMetrics.SpeakerStats]
+    
+    var body: some View {
+        TerminalSection(title: "pace", color: Color(hex: "A371F7"), headerStyle: .plain) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(speakers) { speaker in
+                    HStack {
+                        Text(speaker.speakerLabel.lowercased())
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                            .frame(width: 80, alignment: .leading)
+                        
+                        Text("\(Int(speaker.wordsPerMinute)) wpm")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                        
+                        Spacer()
+                        
+                        Text("\(speaker.wordCount) words")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "484F58"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct MonologueSection: View {
+    let speakers: [TrainingMetrics.SpeakerStats]
+    
+    var body: some View {
+        TerminalSection(title: "longest_monologue", color: Color(hex: "EC4899"), headerStyle: .plain) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(speakers) { speaker in
+                    if speaker.longestMonologueWords > 0 {
+                        HStack {
+                            Text(speaker.speakerLabel.lowercased())
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                                .frame(width: 80, alignment: .leading)
+                            
+                            Text("\(speaker.longestMonologueWords) words")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Color(hex: "E6EDF3"))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct QuestionsSection: View {
+    let speakers: [TrainingMetrics.SpeakerStats]
+    
+    var body: some View {
+        TerminalSection(title: "questions_asked", color: Color(hex: "3FB950"), headerStyle: .plain) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(speakers) { speaker in
+                    HStack {
+                        Text(speaker.speakerLabel.lowercased())
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                            .frame(width: 80, alignment: .leading)
+                        
+                        Text("\(speaker.questionsAsked)")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ClaritySection: View {
+    let speakers: [TrainingMetrics.SpeakerStats]
+    
+    var body: some View {
+        TerminalSection(title: "clarity", color: Color(hex: "D29922"), headerStyle: .plain) {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(speakers) { speaker in
+                    HStack {
+                        Text(speaker.speakerLabel.lowercased())
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                            .frame(width: 80, alignment: .leading)
+                        
+                        Text(String(format: "%.1f", speaker.avgWordsPerTurn))
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                        
+                        Text("avg words/turn")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "484F58"))
+                    }
+                }
+                
+                Text("shorter turns = more focused communication")
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .padding(.top, 4)
+            }
+        }
+    }
+}
+
+private struct StatPill: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 9, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "71717A"))
+            Text(value)
+                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color(hex: "18181B"))
+        .cornerRadius(4)
+    }
+}
+
+/// Compute training metrics from a saved Meeting's segments
+struct SavedTrainingContent: View {
+    let meeting: Meeting
+    
+    private var metrics: TrainingMetrics {
+        let segments = meeting.segments.map {
+            TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
+        }
+        let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
+        return TrainingMetrics.compute(from: segments, duration: duration)
+    }
+    
+    var body: some View {
+        TrainingContent(metrics: metrics)
+    }
+}
+
 struct TerminalInsightsContent: View {
     let meeting: Meeting
     
@@ -287,17 +971,37 @@ struct TerminalInsightsContent: View {
 }
 
 struct TerminalSection<Content: View>: View {
+    enum HeaderStyle: Equatable {
+        case markdown
+        case plain
+    }
+
     let title: String
     let color: Color
+    let headerStyle: HeaderStyle
     @ViewBuilder let content: () -> Content
+
+    init(
+        title: String,
+        color: Color,
+        headerStyle: HeaderStyle = .markdown,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.color = color
+        self.headerStyle = headerStyle
+        self.content = content
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack(spacing: 8) {
-                Text("##")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(color)
+                if headerStyle == .markdown {
+                    Text("##")
+                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .foregroundStyle(color)
+                }
                 Text(title)
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundStyle(color)
@@ -305,7 +1009,7 @@ struct TerminalSection<Content: View>: View {
             
             // Content
             content()
-                .padding(.leading, 20)
+                .padding(.leading, headerStyle == .markdown ? 20 : 0)
         }
         .padding(16)
         .background(

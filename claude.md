@@ -11,6 +11,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - live speaker identification
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - meeting history browser
 - native menu bar controls
 - keyboard shortcuts for everything
@@ -21,13 +22,45 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - live transcription with deepgram
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - meeting history browser
 - Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
 - dark mode terminal-style UI
 
 ## Changelog
 
-### 2026-02-22 - v1.7.1 (current)
+### 2026-02-23 - v1.8.0 (current)
+
+**overall:**
+- Training mode — new insights tab with real-time speech analytics: filler words (per type/speaker/minute), talk ratio, pace, longest monologue, questions asked, clarity score. Purely local computation, no API keys needed. External speakers collapsed into `others` for readability.
+- Training mode styling and layout refined to match other insights tabs (section headers, lowercase labels)
+- Historical meeting insights with mode tabs (standard / MEDDPICC / training); Training stats computed locally from saved transcripts
+- Meeting duration shown in history lists
+- Live MEDDPICC mode is standalone (no summary/actions/topics mixed in)
+- Generate/update actions hidden in Training mode to keep it local-only (no hidden AI calls)
+- `miniti free` / usage status styled as indicator instead of clickable button
+- Fix pause/resume time tracking so duration and managed-mode usage minutes stay accurate
+- Editable meeting titles in history; new meetings default to title `new`; title separator kept as ` - ` with backward compatibility for em-dash
+
+**macOS:**
+- Entire insights tab/button area is clickable (not just text)
+- `update` button in live insights panel with `⌘⇧I` shortcut; respects selected mode for completed recordings (MEDDPICC can be generated for finished meetings)
+- `⌘1` / `⌘2` / `⌘3` switch insight tabs in live + history views
+- Model selectors (transcription + insights) moved to Settings — home and recording views are cleaner
+- Start button shows "starting..." with spinner instead of flashing recording screen
+- Fix Escape not closing Settings window
+- Menu bar icon toggle in Settings (default on)
+- Refreshed keyboard shortcuts help overlay
+
+**iOS:**
+- All insights views (live + history) use plain desktop-style section blocks instead of card layouts
+- Historical insights headers match desktop styling (no markdown headings)
+- `update` button in live recording insights for Standard and MEDDPICC modes
+- `discussion` section added to live Standard insights (matching macOS)
+- `MEDDPICC` label casing in live mode picker (matching desktop)
+- Generate/update controls for saved meeting insights (including MEDDPICC)
+
+### 2026-02-22 - v1.7.1
 - Fix mic test on iOS home screen causing layout jump — waveform area always reserves space
 - Start button on iOS shows "starting..." with spinner instead of flashing the recording screen
 - Fix iOS recording header and controls jumping when toggling stop/resume — all elements stay in place using opacity transitions
@@ -72,7 +105,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 ### 2026-02-13 - v1.5.1
 - Notify users when a new version is available with a download link on the home screen
 
-### 2026-10-13 - v1.5.0
+### 2026-02-13 - v1.5.0
 - App version now sent with all backend requests for better diagnostics
 - Fix "Generate Insights" button not working for Early Adopter users
 - Fix keyboard navigation (K) in meeting history starting from the wrong end of the list
@@ -123,9 +156,9 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
 - **Miniti/Views/MainWindow.swift** – Window chrome: sidebar, content area, status bar
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette
-- **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC modes)
+- **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC + training modes), shared `TrainingContent` view for speech analytics
 - **Miniti/Views/HistoryView.swift** – Past meetings browser
-- **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, general preferences
+- **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, models (Deepgram + OpenAI), general preferences
 - **Miniti/Views/OnboardingView.swift** – First-launch mode selection (managed vs BYOK)
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
 - **Miniti/Views/LimitReachedView.swift** – Hard block when 500 min exhausted, offers BYOK switch
@@ -197,16 +230,18 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
-- **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). The `recordingStartDate` persists across stop/resume cycles within a session, and is cleared on `goHome()`.
+- **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). Paused time is excluded by re-anchoring `recordingStartDate` from the accumulated active duration on resume; `recordingStartDate` is cleared on stop and `goHome()`.
 - **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. This syncs `liveSegments`, insights, notes, and MEDDPICC to SwiftData continuously. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
-- **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS.
+- **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. Title parsing accepts both the current ` - ` separator and legacy em-dash titles for backward compatibility. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS.
 - **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer when recording; when stopped, `elapsedSeconds` is set and the timer switches to a static `Text(formatDuration(_:))` so it freezes. All visual elements (dot, status, title, timer) switch to `pausedGray` when stopped, and transcript is replaced with "tap to return to miniti". `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`. Note: compact Dynamic Island width is system-controlled and cannot be reduced by apps.
 - **iOS background recording & kill recovery**: iOS can terminate backgrounded apps at any time (memory pressure, battery, etc.); there is no way to prevent this. Mitigations: (1) `UIBackgroundModes: [audio]` keeps the app running longer while recording. (2) Periodic auto-save (every 30s) continuously persists transcript to SwiftData. (3) `saveCurrentMeetingIfNeeded()` is also called when the app enters background (`scenePhase == .background`). (4) On launch, `cleanupOrphanedLiveActivities()` ends stale Live Activities, then `resumeInterruptedMeeting()` restores the session from SwiftData so the user lands directly in the stopped-session view with their transcript.
 - **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
 - **Avoid main actor hops from audio threads**: `nonisolated func sendAudio()` on `@MainActor` services should NOT use `Task { @MainActor }` to access properties — this creates a new main-thread task per audio buffer (~4/sec), competing with SwiftUI layout passes. Instead, use `nonisolated(unsafe)` shadow properties (e.g., `_sendTask`, `_sendConnected`) written from `@MainActor` context (connect/disconnect) and read from audio threads. `URLSessionWebSocketTask.send` is thread-safe and doesn't need the main thread.
 - **Discard meeting**: `discardCurrentMeeting()` deletes the current meeting from SwiftData, ends Live Activity (iOS), and clears the session without saving. Used from the "discard" button (with confirmation alert) when a recording is stopped.
-- **Generate insights for history**: `generateInsightsForMeeting(_ meeting: Meeting)` generates standard + MEDDPICC insights for a saved meeting and writes directly to the `Meeting` model. Used from the history detail view's "generate" button.
+- **Generate insights for history**: `generateInsightsForMeeting(_ meeting: Meeting)` generates standard + MEDDPICC insights for a saved meeting and writes directly to the `Meeting` model. Used from history detail generate/update controls.
 - **MEDDPICC save safety**: `applyInsights()` only overwrites MEDDPICC fields when `insightsMode == .meddpicc`. In standard mode, the API returns nil for MEDDPICC fields — writing those nils would erase previously generated MEDDPICC data. `stopRecording()` always calls `generateFinalInsightsAndSave()` (which generates both standard + MEDDPICC) regardless of whether insights already exist.
+- **Training mode**: Third `InsightsMode` (`.training`) that shows locally-computed speech analytics — no LLM calls needed for the Training UI. `TrainingMetrics.compute(from:duration:)` runs a pass over transcript segments to extract filler word counts (hard fillers like "um"/"uh" + soft fillers like "like"/"basically"), talk ratio, speaking pace (wpm), longest monologue, questions asked, and clarity (avg words/turn). Metrics are recomputed on every new segment batch when training mode is active, and on mode switch. During recording in training mode, automatic live insight refresh still computes standard insights in the background so they are ready when switching back. Manual generate/update actions are hidden (or no-op guarded) in Training mode to avoid hidden AI calls. For saved meetings, training metrics are computed on the fly from `meeting.segments` in the history views (no extra model fields needed).
+- **Finished-meeting update action**: `generateInsights()` respects the selected insights mode for a completed current meeting (`standard` vs `meddpicc`). In Training mode, the action just refreshes local training metrics and does not make AI requests.
 - **isStartingMeeting**: Transient flag set in `startNewMeeting()`, cleared when `startRecording()` succeeds or on failure. iOS shows a "starting..." spinner during this phase. macOS hides the session view.
 - **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
 
@@ -245,13 +280,14 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 
 ### macOS
 - **Onboarding** (first launch): Mode selection — "Early Adopter" (managed, 500 min/month) or "Bring Your Own Keys"
-- **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; model selector, audio source panel, start button; cog button (top-right) opens settings
+- **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; audio source panel, start button; cog button (top-right) opens settings
 - **Home (limit reached)**: In managed mode when 500 min used — inline "switch to BYOK" prompt, start button disabled
 - **Home (device disabled)**: In managed mode when admin has disabled the device — shows "account disabled" message, start button hidden
+- **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup — stays on home screen until recording begins
 - **Recording**: TerminalHeader with red dot + timer, stop button, dual labeled waveforms (mic green, system blue), transcript, notes, live insights
-- **Stopped session**: Same layout; rec button shows "cont" (same position as stop — model selector sits after the button, status dot hidden when not recording). Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
-- **History**: Sidebar list → detail view
-- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘,, or menu bar
+- **Stopped session**: Same layout; rec button shows "cont" (same position as stop, status dot hidden when not recording). Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
+- **History**: Sidebar list → detail view. macOS uses split panes (transcript + notes on left, insights on right) and the insights pane has mode tabs (standard / MEDDPICC / training) with `⌘1` / `⌘2` / `⌘3`.
+- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram + OpenAI), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘,, or menu bar
 
 ### iOS
 - **Onboarding** (first launch): Same as macOS (shared `OnboardingView`)
@@ -259,7 +295,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup
 - **Recording**: Header with red dot + timer (center) + waveform, custom lowercase section picker (transcript/insights/notes), stop button at bottom center
 - **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), resume (center, same position as stop), save (right)
-- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes, lowercase). Transcript collapses consecutive same-speaker segments. Insights shows standard + MEDDPICC + "generate" button for past meetings. Notes are editable.
+- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes/training, lowercase). Transcript collapses consecutive same-speaker segments. Insights shows standard + MEDDPICC + "generate" button for past meetings. Training shows speech analytics computed from saved segments. Notes are editable.
 - **Settings**: Accessible via gear icon on home screen (no dedicated tab)
 - **Tab bar**: Record / History — two-tab navigation
 
@@ -389,9 +425,11 @@ Two parallel modes, to be extended with Pro tier:
 #### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
 - Stack: Next.js 14 (App Router, edge runtime), TypeScript, Vercel, Upstash Redis via `@vercel/kv`
-- All routes require `X-API-Key` (shared secret, timing-safe verified) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.5.0") and `X-Platform` header (`"macos"` / `"ios"`) tracked per device in Redis
+- All routes require `X-API-Key` (shared app key) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.5.0") and `X-Platform` header (`"macos"` / `"ios"`) tracked per device in Redis
 - Device disable/enable via admin dashboard — disabled devices get 403 `device_disabled` on all endpoints; app shows "account disabled" message and blocks recording
 - API key is XOR-obfuscated in `MinitiAPIService.swift` (not plain text in source/binary)
+- **Security note**: the client `X-API-Key` is not a true secret (anything shipped in the app can be extracted). XOR obfuscation only reduces casual string scanning. Treat this as a client identifier / coarse gate, not strong authentication.
+- **Safer direction**: keep quota enforcement and abuse protection server-side (`X-Device-ID`, rate limits, caps, anomaly detection), issue short-lived server tokens for sensitive flows (session creation / insights), and optionally add platform attestation later (e.g. App Attest / DeviceCheck on iOS) to raise abuse cost.
 - Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
 

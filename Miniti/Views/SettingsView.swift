@@ -1,8 +1,11 @@
 import SwiftUI
 import ServiceManagement
+import AppKit
+import AVFoundation
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         TabView {
@@ -25,12 +28,39 @@ struct SettingsView: View {
                     Label("Audio", systemImage: "waveform")
                 }
             
+            ModelsSettingsView()
+                .tabItem {
+                    Label("Models", systemImage: "cpu")
+                }
+            
             GeneralSettingsView()
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
         }
         .frame(width: 500, height: 400)
+        .background {
+            // Hidden cancel-action shortcut so Escape closes the settings window.
+            Button("") {
+                closeSettingsWindow()
+            }
+            .keyboardShortcut(.cancelAction)
+            .labelsHidden()
+            .frame(width: 0, height: 0)
+            .opacity(0)
+            .allowsHitTesting(false)
+        }
+        .onExitCommand {
+            closeSettingsWindow()
+        }
+    }
+    
+    private func closeSettingsWindow() {
+        if let keyWindow = NSApp.keyWindow {
+            keyWindow.close()
+            return
+        }
+        dismiss()
     }
 }
 
@@ -452,9 +482,109 @@ struct PermissionStatusBadge: View {
     }
 }
 
+struct ModelsSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    
+    private var selectedDeepgramModel: DeepgramModel {
+        DeepgramModel(rawValue: appState.deepgramModel) ?? .nova3
+    }
+    
+    private var selectedOpenAIModel: OpenAIModel {
+        OpenAIModel(rawValue: appState.openaiModel) ?? .gpt5Mini
+    }
+    
+    var body: some View {
+        Form {
+            Section("Transcription") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Model", selection: $appState.deepgramModel) {
+                        ForEach(DeepgramModel.allCases, id: \.self) { model in
+                            Text(model.displayName).tag(model.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    
+                    SettingsModelSummaryCard(
+                        title: selectedDeepgramModel.displayName,
+                        subtitle: selectedDeepgramModel.shortDescription.capitalized,
+                        pros: selectedDeepgramModel.pros.prefix(2).joined(separator: " • "),
+                        cons: selectedDeepgramModel.cons.prefix(2).joined(separator: " • ")
+                    )
+                }
+                
+                Text("Deepgram model used for real-time speech-to-text transcription.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Insights") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Model", selection: $appState.openaiModel) {
+                        ForEach(OpenAIModel.allCases, id: \.self) { model in
+                            Text(model.displayName).tag(model.rawValue)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    
+                    SettingsModelSummaryCard(
+                        title: selectedOpenAIModel.displayName,
+                        subtitle: selectedOpenAIModel.shortDescription,
+                        pros: selectedOpenAIModel.pros.prefix(2).joined(separator: " • "),
+                        cons: selectedOpenAIModel.cons.prefix(2).joined(separator: " • ")
+                    )
+                }
+                
+                Text("OpenAI model used for generating summaries, action items, and MEDDPICC analysis.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+private struct SettingsModelSummaryCard: View {
+    let title: String
+    let subtitle: String
+    let pros: String
+    let cons: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Label(pros, systemImage: "plus.circle.fill")
+                .foregroundStyle(.secondary)
+            
+            Label(cons, systemImage: "minus.circle.fill")
+                .foregroundStyle(.secondary)
+        }
+        .font(.caption)
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.secondary.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+        )
+    }
+}
+
 struct GeneralSettingsView: View {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
-    @AppStorage("showInMenuBar") private var showInMenuBar: Bool = false
+    @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
     
     var body: some View {
         Form {
@@ -467,8 +597,9 @@ struct GeneralSettingsView: View {
             
             Section("Appearance") {
                 Toggle("Show in Menu Bar", isOn: $showInMenuBar)
-                    .disabled(true) // Future feature
-                Text("Menu bar support coming soon")
+                Text(showInMenuBar
+                     ? "Miniti icon is shown in the menu bar."
+                     : "Turn this back on to restore the Miniti menu bar icon.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -507,8 +638,6 @@ struct GeneralSettingsView: View {
         }
     }
 }
-
-import AVFoundation
 
 #Preview {
     SettingsView()

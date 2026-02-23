@@ -101,6 +101,30 @@ struct MainWindow: View {
         keyboardService.onNavigateDown = { [self] in
             navigateHistory(direction: 1)
         }
+        
+        keyboardService.onStandardMode = { [self] in
+            if selectedMeeting != nil {
+                appState.insightsMode = .standard
+            } else {
+                appState.switchInsightsMode(to: .standard)
+            }
+        }
+        
+        keyboardService.onMeddpiccMode = { [self] in
+            if selectedMeeting != nil {
+                appState.insightsMode = .meddpicc
+            } else {
+                appState.switchInsightsMode(to: .meddpicc)
+            }
+        }
+        
+        keyboardService.onTrainingMode = { [self] in
+            if selectedMeeting != nil {
+                appState.insightsMode = .training
+            } else {
+                appState.switchInsightsMode(to: .training)
+            }
+        }
     }
     
     private func navigateHistory(direction: Int) {
@@ -324,18 +348,29 @@ struct SidebarHistoryItem: View {
     @State private var isHovering = false
     @State private var showDeleteConfirm = false
     
+    private var splitTitle: (timestamp: String, suffix: String)? {
+        for separator in [" - ", " — "] {
+            guard let range = meeting.title.range(of: separator) else { continue }
+            return (
+                timestamp: String(meeting.title[..<range.lowerBound]),
+                suffix: String(meeting.title[range.upperBound...])
+            )
+        }
+        return nil
+    }
+    
     private var displayTitle: String {
         // Show just the suffix if there is one, otherwise timestamp
-        if meeting.title.contains(" - ") {
-            return String(meeting.title.split(separator: " - ", maxSplits: 1).last ?? "")
+        if let splitTitle {
+            return splitTitle.suffix
         }
         return meeting.title
     }
     
     private var timestamp: String {
         // Extract timestamp portion
-        if meeting.title.contains(" - ") {
-            return String(meeting.title.split(separator: " - ", maxSplits: 1).first ?? "")
+        if let splitTitle {
+            return splitTitle.timestamp
         }
         return meeting.title
     }
@@ -351,6 +386,11 @@ struct SidebarHistoryItem: View {
                     
                     HStack(spacing: 6) {
                         Text(formatDate(meeting.startTime))
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                        Text("•")
+                            .foregroundStyle(Theme.textDim.opacity(0.6))
+                        Text(meeting.formattedDuration)
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
                     }
@@ -508,7 +548,9 @@ struct SidebarSessionItem: View {
 // MARK: - Meeting Detail View (for historical meetings)
 
 struct MeetingDetailView: View {
-    let meeting: Meeting
+    @Bindable var meeting: Meeting
+    @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     
     private let speakerColors: [Color] = [
         ColorPalette.Accent.blue,
@@ -523,9 +565,13 @@ struct MeetingDetailView: View {
         VStack(spacing: 0) {
             // Header
             HStack(spacing: 16) {
-                Text(meeting.title)
+                TextField("meeting_title", text: $meeting.title)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.text)
+                    .onSubmit {
+                        saveTitle()
+                    }
                 
                 Spacer()
                 
@@ -585,6 +631,14 @@ struct MeetingDetailView: View {
                         meeting.insightsAsMarkdown()
                     })
                     
+                    HistoricalInsightsModeSelector(
+                        selectedMode: Binding(
+                            get: { appState.insightsMode },
+                            set: { appState.insightsMode = $0 }
+                        )
+                    )
+                    GradientDivider()
+                    
                     ScrollView {
                         insightsContent
                     }
@@ -593,6 +647,9 @@ struct MeetingDetailView: View {
             }
         }
         .background(Theme.bg)
+        .onDisappear {
+            saveTitle()
+        }
     }
     
     private var transcriptContent: some View {
@@ -642,9 +699,67 @@ struct MeetingDetailView: View {
         .padding(16)
     }
     
+    private func saveTitle() {
+        meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if meeting.title.isEmpty {
+            meeting.title = "untitled"
+        }
+        try? modelContext.save()
+    }
+    
     private var insightsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if meeting.hasInsights {
+            if !meeting.segments.isEmpty && appState.insightsMode != .training {
+                HStack(spacing: 8) {
+                    Button {
+                        Task {
+                            await appState.generateInsightsForMeeting(meeting)
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text((meeting.hasInsights || meeting.hasMEDDPICC) ? "update" : "generate")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
+                                Text("meddpicc")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                        }
+                        .foregroundStyle(Theme.text)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Theme.bgTertiary)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Theme.border, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .disabled(appState.isGeneratingInsights)
+                    .opacity(appState.isGeneratingInsights ? 0.5 : 1.0)
+                    
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 6) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("updating...")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                    }
+                    
+                    Spacer()
+                }
+            }
+
+            if appState.insightsMode == .standard {
+                if meeting.hasInsights {
                 // Summary
                 if let summary = meeting.summaryText {
                     DetailInsightBlock(title: "summary", color: Theme.accentBlue) {
@@ -707,23 +822,54 @@ struct MeetingDetailView: View {
                         }
                     }
                 }
-                
-                // MEDDPICC Framework
+                } else {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Text("◇")
+                            .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                        Text("no insights")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textMuted)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+            } else if appState.insightsMode == .meddpicc {
                 if meeting.hasMEDDPICC {
                     SavedMEDDPICCSection(meeting: meeting)
+                } else {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Text("◇")
+                            .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                        Text("no meddpicc yet")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textMuted)
+                        Text("use generate/update above")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
                 }
             } else {
+                if !meeting.segments.isEmpty {
+                    SavedTrainingSection(meeting: meeting)
+                } else {
                 VStack(spacing: 12) {
                     Spacer()
                     Text("◇")
                         .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
-                    Text("no insights")
+                    Text("no transcript")
                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textMuted)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)
+                }
             }
         }
         .padding(16)
@@ -783,6 +929,46 @@ struct DetailSectionHeader: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+        .background(Theme.bgSecondary)
+    }
+}
+
+struct HistoricalInsightsModeSelector: View {
+    @Binding var selectedMode: InsightsMode
+    
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(InsightsMode.allCases.enumerated()), id: \.element) { index, mode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        selectedMode = mode
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Text(mode.displayName)
+                            .font(.system(size: 11, weight: selectedMode == mode ? .semibold : .medium, design: .monospaced))
+                            .foregroundStyle(selectedMode == mode ? Theme.text : Theme.textDim)
+                        
+                        Text("⌘\(index + 1)")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(selectedMode == mode ? Theme.text.opacity(0.4) : Theme.textDim.opacity(0.5))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(selectedMode == mode ? Theme.accent.opacity(0.15) : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+            
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(Theme.bgSecondary)
     }
 }
@@ -916,6 +1102,184 @@ struct MEDDPICCSavedRow: View {
     }
 }
 
+// MARK: - Saved Training Section
+
+struct SavedTrainingSection: View {
+    let meeting: Meeting
+    
+    private let externalSpeakerGroupingThreshold = 3
+    
+    private var metrics: TrainingMetrics {
+        let segments = meeting.segments.map {
+            TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
+        }
+        let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
+        return TrainingMetrics.compute(from: segments, duration: duration)
+    }
+    
+    private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
+        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+            return metrics.speakers
+        }
+        
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
+        var fillerCounts: [String: Int] = [:]
+        
+        let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
+        let totalExternalSegments = externalSpeakers.reduce(0) { $0 + $1.segmentCount }
+        let totalExternalQuestions = externalSpeakers.reduce(0) { $0 + $1.questionsAsked }
+        let totalExternalFillers = externalSpeakers.reduce(0) { $0 + $1.totalFillers }
+        let longestExternalMonologue = externalSpeakers.map(\.longestMonologueWords).max() ?? 0
+        
+        for speaker in externalSpeakers {
+            for filler in speaker.fillers {
+                fillerCounts[filler.word, default: 0] += filler.count
+            }
+        }
+        
+        let mergedFillers = fillerCounts
+            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count { return $0.word < $1.word }
+                return $0.count > $1.count
+            }
+        
+        let others = TrainingMetrics.SpeakerStats(
+            speakerLabel: "Others",
+            isLocalMic: false,
+            wordCount: totalExternalWords,
+            segmentCount: totalExternalSegments,
+            fillers: mergedFillers,
+            totalFillers: totalExternalFillers,
+            fillersPerMinute: Double(totalExternalFillers) / max(metrics.durationMinutes, 0.01),
+            wordsPerMinute: Double(totalExternalWords) / max(metrics.durationMinutes, 0.01),
+            longestMonologueWords: longestExternalMonologue,
+            questionsAsked: totalExternalQuestions,
+            avgWordsPerTurn: totalExternalSegments > 0 ? Double(totalExternalWords) / Double(totalExternalSegments) : 0
+        )
+        
+        return localSpeakers + [others]
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            DetailInsightBlock(title: "fillers", color: ColorPalette.Accent.amber) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(displaySpeakers) { speaker in
+                        if speaker.totalFillers > 0 || speaker.isLocalMic {
+                            HStack(spacing: 8) {
+                                Text(speaker.speakerLabel.lowercased())
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(speaker.isLocalMic ? Theme.accent : Theme.textDim)
+                                    .frame(width: 58, alignment: .leading)
+                                Text("total \(speaker.totalFillers)")
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.text)
+                                Text("•")
+                                    .foregroundStyle(Theme.textDim)
+                                Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if metrics.speakers.count > 1 {
+                DetailInsightBlock(title: "talk_ratio", color: ColorPalette.Accent.blue) {
+                    HStack(spacing: 8) {
+                        Text("you \(Int(metrics.talkRatioYou * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                        Text("•")
+                            .foregroundStyle(Theme.textDim)
+                        Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
+                    }
+                }
+            }
+            
+            DetailInsightBlock(title: "pace", color: ColorPalette.Accent.purple) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(displaySpeakers) { speaker in
+                        SavedTrainingMetricRow(
+                            speaker: speaker,
+                            value: "\(Int(speaker.wordsPerMinute)) wpm",
+                            trailing: "\(speaker.wordCount) words"
+                        )
+                    }
+                }
+            }
+            
+            DetailInsightBlock(title: "longest_monologue", color: ColorPalette.Accent.pink) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(displaySpeakers) { speaker in
+                        if speaker.longestMonologueWords > 0 {
+                            SavedTrainingMetricRow(
+                                speaker: speaker,
+                                value: "\(speaker.longestMonologueWords) words"
+                            )
+                        }
+                    }
+                }
+            }
+            
+            DetailInsightBlock(title: "questions_asked", color: ColorPalette.Accent.green) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(displaySpeakers) { speaker in
+                        SavedTrainingMetricRow(
+                            speaker: speaker,
+                            value: "\(speaker.questionsAsked)"
+                        )
+                    }
+                }
+            }
+            
+            DetailInsightBlock(title: "clarity", color: ColorPalette.Accent.yellow) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(displaySpeakers) { speaker in
+                        SavedTrainingMetricRow(
+                            speaker: speaker,
+                            value: String(format: "%.1f", speaker.avgWordsPerTurn),
+                            trailing: "avg words/turn"
+                        )
+                    }
+                    Text("shorter turns = more focused communication")
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Theme.textDim)
+                }
+            }
+        }
+    }
+}
+
+private struct SavedTrainingMetricRow: View {
+    let speaker: TrainingMetrics.SpeakerStats
+    let value: String
+    var trailing: String? = nil
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(speaker.speakerLabel.lowercased())
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(speaker.isLocalMic ? Theme.accent : Theme.textDim)
+                .frame(width: 58, alignment: .leading)
+            Text(value)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Theme.text)
+            Spacer()
+            if let trailing {
+                Text(trailing)
+                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Theme.textDim)
+            }
+        }
+    }
+}
+
 // MARK: - Visual Effect View (keep for compatibility)
 
 struct VisualEffectView: NSViewRepresentable {
@@ -947,10 +1311,34 @@ struct KeyboardShortcutsOverlay: View {
     
     private let categoryOrder = ["Recording", "Navigation", "Insights", "App"]
     
+    private func keycap(_ text: String, minWidth: CGFloat = 86, compact: Bool = false) -> some View {
+        Text(text)
+            .font(.system(size: compact ? 11 : 14, weight: .bold, design: .monospaced))
+            .foregroundStyle(Theme.text)
+            .frame(minWidth: minWidth, alignment: .center)
+            .padding(.horizontal, compact ? 8 : 12)
+            .padding(.vertical, compact ? 4 : 7)
+            .background(
+                RoundedRectangle(cornerRadius: compact ? 6 : 8)
+                    .fill(Theme.bgSecondary.opacity(0.95))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: compact ? 6 : 8)
+                    .stroke(Theme.border.opacity(0.9), lineWidth: 1)
+            )
+    }
+    
     var body: some View {
         ZStack {
             // Dim background
-            Color.black.opacity(0.7)
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0.82),
+                    Color.black.opacity(0.68)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
                 .ignoresSafeArea()
                 .onTapGesture {
                     keyboardService.showingHelp = false
@@ -981,7 +1369,7 @@ struct KeyboardShortcutsOverlay: View {
                     .buttonStyle(.plain)
                 }
                 .padding(16)
-                .background(Theme.bgSecondary)
+                .background(Theme.bgSecondary.opacity(0.9))
                 
                 Rectangle()
                     .fill(Theme.border)
@@ -999,19 +1387,14 @@ struct KeyboardShortcutsOverlay: View {
                                         .padding(.bottom, 4)
                                     
                                     ForEach(shortcuts) { shortcut in
-                                        HStack {
-                                            Text(shortcut.keys)
-                                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                                .foregroundStyle(Theme.text)
-                                                .frame(width: 70, alignment: .leading)
-                                                .padding(.horizontal, 8)
-                                                .padding(.vertical, 4)
-                                                .background(Theme.bgSecondary)
-                                                .cornerRadius(4)
+                                        HStack(alignment: .center, spacing: 12) {
+                                            keycap(shortcut.keys, minWidth: 96)
                                             
                                             Text(shortcut.description)
                                                 .font(.system(size: 12, weight: .regular, design: .monospaced))
                                                 .foregroundStyle(Theme.textMuted)
+                                            
+                                            Spacer(minLength: 0)
                                         }
                                     }
                                 }
@@ -1020,6 +1403,7 @@ struct KeyboardShortcutsOverlay: View {
                     }
                     .padding(20)
                 }
+                .frame(maxHeight: 420)
                 
                 Rectangle()
                     .fill(Theme.border)
@@ -1030,39 +1414,39 @@ struct KeyboardShortcutsOverlay: View {
                     Text("Press")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
-                    Text("Esc")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Theme.bgSecondary)
-                        .cornerRadius(3)
+                    keycap("Esc", minWidth: 0, compact: true)
                     Text("or")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
-                    Text("⌘/")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Theme.bgSecondary)
-                        .cornerRadius(3)
+                    keycap("⌘/", minWidth: 0, compact: true)
                     Text("to close")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
                 }
                 .padding(12)
                 .frame(maxWidth: .infinity)
-                .background(Theme.bgSecondary)
+                .background(Theme.bgSecondary.opacity(0.9))
             }
-            .frame(width: 340)
-            .background(Theme.bg)
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Theme.border, lineWidth: 1)
+            .frame(width: 460)
+            .frame(maxHeight: 560)
+            .background(
+                RoundedRectangle(cornerRadius: 18)
+                    .fill(Theme.bg.opacity(0.98))
             )
-            .shadow(color: .black.opacity(0.5), radius: 30, y: 10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Theme.border.opacity(0.95), lineWidth: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(Color.white.opacity(0.04), lineWidth: 1)
+                    .padding(1)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .shadow(color: .black.opacity(0.42), radius: 28, y: 10)
+            .shadow(color: Theme.accent.opacity(0.08), radius: 40, y: 0)
+            .padding(.horizontal, 28)
+            .padding(.vertical, 32)
         }
     }
 }

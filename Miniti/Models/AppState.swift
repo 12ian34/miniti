@@ -46,6 +46,7 @@ final class AppState: ObservableObject {
     
     // MARK: - Insights Mode
     @Published var insightsMode: InsightsMode = .standard
+    @Published var trainingMetrics: TrainingMetrics?
     
     // MARK: - Live Notes
     @Published var liveNotes: String = ""
@@ -99,6 +100,7 @@ final class AppState: ObservableObject {
     @Published var isDeviceDisabled = false
     private var currentSessionId: String?
     private var tempDeepgramKey: String?
+    private var managedSessionStartRecordedDuration: TimeInterval?
     
     /// Whether managed mode is at its limit (500 min).
     var isLimitReached: Bool {
@@ -133,6 +135,7 @@ final class AppState: ObservableObject {
     private var recordingTimer: Timer?
     private var periodicSaveTimer: Timer?
     private var recordingStartDate: Date?
+    private var accumulatedRecordedDuration: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
     
     #if os(iOS)
@@ -325,6 +328,11 @@ final class AppState: ObservableObject {
         updateLiveActivityTranscript()
         #endif
         
+        // Update training metrics if in training mode
+        if insightsMode == .training {
+            recomputeTrainingMetrics()
+        }
+        
         // Check if we should update live insights
         let finalCount = liveSegments.filter { 
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
@@ -362,6 +370,9 @@ final class AppState: ObservableObject {
         
         isGeneratingInsights = true
         
+        // Training mode is locally computed — use standard for LLM generation
+        let effectiveMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
+        
         do {
             let insights: InsightsService.LiveInsights
             
@@ -373,7 +384,7 @@ final class AppState: ObservableObject {
                     transcript: transcript,
                     existingSummary: liveSummary.isEmpty ? nil : liveSummary,
                     existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                    mode: insightsMode.rawValue,
+                    mode: effectiveMode.rawValue,
                     model: (OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini).rawValue
                 )
                 insights = response.toLiveInsights()
@@ -388,7 +399,7 @@ final class AppState: ObservableObject {
                     transcript: transcript,
                     existingSummary: liveSummary.isEmpty ? nil : liveSummary,
                     existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                    mode: insightsMode,
+                    mode: effectiveMode,
                     model: selectedModel,
                     apiKey: openaiApiKey
                 )
@@ -469,6 +480,8 @@ final class AppState: ObservableObject {
         interimSpeaker = nil
         detectedSpeakers = []
         recordingDuration = 0
+        recordingStartDate = nil
+        accumulatedRecordedDuration = 0
         hasUnsavedSession = true
         managedSessionError = nil
         
@@ -537,6 +550,10 @@ final class AppState: ObservableObject {
     
     /// Generate standard + MEDDPICC insights for a saved meeting (used from history detail)
     func generateInsightsForMeeting(_ meeting: Meeting) async {
+        if insightsMode == .training {
+            return
+        }
+
         let canGenerate: Bool
         if appMode == .managed {
             canGenerate = minitiAPIService != nil
@@ -665,16 +682,16 @@ final class AppState: ObservableObject {
         // Restore duration from last segment timestamp (actual recorded duration, not wall clock)
         if let lastSegment = liveSegments.last {
             recordingDuration = lastSegment.timestamp
+            accumulatedRecordedDuration = recordingDuration
         }
         
         // Restore detected speakers
         detectedSpeakers = Set(liveSegments.map(\.speaker))
         
         // Restore title tracking
-        let parts = interrupted.title.split(separator: " — ", maxSplits: 1)
-        if parts.count == 2 {
-            meetingTimestamp = String(parts[0])
-            currentTitleSuffix = String(parts[1])
+        if let (timestamp, suffix) = Self.parseMeetingTitle(interrupted.title) {
+            meetingTimestamp = timestamp
+            currentTitleSuffix = suffix
         }
         
         // Track segment counts so insight generation doesn't re-trigger unnecessarily
@@ -693,6 +710,11 @@ final class AppState: ObservableObject {
         let previousMode = insightsMode
         insightsMode = mode
         
+        if mode == .training {
+            recomputeTrainingMetrics()
+            return
+        }
+        
         // If switching to MEDDPICC and we have transcript content, check if re-analysis needed
         if mode == .meddpicc && previousMode != .meddpicc {
             let currentSegmentCount = liveSegments.filter({ $0.isFinal && !$0.text.isEmpty }).count
@@ -704,6 +726,14 @@ final class AppState: ObservableObject {
                 }
             }
         }
+    }
+    
+    /// Recompute training metrics from current live segments
+    func recomputeTrainingMetrics() {
+        let segments = liveSegments.map {
+            TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
+        }
+        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
     }
     
     /// Re-analyze the current transcript with MEDDPICC framework
@@ -947,10 +977,8 @@ final class AppState: ObservableObject {
             }
         }
         
-        // Start duration timer (date-based for reliable background timing)
-        if recordingStartDate == nil {
-            recordingStartDate = Date()
-        }
+        // Exclude paused time by anchoring to the already-recorded active duration.
+        recordingStartDate = Date().addingTimeInterval(-accumulatedRecordedDuration)
         let startDate = recordingStartDate!
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
@@ -987,11 +1015,13 @@ final class AppState: ObservableObject {
             let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: model)
             currentSessionId = session.sessionId
             tempDeepgramKey = session.tempApiKey
+            managedSessionStartRecordedDuration = accumulatedRecordedDuration
             print("[AppState] Got temp key for managed session: \(session.sessionId)")
             
             // Now start recording with the temp key
             startRecording()
         } catch let error as MinitiAPIService.ServiceError {
+            managedSessionStartRecordedDuration = nil
             isStartingMeeting = false
             switch error {
             case .limitReached(_, _):
@@ -1005,6 +1035,7 @@ final class AppState: ObservableObject {
             }
             print("[AppState] Managed session failed: \(error)")
         } catch {
+            managedSessionStartRecordedDuration = nil
             isStartingMeeting = false
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
             print("[AppState] Managed session failed: \(error)")
@@ -1012,9 +1043,15 @@ final class AppState: ObservableObject {
     }
     
     func stopRecording() {
+        if let startDate = recordingStartDate {
+            recordingDuration = Date().timeIntervalSince(startDate)
+            accumulatedRecordedDuration = recordingDuration
+        }
+        
         isRecording = false
         recordingTimer?.invalidate()
         recordingTimer = nil
+        recordingStartDate = nil
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
         
@@ -1029,7 +1066,9 @@ final class AppState: ObservableObject {
         // Report usage to backend in managed mode
         if appMode == .managed, let sessionId = currentSessionId {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-            let durationMinutes = recordingDuration / 60.0
+            let sessionStart = managedSessionStartRecordedDuration ?? 0
+            let sessionDuration = max(0, recordingDuration - sessionStart)
+            let durationMinutes = sessionDuration / 60.0
             Task {
                 do {
                     let result = try await minitiAPIService?.endSession(
@@ -1048,6 +1087,7 @@ final class AppState: ObservableObject {
             }
             currentSessionId = nil
             tempDeepgramKey = nil
+            managedSessionStartRecordedDuration = nil
         }
         
         // Finalize meeting (keep as current session so user can resume/save/discard)
@@ -1080,6 +1120,7 @@ final class AppState: ObservableObject {
         detectedSpeakers = []
         recordingDuration = 0
         recordingStartDate = nil
+        accumulatedRecordedDuration = 0
         hasUnsavedSession = false
         
         // Reset live notes and insights
@@ -1090,6 +1131,9 @@ final class AppState: ObservableObject {
         liveDiscussionFlow = []
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
+        
+        // Reset training metrics
+        trainingMetrics = nil
         
         // Reset MEDDPICC fields
         liveMetrics = nil
@@ -1109,6 +1153,7 @@ final class AppState: ObservableObject {
         // Reset managed session state
         currentSessionId = nil
         tempDeepgramKey = nil
+        managedSessionStartRecordedDuration = nil
         managedSessionError = nil
     }
     
@@ -1222,6 +1267,11 @@ final class AppState: ObservableObject {
     
     func generateInsights() async {
         guard let meeting = currentMeeting else { return }
+
+        if insightsMode == .training {
+            recomputeTrainingMetrics()
+            return
+        }
         
         // Mode-aware capability check
         let canGenerate: Bool
@@ -1236,8 +1286,42 @@ final class AppState: ObservableObject {
         
         do {
             let selectedModel = OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
+            let requestedMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
             
-            if appMode == .managed, let minitiAPIService {
+            if requestedMode == .meddpicc {
+                let meddpiccInsights: InsightsService.LiveInsights
+                
+                if appMode == .managed, let minitiAPIService {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await minitiAPIService.generateInsights(
+                        deviceId: deviceId,
+                        transcript: meeting.fullTranscript,
+                        existingSummary: meeting.summaryText,
+                        existingTitle: nil,
+                        mode: InsightsMode.meddpicc.rawValue,
+                        model: selectedModel.rawValue
+                    )
+                    meddpiccInsights = response.toLiveInsights()
+                } else {
+                    meddpiccInsights = try await insightsService!.generateLiveInsights(
+                        transcript: meeting.fullTranscript,
+                        existingSummary: meeting.summaryText,
+                        existingTitle: nil,
+                        mode: .meddpicc,
+                        model: selectedModel,
+                        apiKey: openaiApiKey
+                    )
+                }
+                
+                meeting.meddpiccMetrics = meddpiccInsights.metrics
+                meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
+                meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
+                meeting.meddpiccDecisionProcess = meddpiccInsights.decisionProcess
+                meeting.meddpiccPaperProcess = meddpiccInsights.paperProcess
+                meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
+                meeting.meddpiccChampion = meddpiccInsights.champion
+                meeting.meddpiccCompetition = meddpiccInsights.competition
+            } else if appMode == .managed, let minitiAPIService {
                 // Managed mode: proxy through backend
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
@@ -1249,6 +1333,7 @@ final class AppState: ObservableObject {
                 meeting.summaryText = insights.summary
                 meeting.actionItems = insights.actionItems
                 meeting.topics = insights.topics
+                meeting.discussionFlow = insights.discussionFlow
             } else {
                 // BYOK mode: direct OpenAI call
                 let insights = try await insightsService!.generateInsights(
@@ -1261,11 +1346,23 @@ final class AppState: ObservableObject {
                 meeting.keyDecisions = insights.decisions
                 meeting.topics = insights.topics
             }
+            
+            try? modelContext?.save()
         } catch {
             print("Failed to generate insights: \(error)")
         }
         
         isGeneratingInsights = false
+    }
+
+    private static func parseMeetingTitle(_ title: String) -> (String, String)? {
+        for separator in [" - ", " — "] {
+            guard let range = title.range(of: separator) else { continue }
+            let timestamp = String(title[..<range.lowerBound])
+            let suffix = String(title[range.upperBound...])
+            return (timestamp, suffix)
+        }
+        return nil
     }
     
     // MARK: - Update Check

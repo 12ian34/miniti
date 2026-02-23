@@ -47,11 +47,13 @@ enum OpenAIModel: String, CaseIterable, Codable {
 enum InsightsMode: String, CaseIterable, Codable {
     case standard = "standard"
     case meddpicc = "meddpicc"
+    case training = "training"
     
     var displayName: String {
         switch self {
         case .standard: return "standard"
         case .meddpicc: return "MEDDPICC"
+        case .training: return "training"
         }
     }
     
@@ -59,7 +61,166 @@ enum InsightsMode: String, CaseIterable, Codable {
         switch self {
         case .standard: return "General meeting insights"
         case .meddpicc: return "Sales qualification framework"
+        case .training: return "Speech pattern analysis"
         }
+    }
+}
+
+// MARK: - Training Metrics (locally computed, no LLM)
+
+struct TrainingMetrics {
+    struct FillerEntry: Identifiable {
+        let id = UUID()
+        let word: String
+        let count: Int
+    }
+    
+    struct SpeakerStats: Identifiable {
+        let id = UUID()
+        let speakerLabel: String
+        let isLocalMic: Bool
+        let wordCount: Int
+        let segmentCount: Int
+        let fillers: [FillerEntry]
+        let totalFillers: Int
+        let fillersPerMinute: Double
+        let wordsPerMinute: Double
+        let longestMonologueWords: Int
+        let questionsAsked: Int
+        let avgWordsPerTurn: Double
+    }
+    
+    let speakers: [SpeakerStats]
+    let talkRatioYou: Double
+    let durationMinutes: Double
+    
+    private static let hardFillers: Set<String> = ["um", "uh", "uh huh", "hmm", "hm", "er", "ah"]
+    private static let softFillers: Set<String> = ["like", "basically", "literally", "actually", "honestly"]
+    private static let phraseFillers: [(phrase: String, label: String)] = [
+        ("you know", "you know"),
+        ("i mean", "I mean"),
+        ("kind of", "kind of"),
+        ("sort of", "sort of"),
+    ]
+    
+    struct Segment {
+        let text: String
+        let speaker: Int
+        let isFinal: Bool
+    }
+    
+    static func compute(from segments: [Segment], duration: TimeInterval) -> TrainingMetrics {
+        let finals = segments.filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let durationMinutes = max(duration / 60.0, 0.01)
+        
+        let speakerIDs = Array(Set(finals.map(\.speaker))).sorted { a, b in
+            if a == DeepgramService.micSpeakerID { return true }
+            if b == DeepgramService.micSpeakerID { return false }
+            return a < b
+        }
+        
+        var totalWordsAll = 0
+        var youWordCount = 0
+        var speakerStatsList: [SpeakerStats] = []
+        
+        for speakerID in speakerIDs {
+            let speakerSegments = finals.filter { $0.speaker == speakerID }
+            let isMic = speakerID == DeepgramService.micSpeakerID
+            let label = isMic ? "You" : "Speaker \(speakerID + 1)"
+            
+            var wordCount = 0
+            var fillerMap: [String: Int] = [:]
+            var questionsAsked = 0
+            var totalWordsInTurns = 0
+            
+            for seg in speakerSegments {
+                let words = seg.text.split(separator: " ")
+                wordCount += words.count
+                
+                if seg.text.trimmingCharacters(in: .whitespaces).hasSuffix("?") {
+                    questionsAsked += 1
+                }
+                
+                let lower = seg.text.lowercased()
+                
+                for filler in hardFillers {
+                    let count = countWordOccurrences(of: filler, in: lower)
+                    if count > 0 { fillerMap[filler, default: 0] += count }
+                }
+                
+                for filler in softFillers {
+                    let count = countWordOccurrences(of: filler, in: lower)
+                    if count > 0 { fillerMap[filler, default: 0] += count }
+                }
+                
+                for (phrase, label) in phraseFillers {
+                    let count = countPhraseOccurrences(of: phrase, in: lower)
+                    if count > 0 { fillerMap[label, default: 0] += count }
+                }
+            }
+            
+            totalWordsAll += wordCount
+            if isMic { youWordCount = wordCount }
+            totalWordsInTurns = wordCount
+            
+            let totalFillers = fillerMap.values.reduce(0, +)
+            let fillerEntries = fillerMap
+                .sorted { $0.value > $1.value }
+                .map { FillerEntry(word: $0.key, count: $0.value) }
+            
+            let longestMonologue = computeLongestMonologue(for: speakerID, in: finals)
+            
+            speakerStatsList.append(SpeakerStats(
+                speakerLabel: label,
+                isLocalMic: isMic,
+                wordCount: wordCount,
+                segmentCount: speakerSegments.count,
+                fillers: fillerEntries,
+                totalFillers: totalFillers,
+                fillersPerMinute: Double(totalFillers) / durationMinutes,
+                wordsPerMinute: Double(wordCount) / durationMinutes,
+                longestMonologueWords: longestMonologue,
+                questionsAsked: questionsAsked,
+                avgWordsPerTurn: speakerSegments.isEmpty ? 0 : Double(totalWordsInTurns) / Double(speakerSegments.count)
+            ))
+        }
+        
+        let ratio = totalWordsAll > 0 ? Double(youWordCount) / Double(totalWordsAll) : 0
+        
+        return TrainingMetrics(
+            speakers: speakerStatsList,
+            talkRatioYou: ratio,
+            durationMinutes: durationMinutes
+        )
+    }
+    
+    private static func countWordOccurrences(of word: String, in text: String) -> Int {
+        let words = text.split(separator: " ").map { String($0).trimmingCharacters(in: .punctuationCharacters) }
+        return words.filter { $0 == word }.count
+    }
+    
+    private static func countPhraseOccurrences(of phrase: String, in text: String) -> Int {
+        var count = 0
+        var searchRange = text.startIndex..<text.endIndex
+        while let range = text.range(of: phrase, options: [], range: searchRange) {
+            count += 1
+            searchRange = range.upperBound..<text.endIndex
+        }
+        return count
+    }
+    
+    private static func computeLongestMonologue(for speaker: Int, in segments: [Segment]) -> Int {
+        var longest = 0
+        var current = 0
+        for seg in segments {
+            if seg.speaker == speaker {
+                current += seg.text.split(separator: " ").count
+            } else {
+                longest = max(longest, current)
+                current = 0
+            }
+        }
+        return max(longest, current)
     }
 }
 
@@ -162,6 +323,27 @@ final class InsightsService: Sendable {
                 "identified_pain": "What pain points were identified (or null)",
                 "champion": "Who could be a champion (or null)",
                 "competition": "What competitors were mentioned (or null)"
+            }
+            
+            Latest transcript:
+            \(transcript)
+            """
+        
+        case .training:
+            systemPrompt = "You provide real-time meeting summaries. Be extremely concise. Focus on what's being discussed RIGHT NOW."
+            maxCompletionTokens = 10000
+            prompt = """
+            You are providing LIVE meeting insights. Be very concise.
+            
+            \(contextNote)
+            
+            Respond in JSON:
+            {
+                \(titleInstruction)
+                "summary": "Brief 1-2 sentence summary of what's being discussed",
+                "action_items": ["Any action items mentioned (keep short)"],
+                "topics": ["Broad themes/categories being discussed (1-2 words each, max 4 topics)"],
+                "discussion_flow": ["Chronological list of what was discussed, in order"]
             }
             
             Latest transcript:
