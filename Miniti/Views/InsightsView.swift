@@ -238,57 +238,26 @@ private struct LiveInsightsContent_iOSPlain: View {
 private struct LiveMEDDPICCContent_iOSPlain: View {
     @EnvironmentObject var appState: AppState
     
-    var body: some View {
-        InsightsPlainBlock_iOS(title: "MEDDPICC", color: Color(hex: "F59E0B")) {
-            VStack(alignment: .leading, spacing: 10) {
-                MEDDPICCLiveRow_iOS(letter: "M", title: "Metrics", value: appState.liveMetrics, color: "3B82F6")
-                MEDDPICCLiveRow_iOS(letter: "E", title: "Economic Buyer", value: appState.liveEconomicBuyer, color: "8B5CF6")
-                MEDDPICCLiveRow_iOS(letter: "D", title: "Decision Criteria", value: appState.liveDecisionCriteria, color: "EC4899")
-                MEDDPICCLiveRow_iOS(letter: "D", title: "Decision Process", value: appState.liveDecisionProcess, color: "F59E0B")
-                MEDDPICCLiveRow_iOS(letter: "P", title: "Paper Process", value: appState.livePaperProcess, color: "F97316")
-                MEDDPICCLiveRow_iOS(letter: "I", title: "Identified Pain", value: appState.liveIdentifiedPain, color: "EF4444")
-                MEDDPICCLiveRow_iOS(letter: "C", title: "Champion", value: appState.liveChampion, color: "22C55E")
-                MEDDPICCLiveRow_iOS(letter: "C", title: "Competition", value: appState.liveCompetition, color: "6366F1")
-            }
-        }
-    }
-}
-
-private struct MEDDPICCLiveRow_iOS: View {
-    let letter: String
-    let title: String
-    let value: String?
-    let color: String
-    
-    private var hasValue: Bool {
-        guard let value else { return false }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !trimmed.isEmpty && trimmed != "null" && trimmed != "n/a" && trimmed != "none"
+    private var fields: [(title: String, color: String, value: String?)] {
+        [
+            ("metrics", "3B82F6", appState.liveMetrics),
+            ("economic buyer", "8B5CF6", appState.liveEconomicBuyer),
+            ("decision criteria", "EC4899", appState.liveDecisionCriteria),
+            ("decision process", "F59E0B", appState.liveDecisionProcess),
+            ("paper process", "F97316", appState.livePaperProcess),
+            ("identified pain", "EF4444", appState.liveIdentifiedPain),
+            ("champion", "22C55E", appState.liveChampion),
+            ("competition", "6366F1", appState.liveCompetition),
+        ]
     }
     
     var body: some View {
-        if hasValue, let value {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(letter)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color(hex: color))
-                        .frame(width: 16, height: 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color(hex: color).opacity(0.15))
-                        )
-                    
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Color(hex: "E6EDF3"))
-                }
-                
-                Text(value)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+        ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
+            InsightsPlainBlock_iOS(title: field.title, color: Color(hex: field.color)) {
+                Text(field.value!)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(3)
-                    .padding(.leading, 22)
+                    .lineSpacing(6)
             }
         }
     }
@@ -296,15 +265,14 @@ private struct MEDDPICCLiveRow_iOS: View {
 
 private struct LiveTrainingContent_iOSPlain: View {
     let metrics: TrainingMetrics
-    private let externalSpeakerGroupingThreshold = 3
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
-        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+        guard externalSpeakers.count > 1, !localSpeakers.isEmpty else {
             return metrics.speakers
         }
         
-        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         var fillerCounts: [String: Int] = [:]
         
         let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
@@ -345,15 +313,37 @@ private struct LiveTrainingContent_iOSPlain: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            InsightsPlainBlock_iOS(title: "fillers", color: Color(hex: "F59E0B")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(displaySpeakers) { speaker in
-                        if speaker.totalFillers > 0 || speaker.isLocalMic {
-                            TrainingMetricRow_iOS(
-                                speaker: speaker,
-                                value: "total \(speaker.totalFillers)",
-                                trailing: "per min \(String(format: "%.1f", speaker.fillersPerMinute))"
-                            )
+            ForEach(displaySpeakers) { speaker in
+                if speaker.totalFillers > 0 || speaker.isLocalMic {
+                    InsightsPlainBlock_iOS(
+                        title: "fillers — \(speaker.speakerLabel.lowercased())",
+                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E")
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 12) {
+                                Text("total \(speaker.totalFillers)")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "E6EDF3"))
+                                Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "8B949E"))
+                            }
+                            
+                            if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(speaker.fillers) { entry in
+                                        HStack(spacing: 6) {
+                                            Text(entry.word)
+                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .foregroundStyle(Color(hex: "D4D4D8"))
+                                                .frame(width: 70, alignment: .trailing)
+                                            Text("\(entry.count)")
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .foregroundStyle(Color(hex: "F59E0B"))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -480,100 +470,36 @@ private struct InsightsPlainBlock_iOS<Content: View>: View {
 
 struct MEDDPICCContent: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.horizontalSizeClass) private var sizeClass
     
-    private let meddpiccItems: [(key: String, title: String, color: String, icon: String)] = [
-        ("metrics", "Metrics", "3B82F6", "📊"),
-        ("economicBuyer", "Economic Buyer", "8B5CF6", "💼"),
-        ("decisionCriteria", "Decision Criteria", "EC4899", "✓"),
-        ("decisionProcess", "Decision Process", "F59E0B", "⚙"),
-        ("identifiedPain", "Identified Pain", "EF4444", "🎯"),
-        ("champion", "Champion", "22C55E", "⭐"),
-        ("competition", "Competition", "6366F1", "⚔"),
-    ]
-    
-    private var gridColumns: [GridItem] {
-        if sizeClass == .compact {
-            return [GridItem(.flexible())]
-        } else {
-            return [GridItem(.flexible()), GridItem(.flexible())]
-        }
+    private var fields: [(title: String, color: String, value: String?)] {
+        [
+            ("metrics", "3B82F6", appState.liveMetrics),
+            ("economic buyer", "8B5CF6", appState.liveEconomicBuyer),
+            ("decision criteria", "EC4899", appState.liveDecisionCriteria),
+            ("decision process", "F59E0B", appState.liveDecisionProcess),
+            ("paper process", "F97316", appState.livePaperProcess),
+            ("identified pain", "EF4444", appState.liveIdentifiedPain),
+            ("champion", "22C55E", appState.liveChampion),
+            ("competition", "6366F1", appState.liveCompetition),
+        ]
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // MEDDPICC Header
-            HStack(spacing: 6) {
-                Text("##")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "F59E0B"))
-                Text("MEDDPICC")
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "F59E0B"))
-            }
-            
-            // Grid of MEDDPICC items — single column on compact (iPhone), 2 columns on regular (Mac/iPad)
-            LazyVGrid(columns: gridColumns, spacing: 10) {
-                MEDDPICCItem(title: "Metrics", value: appState.liveMetrics, color: "3B82F6")
-                MEDDPICCItem(title: "Economic Buyer", value: appState.liveEconomicBuyer, color: "8B5CF6")
-                MEDDPICCItem(title: "Decision Criteria", value: appState.liveDecisionCriteria, color: "EC4899")
-                MEDDPICCItem(title: "Decision Process", value: appState.liveDecisionProcess, color: "F59E0B")
-                MEDDPICCItem(title: "Paper Process", value: appState.livePaperProcess, color: "F97316")
-                MEDDPICCItem(title: "Identify Pain", value: appState.liveIdentifiedPain, color: "EF4444")
-                MEDDPICCItem(title: "Champion", value: appState.liveChampion, color: "22C55E")
-                MEDDPICCItem(title: "Competition", value: appState.liveCompetition, color: "6366F1")
+        ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
+            TerminalSection(title: field.title, color: Color(hex: field.color)) {
+                Text(field.value!)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                    .lineSpacing(6)
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "0F0F11"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "F59E0B").opacity(0.3), lineWidth: 1)
-                )
-        )
     }
 }
 
-struct MEDDPICCItem: View {
-    let title: String
-    let value: String?
-    let color: String
-    
-    private var hasValue: Bool {
-        guard let value else { return false }
-        return !value.isEmpty && value.lowercased() != "null"
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(hasValue ? Color(hex: color) : Color(hex: "484F58"))
-                    .frame(width: 6, height: 6)
-                
-                Text(title)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(hasValue ? Color(hex: color) : Color(hex: "484F58"))
-            }
-            
-            if hasValue, let value {
-                Text(value)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineLimit(3)
-            } else {
-                Text("--")
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "484F58"))
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(Color(hex: "09090B"))
-        .cornerRadius(4)
-    }
+private func hasMEDDPICCValue(_ value: String?) -> Bool {
+    guard let value else { return false }
+    let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
 }
 
 // MARK: - Training Content
@@ -582,15 +508,14 @@ struct TrainingContent: View {
     let metrics: TrainingMetrics
     
     private let accentColor = Color(hex: "22C55E")
-    private let externalSpeakerGroupingThreshold = 3
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
-        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+        guard externalSpeakers.count > 1, !localSpeakers.isEmpty else {
             return metrics.speakers
         }
         
-        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         var fillerCounts: [String: Int] = [:]
         
         let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
@@ -697,8 +622,7 @@ private struct FillerWordsSection: View {
                     StatPill(label: "per min", value: String(format: "%.1f", speaker.fillersPerMinute))
                 }
                 
-                // Per-word breakdown with bars
-                if !speaker.fillers.isEmpty {
+                if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
                     let maxCount = speaker.fillers.first?.count ?? 1
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(speaker.fillers) { entry in
@@ -922,7 +846,6 @@ struct TerminalInsightsContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Summary
                 if let summary = meeting.summaryText {
                     TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
                         Text(summary)
@@ -932,7 +855,16 @@ struct TerminalInsightsContent: View {
                     }
                 }
                 
-                // Action Items
+                if !meeting.discussionFlow.isEmpty {
+                    TerminalSection(title: "discussion", color: Color(hex: "F59E0B")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
+                                TerminalListItem(index: index, text: item, style: .arrow)
+                            }
+                        }
+                    }
+                }
+                
                 if !meeting.actionItems.isEmpty {
                     TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -943,7 +875,6 @@ struct TerminalInsightsContent: View {
                     }
                 }
                 
-                // Key Decisions
                 if !meeting.keyDecisions.isEmpty {
                     TerminalSection(title: "decisions", color: Color(hex: "D29922")) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -954,7 +885,6 @@ struct TerminalInsightsContent: View {
                     }
                 }
                 
-                // Topics
                 if !meeting.topics.isEmpty {
                     TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
                         FlowLayout(spacing: 8) {

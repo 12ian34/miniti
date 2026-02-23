@@ -125,8 +125,12 @@ final class AppState: ObservableObject {
     var minitiAPIService: MinitiAPIService?
     
     // MARK: - Settings (persisted via @AppStorage)
-    @AppStorage("deepgramApiKey") var deepgramApiKey: String = ""
-    @AppStorage("openaiApiKey") var openaiApiKey: String = ""
+    @AppStorage("deepgramApiKey") var deepgramApiKey: String = "" {
+        didSet { updateLogRedaction() }
+    }
+    @AppStorage("openaiApiKey") var openaiApiKey: String = "" {
+        didSet { updateLogRedaction() }
+    }
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
     @AppStorage("deepgramModel") var deepgramModel: String = DeepgramModel.nova3.rawValue
@@ -189,6 +193,7 @@ final class AppState: ObservableObject {
             }
         }
         setupServices()
+        updateLogRedaction()
         
         // Load usage info for managed mode
         if appMode == .managed {
@@ -202,6 +207,10 @@ final class AppState: ObservableObject {
         // Clean up orphaned Live Activities (app was killed while recording, state lost)
         Task { await cleanupOrphanedLiveActivities() }
         #endif
+    }
+    
+    private func updateLogRedaction() {
+        DebugLogger.shared.setRedactPatterns([deepgramApiKey, openaiApiKey])
     }
     
     private func setupServices() {
@@ -451,7 +460,9 @@ final class AppState: ObservableObject {
     }
     
     func startNewMeeting() {
-        // Mode-aware guard
+        DebugLogger.shared.log(.app, "startNewMeeting (mode=\(appMode.rawValue))")
+        updateLogRedaction()
+        
         switch appMode {
         case .byok:
             guard !deepgramApiKey.isEmpty else {
@@ -913,6 +924,7 @@ final class AppState: ObservableObject {
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
         
+        DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
         isStartingMeeting = false
         
         // In managed mode, if we don't have a temp key (e.g. resuming after stop),
@@ -972,6 +984,7 @@ final class AppState: ObservableObject {
                     systemAudio: captureSystemAudio
                 )
             } catch {
+                DebugLogger.shared.log(.app, "Audio capture FAILED in startRecording: \(error.localizedDescription)")
                 print("Failed to start audio capture: \(error)")
                 stopRecording()
             }
@@ -1043,6 +1056,7 @@ final class AppState: ObservableObject {
     }
     
     func stopRecording() {
+        DebugLogger.shared.log(.app, "stopRecording (duration=\(formattedDuration))")
         if let startDate = recordingStartDate {
             recordingDuration = Date().timeIntervalSince(startDate)
             accumulatedRecordedDuration = recordingDuration

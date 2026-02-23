@@ -1,0 +1,127 @@
+import SwiftUI
+
+struct DebugLogView: View {
+    @ObservedObject private var logger = DebugLogger.shared
+    @State private var filter: DebugLogger.Category? = nil
+
+    private var filtered: [DebugLogger.Entry] {
+        guard let filter else { return logger.entries }
+        return logger.entries.filter { $0.category == filter }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            logList
+        }
+        .background(Color.black)
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            Text("debug log")
+                .font(.system(.headline, design: .monospaced))
+                .foregroundStyle(.white)
+
+            Spacer()
+
+            ForEach(DebugLogger.Category.allCases, id: \.self) { cat in
+                Button(cat.rawValue) {
+                    filter = filter == cat ? nil : cat
+                }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(filter == cat ? .white : .gray)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(filter == cat ? Color.white.opacity(0.15) : Color.clear)
+                .cornerRadius(4)
+            }
+
+            Button("copy") { copyLogs() }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(.gray)
+
+            Button("clear") { logger.clear() }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(.gray)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+
+    private var logList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(filtered) { entry in
+                        LogEntryRow(entry: entry)
+                            .id(entry.id)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+            }
+            .onChange(of: logger.entries.count) {
+                if let last = filtered.last {
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo(last.id, anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private func copyLogs() {
+        let text = logger.exportText()
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #else
+        UIPasteboard.general.string = text
+        #endif
+    }
+}
+
+// MARK: - Log Entry Row
+
+private struct LogEntryRow: View {
+    let entry: DebugLogger.Entry
+
+    private static let fmt: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    private var categoryColor: Color {
+        switch entry.category {
+        case .audio: return .green
+        case .deepgram: return .cyan
+        case .app: return .orange
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text(Self.fmt.string(from: entry.timestamp))
+                .foregroundStyle(.gray)
+            Text(entry.category.rawValue)
+                .foregroundStyle(categoryColor)
+                .frame(width: 65, alignment: .leading)
+            Text(entry.message)
+                .foregroundStyle(.white)
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .textSelection(.enabled)
+    }
+}
+
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif

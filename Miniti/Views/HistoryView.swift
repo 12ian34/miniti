@@ -219,6 +219,7 @@ struct TerminalMeetingDetail: View {
     enum Tab: String, CaseIterable {
         case transcript
         case insights
+        case meddpicc
         case training
     }
     
@@ -293,6 +294,8 @@ struct TerminalMeetingDetail: View {
                     TerminalHistoryTranscript(meeting: meeting)
                 case .insights:
                     TerminalHistoryInsights(meeting: meeting)
+                case .meddpicc:
+                    TerminalHistoryMEDDPICC(meeting: meeting)
                 case .training:
                     SavedTrainingContent(meeting: meeting)
                         .padding(16)
@@ -454,6 +457,16 @@ struct TerminalHistoryInsights: View {
                     }
                 }
                 
+                if !meeting.discussionFlow.isEmpty {
+                    TerminalSection(title: "discussion", color: Color(hex: "F59E0B")) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
+                                TerminalListItem(index: index, text: item, style: .arrow)
+                            }
+                        }
+                    }
+                }
+                
                 if !meeting.actionItems.isEmpty {
                     TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -476,7 +489,7 @@ struct TerminalHistoryInsights: View {
                 
                 if !meeting.topics.isEmpty {
                     TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
-                        HStack(spacing: 8) {
+                        FlowLayout(spacing: 8) {
                             ForEach(meeting.topics, id: \.self) { topic in
                                 TerminalTag(text: topic)
                             }
@@ -493,6 +506,102 @@ struct TerminalHistoryInsights: View {
                 Text("no_insights")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "484F58"))
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding()
+        }
+    }
+}
+
+struct TerminalHistoryMEDDPICC: View {
+    let meeting: Meeting
+    @EnvironmentObject var appState: AppState
+    
+    private var fields: [(title: String, color: String, value: String?)] {
+        [
+            ("metrics", "3B82F6", meeting.meddpiccMetrics),
+            ("economic buyer", "8B5CF6", meeting.meddpiccEconomicBuyer),
+            ("decision criteria", "EC4899", meeting.meddpiccDecisionCriteria),
+            ("decision process", "F59E0B", meeting.meddpiccDecisionProcess),
+            ("paper process", "F97316", meeting.meddpiccPaperProcess),
+            ("identified pain", "EF4444", meeting.meddpiccIdentifiedPain),
+            ("champion", "22C55E", meeting.meddpiccChampion),
+            ("competition", "6366F1", meeting.meddpiccCompetition),
+        ]
+    }
+    
+    private func hasValue(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
+    }
+    
+    var body: some View {
+        if meeting.hasMEDDPICC {
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
+                    TerminalSection(title: field.title, color: Color(hex: field.color)) {
+                        Text(field.value!)
+                            .font(.system(size: 13, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                            .lineSpacing(6)
+                    }
+                }
+                
+                Button {
+                    Task {
+                        await appState.generateInsightsForMeeting(meeting)
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("update")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "58A6FF"))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color(hex: "58A6FF").opacity(0.1))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(16)
+        } else {
+            VStack(spacing: 16) {
+                Text("◇")
+                    .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                    .foregroundStyle(Color(hex: "1C1C1F"))
+                Text("no MEDDPICC data")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                
+                Button {
+                    Task {
+                        await appState.generateInsightsForMeeting(meeting)
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("⚡")
+                        Text("generate")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "58A6FF"))
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color(hex: "58A6FF").opacity(0.15))
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(hex: "58A6FF").opacity(0.3), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .padding()
