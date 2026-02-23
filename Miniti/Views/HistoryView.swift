@@ -7,6 +7,8 @@ struct HistoryView: View {
     @State private var selectedMeeting: Meeting?
     @State private var searchText = ""
     
+    init() {}
+    
     var filteredMeetings: [Meeting] {
         if searchText.isEmpty {
             return meetings
@@ -210,21 +212,27 @@ struct TerminalMeetingRow: View {
 }
 
 struct TerminalMeetingDetail: View {
-    let meeting: Meeting
+    @Bindable var meeting: Meeting
+    @Environment(\.modelContext) private var modelContext
     @State private var selectedTab: Tab = .transcript
     
     enum Tab: String, CaseIterable {
         case transcript
         case insights
+        case training
     }
     
     var body: some View {
         VStack(spacing: 0) {
             // Header
             VStack(alignment: .leading, spacing: 8) {
-                Text(meeting.title)
+                TextField("meeting_title", text: $meeting.title)
+                    .textFieldStyle(.plain)
                     .font(.system(size: 14, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
+                    .onSubmit {
+                        saveTitle()
+                    }
                 
                 HStack(spacing: 16) {
                     HStack(spacing: 4) {
@@ -285,11 +293,25 @@ struct TerminalMeetingDetail: View {
                     TerminalHistoryTranscript(meeting: meeting)
                 case .insights:
                     TerminalHistoryInsights(meeting: meeting)
+                case .training:
+                    SavedTrainingContent(meeting: meeting)
+                        .padding(16)
                 }
             }
             .background(Color(hex: "09090B"))
         }
         .background(Color(hex: "09090B"))
+        .onDisappear {
+            saveTitle()
+        }
+    }
+    
+    private func saveTitle() {
+        meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if meeting.title.isEmpty {
+            meeting.title = "untitled"
+        }
+        try? modelContext.save()
     }
 }
 
@@ -480,5 +502,6 @@ struct TerminalHistoryInsights: View {
 
 #Preview {
     HistoryView()
+        .modelContainer(for: [Meeting.self, TranscriptSegment.self], inMemory: true)
         .frame(width: 900, height: 600)
 }

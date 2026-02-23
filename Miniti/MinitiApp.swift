@@ -6,6 +6,7 @@ import AppKit
 struct MinitiApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var keyboardService = KeyboardShortcutsService.shared
+    @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -71,7 +72,7 @@ struct MinitiApp: App {
         }
         
         // Menu Bar
-        MenuBarExtra {
+        MenuBarExtra(isInserted: $showInMenuBar) {
             MenuBarView()
                 .environmentObject(appState)
         } label: {
@@ -112,6 +113,11 @@ struct MinitiApp: App {
         keyboardService.onMeddpiccMode = { [weak appState] in
             guard let appState else { return }
             appState.switchInsightsMode(to: .meddpicc)
+        }
+        
+        keyboardService.onTrainingMode = { [weak appState] in
+            guard let appState else { return }
+            appState.switchInsightsMode(to: .training)
         }
         
         keyboardService.startMonitoring()

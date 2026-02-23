@@ -15,6 +15,7 @@ final class KeyboardShortcutsService: ObservableObject {
     var onGoHome: (() -> Void)?
     var onStandardMode: (() -> Void)?
     var onMeddpiccMode: (() -> Void)?
+    var onTrainingMode: (() -> Void)?
     var onToggleHelp: (() -> Void)?
     var onNavigateUp: (() -> Void)?
     var onNavigateDown: (() -> Void)?
@@ -43,6 +44,10 @@ final class KeyboardShortcutsService: ObservableObject {
         
         // Escape - Go home or close help
         if event.keyCode == kVK_Escape {
+            // Let the native Settings/Preferences window handle Escape (cancel/close).
+            if isSettingsWindowActive() {
+                return event
+            }
             if showingHelp {
                 showingHelp = false
                 return nil
@@ -87,6 +92,12 @@ final class KeyboardShortcutsService: ObservableObject {
             return nil
         }
         
+        // ⌘3 - Training mode
+        if modifiers == .command && event.keyCode == kVK_ANSI_3 {
+            onTrainingMode?()
+            return nil
+        }
+        
         // ⌘/ or ⌘? - Toggle help
         if modifiers == .command && event.keyCode == kVK_ANSI_Slash {
             showingHelp.toggle()
@@ -106,6 +117,12 @@ final class KeyboardShortcutsService: ObservableObject {
         }
         
         return event
+    }
+    
+    private func isSettingsWindowActive() -> Bool {
+        guard let keyWindow = NSApp.keyWindow else { return false }
+        let title = keyWindow.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return title == "settings" || title == "preferences"
     }
 }
 
@@ -132,6 +149,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     // Insights
     KeyboardShortcut(keys: "⌘1", description: "Standard mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘2", description: "MEDDPICC mode", category: "Insights"),
+    KeyboardShortcut(keys: "⌘3", description: "Training mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
     
     // App
@@ -163,6 +181,7 @@ private let kVK_ANSI_J: UInt16 = 0x26
 private let kVK_ANSI_K: UInt16 = 0x28
 private let kVK_ANSI_1: UInt16 = 0x12
 private let kVK_ANSI_2: UInt16 = 0x13
+private let kVK_ANSI_3: UInt16 = 0x14
 private let kVK_ANSI_Slash: UInt16 = 0x2C
 private let kVK_UpArrow: UInt16 = 0x7E
 private let kVK_DownArrow: UInt16 = 0x7D

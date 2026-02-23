@@ -13,6 +13,14 @@ struct MeetingView_iOS: View {
         case notes = "notes"
     }
     
+    private var canUpdateInsights: Bool {
+        appState.currentMeeting != nil && !appState.liveSegments.isEmpty
+    }
+    
+    private var showsLiveInsightsUpdateButton: Bool {
+        appState.insightsMode != .training
+    }
+    
     var body: some View {
         NavigationStack {
             Group {
@@ -273,6 +281,40 @@ struct MeetingView_iOS: View {
             VStack(alignment: .leading, spacing: 16) {
                 insightsModePicker
                 
+                if showsLiveInsightsUpdateButton {
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { @MainActor in
+                                await appState.generateInsights()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10, weight: .semibold))
+                                Text("update")
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundStyle(ColorPalette.Text.primary)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color(hex: "0F0F11"))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(hex: "27272A"), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canUpdateInsights || appState.isGeneratingInsights)
+                        .opacity((!canUpdateInsights || appState.isGeneratingInsights) ? 0.5 : 1)
+                        
+                        Spacer()
+                    }
+                    .padding(.horizontal)
+                }
+                
                 InsightsView()
                     .padding(.horizontal)
             }
@@ -288,7 +330,7 @@ struct MeetingView_iOS: View {
                         appState.switchInsightsMode(to: mode)
                     }
                 } label: {
-                    Text(mode.rawValue)
+                    Text(mode.displayName)
                         .font(.system(size: 12, weight: appState.insightsMode == mode ? .bold : .medium, design: .monospaced))
                         .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
                         .frame(maxWidth: .infinity)
@@ -515,26 +557,45 @@ struct ReadyStateView_iOS: View {
 struct ManagedStatusPill: View {
     @EnvironmentObject var appState: AppState
     
+    private var accentColor: Color {
+        guard let usage = appState.usageInfo else { return ColorPalette.Status.success }
+        if usage.minutesRemaining < 15 { return ColorPalette.Status.limitReached }
+        if usage.minutesRemaining < 60 { return ColorPalette.Status.warning }
+        return ColorPalette.Status.success
+    }
+    
     var body: some View {
         if let usage = appState.usageInfo {
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(usage.minutesRemaining > 60 ? ColorPalette.Status.success : ColorPalette.Status.warning)
-                    .frame(width: 6, height: 6)
-                Text("\(Int(usage.minutesRemaining.rounded())) min left")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.secondary)
+            VStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(accentColor)
+                        .frame(width: 5, height: 5)
+                    
+                    Text("miniti free")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                    
+                    Text("•")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.disabled)
+                    
+                    Text("\(Int(usage.minutesRemaining.rounded())) min left")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(accentColor)
+                }
+                
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(ColorPalette.Background.secondary)
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(accentColor.opacity(0.85))
+                            .frame(width: max(2, geo.size.width * usage.usagePercentage))
+                    }
+                }
+                .frame(width: 180, height: 6)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(ColorPalette.Background.secondary)
-                    .overlay(
-                        Capsule()
-                            .strokeBorder(ColorPalette.Border.subtle, lineWidth: 1)
-                    )
-            )
         }
     }
 }

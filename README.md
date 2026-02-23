@@ -37,7 +37,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 ### 4. Record
 
 1. Toggle mic and/or system audio on the home screen
-2. Select your transcription model (Nova-2 or Nova-3)
+2. (Optional) Choose transcription + AI models in Settings (`⌘,` on macOS)
 3. Click the start button or press `⌘⇧R`
 4. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
 5. Click stop or press `⌘⇧R` when done
@@ -75,6 +75,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 - live speaker identification
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - meeting history browser
 - native menu bar controls
 - keyboard shortcuts for everything
@@ -117,6 +118,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 - **Side-by-side View**: Transcript and insights displayed together
 - **Resizable Panels**: Drag handle for transcript/notes split, HSplitView for content/insights
 - **Session Management**: Meetings move to history immediately after stopping
+- **Historical Insights Tabs**: Saved meetings on macOS include standard / MEDDPICC / training views with `⌘1` / `⌘2` / `⌘3`
 
 ## Keyboard Shortcuts
 
@@ -127,6 +129,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 | `⌘H` | Go Home |
 | `⌘1` | Standard Mode |
 | `⌘2` | MEDDPICC Mode |
+| `⌘3` | Training Mode |
 | `⌘⇧I` | Generate Insights |
 | `⌘,` | Settings |
 | `⌘/` | Show All Shortcuts |
@@ -136,7 +139,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 
 ## Transcription Models
 
-Select your transcription model before recording:
+Select your transcription model in Settings (macOS: `⌘,` → Models):
 
 | Model | Pros | Cons |
 |-------|------|------|
@@ -145,7 +148,7 @@ Select your transcription model before recording:
 
 ## AI Models
 
-Select your AI model in the insights panel:
+Select your AI model in Settings (macOS: `⌘,` → Models):
 
 | Model | Pros | Cons |
 |-------|------|------|
@@ -174,6 +177,18 @@ Best for sales discovery calls. Extracts qualification criteria:
 | I | Identify Pain | Problems they're trying to solve |
 | C | Champion | Internal advocate for your solution |
 | C | Competition | Other solutions they're considering |
+
+### Training Mode
+Analyzes your speech patterns in real-time to help you become a better communicator. All metrics are computed locally from the transcript — no LLM calls, no API keys needed.
+
+| Metric | What it measures |
+|--------|------------------|
+| Filler words | Counts of "um", "uh", "like", "basically", etc. — per type, per speaker, per minute |
+| Talk ratio | How much of the conversation each speaker occupies |
+| Speaking pace | Words per minute for each speaker |
+| Longest monologue | Longest uninterrupted speaking stretch |
+| Questions asked | Number of questions per speaker |
+| Clarity | Average words per turn — shorter turns tend to be clearer |
 
 ## Markdown Export
 
@@ -219,6 +234,7 @@ Brief overview of the meeting...
 - live transcription with deepgram
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - meeting history browser
 - Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
 - dark mode terminal-style UI
@@ -236,8 +252,9 @@ Brief overview of the meeting...
 
 ### Meeting History
 - **Browse Past Meetings**: Searchable list with swipe-to-delete
-- **Meeting Detail**: Drill into transcript, insights (including MEDDPICC), and notes for any meeting
-- **Generate Insights**: Generate AI insights for past meetings that don't have them
+- **Meeting Detail**: Drill into transcript, insights (including MEDDPICC), training stats, and notes for any meeting
+- **Editable Titles**: Rename saved meetings from the history detail view
+- **Generate/Update Insights**: Generate or refresh saved-meeting insights, including MEDDPICC
 - **Editable Notes**: Add or edit notes on saved meetings
 - **Persisted with SwiftData**: Shared data model with macOS
 

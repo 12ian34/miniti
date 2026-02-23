@@ -94,15 +94,15 @@ struct ManagedStatusView: View {
     
     var body: some View {
         VStack(spacing: 10) {
-            // Mode badge
+            // Managed plan status (textual, not button-like)
             HStack(spacing: 6) {
                 Circle()
                     .fill(accentColor)
-                    .frame(width: 6, height: 6)
+                    .frame(width: 5, height: 5)
                 
                 Text("miniti free")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "D4D4D8"))
+                    .foregroundStyle(Color(hex: "A1A1AA"))
                 
                 if let usage {
                     Text("•")
@@ -112,16 +112,6 @@ struct ManagedStatusView: View {
                         .foregroundStyle(accentColor)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(Color(hex: "0F0F11"))
-                    .overlay(
-                        Capsule()
-                            .stroke(accentColor.opacity(0.3), lineWidth: 1)
-                    )
-            )
             
             // Usage progress bar
             if let usage {

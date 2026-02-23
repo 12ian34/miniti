@@ -4,6 +4,7 @@
 # Xcode
 build/
 DerivedData/
+DerivedDataLocal/
 *.xcuserstate
 *.xcuserdatad
 xcuserdata/
@@ -27,5 +28,7 @@ Miniti*.app/
 *.zip
 *.dmg
 miniti-icon.png
+
+shn.md
 
 scripts/
