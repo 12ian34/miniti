@@ -585,6 +585,9 @@ private struct SettingsModelSummaryCard: View {
 struct GeneralSettingsView: View {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
+    @State private var versionTapCount = 0
+    @State private var lastVersionTap: Date?
+    @State private var showDebugLog = false
     
     var body: some View {
         Form {
@@ -610,6 +613,9 @@ struct GeneralSettingsView: View {
                     Spacer()
                     Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                         .foregroundStyle(.secondary)
+                        .onTapGesture {
+                            handleVersionTap()
+                        }
                 }
                 Link(destination: URL(string: "https://ianahuja.com/miniti/privacy/")!) {
                     HStack {
@@ -624,6 +630,24 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .sheet(isPresented: $showDebugLog) {
+            DebugLogView()
+                .frame(width: 700, height: 500)
+        }
+    }
+    
+    private func handleVersionTap() {
+        let now = Date()
+        if let last = lastVersionTap, now.timeIntervalSince(last) < 1.5 {
+            versionTapCount += 1
+        } else {
+            versionTapCount = 1
+        }
+        lastVersionTap = now
+        if versionTapCount >= 5 {
+            showDebugLog = true
+            versionTapCount = 0
+        }
     }
     
     private func setLaunchAtLogin(_ enabled: Bool) {

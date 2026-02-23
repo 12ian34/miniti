@@ -113,14 +113,21 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         self.apiKey = apiKey
     }
     
+    nonisolated(unsafe) private var wsMessageCount: Int = 0
+    nonisolated(unsafe) private var lastWsHeartbeat: CFAbsoluteTime = 0
+    
     func connect(model: DeepgramModel = .nova3) {
         guard !apiKey.isEmpty else {
+            DebugLogger.shared.log(.deepgram, "No API key — cannot connect")
             error = DeepgramError.noApiKey
             return
         }
         
+        DebugLogger.shared.log(.deepgram, "Connecting with model=\(model.rawValue)")
         connectionState = .connecting
-        speakerHistory = [:]  // Reset speaker tracking
+        speakerHistory = [:]
+        wsMessageCount = 0
+        lastWsHeartbeat = CFAbsoluteTimeGetCurrent()
         
         // Build URL with parameters - optimized for speaker diarization
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
@@ -129,6 +136,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
             URLQueryItem(name: "language", value: "en"),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
+            URLQueryItem(name: "filler_words", value: "true"),
             // Diarization - enables speaker identification
             URLQueryItem(name: "diarize", value: "true"),
             // Streaming settings
@@ -162,11 +170,13 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         _sendConnected = true
         _sendTask = webSocketTask
         connectionState = .connected
+        DebugLogger.shared.log(.deepgram, "WebSocket connected")
         
         receiveMessages()
     }
     
     func disconnect() {
+        DebugLogger.shared.log(.deepgram, "Disconnecting (received \(wsMessageCount) messages)")
         _sendConnected = false
         _sendTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -197,12 +207,18 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                 guard let self else { return }
                 switch result {
                 case .success(let message):
+                    self.wsMessageCount += 1
+                    let now = CFAbsoluteTimeGetCurrent()
+                    if now - self.lastWsHeartbeat > 15.0 {
+                        self.lastWsHeartbeat = now
+                        DebugLogger.shared.log(.deepgram, "WS heartbeat: \(self.wsMessageCount) messages, \(self.speakerHistory.count) speakers")
+                    }
                     self.handleMessage(message)
                     self.receiveMessages()
                     
                 case .failure(let error):
-                    // Ignore errors from intentional disconnect (socket cancelled)
                     guard self.isConnected else { return }
+                    DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
                     print("WebSocket receive error: \(error)")
                     self.error = error
                     self.connectionState = .error

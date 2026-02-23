@@ -300,7 +300,7 @@ struct MeetingDetail_iOS: View {
                     }
 
                     if !meeting.discussionFlow.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "discussion", color: Color(hex: "D29922")) {
+                        HistoricalDetailBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
                                     TerminalListItem(index: index, text: item, style: .arrow)
@@ -342,7 +342,7 @@ struct MeetingDetail_iOS: View {
             } else if !meeting.segments.isEmpty {
                 historicalEmptyState(
                     title: "no insights",
-                    subtitle: "use generate/update above"
+                    subtitle: "use update above"
                 )
             } else {
                 historicalEmptyState(
@@ -360,7 +360,7 @@ struct MeetingDetail_iOS: View {
             } else if !meeting.segments.isEmpty {
                 historicalEmptyState(
                     title: "no meddpicc yet",
-                    subtitle: "use generate/update above"
+                    subtitle: "use update above"
                 )
             } else {
                 historicalEmptyState(
@@ -563,17 +563,32 @@ struct CollapsedSegment: Identifiable {
 struct SavedMEDDPICCContent: View {
     let meeting: Meeting
     
+    private var fields: [(title: String, color: String, value: String?)] {
+        [
+            ("metrics", "3B82F6", meeting.meddpiccMetrics),
+            ("economic buyer", "8B5CF6", meeting.meddpiccEconomicBuyer),
+            ("decision criteria", "EC4899", meeting.meddpiccDecisionCriteria),
+            ("decision process", "F59E0B", meeting.meddpiccDecisionProcess),
+            ("paper process", "F97316", meeting.meddpiccPaperProcess),
+            ("identified pain", "EF4444", meeting.meddpiccIdentifiedPain),
+            ("champion", "22C55E", meeting.meddpiccChampion),
+            ("competition", "6366F1", meeting.meddpiccCompetition),
+        ]
+    }
+    
+    private func hasValue(_ value: String?) -> Bool {
+        guard let value else { return false }
+        let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
+    }
+    
     var body: some View {
-        HistoricalDetailBlock_iOS(title: "MEDDPICC", color: Color(hex: "F59E0B")) {
-            VStack(alignment: .leading, spacing: 10) {
-                MEDDPICCSavedRow_iOS(letter: "M", title: "Metrics", value: meeting.meddpiccMetrics, color: "3B82F6")
-                MEDDPICCSavedRow_iOS(letter: "E", title: "Economic Buyer", value: meeting.meddpiccEconomicBuyer, color: "8B5CF6")
-                MEDDPICCSavedRow_iOS(letter: "D", title: "Decision Criteria", value: meeting.meddpiccDecisionCriteria, color: "EC4899")
-                MEDDPICCSavedRow_iOS(letter: "D", title: "Decision Process", value: meeting.meddpiccDecisionProcess, color: "F59E0B")
-                MEDDPICCSavedRow_iOS(letter: "P", title: "Paper Process", value: meeting.meddpiccPaperProcess, color: "F97316")
-                MEDDPICCSavedRow_iOS(letter: "I", title: "Identified Pain", value: meeting.meddpiccIdentifiedPain, color: "EF4444")
-                MEDDPICCSavedRow_iOS(letter: "C", title: "Champion", value: meeting.meddpiccChampion, color: "22C55E")
-                MEDDPICCSavedRow_iOS(letter: "C", title: "Competition", value: meeting.meddpiccCompetition, color: "6366F1")
+        ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
+            HistoricalDetailBlock_iOS(title: field.title, color: Color(hex: field.color)) {
+                Text(field.value!)
+                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                    .lineSpacing(6)
             }
         }
     }
@@ -584,8 +599,6 @@ struct SavedMEDDPICCContent: View {
 struct HistoricalSavedTrainingContent_iOS: View {
     let meeting: Meeting
     
-    private let externalSpeakerGroupingThreshold = 3
-    
     private var metrics: TrainingMetrics {
         let segments = meeting.segments.map {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
@@ -595,12 +608,12 @@ struct HistoricalSavedTrainingContent_iOS: View {
     }
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
+        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
-        guard externalSpeakers.count > externalSpeakerGroupingThreshold else {
+        guard externalSpeakers.count > 1, !localSpeakers.isEmpty else {
             return metrics.speakers
         }
         
-        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         var fillerCounts: [String: Int] = [:]
         
         let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
@@ -641,15 +654,37 @@ struct HistoricalSavedTrainingContent_iOS: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HistoricalDetailBlock_iOS(title: "fillers", color: Color(hex: "F59E0B")) {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(displaySpeakers) { speaker in
-                        if speaker.totalFillers > 0 || speaker.isLocalMic {
-                            HistoricalTrainingMetricRow_iOS(
-                                speaker: speaker,
-                                value: "total \(speaker.totalFillers)",
-                                trailing: "per min \(String(format: "%.1f", speaker.fillersPerMinute))"
-                            )
+            ForEach(displaySpeakers) { speaker in
+                if speaker.totalFillers > 0 || speaker.isLocalMic {
+                    HistoricalDetailBlock_iOS(
+                        title: "fillers — \(speaker.speakerLabel.lowercased())",
+                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E")
+                    ) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 12) {
+                                Text("total \(speaker.totalFillers)")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "E6EDF3"))
+                                Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "8B949E"))
+                            }
+                            
+                            if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(speaker.fillers) { entry in
+                                        HStack(spacing: 6) {
+                                            Text(entry.word)
+                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .foregroundStyle(Color(hex: "D4D4D8"))
+                                                .frame(width: 70, alignment: .trailing)
+                                            Text("\(entry.count)")
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .foregroundStyle(Color(hex: "F59E0B"))
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -747,45 +782,6 @@ private struct HistoricalDetailBlock_iOS<Content: View>: View {
     }
 }
 
-private struct MEDDPICCSavedRow_iOS: View {
-    let letter: String
-    let title: String
-    let value: String?
-    let color: String
-    
-    private var hasValue: Bool {
-        guard let value else { return false }
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !trimmed.isEmpty && trimmed != "null" && trimmed != "n/a" && trimmed != "none"
-    }
-    
-    var body: some View {
-        if hasValue, let value {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(letter)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color(hex: color))
-                        .frame(width: 16, height: 16)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color(hex: color).opacity(0.15))
-                        )
-                    
-                    Text(title)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.primary)
-                }
-                
-                Text(value)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                    .lineSpacing(3)
-                    .padding(.leading, 22)
-            }
-        }
-    }
-}
 
 private struct HistoricalTrainingMetricRow_iOS: View {
     let speaker: TrainingMetrics.SpeakerStats

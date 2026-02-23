@@ -6,6 +6,7 @@ import Accelerate
 @MainActor
 final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
     private var audioEngine: AVAudioEngine?
+    private var engineConfigObserver: Any?
     
     // System audio via Core Audio Process Tap (macOS 14.2+)
     // Uses AudioHardwareCreateProcessTap instead of ScreenCaptureKit to land
@@ -105,6 +106,74 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         super.init()
         ringBuffer = .allocate(capacity: ringCapacity)
         ringBuffer.initialize(repeating: 0, count: ringCapacity)
+        monitorAudioDeviceChanges()
+    }
+    
+    // MARK: - Audio Device Monitoring
+    
+    private func monitorAudioDeviceChanges() {
+        var inputAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &inputAddr, DispatchQueue.main
+        ) { _, _ in
+            DebugLogger.shared.log(.audio, "Default INPUT device changed → \(Self.defaultInputDeviceInfo())")
+        }
+        
+        var outputAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &outputAddr, DispatchQueue.main
+        ) { _, _ in
+            DebugLogger.shared.log(.audio, "Default OUTPUT device changed → \(Self.defaultOutputDeviceInfo())")
+        }
+    }
+    
+    nonisolated static func defaultInputDeviceInfo() -> String {
+        return deviceInfo(selector: kAudioHardwarePropertyDefaultInputDevice)
+    }
+    
+    nonisolated static func defaultOutputDeviceInfo() -> String {
+        return deviceInfo(selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+    
+    nonisolated private static func deviceInfo(selector: AudioObjectPropertySelector) -> String {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        ) == noErr else { return "unknown (read error)" }
+        
+        var nameRef: CFString?
+        var nameSize = UInt32(MemoryLayout<CFString?>.size)
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = withUnsafeMutablePointer(to: &nameRef) { ptr in
+            AudioObjectGetPropertyData(deviceID, &nameAddr, 0, nil, &nameSize, UnsafeMutableRawPointer(ptr))
+        }
+        let name = (nameRef as String?) ?? "unknown"
+        
+        var sampleRate: Float64 = 0
+        var rateSize = UInt32(MemoryLayout<Float64>.size)
+        var rateAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &rateAddr, 0, nil, &rateSize, &sampleRate)
+        
+        return "\(name) (\(Int(sampleRate))Hz, id:\(deviceID))"
     }
     
     deinit {
@@ -115,6 +184,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
         await stopCaptureAsync()
         
+        DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
         var capturedAny = false
         
         if microphone {
@@ -125,6 +195,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 print("Microphone capture started")
             } catch {
                 print("Microphone capture failed: \(error.localizedDescription)")
+                DebugLogger.shared.log(.audio, "Mic capture FAILED: \(error.localizedDescription)")
                 isMicActive = false
                 if !systemAudio { throw error }
             }
@@ -138,13 +209,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 print("System audio capture started")
             } catch {
                 print("System audio capture failed: \(error.localizedDescription)")
-                print("Tip: Grant System Audio Recording permission in System Settings > Privacy & Security")
+                DebugLogger.shared.log(.audio, "System audio FAILED: \(error.localizedDescription)")
                 isSystemAudioActive = false
                 if !capturedAny { throw error }
             }
         }
         
         isCapturing = capturedAny
+        DebugLogger.shared.log(.audio, "Capture result: mic=\(isMicActive), sys=\(isSystemAudioActive)")
     }
     
     func stopCapture() {
@@ -167,15 +239,30 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     
     // MARK: - Microphone Capture
     
+    nonisolated(unsafe) private var micBufferCount: Int = 0
+    nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
+    
     private func startMicrophoneCapture() async throws {
         let granted = await requestMicrophonePermission()
-        guard granted else { throw AudioCaptureError.microphonePermissionDenied }
+        guard granted else {
+            DebugLogger.shared.log(.audio, "Mic permission DENIED")
+            throw AudioCaptureError.microphonePermissionDenied
+        }
+        
+        DebugLogger.shared.log(.audio, "Default input device: \(Self.defaultInputDeviceInfo())")
         
         audioEngine = AVAudioEngine()
         guard let audioEngine else { return }
         
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        
+        DebugLogger.shared.log(.audio, "Mic input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)fmt")
+        
+        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+            DebugLogger.shared.log(.audio, "INVALID input format (0Hz or 0ch) — audio device may be unavailable")
+            throw AudioCaptureError.formatCreationFailed
+        }
         
         guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -185,7 +272,71 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         ) else { throw AudioCaptureError.formatCreationFailed }
         
         guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            DebugLogger.shared.log(.audio, "FAILED to create converter: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
             throw AudioCaptureError.converterCreationFailed
+        }
+        
+        DebugLogger.shared.log(.audio, "Mic converter ready: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
+        micBufferCount = 0
+        lastMicHeartbeat = CFAbsoluteTimeGetCurrent()
+        
+        let onBuffer = onAudioBuffer
+        let hasCallback = onBuffer != nil
+        DebugLogger.shared.log(.audio, "Mic tap installing (callback \(hasCallback ? "set" : "nil — monitoring only"))")
+        
+        let targetRate = targetSampleRate
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+            self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
+        }
+        
+        try audioEngine.start()
+        DebugLogger.shared.log(.audio, "Mic AVAudioEngine started")
+        
+        // Handle audio device changes (e.g. AirPods switching to HFP when Zoom grabs the mic).
+        // Without this, the engine silently stops producing buffers after the hardware reconfigures.
+        if let observer = engineConfigObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        engineConfigObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: audioEngine,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.handleEngineConfigurationChange()
+            }
+        }
+    }
+    
+    /// Re-install the mic tap after the audio hardware changes (Bluetooth codec switch, device unplug, etc.)
+    private func handleEngineConfigurationChange() {
+        guard isCapturing, isMicActive else { return }
+        guard let audioEngine else { return }
+        
+        DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.defaultInputDeviceInfo())")
+        
+        audioEngine.inputNode.removeTap(onBus: 0)
+        
+        let inputNode = audioEngine.inputNode
+        let inputFormat = inputNode.outputFormat(forBus: 0)
+        
+        DebugLogger.shared.log(.audio, "New input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
+        
+        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+            DebugLogger.shared.log(.audio, "INVALID new format — mic capture suspended until next device change")
+            return
+        }
+        
+        guard let outputFormat = AVAudioFormat(
+            commonFormat: .pcmFormatInt16,
+            sampleRate: targetSampleRate,
+            channels: targetChannels,
+            interleaved: true
+        ) else { return }
+        
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
+            DebugLogger.shared.log(.audio, "FAILED to create converter for new format")
+            return
         }
         
         let onBuffer = onAudioBuffer
@@ -194,10 +345,19 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
         }
         
-        try audioEngine.start()
+        do {
+            try audioEngine.start()
+            DebugLogger.shared.log(.audio, "Mic capture restarted with \(inputFormat.sampleRate)Hz format")
+        } catch {
+            DebugLogger.shared.log(.audio, "FAILED to restart engine: \(error.localizedDescription)")
+        }
     }
     
     private func stopMicrophoneCapture() {
+        if let observer = engineConfigObserver {
+            NotificationCenter.default.removeObserver(observer)
+            engineConfigObserver = nil
+        }
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
@@ -233,6 +393,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         processTapID = tapID
         print("[SystemAudio] Created process tap #\(tapID)")
+        DebugLogger.shared.log(.audio, "System audio process tap created (#\(tapID))")
         
         // 2. Read tap's native audio format
         var tapFormat = AudioStreamBasicDescription()
@@ -364,6 +525,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         
         print("[SystemAudio] Process tap started successfully (audio-only mode)")
+        DebugLogger.shared.log(.audio, "System audio tap started. Output device: \(Self.defaultOutputDeviceInfo())")
     }
     
     private func stopSystemAudioCapture() {
@@ -579,6 +741,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             Task { @MainActor [weak self] in
                 self?.microphoneLevel = level
             }
+        }
+        
+        micBufferCount += 1
+        if now - lastMicHeartbeat > 10.0 {
+            lastMicHeartbeat = now
+            let level = calculateLevelVDSP(buffer)
+            DebugLogger.shared.log(.audio, "Mic heartbeat: \(micBufferCount) buffers, level=\(String(format: "%.5f", level)), frames=\(micSamples)")
         }
         
         // Mix with buffered system audio (gain-normalized)

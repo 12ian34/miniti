@@ -117,7 +117,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 - **Linear-style Shortcuts**: Keyboard shortcuts displayed directly on buttons
 - **Side-by-side View**: Transcript and insights displayed together
 - **Resizable Panels**: Drag handle for transcript/notes split, HSplitView for content/insights
-- **Session Management**: Meetings move to history immediately after stopping
+- **Session Management**: Stop a recording to review, then resume, save, or discard
 - **Historical Insights Tabs**: Saved meetings on macOS include standard / MEDDPICC / training views with `⌘1` / `⌘2` / `⌘3`
 
 ## Keyboard Shortcuts

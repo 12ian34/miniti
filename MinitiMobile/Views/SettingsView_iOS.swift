@@ -3,6 +3,9 @@ import AVFoundation
 
 struct SettingsView_iOS: View {
     @EnvironmentObject var appState: AppState
+    @State private var versionTapCount = 0
+    @State private var lastVersionTap: Date?
+    @State private var showDebugLog = false
     
     var body: some View {
         NavigationStack {
@@ -138,6 +141,9 @@ struct SettingsView_iOS: View {
                         Spacer()
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
                             .foregroundStyle(.secondary)
+                            .onTapGesture {
+                                handleVersionTap()
+                            }
                     }
                     Link(destination: URL(string: "https://ianahuja.com/miniti/privacy/")!) {
                         HStack {
@@ -154,8 +160,25 @@ struct SettingsView_iOS: View {
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
+            .sheet(isPresented: $showDebugLog) {
+                DebugLogView()
+            }
         }
         .preferredColorScheme(.dark)
+    }
+    
+    private func handleVersionTap() {
+        let now = Date()
+        if let last = lastVersionTap, now.timeIntervalSince(last) < 1.5 {
+            versionTapCount += 1
+        } else {
+            versionTapCount = 1
+        }
+        lastVersionTap = now
+        if versionTapCount >= 5 {
+            showDebugLog = true
+            versionTapCount = 0
+        }
     }
     
     private func checkMicPermission() -> Bool {
