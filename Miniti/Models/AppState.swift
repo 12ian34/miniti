@@ -21,7 +21,9 @@ final class AppState: ObservableObject {
     // MARK: - Recording State
     @Published var isRecording = false
     @Published var isStartingMeeting = false
+    @Published var isResumingRecording = false
     @Published var currentMeeting: Meeting?
+    @Published var pendingOpenSavedMeetingID: UUID?
     @Published var recordingDuration: TimeInterval = 0
     
     // MARK: - Session Management
@@ -39,6 +41,7 @@ final class AppState: ObservableObject {
     @Published var showSettings = false
     @Published var selectedTab: Tab = .transcript
     @Published var isGeneratingInsights = false
+    @Published var isLiveInsightsCollapsed = false
     @Published var audioLevel: Float = 0  // Combined audio level for visualization
     @Published var microphoneLevel: Float = 0  // Mic-only level
     @Published var systemAudioLevel: Float = 0  // System audio-only level
@@ -72,6 +75,10 @@ final class AppState: ObservableObject {
     
     // MARK: - MEDDPICC Tracking
     private var lastMEDDPICCSegmentCount = 0 // Track when we last analyzed with MEDDPICC
+    private var lastMEDDPICCRequestAt: Date? = nil
+    private let firstMEDDPICCInsightThreshold = 6
+    private let meddpiccInsightUpdateThreshold = 8
+    private let meddpiccMinUpdateInterval: TimeInterval = 30
     
     // MARK: - Title Updates
     private var lastTitleUpdateCount = 0
@@ -347,13 +354,29 @@ final class AppState: ObservableObject {
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
         }.count
         
-        // Use lower threshold for first insight, then normal threshold after
-        let threshold = lastInsightSegmentCount == 0 ? firstInsightThreshold : insightUpdateThreshold
-        
-        if finalCount >= lastInsightSegmentCount + threshold {
-            lastInsightSegmentCount = finalCount
-            Task {
-                await updateLiveInsights()
+        if insightsMode == .meddpicc {
+            let threshold = lastMEDDPICCSegmentCount == 0
+                ? firstMEDDPICCInsightThreshold
+                : meddpiccInsightUpdateThreshold
+            let meetsSegmentThreshold = finalCount >= lastMEDDPICCSegmentCount + threshold
+            let meetsTimeThreshold = lastMEDDPICCRequestAt.map {
+                Date().timeIntervalSince($0) >= meddpiccMinUpdateInterval
+            } ?? true
+            
+            if meetsSegmentThreshold && meetsTimeThreshold {
+                Task {
+                    await updateLiveInsights()
+                }
+            }
+        } else {
+            // Use lower threshold for first insight, then normal threshold after
+            let threshold = lastInsightSegmentCount == 0 ? firstInsightThreshold : insightUpdateThreshold
+            
+            if finalCount >= lastInsightSegmentCount + threshold {
+                lastInsightSegmentCount = finalCount
+                Task {
+                    await updateLiveInsights()
+                }
             }
         }
     }
@@ -381,6 +404,9 @@ final class AppState: ObservableObject {
         
         // Training mode is locally computed — use standard for LLM generation
         let effectiveMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
+        if effectiveMode == .meddpicc {
+            lastMEDDPICCRequestAt = Date()
+        }
         
         do {
             let insights: InsightsService.LiveInsights
@@ -388,14 +414,26 @@ final class AppState: ObservableObject {
             if appMode == .managed, let minitiAPIService {
                 // Managed mode: proxy through backend
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await minitiAPIService.generateInsights(
-                    deviceId: deviceId,
-                    transcript: transcript,
-                    existingSummary: liveSummary.isEmpty ? nil : liveSummary,
-                    existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                    mode: effectiveMode.rawValue,
-                    model: (OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini).rawValue
-                )
+                let response: ManagedInsightsResponse
+                if effectiveMode == .meddpicc {
+                    response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId,
+                        transcript: transcript,
+                        existingSummary: liveSummary.isEmpty ? nil : liveSummary,
+                        existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
+                        mode: effectiveMode.rawValue,
+                        model: (OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini).rawValue
+                    )
+                } else {
+                    response = try await minitiAPIService.generateInsights(
+                        deviceId: deviceId,
+                        transcript: transcript,
+                        existingSummary: liveSummary.isEmpty ? nil : liveSummary,
+                        existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
+                        mode: effectiveMode.rawValue,
+                        model: (OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini).rawValue
+                    )
+                }
                 insights = response.toLiveInsights()
             } else {
                 // BYOK mode: call OpenAI directly
@@ -416,6 +454,9 @@ final class AppState: ObservableObject {
             
             // Apply insights (same for both modes)
             applyInsights(insights, segmentCount: segmentCount)
+            if effectiveMode == .meddpicc {
+                lastMEDDPICCSegmentCount = segmentCount
+            }
         } catch {
             print("Live insights error: \(error)")
         }
@@ -504,6 +545,7 @@ final class AppState: ObservableObject {
         liveDiscussionFlow = []
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
+        lastMEDDPICCRequestAt = nil
         
         if appMode == .managed {
             // Managed mode: request temp key first, then start recording
@@ -518,8 +560,10 @@ final class AppState: ObservableObject {
         if isRecording {
             stopRecording()
         } else {
-            // Save and clear if not recording
-            saveCurrentMeetingIfNeeded()
+            // Save and clear if not recording and a draft session exists
+            if currentMeeting != nil {
+                saveCurrentMeetingIfNeeded()
+            }
             clearCurrentSession()
         }
     }
@@ -542,6 +586,15 @@ final class AppState: ObservableObject {
         
         // Reset insights mode to standard for fresh start
         insightsMode = .standard
+    }
+
+    /// Save the current meeting (stopping first if needed) and request the UI open it from history.
+    func saveAndOpenCurrentMeeting() {
+        pendingOpenSavedMeetingID = currentMeeting?.id
+        if isRecording {
+            stopRecording()
+        }
+        goHome()
     }
     
     /// Discard current meeting without saving — deletes from SwiftData and clears session
@@ -608,9 +661,9 @@ final class AppState: ObservableObject {
         // Generate MEDDPICC insights
         do {
             let meddpiccInsights: InsightsService.LiveInsights
-            if appMode == .managed, let minitiAPIService {
+            if appMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await minitiAPIService.generateInsights(
+                let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: meeting.summaryText, existingTitle: nil,
                     mode: InsightsMode.meddpicc.rawValue, model: selectedModel.rawValue
@@ -709,6 +762,7 @@ final class AppState: ObservableObject {
         let finalCount = liveSegments.filter { $0.isFinal && !$0.text.isEmpty }.count
         lastInsightSegmentCount = finalCount
         lastMEDDPICCSegmentCount = finalCount
+        lastMEDDPICCRequestAt = Date()
         lastTitleUpdateCount = finalCount
         
         hasUnsavedSession = true
@@ -767,9 +821,9 @@ final class AppState: ObservableObject {
         do {
             let insights: InsightsService.LiveInsights
             
-            if appMode == .managed, let minitiAPIService {
+            if appMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await minitiAPIService.generateInsights(
+                let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId,
                     transcript: transcript,
                     existingSummary: nil,
@@ -926,10 +980,12 @@ final class AppState: ObservableObject {
         
         DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
         isStartingMeeting = false
+        isResumingRecording = false
         
         // In managed mode, if we don't have a temp key (e.g. resuming after stop),
         // we must request a new one before connecting to Deepgram.
         if appMode == .managed && tempDeepgramKey == nil {
+            isResumingRecording = true
             Task { await startManagedRecording() }
             return
         }
@@ -1018,6 +1074,7 @@ final class AppState: ObservableObject {
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
             isStartingMeeting = false
+            isResumingRecording = false
             return
         }
         
@@ -1036,6 +1093,7 @@ final class AppState: ObservableObject {
         } catch let error as MinitiAPIService.ServiceError {
             managedSessionStartRecordedDuration = nil
             isStartingMeeting = false
+            isResumingRecording = false
             switch error {
             case .limitReached(_, _):
                 await refreshUsage()
@@ -1050,6 +1108,7 @@ final class AppState: ObservableObject {
         } catch {
             managedSessionStartRecordedDuration = nil
             isStartingMeeting = false
+            isResumingRecording = false
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
             print("[AppState] Managed session failed: \(error)")
         }
@@ -1128,6 +1187,7 @@ final class AppState: ObservableObject {
         periodicSaveTimer = nil
         currentMeeting = nil
         isStartingMeeting = false
+        isResumingRecording = false
         liveSegments = []
         interimText = ""
         interimSpeaker = nil
@@ -1145,6 +1205,7 @@ final class AppState: ObservableObject {
         liveDiscussionFlow = []
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
+        lastMEDDPICCRequestAt = nil
         
         // Reset training metrics
         trainingMetrics = nil
@@ -1246,9 +1307,9 @@ final class AppState: ObservableObject {
             print("[AppState] Generating MEDDPICC insights...")
             let meddpiccInsights: InsightsService.LiveInsights
             
-            if appMode == .managed, let minitiAPIService {
+            if appMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await minitiAPIService.generateInsights(
+                let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: liveSummary, existingTitle: currentTitleSuffix,
                     mode: InsightsMode.meddpicc.rawValue, model: selectedModel.rawValue
@@ -1305,9 +1366,9 @@ final class AppState: ObservableObject {
             if requestedMode == .meddpicc {
                 let meddpiccInsights: InsightsService.LiveInsights
                 
-                if appMode == .managed, let minitiAPIService {
+                if appMode == .managed, minitiAPIService != nil {
                     let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                    let response = try await minitiAPIService.generateInsights(
+                    let response = try await generateManagedInsightsWithRetry(
                         deviceId: deviceId,
                         transcript: meeting.fullTranscript,
                         existingSummary: meeting.summaryText,
@@ -1377,6 +1438,70 @@ final class AppState: ObservableObject {
             return (timestamp, suffix)
         }
         return nil
+    }
+
+    private func generateManagedInsightsWithRetry(
+        deviceId: String,
+        transcript: String,
+        existingSummary: String?,
+        existingTitle: String?,
+        mode: String,
+        model: String,
+        maxAttempts: Int = 2
+    ) async throws -> ManagedInsightsResponse {
+        guard let minitiAPIService else {
+            throw MinitiAPIService.ServiceError.invalidResponse
+        }
+
+        var attempt = 1
+        while true {
+            do {
+                return try await minitiAPIService.generateInsights(
+                    deviceId: deviceId,
+                    transcript: transcript,
+                    existingSummary: existingSummary,
+                    existingTitle: existingTitle,
+                    mode: mode,
+                    model: model
+                )
+            } catch {
+                let shouldRetry = attempt < maxAttempts && Self.isTransientInsightsError(error)
+                if !shouldRetry {
+                    throw error
+                }
+
+                print("[AppState] Insights request failed (attempt \(attempt)/\(maxAttempts)) with transient error: \(error). Retrying...")
+                attempt += 1
+                try? await Task.sleep(nanoseconds: 800_000_000)
+            }
+        }
+    }
+
+    private static func isTransientInsightsError(_ error: Error) -> Bool {
+        if let serviceError = error as? MinitiAPIService.ServiceError {
+            switch serviceError {
+            case .serverError(let message):
+                let normalized = message.lowercased()
+                if normalized.contains("504") || normalized.contains("gateway timeout") {
+                    return true
+                }
+            case .networkError(let wrappedError):
+                return isTransientInsightsError(wrappedError)
+            default:
+                break
+            }
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .networkConnectionLost, .cannotConnectToHost, .cannotFindHost:
+                return true
+            default:
+                break
+            }
+        }
+
+        return false
     }
     
     // MARK: - Update Check

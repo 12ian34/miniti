@@ -11,6 +11,26 @@ struct TranscriptView: View {
     private var hasInterimText: Bool {
         !appState.interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    /// Merge streaming-finalized chunks so rows break on sentence boundaries
+    /// instead of arbitrary transport segmentation.
+    private var displaySegments: [AppState.LiveSegment] {
+        var merged: [AppState.LiveSegment] = []
+
+        for segment in visibleSegments {
+            if var last = merged.last,
+               last.speaker == segment.speaker,
+               !endsSentence(last.text) {
+                last.text = joinTranscriptFragments(last.text, segment.text)
+                last.isFinal = last.isFinal && segment.isFinal
+                merged[merged.count - 1] = last
+            } else {
+                merged.append(segment)
+            }
+        }
+
+        return merged
+    }
     
     // Get unique speakers - combine from segments and detected speakers.
     // "You" (micSpeakerID=1000) sorts first, then remote speakers by number.
@@ -35,10 +55,33 @@ struct TranscriptView: View {
     }
     
     // Check if this segment starts a new speaker turn
-    private func isNewSpeakerTurn(at index: Int) -> Bool {
+    private func isNewSpeakerTurn(at index: Int, in segments: [AppState.LiveSegment]) -> Bool {
         guard index > 0 else { return true }
-        let segments = visibleSegments
         return segments[index].speaker != segments[index - 1].speaker
+    }
+
+    private func endsSentence(_ text: String) -> Bool {
+        let trailingClosers = CharacterSet(charactersIn: "\"'”’)]}")
+        let sentenceTerminators: Set<Character> = [".", "!", "?", "…"]
+        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        while let scalar = trimmed.unicodeScalars.last, trailingClosers.contains(scalar) {
+            trimmed.removeLast()
+        }
+        guard let last = trimmed.last else { return false }
+        return sentenceTerminators.contains(last)
+    }
+
+    private func joinTranscriptFragments(_ lhs: String, _ rhs: String) -> String {
+        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !left.isEmpty else { return right }
+        guard !right.isEmpty else { return left }
+
+        let noLeadingSpaceChars: Set<Character> = [",", ".", "!", "?", ";", ":", ")", "]", "}"]
+        if let first = right.first, noLeadingSpaceChars.contains(first) {
+            return left + right
+        }
+        return left + " " + right
     }
     
     var body: some View {
@@ -55,10 +98,10 @@ struct TranscriptView: View {
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(alignment: .leading, spacing: 6) {
-                                ForEach(Array(visibleSegments.enumerated()), id: \.element.id) { index, segment in
+                                ForEach(Array(displaySegments.enumerated()), id: \.element.id) { index, segment in
                                     TerminalSegmentRow(
                                         segment: segment,
-                                        isNewTurn: isNewSpeakerTurn(at: index),
+                                        isNewTurn: isNewSpeakerTurn(at: index, in: displaySegments),
                                         isFirst: index == 0
                                     )
                                     .id(segment.id)
@@ -69,7 +112,7 @@ struct TranscriptView: View {
                                     TerminalInterimRow(
                                         text: appState.interimText,
                                         speaker: appState.interimSpeaker ?? appState.currentSpeaker,
-                                        isNewTurn: visibleSegments.last?.speaker != (appState.interimSpeaker ?? appState.currentSpeaker)
+                                        isNewTurn: displaySegments.last?.speaker != (appState.interimSpeaker ?? appState.currentSpeaker)
                                     )
                                     .id("interim")
                                 }

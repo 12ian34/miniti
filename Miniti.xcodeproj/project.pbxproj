@@ -12,7 +12,6 @@
 		A10000010000000000000003 /* MeetingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000003 /* MeetingView.swift */; };
 		A10000010000000000000004 /* TranscriptView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000004 /* TranscriptView.swift */; };
 		A10000010000000000000005 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000005 /* InsightsView.swift */; };
-		A10000010000000000000006 /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000006 /* HistoryView.swift */; };
 		A10000010000000000000007 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000007 /* SettingsView.swift */; };
 		A10000010000000000000008 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		A10000010000000000000009 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
@@ -89,7 +88,6 @@
 		A20000010000000000000003 /* MeetingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingView.swift; sourceTree = "<group>"; };
 		A20000010000000000000004 /* TranscriptView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptView.swift; sourceTree = "<group>"; };
 		A20000010000000000000005 /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
-		A20000010000000000000006 /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
 		A20000010000000000000007 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20000010000000000000008 /* Meeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Meeting.swift; sourceTree = "<group>"; };
 		A20000010000000000000009 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
@@ -195,7 +193,6 @@
 				A20000010000000000000003 /* MeetingView.swift */,
 				A20000010000000000000004 /* TranscriptView.swift */,
 				A20000010000000000000005 /* InsightsView.swift */,
-				A20000010000000000000006 /* HistoryView.swift */,
 				A20000010000000000000007 /* SettingsView.swift */,
 				A20000010000000000000020 /* OnboardingView.swift */,
 				A20000010000000000000021 /* UsageBanner.swift */,
@@ -410,7 +407,6 @@
 				A10000010000000000000003 /* MeetingView.swift in Sources */,
 				A10000010000000000000004 /* TranscriptView.swift in Sources */,
 				A10000010000000000000005 /* InsightsView.swift in Sources */,
-				A10000010000000000000006 /* HistoryView.swift in Sources */,
 				A10000010000000000000007 /* SettingsView.swift in Sources */,
 				A10000010000000000000008 /* Meeting.swift in Sources */,
 				A10000010000000000000009 /* AppState.swift in Sources */,
@@ -630,7 +626,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -667,7 +663,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -702,7 +698,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -742,7 +738,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -773,7 +769,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -801,7 +797,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.8.1;
+				MARKETING_VERSION = 1.9.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
