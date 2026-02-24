@@ -6,6 +6,7 @@ struct MeetingView_iOS: View {
     @State private var meetingTitle: String = ""
     @State private var activeSection: MeetingSection = .transcript
     @State private var showDiscardConfirmation = false
+    @State private var isResumingRecording = false
     
     enum MeetingSection: String, CaseIterable {
         case transcript = "transcript"
@@ -19,6 +20,14 @@ struct MeetingView_iOS: View {
     
     private var showsLiveInsightsUpdateButton: Bool {
         appState.insightsMode != .training
+    }
+
+    private var isStopped: Bool {
+        appState.currentMeeting != nil && !appState.isRecording
+    }
+
+    private var isResumePending: Bool {
+        isStopped && isResumingRecording
     }
     
     var body: some View {
@@ -70,6 +79,21 @@ struct MeetingView_iOS: View {
         .onChange(of: appState.currentMeeting?.title) { _, newTitle in
             if let newTitle, newTitle != meetingTitle {
                 meetingTitle = newTitle
+            }
+        }
+        .onChange(of: appState.isRecording) { _, isRecording in
+            if isRecording {
+                isResumingRecording = false
+            }
+        }
+        .onChange(of: appState.managedSessionError) { _, error in
+            if error != nil {
+                isResumingRecording = false
+            }
+        }
+        .onChange(of: appState.currentMeeting == nil) { _, noMeeting in
+            if noMeeting {
+                isResumingRecording = false
             }
         }
     }
@@ -137,8 +161,6 @@ struct MeetingView_iOS: View {
     // MARK: - Control Bar (bottom)
     
     private var controlBar: some View {
-        let isStopped = appState.currentMeeting != nil && !appState.isRecording
-        
         return ZStack {
             // Stop button (always laid out, visible when recording)
             stopButton
@@ -183,6 +205,7 @@ struct MeetingView_iOS: View {
             .foregroundStyle(Color(hex: "F85149"))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .frame(width: 128)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(hex: "F85149").opacity(0.15))
@@ -196,17 +219,28 @@ struct MeetingView_iOS: View {
     
     private var resumeButton: some View {
         Button {
+            guard !isResumePending else { return }
+            isResumingRecording = true
+            appState.managedSessionError = nil
             appState.startRecording()
         } label: {
             HStack(spacing: 6) {
-                Image(systemName: "record.circle")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("resume")
+                if isResumePending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(Color(hex: "3FB950"))
+                } else {
+                    Image(systemName: "record.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                Text(isResumePending ? "starting..." : "start")
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .lineLimit(1)
             }
             .foregroundStyle(Color(hex: "3FB950"))
             .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .frame(width: isResumePending ? 144 : 128)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(hex: "3FB950").opacity(0.15))
@@ -216,6 +250,7 @@ struct MeetingView_iOS: View {
                     .stroke(Color(hex: "3FB950").opacity(0.3), lineWidth: 1)
             )
         }
+        .disabled(isResumePending)
     }
     
     private func terminalButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
@@ -511,6 +546,7 @@ struct ReadyStateView_iOS: View {
                                 .scaleEffect(0.8)
                             Text("starting...")
                                 .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                                .lineLimit(1)
                         } else {
                             Image(systemName: "record.circle")
                                 .font(.system(size: 18))

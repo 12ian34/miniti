@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import Combine
 
 // MARK: - Theme (using ColorPalette)
 /// Theme struct provides convenient access to the global color palette.
@@ -30,8 +31,15 @@ struct MainWindow: View {
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var keyboardService: KeyboardShortcutsService
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
-    @State private var selectedMeeting: Meeting?
+    @State private var meetings: [Meeting] = []
+    @State private var selectedMeetingID: UUID?
+    @State private var sidebarCollapsed = false
+    @State private var didInitialize = false
+
+    private var selectedMeeting: Meeting? {
+        guard let selectedMeetingID else { return nil }
+        return meetings.first(where: { $0.id == selectedMeetingID })
+    }
     
     var body: some View {
         ZStack {
@@ -39,12 +47,13 @@ struct MainWindow: View {
                 // Sidebar
                 TerminalSidebar(
                     meetings: meetings,
-                    selectedMeeting: $selectedMeeting,
+                    selectedMeetingID: $selectedMeetingID,
+                    isCollapsed: $sidebarCollapsed,
                     onDeleteMeeting: { meeting in
                         deleteMeeting(meeting)
                     }
                 )
-                .frame(width: 260)
+                .frame(width: sidebarCollapsed ? 68 : 260)
                 
                 // Subtle gradient divider
                 ZStack {
@@ -81,25 +90,61 @@ struct MainWindow: View {
         .frame(minWidth: 1000, minHeight: 600)
         .background(Theme.bg)
         .onAppear {
-            appState.modelContext = modelContext
-            appState.resumeInterruptedMeeting()
-            setupNavigationHandlers()
+            initializeIfNeeded()
+            refreshMeetings()
+            selectPendingSavedMeetingIfNeeded()
         }
         .onChange(of: appState.currentMeeting) { _, newMeeting in
             // When starting a new meeting, deselect historical meeting
             if newMeeting != nil {
-                selectedMeeting = nil
+                selectedMeetingID = nil
             }
+            refreshMeetings()
         }
+        .onChange(of: appState.pendingOpenSavedMeetingID) { _, _ in
+            refreshMeetings()
+            selectPendingSavedMeetingIfNeeded()
+        }
+        .onChange(of: meetings.map(\.id)) { _, _ in
+            selectPendingSavedMeetingIfNeeded()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            refreshMeetings()
+        }
+    }
+
+    private func initializeIfNeeded() {
+        guard !didInitialize else { return }
+        didInitialize = true
+        appState.modelContext = modelContext
+        appState.resumeInterruptedMeeting()
+        setupNavigationHandlers()
     }
     
     private func setupNavigationHandlers() {
+        keyboardService.onNewSession = { [self] in
+            appState.createNewSession()
+            selectedMeetingID = nil
+        }
+
         keyboardService.onNavigateUp = { [self] in
             navigateHistory(direction: -1)
         }
         
         keyboardService.onNavigateDown = { [self] in
             navigateHistory(direction: 1)
+        }
+
+        keyboardService.onToggleSidebarCollapse = { [self] in
+            withAnimation(.easeInOut(duration: 0.16)) {
+                sidebarCollapsed.toggle()
+            }
+        }
+
+        keyboardService.onToggleInsightsCollapse = { [self] in
+            withAnimation(.easeInOut(duration: 0.16)) {
+                appState.isLiveInsightsCollapsed.toggle()
+            }
         }
         
         keyboardService.onStandardMode = { [self] in
@@ -131,39 +176,60 @@ struct MainWindow: View {
         let historicalMeetings = meetings.filter { $0.id != appState.currentMeeting?.id }
         guard !historicalMeetings.isEmpty else { return }
         
-        if let current = selectedMeeting,
-           let currentIndex = historicalMeetings.firstIndex(where: { $0.id == current.id }) {
+        if let selectedMeetingID,
+           let currentIndex = historicalMeetings.firstIndex(where: { $0.id == selectedMeetingID }) {
             // Move from current selection
             let newIndex = currentIndex + direction
             if newIndex >= 0 && newIndex < historicalMeetings.count {
-                selectedMeeting = historicalMeetings[newIndex]
+                self.selectedMeetingID = historicalMeetings[newIndex].id
             }
         } else {
             // No selection - select first or last based on direction
             if direction > 0 {
-                selectedMeeting = historicalMeetings.first
+                selectedMeetingID = historicalMeetings.first?.id
             } else {
-                selectedMeeting = historicalMeetings.last
+                selectedMeetingID = historicalMeetings.last?.id
             }
         }
     }
     
     private func deleteMeeting(_ meeting: Meeting) {
         // Deselect if this was selected
-        if selectedMeeting?.id == meeting.id {
-            selectedMeeting = nil
+        if selectedMeetingID == meeting.id {
+            selectedMeetingID = nil
         }
         // Delete from context
         modelContext.delete(meeting)
         try? modelContext.save()
+        refreshMeetings()
+    }
+
+    private func selectPendingSavedMeetingIfNeeded() {
+        guard let pendingID = appState.pendingOpenSavedMeetingID else { return }
+        guard let meeting = meetings.first(where: { $0.id == pendingID }) else { return }
+        selectedMeetingID = meeting.id
+        appState.pendingOpenSavedMeetingID = nil
+    }
+
+    private func refreshMeetings() {
+        let descriptor = FetchDescriptor<Meeting>()
+        guard let fetched = try? modelContext.fetch(descriptor) else { return }
+        meetings = fetched.sorted { $0.startTime > $1.startTime }
+
+        if let selectedMeetingID, !fetched.contains(where: { $0.id == selectedMeetingID }) {
+            self.selectedMeetingID = nil
+        }
     }
 }
 
 struct TerminalSidebar: View {
     @EnvironmentObject var appState: AppState
     let meetings: [Meeting]
-    @Binding var selectedMeeting: Meeting?
+    @Binding var selectedMeetingID: UUID?
+    @Binding var isCollapsed: Bool
     let onDeleteMeeting: (Meeting) -> Void
+    @State private var historyCollapsed = false
+    @State private var collapsedStatusPulse = false
     
     // Filter out the current meeting from history
     private var historicalMeetings: [Meeting] {
@@ -171,15 +237,128 @@ struct TerminalSidebar: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Logo/Title
-            HStack(spacing: 10) {
+        if isCollapsed {
+            collapsedSidebar
+        } else {
+            expandedSidebar
+        }
+    }
+    
+    private var collapsedSidebar: some View {
+        VStack(alignment: .center, spacing: 0) {
+            Button {
+                selectedMeetingID = nil
+            } label: {
                 Text("⬢")
                     .font(.system(size: 18, weight: .bold, design: .monospaced))
                     .foregroundStyle(Theme.accent)
-                Text("miniti")
-                    .font(.system(size: 15, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Theme.text)
+                    .frame(width: 36, height: 36)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                        .fill(selectedMeetingID == nil ? Theme.bgTertiary : Color.clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .padding(.top, 14)
+            
+            GradientDivider()
+                .padding(.top, 14)
+                .padding(.bottom, 12)
+            
+            Button {
+                selectedMeetingID = nil
+            } label: {
+                VStack(spacing: 5) {
+                    Circle()
+                        .fill(appState.currentMeeting == nil ? Theme.textDim : (appState.isRecording ? Theme.accentRed : Theme.accentBlue))
+                        .frame(width: 8, height: 8)
+                        .shadow(
+                            color: (appState.currentMeeting == nil ? Theme.textDim : (appState.isRecording ? Theme.accentRed : Theme.accentBlue)).opacity(0.5),
+                            radius: appState.isRecording ? 4 : 2
+                        )
+                        .scaleEffect(appState.isRecording && collapsedStatusPulse ? 1.18 : 1.0)
+                        .opacity(appState.isRecording && collapsedStatusPulse ? 0.8 : 1.0)
+                    
+                    Text(appState.currentMeeting == nil ? "idle" : (appState.isRecording ? "rec" : "sess"))
+                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(appState.currentMeeting == nil ? Theme.textDim : Theme.textMuted)
+                        .lineLimit(1)
+                }
+                .frame(width: 44, height: 44)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(selectedMeetingID == nil ? Theme.bgTertiary : Theme.bgSecondary.opacity(0.35))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(selectedMeetingID == nil ? Theme.border : Color.clear, lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            
+            Spacer()
+            
+            VStack(spacing: 0) {
+                GradientDivider()
+                
+                HStack {
+                    Spacer()
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            isCollapsed = false
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textDim)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                RoundedRectangle(cornerRadius: 7)
+                                    .fill(Theme.bgTertiary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    Spacer()
+                }
+                .padding(.vertical, 14)
+            }
+        }
+        .background(Theme.bgSecondary)
+        .onAppear {
+            updateCollapsedStatusPulse()
+        }
+        .onChange(of: appState.isRecording) { _, _ in
+            updateCollapsedStatusPulse()
+        }
+        .onChange(of: appState.currentMeeting?.id) { _, _ in
+            updateCollapsedStatusPulse()
+        }
+    }
+    
+    private var expandedSidebar: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Logo/Title
+            HStack(spacing: 10) {
+                Button {
+                    selectedMeetingID = nil
+                } label: {
+                    HStack(spacing: 10) {
+                        Text("⬢")
+                            .font(.system(size: 18, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Theme.accent)
+                        Text("miniti")
+                            .font(.system(size: 15, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+
+                Spacer()
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 18)
@@ -193,21 +372,21 @@ struct TerminalSidebar: View {
                     SidebarSessionItem(
                         title: meeting.title,
                         isRecording: appState.isRecording,
-                        isSelected: selectedMeeting == nil
+                        isSelected: selectedMeetingID == nil
                     ) {
-                        selectedMeeting = nil
+                        selectedMeetingID = nil
                     }
                 } else {
                     // New session button when no current meeting
                     SidebarItem(
                         icon: "+",
                         label: "new_session",
-                        isSelected: selectedMeeting == nil,
+                        isSelected: selectedMeetingID == nil,
                         accentColor: Theme.accent,
                         shortcut: "⌘N"
                     ) {
                         appState.createNewSession()
-                        selectedMeeting = nil
+                        selectedMeetingID = nil
                     }
                 }
             }
@@ -221,61 +400,81 @@ struct TerminalSidebar: View {
                         .padding(.vertical, 12)
                     
                     HStack {
-                        Text("history")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Theme.textDim)
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                historyCollapsed.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
+                                    .font(.system(size: 8, weight: .semibold))
+                                    .foregroundStyle(Theme.textDim.opacity(0.8))
+                                    .frame(width: 10)
+                                Text("history")
+                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
                         
                         Spacer()
                         
-                        // Navigation hints
-                        HStack(spacing: 4) {
-                            HStack(spacing: 2) {
-                                Text("↑")
-                                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                Text("K")
-                                    .font(.system(size: 7, weight: .medium, design: .monospaced))
+                        if !historyCollapsed {
+                            // Navigation hints
+                            HStack(spacing: 4) {
+                                HStack(spacing: 2) {
+                                    Text("↑")
+                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                    Text("K")
+                                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                }
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Theme.bgTertiary)
+                                )
+                                
+                                HStack(spacing: 2) {
+                                    Text("↓")
+                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                    Text("J")
+                                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                }
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Theme.bgTertiary)
+                                )
                             }
-                            .foregroundStyle(Theme.textDim.opacity(0.6))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(Theme.bgTertiary)
-                            )
-                            
-                            HStack(spacing: 2) {
-                                Text("↓")
-                                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                Text("J")
-                                    .font(.system(size: 7, weight: .medium, design: .monospaced))
-                            }
-                            .foregroundStyle(Theme.textDim.opacity(0.6))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(
-                                RoundedRectangle(cornerRadius: 3)
-                                    .fill(Theme.bgTertiary)
-                            )
                         }
                     }
                     .padding(.horizontal, 16)
                     
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 4) {
-                            ForEach(historicalMeetings) { meeting in
-                                SidebarHistoryItem(
-                                    meeting: meeting,
-                                    isSelected: selectedMeeting?.id == meeting.id,
-                                    action: {
-                                        selectedMeeting = meeting
-                                    },
-                                    onDelete: {
-                                        onDeleteMeeting(meeting)
-                                    }
-                                )
+                    if !historyCollapsed {
+                        ScrollView(showsIndicators: false) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(historicalMeetings) { meeting in
+                                    SidebarHistoryItem(
+                                        meeting: meeting,
+                                        isSelected: selectedMeetingID == meeting.id,
+                                        action: {
+                                            selectedMeetingID = meeting.id
+                                        },
+                                        onDelete: {
+                                            onDeleteMeeting(meeting)
+                                        }
+                                    )
+                                }
                             }
+                            .padding(.horizontal, 10)
                         }
-                        .padding(.horizontal, 10)
+                        .scrollIndicators(.hidden)
                     }
                 }
             }
@@ -314,12 +513,43 @@ struct TerminalSidebar: View {
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
                     }
+                    
+                    Spacer(minLength: 8)
+                    
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            isCollapsed = true
+                        }
+                    } label: {
+                        Image(systemName: "sidebar.right")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(Theme.textDim)
+                            .frame(width: 26, height: 26)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Theme.bgTertiary)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 14)
             }
         }
         .background(Theme.bgSecondary)
+    }
+
+    private func updateCollapsedStatusPulse() {
+        guard appState.currentMeeting != nil, appState.isRecording else {
+            collapsedStatusPulse = false
+            return
+        }
+
+        collapsedStatusPulse = false
+        withAnimation(.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
+            collapsedStatusPulse = true
+        }
     }
 }
 
@@ -551,6 +781,8 @@ struct MeetingDetailView: View {
     @Bindable var meeting: Meeting
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
+    @State private var showingAttioSheet = false
     
     private let speakerColors: [Color] = [
         ColorPalette.Accent.blue,
@@ -575,22 +807,48 @@ struct MeetingDetailView: View {
                 
                 Spacer()
                 
-                HStack(spacing: 16) {
-                    HStack(spacing: 4) {
-                        Text("◷")
-                        Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
+                HStack(spacing: 12) {
+                    HStack(spacing: 16) {
+                        HStack(spacing: 4) {
+                            Text("◷")
+                            Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
+                        }
+                        HStack(spacing: 4) {
+                            Text("⏱")
+                            Text(meeting.formattedDuration)
+                        }
+                        HStack(spacing: 4) {
+                            Text("¶")
+                            Text("\(meeting.segments.count)")
+                        }
                     }
-                    HStack(spacing: 4) {
-                        Text("⏱")
-                        Text(meeting.formattedDuration)
-                    }
-                    HStack(spacing: 4) {
-                        Text("¶")
-                        Text("\(meeting.segments.count)")
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Theme.textDim)
+
+                    if attioExportEnabled {
+                        Button {
+                            showingAttioSheet = true
+                        } label: {
+                            HStack(spacing: 8) {
+                                AttioLogoMark()
+                                    .frame(width: 14, height: 14)
+                                Text("send to attio")
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            }
+                            .foregroundStyle(Color(hex: "F97316"))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 7)
+                            .background(Color(hex: "F97316").opacity(0.08))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
+                            )
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
                     }
                 }
-                .font(.system(size: 11, weight: .regular, design: .monospaced))
-                .foregroundStyle(Theme.textDim)
             }
             .padding(16)
             .background(Theme.bgSecondary)
@@ -626,29 +884,53 @@ struct MeetingDetailView: View {
                 .frame(minWidth: 400)
                 
                 // Insights (right)
-                VStack(spacing: 0) {
-                    DetailSectionHeader(title: "insights", icon: "◇", onCopy: {
-                        meeting.insightsAsMarkdown()
-                    })
-                    
-                    HistoricalInsightsModeSelector(
-                        selectedMode: Binding(
-                            get: { appState.insightsMode },
-                            set: { appState.insightsMode = $0 }
-                        )
-                    )
-                    GradientDivider()
-                    
-                    ScrollView {
-                        insightsContent
+                Group {
+                    if appState.isLiveInsightsCollapsed {
+                        HistoricalCollapsedInsightsRail()
+                    } else {
+                        VStack(spacing: 0) {
+                            DetailSectionHeader(title: "insights", icon: "◇", onCopy: {
+                                meeting.insightsAsMarkdown()
+                            })
+                            
+                            HistoricalInsightsModeSelector(
+                                selectedMode: Binding(
+                                    get: { appState.insightsMode },
+                                    set: { appState.insightsMode = $0 }
+                                )
+                            )
+                            GradientDivider()
+                            
+                            ScrollView {
+                                insightsContent
+                            }
+                            
+                            GradientDivider()
+                            
+                            HStack {
+                                HistoricalInsightsPaneToggleButton(direction: .collapse) {
+                                    withAnimation(.easeInOut(duration: 0.16)) {
+                                        appState.isLiveInsightsCollapsed = true
+                                    }
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(Theme.bgSecondary)
+                        }
                     }
                 }
-                .frame(minWidth: 280, maxWidth: 380)
+                .frame(minWidth: appState.isLiveInsightsCollapsed ? 44 : 280,
+                       maxWidth: appState.isLiveInsightsCollapsed ? 44 : 380)
             }
         }
         .background(Theme.bg)
         .onDisappear {
             saveTitle()
+        }
+        .sheet(isPresented: $showingAttioSheet) {
+            AttioSendSheet(meeting: meeting)
         }
     }
     
@@ -666,7 +948,7 @@ struct MeetingDetailView: View {
                                 .frame(width: 3, height: 12)
                                 .cornerRadius(1.5)
                             
-                            Text("Speaker \(segment.speaker + 1)")
+                            Text(segment.speakerLabel)
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(speakerColors[segment.speaker % speakerColors.count])
                             
@@ -811,7 +1093,7 @@ struct MeetingDetailView: View {
                     DetailInsightBlock(title: "topics", color: ColorPalette.Accent.purple) {
                         FlowLayout(spacing: 6) {
                             ForEach(meeting.topics, id: \.self) { topic in
-                                Text("#\(topic.lowercased().replacingOccurrences(of: " ", with: "_"))")
+                                Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundStyle(ColorPalette.Accent.purple)
                                     .padding(.horizontal, 8)
@@ -873,6 +1155,60 @@ struct MeetingDetailView: View {
             }
         }
         .padding(16)
+    }
+}
+
+private struct HistoricalInsightsPaneToggleButton: View {
+    enum Direction { case collapse, expand }
+    let direction: Direction
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: direction == .collapse ? "sidebar.right" : "sidebar.left")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.textDim)
+                .frame(width: 26, height: 26)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Theme.bgTertiary)
+                )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
+private struct HistoricalCollapsedInsightsRail: View {
+    @EnvironmentObject var appState: AppState
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("insights")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Theme.textMuted)
+                .rotationEffect(.degrees(-90))
+                .fixedSize()
+                .frame(height: 120)
+                .padding(.top, 12)
+            
+            Spacer()
+            
+            GradientDivider()
+            
+            HStack {
+                Spacer()
+                HistoricalInsightsPaneToggleButton(direction: .expand) {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        appState.isLiveInsightsCollapsed = false
+                    }
+                }
+                Spacer()
+            }
+            .padding(.vertical, 10)
+            .background(Theme.bgSecondary)
+        }
+        .background(Theme.bg)
     }
 }
 
@@ -1008,7 +1344,20 @@ struct SavedNotesView: View {
 struct DetailInsightBlock<Content: View>: View {
     let title: String
     let color: Color
+    let info: TerminalSectionInfo?
     @ViewBuilder let content: () -> Content
+
+    init(
+        title: String,
+        color: Color,
+        info: TerminalSectionInfo? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.color = color
+        self.info = info
+        self.content = content
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1020,6 +1369,9 @@ struct DetailInsightBlock<Content: View>: View {
                 Text(title)
                     .font(.system(size: 10, weight: .semibold, design: .monospaced))
                     .foregroundStyle(color)
+                if let info {
+                    TerminalSectionInfoButton(info: info, accent: color)
+                }
             }
             
             content()
@@ -1127,8 +1479,9 @@ struct SavedTrainingSection: View {
             ForEach(displaySpeakers) { speaker in
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     DetailInsightBlock(
-                        title: "fillers — \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? ColorPalette.Accent.amber : Color(hex: "8B949E")
+                        title: "fillers: \(speaker.speakerLabel.lowercased())",
+                        color: speaker.isLocalMic ? ColorPalette.Accent.amber : Color(hex: "8B949E"),
+                        info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
@@ -1161,7 +1514,7 @@ struct SavedTrainingSection: View {
             }
             
             if metrics.speakers.count > 1 {
-                DetailInsightBlock(title: "talk_ratio", color: ColorPalette.Accent.blue) {
+                DetailInsightBlock(title: "talk ratio", color: ColorPalette.Accent.blue, info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -1175,7 +1528,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "pace", color: ColorPalette.Accent.purple) {
+            DetailInsightBlock(title: "pace", color: ColorPalette.Accent.purple, info: .pace) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -1187,7 +1540,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "longest_monologue", color: ColorPalette.Accent.pink) {
+            DetailInsightBlock(title: "longest monologue", color: ColorPalette.Accent.pink, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -1200,7 +1553,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "questions_asked", color: ColorPalette.Accent.green) {
+            DetailInsightBlock(title: "questions asked", color: ColorPalette.Accent.green, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -1211,7 +1564,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "clarity", color: ColorPalette.Accent.yellow) {
+            DetailInsightBlock(title: "clarity", color: ColorPalette.Accent.yellow, info: .clarity) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -1220,7 +1573,7 @@ struct SavedTrainingSection: View {
                             trailing: "avg words/turn"
                         )
                     }
-                    Text("shorter turns = more focused communication")
+                    Text("lower = clearer = better")
                         .font(.system(size: 9, weight: .regular, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
                 }
@@ -1423,6 +1776,726 @@ struct KeyboardShortcutsOverlay: View {
         }
     }
 }
+
+// MARK: - Attio Send (macOS history detail only)
+
+struct AttioLogoMark: View {
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color(hex: "FB923C").opacity(0.18))
+            Circle()
+                .fill(Color(hex: "F97316"))
+                .frame(width: 6, height: 6)
+                .offset(x: -2.5, y: -1.5)
+            Circle()
+                .fill(Color(hex: "FDBA74"))
+                .frame(width: 4, height: 4)
+                .offset(x: 3, y: 2)
+        }
+    }
+}
+
+struct AttioSendSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let meeting: Meeting
+    @AppStorage("attioCreateTasksFromActionItems") private var createTasksFromActionItems: Bool = true
+
+    @State private var api = MinitiAPIService()
+    @State private var status: MinitiAPIService.AttioStatusResponse?
+    @State private var isLoadingStatus = false
+    @State private var isConnecting = false
+    @State private var connectionError: String?
+
+    @State private var query = ""
+    @State private var selectedScope: AttioSearchScope = .both
+    @State private var results: [MinitiAPIService.AttioSearchRecord] = []
+    @State private var selectedRecordID: String?
+    @State private var selectedRecordObject: String?
+    @State private var selectedRecordText: String?
+    @State private var selectedRecordDetail: String?
+    @State private var showSearchResults = false
+    @State private var isSearching = false
+    @State private var searchError: String?
+
+    @State private var isSending = false
+    @State private var sendMessage: String?
+    @State private var sendError: String?
+    @State private var localEscapeMonitor: Any?
+
+    private let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider().overlay(Color(hex: "1C1C1F"))
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    connectionSection
+                    searchSection
+                    payloadPreviewSection
+                    sendSection
+                }
+                .padding(16)
+            }
+            .background(Color(hex: "09090B"))
+        }
+        .frame(width: 640, height: 620)
+        .background(Color(hex: "09090B"))
+        .task {
+            loadPersistedSelection()
+            await refreshStatus()
+        }
+        .onAppear {
+            installLocalEscapeMonitor()
+        }
+        .onDisappear {
+            removeLocalEscapeMonitor()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiAttioOAuthCallback)) { notification in
+            guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
+            guard callbackURL.scheme?.lowercased() == "miniti-attio" else { return }
+            DebugLogger.shared.log(.app, "[attio] oauth callback received path=\(callbackURL.host ?? "")")
+            Task { @MainActor in
+                await handleOAuthCallback(callbackURL)
+            }
+        }
+#if os(macOS) || os(tvOS)
+        .onExitCommand {
+            dismiss()
+        }
+#endif
+    }
+
+    private var header: some View {
+        HStack(spacing: 10) {
+            AttioLogoMark()
+                .frame(width: 18, height: 18)
+            Text("send to attio")
+                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+            Spacer()
+            Button("close") { dismiss() }
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(hex: "8B949E"))
+                .focusable(false)
+                .keyboardShortcut(.cancelAction)
+        }
+        .padding(14)
+        .background(Color(hex: "0F0F11"))
+    }
+
+    private var connectionSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("attio account")
+
+            HStack(spacing: 10) {
+                Circle()
+                    .fill((status?.connected ?? false) ? Color(hex: "3FB950") : Color(hex: "6B7280"))
+                    .frame(width: 8, height: 8)
+                Text(connectionStatusText)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                Spacer()
+                if isLoadingStatus {
+                    ProgressView().controlSize(.small)
+                }
+                Button {
+                    Task { await startOAuth() }
+                } label: {
+                    Text((status?.connected ?? false) ? "reconnect" : "connect")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "F97316"))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color(hex: "F97316").opacity(0.08))
+                        .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .disabled(isConnecting)
+            }
+
+            if let connectionError {
+                errorLine(connectionError)
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+        )
+    }
+
+    private var searchSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("find attio record")
+
+            HStack(spacing: 8) {
+                ForEach(AttioSearchScope.allCases, id: \.self) { scope in
+                    Button {
+                        selectedScope = scope
+                    } label: {
+                        Text(scope.label)
+                            .font(.system(size: 11, weight: selectedScope == scope ? .semibold : .medium, design: .monospaced))
+                            .foregroundStyle(selectedScope == scope ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selectedScope == scope ? Color(hex: "18181B") : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                TextField(searchPlaceholder, text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(hex: "09090B"))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+                    )
+                    .onSubmit {
+                        Task { await runSearch() }
+                    }
+
+                Button {
+                    Task { await runSearch() }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isSearching { ProgressView().controlSize(.small) }
+                        Text("search")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "58A6FF"))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(hex: "58A6FF").opacity(0.08))
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .disabled(isSearching || !(status?.connected ?? false) || query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+            }
+
+            if let searchError {
+                errorLine(searchError)
+            }
+
+            if let selectedRecordID, let selectedRecordObject {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "pin")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                        Text(selectedRecordText ?? selectedRecordID)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "E6EDF3"))
+                            .lineLimit(1)
+                        Text("· \(selectedRecordObject)")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                        Spacer()
+                    }
+                    if let selectedRecordDetail, !selectedRecordDetail.isEmpty {
+                        Text(selectedRecordDetail)
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                            .padding(.leading, 18)
+                            .textSelection(.enabled)
+                    }
+                }
+            }
+
+            if showSearchResults || !results.isEmpty {
+                VStack(spacing: 6) {
+                if results.isEmpty {
+                    Text("no results yet")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "6B7280"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 2)
+                } else {
+                    ForEach(results) { record in
+                        Button {
+                            selectRecord(record)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(color(for: record.objectSlug))
+                                    .frame(width: 8, height: 8)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(record.recordText)
+                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "E6EDF3"))
+                                        .lineLimit(1)
+                                    if let secondary = record.secondaryIdentifier, !secondary.isEmpty {
+                                        Text(secondary)
+                                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "8B949E"))
+                                            .textSelection(.enabled)
+                                    } else {
+                                        Text(record.objectSlug)
+                                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "8B949E"))
+                                    }
+                                }
+                                Spacer()
+                                if selectedRecordID == record.idPayload.recordID {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(Color(hex: "3FB950"))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(selectedRecordID == record.idPayload.recordID ? Color(hex: "18181B") : Color(hex: "09090B"))
+                                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                    }
+                }
+            }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+        )
+    }
+
+    private var payloadPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("what will be sent")
+            VStack(alignment: .leading, spacing: 6) {
+                payloadLine("summary", hasValue(meeting.summaryText))
+                payloadLine("discussion", !meeting.discussionFlow.isEmpty)
+                payloadLine("action items", !normalizedActionItems.isEmpty)
+                payloadLine("decisions", !meeting.keyDecisions.isEmpty)
+                payloadLine("topics", !meeting.topics.isEmpty)
+                payloadLine("MEDDPICC", meeting.hasMEDDPICC)
+                payloadLine("notes", !meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                payloadLine("transcript", false, note: "not sent")
+                payloadLine("training", false, note: "not sent")
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+        )
+    }
+
+    private var sendSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("send")
+
+            Toggle(isOn: $createTasksFromActionItems) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("create tasks from action items")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "E6EDF3"))
+                    Text(normalizedActionItems.isEmpty ? "No action items found in this meeting" : "Creates Attio tasks linked to the selected record")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "8B949E"))
+                }
+            }
+            .toggleStyle(.switch)
+            .focusable(false)
+            .disabled(normalizedActionItems.isEmpty)
+
+            if let sendMessage {
+                Text(sendMessage)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "3FB950"))
+            }
+            if let sendError {
+                errorLine(sendError)
+            }
+
+            Button {
+                Task { await sendToAttio() }
+            } label: {
+                HStack(spacing: 8) {
+                    if isSending { ProgressView().controlSize(.small) }
+                    AttioLogoMark().frame(width: 12, height: 12)
+                    Text("send to attio")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(Color(hex: "F97316"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(hex: "F97316").opacity(0.08))
+                .cornerRadius(6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
+                )
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .disabled(!(status?.connected ?? false) || selectedRecordID == nil || selectedRecordObject == nil || isSending)
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+        )
+    }
+
+    private var connectionStatusText: String {
+        if isConnecting { return "connecting..." }
+        if let status, status.connected {
+            if let label = status.accountLabel, !label.isEmpty {
+                return "connected (\(label))"
+            }
+            return "connected"
+        }
+        return "not connected"
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .foregroundStyle(Color(hex: "E6EDF3"))
+    }
+
+    private func errorLine(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(Color(hex: "F85149"))
+    }
+
+    private func payloadLine(_ label: String, _ included: Bool, note: String? = nil) -> some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(included ? Color(hex: "3FB950") : Color(hex: "6B7280"))
+                .frame(width: 6, height: 6)
+            Text(label)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+            if let note {
+                Text("(\(note))")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+            }
+            Spacer()
+        }
+    }
+
+    private func color(for objectSlug: String) -> Color {
+        switch objectSlug.lowercased() {
+        case "people": return Color(hex: "58A6FF")
+        case "companies": return Color(hex: "A371F7")
+        default: return Color(hex: "8B949E")
+        }
+    }
+
+    private var searchPlaceholder: String {
+        switch selectedScope {
+        case .people:
+            return "search people..."
+        case .companies:
+            return "search companies..."
+        case .both:
+            return "search people or companies..."
+        }
+    }
+
+    private func hasValue(_ value: String?) -> Bool {
+        guard let value else { return false }
+        return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var normalizedActionItems: [String] {
+        AttioMeetingPayload.normalizedActionItems(from: meeting.actionItems)
+    }
+
+    private func refreshStatus() async {
+        isLoadingStatus = true
+        defer { isLoadingStatus = false }
+        DebugLogger.shared.log(.app, "[attio] status refresh start")
+        do {
+            status = try await api.attioStatus(deviceId: deviceId)
+            connectionError = nil
+            DebugLogger.shared.log(
+                .app,
+                "[attio] status refresh success connected=\(status?.connected == true) account=\(status?.accountLabel ?? "-")"
+            )
+        } catch {
+            status = .init(connected: false, accountLabel: nil)
+            if isMissingAttioBackend(error) {
+                connectionError = "Attio backend endpoints are not deployed yet"
+            }
+            DebugLogger.shared.log(.app, "[attio] status refresh failed \(error.localizedDescription)")
+        }
+    }
+
+    private func startOAuth() async {
+        connectionError = nil
+        isConnecting = true
+        defer { isConnecting = false }
+        DebugLogger.shared.log(.app, "[attio] oauth start requested")
+
+        do {
+            let start = try await api.attioConnectStart(deviceId: deviceId)
+            DebugLogger.shared.log(.app, "[attio] oauth start response callbackScheme=\(start.callbackScheme)")
+            guard let authURL = URL(string: start.authURL) else {
+                DebugLogger.shared.log(.app, "[attio] oauth start invalid auth URL")
+                connectionError = "Invalid Attio auth URL from server"
+                return
+            }
+            guard start.callbackScheme.lowercased() == "miniti-attio" else {
+                DebugLogger.shared.log(.app, "[attio] oauth start unexpected callback scheme=\(start.callbackScheme)")
+                connectionError = "Unexpected callback scheme from server"
+                return
+            }
+            guard NSWorkspace.shared.open(authURL) else {
+                DebugLogger.shared.log(.app, "[attio] oauth browser open failed")
+                connectionError = "Could not open browser for Attio login"
+                return
+            }
+            DebugLogger.shared.log(.app, "[attio] oauth browser opened host=\(authURL.host ?? "-")")
+        } catch {
+            DebugLogger.shared.log(.app, "[attio] oauth start failed \(error.localizedDescription)")
+            connectionError = userFacingAttioError(error)
+        }
+    }
+
+    @MainActor
+    private func handleOAuthCallback(_ callbackURL: URL) async {
+        let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
+        let statusValue = components?.queryItems?.first(where: { $0.name == "status" })?.value
+        let message = components?.queryItems?.first(where: { $0.name == "message" })?.value
+        DebugLogger.shared.log(
+            .app,
+            "[attio] oauth callback parsed status=\(statusValue ?? "nil") message=\((message ?? "").prefix(120))"
+        )
+
+        if statusValue != "success" {
+            connectionError = message ?? "Attio connection failed"
+            DebugLogger.shared.log(.app, "[attio] oauth callback failed")
+            return
+        }
+
+        connectionError = nil
+        DebugLogger.shared.log(.app, "[attio] oauth callback success, refreshing status")
+        await refreshStatus()
+    }
+
+    private func runSearch() async {
+        searchError = nil
+        sendMessage = nil
+        guard status?.connected == true else {
+            searchError = "Connect Attio first"
+            DebugLogger.shared.log(.app, "[attio] search blocked not connected")
+            return
+        }
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else {
+            DebugLogger.shared.log(.app, "[attio] search skipped query too short")
+            return
+        }
+
+        isSearching = true
+        showSearchResults = true
+        defer { isSearching = false }
+        DebugLogger.shared.log(
+            .app,
+            "[attio] search start scope=\(selectedScope.label.lowercased()) query='\(trimmed.prefix(80))'"
+        )
+        do {
+            results = try await api.attioSearch(
+                deviceId: deviceId,
+                query: trimmed,
+                objects: selectedScope.objectSlugs
+            )
+            DebugLogger.shared.log(.app, "[attio] search success results=\(results.count)")
+            if let selectedRecordID,
+               let selectedRecordObject,
+               !results.contains(where: { $0.idPayload.recordID == selectedRecordID && $0.objectSlug == selectedRecordObject }) {
+                // Keep persisted target, but clear highlighted current search selection if missing.
+                // (Selection remains sendable; this only affects visual matching in results list.)
+            }
+        } catch {
+            searchError = userFacingAttioError(error)
+            results = []
+            DebugLogger.shared.log(.app, "[attio] search failed \(error.localizedDescription)")
+        }
+    }
+
+    private func sendToAttio() async {
+        sendError = nil
+        sendMessage = nil
+        guard let selectedRecordID, let selectedRecordObject else {
+            sendError = "Select an Attio record first"
+            return
+        }
+        isSending = true
+        defer { isSending = false }
+        do {
+            let meetingPayload = AttioMeetingPayload.from(meeting: meeting)
+            let shouldCreateTasks = createTasksFromActionItems && !meetingPayload.actionItems.isEmpty
+            DebugLogger.shared.log(
+                .app,
+                "[attio] send start object=\(selectedRecordObject) record=\(selectedRecordID) " +
+                "notesPayload actionItems=\(meetingPayload.actionItems.count) createTasks=\(shouldCreateTasks)"
+            )
+            if shouldCreateTasks {
+                let previewItems = meetingPayload.actionItems.prefix(5).joined(separator: " | ")
+                DebugLogger.shared.log(.app, "[attio] normalized action items: \(previewItems)")
+            }
+            let response = try await api.attioSendMeeting(
+                deviceId: deviceId,
+                meetingPayload: meetingPayload,
+                targetObject: selectedRecordObject,
+                targetRecordID: selectedRecordID,
+                createTasksFromActionItems: shouldCreateTasks
+            )
+            if response.success {
+                let notePart = "\(response.noteIDs.count) note\(response.noteIDs.count == 1 ? "" : "s")"
+                let createdTaskCount = response.taskCount ?? response.taskIDs.count
+                let taskPart = shouldCreateTasks
+                    ? ", \(createdTaskCount) task\(createdTaskCount == 1 ? "" : "s")"
+                    : ""
+                let warningPart: String
+                if let taskError = response.taskError {
+                    DebugLogger.shared.log(
+                        .app,
+                        "[attio] task creation skipped error='\(taskError)' createdTasks=\(createdTaskCount) noteIDs=\(response.noteIDs.count)"
+                    )
+                    warningPart = " · task creation skipped: \(taskError)"
+                } else if shouldCreateTasks && !meetingPayload.actionItems.isEmpty && createdTaskCount == 0 {
+                    DebugLogger.shared.log(
+                        .app,
+                        "[attio] task creation returned zero tasks without explicit error; actionItems=\(meetingPayload.actionItems.count)"
+                    )
+                    warningPart = " · sent action items but Attio returned 0 tasks"
+                } else {
+                    warningPart = ""
+                }
+                DebugLogger.shared.log(
+                    .app,
+                    "[attio] send success notes=\(response.noteIDs.count) tasks=\(createdTaskCount)"
+                )
+                sendMessage = "sent (\(notePart)\(taskPart))\(warningPart)"
+            } else {
+                DebugLogger.shared.log(.app, "[attio] send response success=false")
+                sendError = "Attio send failed"
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "[attio] send failed \(error.localizedDescription)")
+            sendError = userFacingAttioError(error)
+        }
+    }
+
+    private func isMissingAttioBackend(_ error: Error) -> Bool {
+        guard case let MinitiAPIService.ServiceError.serverError(message) = error else { return false }
+        return message.contains("HTTP 404")
+    }
+
+    private func userFacingAttioError(_ error: Error) -> String {
+        if isMissingAttioBackend(error) {
+            return "Attio backend endpoints are not deployed yet"
+        }
+        return error.localizedDescription
+    }
+
+    private func selectRecord(_ record: MinitiAPIService.AttioSearchRecord) {
+        selectedRecordID = record.idPayload.recordID
+        selectedRecordObject = record.objectSlug
+        selectedRecordText = record.recordText
+        selectedRecordDetail = record.secondaryIdentifier
+        showSearchResults = false
+        results = []
+        DebugLogger.shared.log(
+            .app,
+            "[attio] selected record object=\(record.objectSlug) id=\(record.idPayload.recordID) text='\(record.recordText.prefix(80))'"
+        )
+        persistSelection()
+    }
+
+    private func loadPersistedSelection() {
+        let defaults = UserDefaults.standard
+        selectedRecordID = defaults.string(forKey: persistedSelectionKey("record_id"))
+        selectedRecordObject = defaults.string(forKey: persistedSelectionKey("object"))
+        selectedRecordText = defaults.string(forKey: persistedSelectionKey("label"))
+        selectedRecordDetail = defaults.string(forKey: persistedSelectionKey("detail"))
+    }
+
+    private func persistSelection() {
+        let defaults = UserDefaults.standard
+        defaults.set(selectedRecordID, forKey: persistedSelectionKey("record_id"))
+        defaults.set(selectedRecordObject, forKey: persistedSelectionKey("object"))
+        defaults.set(selectedRecordText, forKey: persistedSelectionKey("label"))
+        defaults.set(selectedRecordDetail, forKey: persistedSelectionKey("detail"))
+    }
+
+    private func persistedSelectionKey(_ suffix: String) -> String {
+        "crm.attio.lastSelection.\(meeting.id.uuidString).\(suffix)"
+    }
+
+    private func installLocalEscapeMonitor() {
+        guard localEscapeMonitor == nil else { return }
+        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            guard event.keyCode == 53 else { return event } // Esc
+            if event.type == .keyDown {
+                dismiss()
+            }
+            return nil // consume to avoid window flash/beep
+        }
+    }
+
+    private func removeLocalEscapeMonitor() {
+        guard let localEscapeMonitor else { return }
+        NSEvent.removeMonitor(localEscapeMonitor)
+        self.localEscapeMonitor = nil
+    }
+}
+
+private enum AttioSearchScope: CaseIterable {
+    case people
+    case companies
+    case both
+
+    var label: String {
+        switch self {
+        case .people: return "people"
+        case .companies: return "companies"
+        case .both: return "both"
+        }
+    }
+
+    var objectSlugs: [String] {
+        switch self {
+        case .people: return ["people"]
+        case .companies: return ["companies"]
+        case .both: return ["people", "companies"]
+        }
+    }
+}
+
+
 
 #Preview {
     MainWindow()

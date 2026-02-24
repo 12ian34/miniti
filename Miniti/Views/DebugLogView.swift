@@ -1,8 +1,10 @@
 import SwiftUI
 
 struct DebugLogView: View {
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject private var logger = DebugLogger.shared
     @State private var filter: DebugLogger.Category? = nil
+    @State private var localEscapeMonitor: Any?
 
     private var filtered: [DebugLogger.Entry] {
         guard let filter else { return logger.entries }
@@ -16,6 +18,17 @@ struct DebugLogView: View {
             logList
         }
         .background(Color.black)
+        .onAppear {
+            installLocalEscapeMonitor()
+        }
+        .onDisappear {
+            removeLocalEscapeMonitor()
+        }
+#if os(macOS) || os(tvOS)
+        .onExitCommand {
+            dismiss()
+        }
+#endif
     }
 
     private var header: some View {
@@ -48,6 +61,12 @@ struct DebugLogView: View {
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
                 .foregroundStyle(.gray)
+
+            Button("close") { dismiss() }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(.gray)
+                .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -84,6 +103,28 @@ struct DebugLogView: View {
         UIPasteboard.general.string = text
         #endif
     }
+
+    #if os(macOS)
+    private func installLocalEscapeMonitor() {
+        guard localEscapeMonitor == nil else { return }
+        localEscapeMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { event in
+            guard event.keyCode == 53 else { return event } // Esc
+            if event.type == .keyDown {
+                dismiss()
+            }
+            return nil
+        }
+    }
+
+    private func removeLocalEscapeMonitor() {
+        guard let localEscapeMonitor else { return }
+        NSEvent.removeMonitor(localEscapeMonitor)
+        self.localEscapeMonitor = nil
+    }
+    #else
+    private func installLocalEscapeMonitor() {}
+    private func removeLocalEscapeMonitor() {}
+    #endif
 }
 
 // MARK: - Log Entry Row

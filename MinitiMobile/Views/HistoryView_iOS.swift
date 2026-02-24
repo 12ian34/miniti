@@ -657,8 +657,9 @@ struct HistoricalSavedTrainingContent_iOS: View {
             ForEach(displaySpeakers) { speaker in
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     HistoricalDetailBlock_iOS(
-                        title: "fillers — \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E")
+                        title: "fillers: \(speaker.speakerLabel.lowercased())",
+                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+                        info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
@@ -691,7 +692,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
             }
             
             if metrics.speakers.count > 1 {
-                HistoricalDetailBlock_iOS(title: "talk_ratio", color: Color(hex: "58A6FF")) {
+                HistoricalDetailBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -705,7 +706,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "pace", color: Color(hex: "A371F7")) {
+            HistoricalDetailBlock_iOS(title: "pace", color: Color(hex: "A371F7"), info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -717,7 +718,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "longest_monologue", color: Color(hex: "EC4899")) {
+            HistoricalDetailBlock_iOS(title: "longest monologue", color: Color(hex: "EC4899"), info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -730,7 +731,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "questions_asked", color: Color(hex: "3FB950")) {
+            HistoricalDetailBlock_iOS(title: "questions asked", color: Color(hex: "3FB950"), info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -741,7 +742,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "clarity", color: Color(hex: "D29922")) {
+            HistoricalDetailBlock_iOS(title: "clarity", color: Color(hex: "D29922"), info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -750,7 +751,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                             trailing: "avg words/turn"
                         )
                     }
-                    Text("shorter turns = more focused communication")
+                    Text("lower = clearer = better")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.disabled)
                 }
@@ -762,7 +763,20 @@ struct HistoricalSavedTrainingContent_iOS: View {
 private struct HistoricalDetailBlock_iOS<Content: View>: View {
     let title: String
     let color: Color
+    let info: HistoricalMetricInfo_iOS?
     @ViewBuilder let content: () -> Content
+
+    init(
+        title: String,
+        color: Color,
+        info: HistoricalMetricInfo_iOS? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.color = color
+        self.info = info
+        self.content = content
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -774,12 +788,186 @@ private struct HistoricalDetailBlock_iOS<Content: View>: View {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(color)
+                if let info {
+                    HistoricalMetricInfoButton_iOS(info: info, accent: color)
+                }
             }
             
             content()
                 .padding(.leading, 12)
         }
     }
+}
+
+private struct HistoricalMetricInfo_iOS {
+    let title: String
+    let summary: String
+    let guidance: [String]
+}
+
+private struct HistoricalMetricInfoButton_iOS: View {
+    let info: HistoricalMetricInfo_iOS
+    let accent: Color
+    
+    @State private var showInfo = false
+    
+    var body: some View {
+        Button {
+            showInfo.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.85))
+                .padding(2)
+        }
+        .buttonStyle(.plain)
+        .fullScreenCover(isPresented: $showInfo) {
+            ZStack {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        showInfo = false
+                    }
+
+                HistoricalMetricInfoOverlayCard_iOS(info: info, accent: accent) {
+                    showInfo = false
+                }
+                .padding(.horizontal, 20)
+            }
+            .background(Color.clear)
+        }
+    }
+}
+
+private struct HistoricalMetricInfoOverlayCard_iOS: View {
+    let info: HistoricalMetricInfo_iOS
+    let accent: Color
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(info.title)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Spacer(minLength: 8)
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.08))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(info.summary)
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(info.guidance, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 7) {
+                        Circle()
+                            .fill(accent.opacity(0.85))
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 5)
+                        Text(line)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(ColorPalette.Background.primary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(accent.opacity(0.26), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.28), radius: 20, x: 0, y: 10)
+        )
+        .onTapGesture {
+            // Prevent backdrop tap gesture from firing when interacting with the card.
+        }
+    }
+}
+
+private extension HistoricalMetricInfo_iOS {
+    static let fillers = HistoricalMetricInfo_iOS(
+        title: "Fillers",
+        summary: "Lower is usually better. This counts words like um, uh, like, and similar verbal placeholders.",
+        guidance: [
+            "Rough coaching range: under 1-3 fillers/min is usually solid.",
+            "3-6/min is common in casual conversation or when thinking live.",
+            "6+/min can make delivery feel less confident or less crisp.",
+            "Context matters: brainstorming and interviews usually spike filler usage."
+        ]
+    )
+    
+    static let talkRatio = HistoricalMetricInfo_iOS(
+        title: "Talk Ratio",
+        summary: "There is no single best number. Good ratio depends on your role in the conversation.",
+        guidance: [
+            "Presenter/demo: you may be 60-90% and that can be correct.",
+            "Interview or discovery call: balanced turns (roughly 40-60%) often feels stronger.",
+            "Coaching/support roles usually improve when the other person talks more.",
+            "Watch sudden extremes: very high ratio can mean not leaving space."
+        ]
+    )
+    
+    static let pace = HistoricalMetricInfo_iOS(
+        title: "Pace",
+        summary: "Words per minute (WPM). Faster is not always better; clarity usually drops when pace gets too high.",
+        guidance: [
+            "Common clear speaking range: ~120-170 wpm.",
+            "Energetic but still understandable often lands around 150-190 wpm.",
+            "Above ~200 wpm can feel rushed unless the audience is highly familiar.",
+            "Below ~100 wpm can work for emphasis, but may feel slow if sustained."
+        ]
+    )
+    
+    static let longestMonologue = HistoricalMetricInfo_iOS(
+        title: "Longest Monologue",
+        summary: "Tracks the longest uninterrupted stretch by word count. Lower is usually better in back-and-forth conversations.",
+        guidance: [
+            "Shorter monologues usually create more room for engagement.",
+            "Long stretches are fine in demos or explanations when the listener expects it.",
+            "If this keeps growing in meetings, pause and check for questions.",
+            "Compare to your own baseline by meeting type, not a single fixed target."
+        ]
+    )
+    
+    static let questionsAsked = HistoricalMetricInfo_iOS(
+        title: "Questions Asked",
+        summary: "This is directional, not a quality score. More questions can improve engagement, but only in the right context.",
+        guidance: [
+            "Discovery, coaching, and interviews usually benefit from more questions.",
+            "Status updates and presentations may be strong even with few or no questions.",
+            "Use this with talk ratio: low questions + high talk ratio can signal one-way delivery.",
+            "Quality matters more than raw count."
+        ]
+    )
+    
+    static let clarity = HistoricalMetricInfo_iOS(
+        title: "Clarity (avg words/turn)",
+        summary: "This metric is average words per speaking turn. Lower usually means shorter turns, which often feels easier to follow.",
+        guidance: [
+            "Lower is usually better for conversational clarity, but too low can sound choppy.",
+            "Rough guide: ~5-15 words/turn often feels concise in discussion.",
+            "15-25 can be fine for explanations; 25+ may feel dense if repeated.",
+            "Do not compare across formats (presentation vs interview) without context."
+        ]
+    )
 }
 
 

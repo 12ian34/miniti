@@ -5,8 +5,6 @@ import AVFoundation
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.dismiss) private var dismiss
-    
     var body: some View {
         TabView {
             AccountSettingsView()
@@ -39,29 +37,9 @@ struct SettingsView: View {
                 }
         }
         .frame(width: 500, height: 400)
-        .background {
-            // Hidden cancel-action shortcut so Escape closes the settings window.
-            Button("") {
-                closeSettingsWindow()
-            }
-            .keyboardShortcut(.cancelAction)
-            .labelsHidden()
-            .frame(width: 0, height: 0)
-            .opacity(0)
-            .allowsHitTesting(false)
-        }
-        .onExitCommand {
-            closeSettingsWindow()
-        }
+        
     }
     
-    private func closeSettingsWindow() {
-        if let keyWindow = NSApp.keyWindow {
-            keyWindow.close()
-            return
-        }
-        dismiss()
-    }
 }
 
 // MARK: - Account Settings (Mode + Usage)
@@ -585,6 +563,7 @@ private struct SettingsModelSummaryCard: View {
 struct GeneralSettingsView: View {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
+    @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
     @State private var showDebugLog = false
@@ -603,6 +582,15 @@ struct GeneralSettingsView: View {
                 Text(showInMenuBar
                      ? "Miniti icon is shown in the menu bar."
                      : "Turn this back on to restore the Miniti menu bar icon.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Integrations") {
+                Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
+                Text(attioExportEnabled
+                     ? "\"Send to Attio\" is available in saved meeting history."
+                     : "\"Send to Attio\" is hidden until you enable it here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

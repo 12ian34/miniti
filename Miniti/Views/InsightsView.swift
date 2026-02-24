@@ -56,6 +56,7 @@ struct InsightsModeSelector: View {
                     .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             }
             
             Spacer()
@@ -316,8 +317,9 @@ private struct LiveTrainingContent_iOSPlain: View {
             ForEach(displaySpeakers) { speaker in
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     InsightsPlainBlock_iOS(
-                        title: "fillers — \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E")
+                        title: "fillers: \(speaker.speakerLabel.lowercased())",
+                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+                        info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
@@ -350,7 +352,7 @@ private struct LiveTrainingContent_iOSPlain: View {
             }
             
             if metrics.speakers.count > 1 {
-                InsightsPlainBlock_iOS(title: "talk_ratio", color: Color(hex: "58A6FF")) {
+                InsightsPlainBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -364,7 +366,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "pace", color: Color(hex: "A371F7")) {
+            InsightsPlainBlock_iOS(title: "pace", color: Color(hex: "A371F7"), info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -376,7 +378,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "longest_monologue", color: Color(hex: "EC4899")) {
+            InsightsPlainBlock_iOS(title: "longest monologue", color: Color(hex: "EC4899"), info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -389,7 +391,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "questions_asked", color: Color(hex: "3FB950")) {
+            InsightsPlainBlock_iOS(title: "questions asked", color: Color(hex: "3FB950"), info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -400,7 +402,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "clarity", color: Color(hex: "D29922")) {
+            InsightsPlainBlock_iOS(title: "clarity", color: Color(hex: "D29922"), info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -409,7 +411,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                             trailing: "avg words/turn"
                         )
                     }
-                    Text("shorter turns = more focused communication")
+                    Text("lower = clearer = better")
                         .font(.system(size: 10, weight: .regular, design: .monospaced))
                         .foregroundStyle(Color(hex: "484F58"))
                 }
@@ -445,7 +447,20 @@ private struct TrainingMetricRow_iOS: View {
 private struct InsightsPlainBlock_iOS<Content: View>: View {
     let title: String
     let color: Color
+    let info: TerminalSectionInfo?
     @ViewBuilder let content: () -> Content
+
+    init(
+        title: String,
+        color: Color,
+        info: TerminalSectionInfo? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.title = title
+        self.color = color
+        self.info = info
+        self.content = content
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -457,6 +472,9 @@ private struct InsightsPlainBlock_iOS<Content: View>: View {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
                     .foregroundStyle(color)
+                if let info {
+                    TerminalSectionInfoButton(info: info, accent: color)
+                }
             }
             
             content()
@@ -611,39 +629,28 @@ private struct FillerWordsSection: View {
     
     var body: some View {
         TerminalSection(
-            title: "fillers — \(speaker.speakerLabel.lowercased())",
+            title: "fillers: \(speaker.speakerLabel.lowercased())",
             color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
-            headerStyle: .plain
+            headerStyle: .plain,
+            info: .fillers
         ) {
             VStack(alignment: .leading, spacing: 10) {
-                // Summary line
-                HStack(spacing: 16) {
-                    StatPill(label: "total", value: "\(speaker.totalFillers)")
-                    StatPill(label: "per min", value: String(format: "%.1f", speaker.fillersPerMinute))
-                }
+                Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "71717A"))
                 
                 if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
-                    let maxCount = speaker.fillers.first?.count ?? 1
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(speaker.fillers) { entry in
-                            HStack(spacing: 8) {
+                            HStack(spacing: 6) {
                                 Text(entry.word)
                                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                                     .foregroundStyle(Color(hex: "D4D4D8"))
-                                    .frame(width: 70, alignment: .trailing)
-                                
-                                GeometryReader { geo in
-                                    let width = max(4, geo.size.width * CGFloat(entry.count) / CGFloat(max(maxCount, 1)))
-                                    RoundedRectangle(cornerRadius: 2)
-                                        .fill(Color(hex: "F59E0B").opacity(0.6))
-                                        .frame(width: width, height: 14)
-                                }
-                                .frame(height: 14)
+                                    .fixedSize()
                                 
                                 Text("\(entry.count)")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(Color(hex: "8B949E"))
-                                    .frame(width: 24, alignment: .trailing)
+                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "F59E0B"))
                             }
                         }
                     }
@@ -657,7 +664,7 @@ private struct TalkRatioSection: View {
     let metrics: TrainingMetrics
     
     var body: some View {
-        TerminalSection(title: "talk_ratio", color: Color(hex: "58A6FF"), headerStyle: .plain) {
+        TerminalSection(title: "talk ratio", color: Color(hex: "58A6FF"), headerStyle: .plain, info: .talkRatio) {
             VStack(alignment: .leading, spacing: 8) {
                 // Bar
                 GeometryReader { geo in
@@ -698,25 +705,14 @@ private struct PaceSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "pace", color: Color(hex: "A371F7"), headerStyle: .plain) {
+        TerminalSection(title: "pace", color: Color(hex: "A371F7"), headerStyle: .plain, info: .pace) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
-                    HStack {
-                        Text(speaker.speakerLabel.lowercased())
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
-                            .frame(width: 80, alignment: .leading)
-                        
-                        Text("\(Int(speaker.wordsPerMinute)) wpm")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                        
-                        Spacer()
-                        
-                        Text("\(speaker.wordCount) words")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(hex: "484F58"))
-                    }
+                    TerminalTrainingMetricRow(
+                        speaker: speaker,
+                        primary: "\(Int(speaker.wordsPerMinute)) wpm",
+                        secondary: "\(speaker.wordCount) words"
+                    )
                 }
             }
         }
@@ -727,20 +723,14 @@ private struct MonologueSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "longest_monologue", color: Color(hex: "EC4899"), headerStyle: .plain) {
+        TerminalSection(title: "longest monologue", color: Color(hex: "EC4899"), headerStyle: .plain, info: .longestMonologue) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
                     if speaker.longestMonologueWords > 0 {
-                        HStack {
-                            Text(speaker.speakerLabel.lowercased())
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
-                                .frame(width: 80, alignment: .leading)
-                            
-                            Text("\(speaker.longestMonologueWords) words")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                        }
+                        TerminalTrainingMetricRow(
+                            speaker: speaker,
+                            primary: "\(speaker.longestMonologueWords) words"
+                        )
                     }
                 }
             }
@@ -752,19 +742,13 @@ private struct QuestionsSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "questions_asked", color: Color(hex: "3FB950"), headerStyle: .plain) {
+        TerminalSection(title: "questions asked", color: Color(hex: "3FB950"), headerStyle: .plain, info: .questionsAsked) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
-                    HStack {
-                        Text(speaker.speakerLabel.lowercased())
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
-                            .frame(width: 80, alignment: .leading)
-                        
-                        Text("\(speaker.questionsAsked)")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                    }
+                    TerminalTrainingMetricRow(
+                        speaker: speaker,
+                        primary: "\(speaker.questionsAsked)"
+                    )
                 }
             }
         }
@@ -775,26 +759,17 @@ private struct ClaritySection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "clarity", color: Color(hex: "D29922"), headerStyle: .plain) {
+        TerminalSection(title: "clarity", color: Color(hex: "D29922"), headerStyle: .plain, info: .clarity) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
-                    HStack {
-                        Text(speaker.speakerLabel.lowercased())
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
-                            .frame(width: 80, alignment: .leading)
-                        
-                        Text(String(format: "%.1f", speaker.avgWordsPerTurn))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                        
-                        Text("avg words/turn")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(hex: "484F58"))
-                    }
+                    TerminalTrainingMetricRow(
+                        speaker: speaker,
+                        primary: String(format: "%.1f", speaker.avgWordsPerTurn),
+                        secondary: "avg words/turn"
+                    )
                 }
                 
-                Text("shorter turns = more focused communication")
+                Text("lower = clearer = better")
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .padding(.top, 4)
@@ -803,23 +778,28 @@ private struct ClaritySection: View {
     }
 }
 
-private struct StatPill: View {
-    let label: String
-    let value: String
+private struct TerminalTrainingMetricRow: View {
+    let speaker: TrainingMetrics.SpeakerStats
+    let primary: String
+    var secondary: String? = nil
     
     var body: some View {
-        HStack(spacing: 4) {
-            Text(label)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color(hex: "71717A"))
-            Text(value)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
+        HStack(spacing: 8) {
+            Text(speaker.speakerLabel.lowercased())
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                .frame(width: 48, alignment: .leading)
+            
+            Text(primary)
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color(hex: "E6EDF3"))
+            
+            if let secondary {
+                Text(secondary)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+            }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Color(hex: "18181B"))
-        .cornerRadius(4)
     }
 }
 
@@ -909,17 +889,20 @@ struct TerminalSection<Content: View>: View {
     let title: String
     let color: Color
     let headerStyle: HeaderStyle
+    let info: TerminalSectionInfo?
     @ViewBuilder let content: () -> Content
 
     init(
         title: String,
         color: Color,
         headerStyle: HeaderStyle = .markdown,
+        info: TerminalSectionInfo? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
         self.color = color
         self.headerStyle = headerStyle
+        self.info = info
         self.content = content
     }
     
@@ -935,6 +918,9 @@ struct TerminalSection<Content: View>: View {
                 Text(title)
                     .font(.system(size: 12, weight: .bold, design: .monospaced))
                     .foregroundStyle(color)
+                if let info {
+                    TerminalSectionInfoButton(info: info, accent: color)
+                }
             }
             
             // Content
@@ -951,6 +937,211 @@ struct TerminalSection<Content: View>: View {
                 )
         )
     }
+}
+
+struct TerminalSectionInfo {
+    let title: String
+    let summary: String
+    let guidance: [String]
+}
+
+struct TerminalSectionInfoButton: View {
+    let info: TerminalSectionInfo
+    let accent: Color
+    
+    @State private var showInfo = false
+    
+    var body: some View {
+        Button {
+            showInfo.toggle()
+        } label: {
+            Image(systemName: "questionmark.circle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(accent.opacity(0.75))
+                .padding(2)
+        }
+        .buttonStyle(.plain)
+        .help("How to read this metric")
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showInfo) {
+            ZStack {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        showInfo = false
+                    }
+
+                TerminalSectionInfoOverlayCard_iOS(info: info, accent: accent) {
+                    showInfo = false
+                }
+                .padding(.horizontal, 20)
+            }
+            .background(Color.clear)
+        }
+        #else
+        .popover(isPresented: $showInfo, arrowEdge: .top) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(info.title)
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                Text(info.summary)
+                    .font(.system(size: 11, weight: .regular, design: .rounded))
+                    .foregroundStyle(Color(hex: "C9D1D9"))
+                    .fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(info.guidance, id: \.self) { line in
+                        HStack(alignment: .top, spacing: 6) {
+                            Circle()
+                                .fill(accent.opacity(0.8))
+                                .frame(width: 5, height: 5)
+                                .padding(.top, 4)
+                            Text(line)
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .foregroundStyle(Color(hex: "C9D1D9"))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(14)
+            .frame(width: 300, alignment: .leading)
+            .background(Color(hex: "0F0F11"))
+        }
+        #endif
+    }
+}
+
+#if os(iOS)
+private struct TerminalSectionInfoOverlayCard_iOS: View {
+    let info: TerminalSectionInfo
+    let accent: Color
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(info.title)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                Spacer(minLength: 8)
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(Color(hex: "C9D1D9"))
+                        .frame(width: 22, height: 22)
+                        .background(
+                            Circle()
+                                .fill(Color.white.opacity(0.06))
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(info.summary)
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundStyle(Color(hex: "C9D1D9"))
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(info.guidance, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 7) {
+                        Circle()
+                            .fill(accent.opacity(0.85))
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 5)
+                        Text(line)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(Color(hex: "C9D1D9"))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(hex: "0F0F11"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(accent.opacity(0.28), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.4), radius: 20, x: 0, y: 10)
+        )
+        .onTapGesture {
+            // Prevent backdrop tap gesture from triggering when tapping inside the card.
+        }
+    }
+}
+#endif
+
+extension TerminalSectionInfo {
+    static let fillers = TerminalSectionInfo(
+        title: "Fillers",
+        summary: "Lower is usually better. This counts words like um, uh, like, and similar verbal placeholders.",
+        guidance: [
+            "Rough coaching range: under 1-3 fillers/min is usually solid.",
+            "3-6/min is common in casual conversation or when thinking live.",
+            "6+/min can make delivery feel less confident or less crisp.",
+            "Context matters: brainstorming and interviews usually spike filler usage."
+        ]
+    )
+    
+    static let talkRatio = TerminalSectionInfo(
+        title: "Talk Ratio",
+        summary: "There is no single best number. Good ratio depends on your role in the conversation.",
+        guidance: [
+            "Presenter/demo: you may be 60-90% and that can be correct.",
+            "Interview or discovery call: balanced turns (roughly 40-60%) often feels stronger.",
+            "Coaching/support roles usually improve when the other person talks more.",
+            "Watch sudden extremes: very high ratio can mean not leaving space."
+        ]
+    )
+    
+    static let pace = TerminalSectionInfo(
+        title: "Pace",
+        summary: "Words per minute (WPM). Faster is not always better; clarity usually drops when pace gets too high.",
+        guidance: [
+            "Common clear speaking range: ~120-170 wpm.",
+            "Energetic but still understandable often lands around 150-190 wpm.",
+            "Above ~200 wpm can feel rushed unless the audience is highly familiar.",
+            "Below ~100 wpm can work for emphasis, but may feel slow if sustained."
+        ]
+    )
+    
+    static let longestMonologue = TerminalSectionInfo(
+        title: "Longest Monologue",
+        summary: "Tracks the longest uninterrupted stretch by word count. Lower is usually better in back-and-forth conversations.",
+        guidance: [
+            "Shorter monologues usually create more room for engagement.",
+            "Long stretches are fine in demos or explanations when the listener expects it.",
+            "If this keeps growing in meetings, pause and check for questions.",
+            "Compare to your own baseline by meeting type, not a single fixed target."
+        ]
+    )
+    
+    static let questionsAsked = TerminalSectionInfo(
+        title: "Questions Asked",
+        summary: "This is directional, not a quality score. More questions can improve engagement, but only in the right context.",
+        guidance: [
+            "Discovery, coaching, and interviews usually benefit from more questions.",
+            "Status updates and presentations may be strong even with few or no questions.",
+            "Use this with talk ratio: low questions + high talk ratio can signal one-way delivery.",
+            "Quality matters more than raw count."
+        ]
+    )
+    
+    static let clarity = TerminalSectionInfo(
+        title: "Clarity (avg words/turn)",
+        summary: "This metric is average words per speaking turn. Lower usually means shorter turns, which often feels easier to follow.",
+        guidance: [
+            "Lower is usually better for conversational clarity, but too low can sound choppy.",
+            "Rough guide: ~5-15 words/turn often feels concise in discussion.",
+            "15-25 can be fine for explanations; 25+ may feel dense if repeated.",
+            "Do not compare across formats (presentation vs interview) without context."
+        ]
+    )
 }
 
 struct TerminalListItem: View {
@@ -980,6 +1171,7 @@ struct TerminalListItem: View {
                         .foregroundStyle(isCompleted ? Color(hex: "3FB950") : Color(hex: "484F58"))
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
             case .arrow:
                 Text("->")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -1002,7 +1194,7 @@ struct TerminalTag: View {
     let text: String
     
     var body: some View {
-        Text("[\(text.lowercased().replacingOccurrences(of: " ", with: "_"))]")
+        Text("[\(text.lowercased().replacingOccurrences(of: "_", with: " "))]")
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(Color(hex: "A371F7"))
             .padding(.horizontal, 8)
@@ -1082,6 +1274,7 @@ struct TerminalNoInsightsView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .focusable(false)
                 .disabled(appState.openaiApiKey.isEmpty)
                 .padding(.top, 8)
                 
@@ -1159,7 +1352,7 @@ struct InsightSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
     
     var body: some View {
-        TerminalSection(title: title.lowercased().replacingOccurrences(of: " ", with: "_"), color: color, content: content)
+        TerminalSection(title: title.lowercased(), color: color, content: content)
     }
 }
 

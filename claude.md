@@ -29,7 +29,39 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-23 - v1.8.1 (current)
+### 2026-02-24 - v1.9.0 (current)
+
+**Attio CRM integration (macOS):**
+- Send saved meeting summaries to Attio: connect your account, search people/companies, and push summaries, discussion flow, action items, decisions, topics, MEDDPICC, and notes (transcript and training metrics excluded by default)
+- Optionally create Attio tasks from action items
+- Enable/hide in Settings → General → Integrations; target selection remembered per meeting
+- Search shows full email/domain, scope-aware placeholder, and results collapse after selection
+- Improved task sync reliability and clearer messaging when Attio returns zero tasks
+
+**macOS layout & navigation:**
+- Sidebar collapses to a compact icon/status rail (`⌘[`); history section is collapsible
+- Insights pane collapses to a slim rail (`⌘]`)
+- Session controls show shortcut hints (`⌘S` save / `⌘⌫` discard); both safely stop recording first if used mid-session, and save opens the meeting in history
+- `⌘N` / menu-bar New Session starts a fresh session cleanly even while browsing history
+- Escape closes the debug log sheet and Settings window; debug log also has an explicit close button
+
+**Reliability & polish:**
+- Resume/start shows a "starting..." spinner and blocks repeat taps while reconnecting in managed mode (macOS and iOS)
+- Live MEDDPICC updates retry automatically on transient failures and throttle refresh cadence in managed mode
+- Live transcript merges same-speaker streaming fragments until sentence boundaries, reducing choppy line breaks
+- Markdown transcript export preserves actual speaker labels (like "You") instead of generic numbered headings
+
+**Training mode & formatting:**
+- Training UI is cleaner and easier to scan, with simplified metric rows and filler counts
+- Each training metric has an info popup with plain-English guidance and coaching ranges
+- Clarity helper text standardized across all views: "lower = clearer = better"
+- iOS training info bubbles use a centered floating popup card with dim backdrop and tap-to-dismiss
+- Labels and topic tags use human-readable spaces instead of underscores across macOS and iOS
+
+**Bug fixes:**
+- Fix a macOS crash when reactivating the app window after it sat in the background (especially after finishing a meeting)
+
+### 2026-02-23 - v1.8.1
 
 - Fix audio cutting out when Bluetooth headphones switch modes mid-session (e.g. AirPods joining a Zoom call)
 - Filler words like "um" and "uh" now appear in transcripts and get counted in training mode
@@ -160,7 +192,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Architecture
 
-- **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts
+- **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts, and custom URL callback handling (Attio OAuth return)
 - **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, Live Activity lifecycle (`#if os(iOS)` guarded)
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
@@ -168,13 +200,13 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DebugLogger.swift** – In-memory ring-buffer logger (1000 entries) with API key redaction. Thread-safe `log()` callable from audio threads. Categories: audio, deepgram, app. Shared between macOS and iOS.
 - **Miniti/Views/DebugLogView.swift** – Terminal-style log viewer with category filters, copy, and clear. Accessed via hidden 5-tap on version text in Settings.
+- **Miniti/Services/KeyboardShortcutsService.swift** – Global `NSEvent.addGlobalMonitorForEvents` keyboard handler. Routes Escape (dismiss sheets → close Settings → close help → go home), shortcuts for recording (⌘⇧R, ⌘N, ⌘S, ⌘⌫), navigation (J/K/⌘H), insight mode switching (⌘1/2/3), sidebar collapse (⌘[), insights pane collapse (⌘]), and help overlay (⌘/). Also defines `allKeyboardShortcuts` array for the help overlay.
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
-- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking. Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
+- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking, and Attio CRM export helpers (connect start/status/search/send endpoints). Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
 - **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
-- **Miniti/Views/MainWindow.swift** – Window chrome: sidebar, content area, status bar
-- **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette
-- **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC + training modes), shared `TrainingContent` view for speech analytics
-- **Miniti/Views/HistoryView.swift** – Past meetings browser
+- **Miniti/Views/MainWindow.swift** – Window chrome, history sidebar, and macOS historical meeting detail (`MeetingDetailView`, includes `send to attio` sheet with OAuth connect/search/send flow)
+- **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette; merges streaming fragments into sentence-level rows for cleaner display
+- **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC + training modes), shared `TrainingContent` view for speech analytics, and shared metric info-help UI (`TerminalSectionInfo*`; macOS popover + iOS floating popup card via `fullScreenCover`)
 - **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, models (Deepgram + OpenAI), general preferences
 - **Miniti/Views/OnboardingView.swift** – First-launch mode selection (managed vs BYOK)
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
@@ -187,10 +219,10 @@ Separate iOS target in the same Xcode project. Mic-only recording (no system aud
 
 - **MinitiMobile/MinitiApp_iOS.swift** – `@main` iOS entry point, `WindowGroup` + `ModelContainer`, onboarding gate, forces `.preferredColorScheme(.dark)` app-wide
 - **MinitiMobile/AudioCaptureService_iOS.swift** – Mic-only `AudioCaptureService` (same class name/interface as macOS). Uses `AVAudioSession` for iOS audio session management. Stubs system audio properties (always false/0). `dominantSource()` always returns `.mic`.
-- **MinitiMobile/Views/MainTabView.swift** – `TabView` with Record / History / Settings tabs; wires `@Environment(\.modelContext)` → `appState.modelContext` on appear (critical for SwiftData saves)
+- **MinitiMobile/Views/MainTabView.swift** – `TabView` with Record / History tabs; wires `@Environment(\.modelContext)` → `appState.modelContext` on appear (critical for SwiftData saves)
 - **MinitiMobile/Views/MeetingView_iOS.swift** – Mobile recording UI: terminal-style buttons (stop/resume/save/home matching macOS), custom section picker, `UIPasteboard` for copy, `SourceWaveform_iOS`
 - **MinitiMobile/Views/SettingsView_iOS.swift** – `NavigationStack` + `Form`, no launch-at-login / system audio toggle / radio picker
-- **MinitiMobile/Views/HistoryView_iOS.swift** – `NavigationStack` + `List` with drill-down to meeting detail
+- **MinitiMobile/Views/HistoryView_iOS.swift** – `NavigationStack` + `List` with drill-down to meeting detail; historical training metrics use `HistoricalDetailBlock_iOS` with local metric info popup types (`HistoricalMetricInfo*`) for iOS-only floating overlays
 - **MinitiMobile/Info.plist** – `NSMicrophoneUsageDescription`, `UIBackgroundModes: [audio]`, `NSSupportsLiveActivities: YES`, `UILaunchScreen` (empty dict, required for iOS launch)
 - **MinitiMobile/MinitiMobile.entitlements** – Empty dict (iOS is always sandboxed; macOS sandbox keys like `com.apple.security.app-sandbox` are invalid on iOS and prevent launch)
 
@@ -206,20 +238,28 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 **Shared files** (macOS + iOS + extension where noted): `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`, `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `DebugLogger.swift`, `Secrets.swift`, `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`, `Assets.xcassets`, `RecordingActivityAttributes.swift` (iOS app + extension only)
 
-**macOS-only files**: `MinitiApp.swift`, `AudioCaptureService.swift`, `KeyboardShortcutsService.swift`, `MainWindow.swift`, `MeetingView.swift`, `SettingsView.swift`, `HistoryView.swift`
+**macOS-only files**: `MinitiApp.swift`, `AudioCaptureService.swift`, `KeyboardShortcutsService.swift`, `MainWindow.swift`, `MeetingView.swift`, `SettingsView.swift`
 
-**Key design**: Minimal `#if os()` guards — only in `AppState.swift` for `import ActivityKit`, Live Activity start/update/end calls, and `#if os(macOS)` for source dominance `sourceLookup` wiring (iOS skips it to preserve Deepgram's native diarization). Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout. MEDDPICC fields are rendered as individual sections (same heading style as summary/discussion) across all views — `LiveInsightSection` in the sidebar, `TerminalSection` in full-width/history, `InsightsPlainBlock_iOS`/`HistoricalDetailBlock_iOS` on iOS.
+**Key design**: Keep platform guards (`#if os()`) limited and localized. Most platform-specific branching lives in `AppState.swift` (ActivityKit + source-dominance wiring), with additional targeted guards in shared UI/service code where platform behavior differs (for example `DebugLogView`, `InsightsView`, `MinitiAPIService`, and macOS-only Attio UI in `MainWindow`). Each target compiles its own `AudioCaptureService` (same class name, same public interface). AppState references `AudioCaptureService` by name and works with either version. Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout. MEDDPICC fields are rendered as individual sections (same heading style as summary/discussion) across all views — `LiveInsightSection` in the sidebar, `TerminalSection` in full-width/history, `InsightsPlainBlock_iOS`/`HistoricalDetailBlock_iOS` on iOS.
 
 **Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
+
+**macOS SwiftData stability note (v1.9.0)**: `MainWindow.swift` intentionally avoids a root-level `@Query` for history and stores `selectedMeetingID` (UUID) instead of a `Meeting` object in `@State`. Meetings are fetched manually from `ModelContext` (including on app reactivation) to avoid a SwiftUI/SwiftData crash path seen when clicking the window after it had been backgrounded.
 
 ## Key patterns
 
 - **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, 10-second heartbeats confirming audio is flowing (buffer count + level), Deepgram WebSocket connect/disconnect/message counts, app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style scrolling log with category filters, copy, and clear. Not discoverable by normal users.
 - **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, release notes, and a download link (currently Proton Drive). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
+- **Attio CRM send (macOS history only)**: user-initiated from saved meeting detail (`send to attio`). OAuth is backend-mediated (Attio redirects to `miniti-api`, backend stores token in KV keyed by device ID, backend redirects back to app custom URL scheme `miniti-attio://`). macOS registers `miniti-attio` in `Info.plist`; `MinitiApp.onOpenURL` forwards the callback to the sheet via `NotificationCenter`. Frontend calls additive backend routes (`/api/attio/connect/start`, `/status`, `/search`, `/send`) and fails gracefully if backend is not deployed yet (shows a clear message instead of breaking older deployments). App payload omits full transcript by default; backend also ignores transcript if older clients still send it.
+- **Managed MEDDPICC live insights throttling/retry**: MEDDPICC mode uses its own segment thresholds + a minimum refresh interval, and managed-mode insight requests retry once on transient timeout/network failures (e.g. 504 / gateway timeout) to make live MEDDPICC updates less flaky.
+- **Live transcript display merge**: streaming-finalized chunks from the same speaker are merged in the UI until a sentence terminator is reached. This keeps the live transcript readable without changing stored transcript data.
+- **Markdown transcript speaker labels**: Transcript markdown export uses each segment's computed `speakerLabel` (for example `You`) instead of always rendering generic numbered labels.
 
 ## Changelog style
 
-Changelog entries (in both `claude.md` and `README.md`) should be written as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`". Keep both changelogs in sync.
+Changelog entries in `claude.md` should be written as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
+
+`README.md` should not contain a changelog for this project. Keep it focused on current end-user functionality, setup, and usage guides.
 
 ## Color Palette
 
@@ -249,6 +289,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
 - **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
+- **macOS focus rings / tab focus**: Prefer `.focusable(false)` for button-only controls and utility panels (including Attio send sheet controls) unless keyboard tab navigation is explicitly required. This app is shortcut-driven; avoid default tab-focus highlight rings by default.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). Paused time is excluded by re-anchoring `recordingStartDate` from the accumulated active duration on resume; `recordingStartDate` is cleared on stop and `goHome()`.
 - **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. This syncs `liveSegments`, insights, notes, and MEDDPICC to SwiftData continuously. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
 - **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. Title parsing accepts both the current ` - ` separator and legacy em-dash titles for backward compatibility. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS.
@@ -260,8 +301,14 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Generate insights for history**: `generateInsightsForMeeting(_ meeting: Meeting)` generates standard + MEDDPICC insights for a saved meeting and writes directly to the `Meeting` model. Used from history detail generate/update controls.
 - **MEDDPICC save safety**: `applyInsights()` only overwrites MEDDPICC fields when `insightsMode == .meddpicc`. In standard mode, the API returns nil for MEDDPICC fields — writing those nils would erase previously generated MEDDPICC data. `stopRecording()` always calls `generateFinalInsightsAndSave()` (which generates both standard + MEDDPICC) regardless of whether insights already exist.
 - **Training mode**: Third `InsightsMode` (`.training`) that shows locally-computed speech analytics — no LLM calls needed for the Training UI. `TrainingMetrics.compute(from:duration:)` runs a pass over transcript segments to extract filler word counts (hard fillers like "um"/"uh" + soft fillers like "like"/"basically"), talk ratio, speaking pace (wpm), longest monologue, questions asked, and clarity (avg words/turn). Metrics are recomputed on every new segment batch when training mode is active, and on mode switch. During recording in training mode, automatic live insight refresh still computes standard insights in the background so they are ready when switching back. Manual generate/update actions are hidden (or no-op guarded) in Training mode to avoid hidden AI calls. For saved meetings, training metrics are computed on the fly from `meeting.segments` in the history views (no extra model fields needed).
+- **Training metric help UI (cross-platform)**: All major training metrics (fillers, talk ratio, pace, longest monologue, questions, clarity) expose the same plain-English guidance/ranges in live + historical views. macOS uses native popovers; iOS uses a custom centered floating popup card with dim backdrop and tap-outside-to-dismiss to avoid `.popover`/sheet full-screen presentation quirks.
+- **Training clarity helper copy**: The inline clarity helper is intentionally standardized across macOS/iOS live + historical views as `lower = clearer = better` for fast scanning.
 - **Finished-meeting update action**: `generateInsights()` respects the selected insights mode for a completed current meeting (`standard` vs `meddpicc`). In Training mode, the action just refreshes local training metrics and does not make AI requests.
 - **isStartingMeeting**: Transient flag set in `startNewMeeting()`, cleared when `startRecording()` succeeds or on failure. iOS shows a "starting..." spinner during this phase. macOS hides the session view.
+- **isResumingRecording**: Transient flag set when resuming a stopped session in managed mode (needs a fresh temp Deepgram key). Cleared when `startRecording()` succeeds, on failure, or on `clearCurrentSession()`. Shows a "starting..." spinner on the resume button and blocks repeat taps. On iOS, managed via local `@State` in `MeetingView_iOS` rather than AppState to avoid cross-view side effects.
+- **pendingOpenSavedMeetingID / saveAndOpenCurrentMeeting()**: When the user saves a stopped session (⌘S), `saveAndOpenCurrentMeeting()` stores the meeting's UUID in `pendingOpenSavedMeetingID`, calls `goHome()`, and `MainWindow` picks up the pending ID to select it in the history sidebar. This makes save navigate directly to the saved meeting.
+- **Escape key routing (macOS)**: Centralized in `KeyboardShortcutsService`. Order: (1) dismiss any active sheet (debug log, Attio send) via `cancelOperation` + `performClose`, (2) close Settings/Preferences window, (3) close help overlay, (4) go home. Sheet dismissal scans both key window and all visible windows as fallback. Settings detection checks window title and `toolbarStyle == .preference`.
+- **J/K history navigation vs text entry (macOS)**: `KeyboardShortcutsService` ignores unmodified `j`/`k` and arrow-key history navigation when focus is in an editable text responder (`TextField`/`TextEditor` via AppKit `NSTextView`/field editor). This prevents list scrolling while typing in notes or Attio search fields.
 - **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
 
 ## Audio flow
@@ -304,17 +351,17 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Home (device disabled)**: In managed mode when admin has disabled the device — shows "account disabled" message, start button hidden
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup — stays on home screen until recording begins
 - **Recording**: TerminalHeader with red dot + timer, stop button, dual labeled waveforms (mic green, system blue), transcript, notes, live insights
-- **Stopped session**: Same layout; header shows discard (left), cont (center, same position as stop), save (right). Status dot hidden when not recording. Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
+- **Stopped session**: Same layout; header shows discard (left), cont (center, same position as stop), save (right) with `⌘⌫` / `⌘S` shortcuts on macOS. Status dot hidden when not recording. Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
 - **History**: Sidebar list → detail view with tabs (transcript / insights / meddpicc / training). macOS uses split panes (transcript + notes on left, insights on right) and the insights pane has mode tabs (standard / MEDDPICC / training) with `⌘1` / `⌘2` / `⌘3`.
-- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram + OpenAI), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘,, or menu bar
+- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram + OpenAI), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘, or menu bar
 
 ### iOS
 - **Onboarding** (first launch): Same as macOS (shared `OnboardingView`)
 - **Home** (`ReadyStateView_iOS`): Logo, mode status pill, "test mic" button (opt-in waveform), gear icon for settings, start button. Mic-only (no system audio toggle)
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup
 - **Recording**: Header with red dot + timer (center) + waveform, custom lowercase section picker (transcript/insights/notes), stop button at bottom center
-- **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), resume (center, same position as stop), save (right)
-- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes/training, lowercase). Transcript collapses consecutive same-speaker segments. Insights shows standard + MEDDPICC + "generate" button for past meetings. Training shows speech analytics computed from saved segments. Notes are editable.
+- **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), start/resume (center, same position as stop), save (right)
+- **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes, lowercase). Transcript collapses consecutive same-speaker segments. Insights contains standard / MEDDPICC / training modes plus generate/update for saved meetings. Training metrics are computed from saved segments. Notes are editable.
 - **Settings**: Accessible via gear icon on home screen (no dedicated tab)
 - **Tab bar**: Record / History — two-tab navigation
 
@@ -450,6 +497,7 @@ Two parallel modes, to be extended with Pro tier:
 - **Security note**: the client `X-API-Key` is not a true secret (anything shipped in the app can be extracted). XOR obfuscation only reduces casual string scanning. Treat this as a client identifier / coarse gate, not strong authentication.
 - **Safer direction**: keep quota enforcement and abuse protection server-side (`X-Device-ID`, rate limits, caps, anomaly detection), issue short-lived server tokens for sensitive flows (session creation / insights), and optionally add platform attestation later (e.g. App Attest / DeviceCheck on iOS) to raise abuse cost.
 - Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars
+- Optional Attio env vars for CRM export (backend repo): `ATTIO_CLIENT_ID`, `ATTIO_CLIENT_SECRET`, `ATTIO_OAUTH_REDIRECT_URI`, `ATTIO_OAUTH_SCOPES`
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
 
 **Endpoints:**
@@ -458,6 +506,7 @@ Two parallel modes, to be extended with Pro tier:
 - `POST /api/session` — start session, returns temp Deepgram key (4hr TTL, `usage:write` scope); returns 402 if limit reached (5 req/min)
 - `POST /api/session/end` — report duration, increment usage counter; server caps at wall-clock elapsed (10 req/min)
 - `POST /api/insights` — OpenAI proxy for transcript analysis; modes: `standard` or `meddpicc`; transcript capped at 100KB (10 req/min)
+- `POST /api/attio/connect/start`, `GET /api/attio/status`, `POST /api/attio/search`, `POST /api/attio/send` — additive Attio CRM export routes (backend stores OAuth token; older app versions unaffected)
 
 **Session flow:** launch → `GET /api/version` (update check) + `GET /usage` (managed only) → `POST /session` (get temp key) → connect directly to Deepgram WebSocket with temp key → periodic `POST /insights` → stop → `POST /session/end` → final `POST /insights`
 

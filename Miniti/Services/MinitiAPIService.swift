@@ -157,6 +157,105 @@ final class MinitiAPIService: @unchecked Sendable {
             case resetsAt = "resets_at"
         }
     }
+
+    // MARK: - Attio
+
+    struct AttioConnectStartResponse: Decodable {
+        let authURL: String
+        let callbackScheme: String
+
+        enum CodingKeys: String, CodingKey {
+            case authURL = "auth_url"
+            case callbackScheme = "callback_scheme"
+        }
+    }
+
+    struct AttioStatusResponse: Decodable {
+        let connected: Bool
+        let accountLabel: String?
+
+        enum CodingKeys: String, CodingKey {
+            case connected
+            case accountLabel = "account_label"
+        }
+    }
+
+    struct AttioSearchRecord: Decodable, Identifiable {
+        struct RecordID: Decodable {
+            let workspaceID: String
+            let objectID: String
+            let recordID: String
+
+            enum CodingKeys: String, CodingKey {
+                case workspaceID = "workspace_id"
+                case objectID = "object_id"
+                case recordID = "record_id"
+            }
+        }
+
+        let idPayload: RecordID
+        let recordText: String
+        let recordImage: String?
+        let objectSlug: String
+        let recordEmail: String?
+        let recordDomain: String?
+
+        enum CodingKeys: String, CodingKey {
+            case idPayload = "id"
+            case recordText = "record_text"
+            case recordImage = "record_image"
+            case objectSlug = "object_slug"
+            case recordEmail = "record_email"
+            case recordDomain = "record_domain"
+        }
+
+        var id: String { "\(objectSlug):\(idPayload.recordID)" }
+
+        var secondaryIdentifier: String? {
+            switch objectSlug.lowercased() {
+            case "people":
+                return recordEmail
+            case "companies":
+                return recordDomain
+            default:
+                return recordEmail ?? recordDomain
+            }
+        }
+    }
+
+    struct AttioSearchResponse: Decodable {
+        let data: [AttioSearchRecord]
+    }
+
+    struct AttioSendResponse: Decodable {
+        let success: Bool
+        let noteIDs: [String]
+        let taskIDs: [String]
+        let taskError: String?
+        let taskCount: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case success
+            case noteIDs = "note_ids"
+            case taskIDs = "task_ids"
+            case taskError = "task_error"
+            case taskCount = "task_count"
+            case tasksSynced = "tasks_synced"
+            case tasksCreated = "tasks_created"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            success = try container.decode(Bool.self, forKey: .success)
+            noteIDs = try container.decodeIfPresent([String].self, forKey: .noteIDs) ?? []
+            taskIDs = try container.decodeIfPresent([String].self, forKey: .taskIDs) ?? []
+            taskError = try container.decodeIfPresent(String.self, forKey: .taskError)
+            taskCount =
+                try container.decodeIfPresent(Int.self, forKey: .taskCount) ??
+                (try container.decodeIfPresent(Int.self, forKey: .tasksSynced)) ??
+                (try container.decodeIfPresent(Int.self, forKey: .tasksCreated))
+        }
+    }
     
     // MARK: - Errors
     
@@ -309,6 +408,60 @@ final class MinitiAPIService: @unchecked Sendable {
         
         return try Self.decoder.decode(ManagedInsightsResponse.self, from: data)
     }
+
+    func attioConnectStart(deviceId: String, callbackScheme: String = "miniti-attio") async throws -> AttioConnectStartResponse {
+        let request = makeRequest(
+            path: "/attio/connect/start",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["callback_scheme": callbackScheme]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(AttioConnectStartResponse.self, from: data)
+    }
+
+    func attioStatus(deviceId: String) async throws -> AttioStatusResponse {
+        let request = makeRequest(path: "/attio/status", deviceId: deviceId)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(AttioStatusResponse.self, from: data)
+    }
+
+    func attioSearch(deviceId: String, query: String, objects: [String]) async throws -> [AttioSearchRecord] {
+        let request = makeRequest(
+            path: "/attio/search",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["query": query, "objects": objects]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(AttioSearchResponse.self, from: data).data
+    }
+
+    func attioSendMeeting(
+        deviceId: String,
+        meetingPayload: AttioMeetingPayload,
+        targetObject: String,
+        targetRecordID: String,
+        createTasksFromActionItems: Bool
+    ) async throws -> AttioSendResponse {
+        let request = makeRequest(
+            path: "/attio/send",
+            method: "POST",
+            deviceId: deviceId,
+            body: [
+                "target_object": targetObject,
+                "target_record_id": targetRecordID,
+                "meeting": meetingPayload.dictionary,
+                "create_tasks_from_action_items": createTasksFromActionItems
+            ]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(AttioSendResponse.self, from: data)
+    }
     
     // MARK: - Response Validation
     
@@ -342,6 +495,132 @@ final class MinitiAPIService: @unchecked Sendable {
             }
             throw ServiceError.serverError("HTTP \(httpResponse.statusCode)")
         }
+    }
+}
+
+// MARK: - Attio Meeting Payload
+
+struct AttioMeetingPayload: Sendable {
+    let title: String
+    let startedAt: String
+    let endedAt: String?
+    let durationText: String
+    let summary: String?
+    let discussionFlow: [String]
+    let actionItems: [String]
+    let keyDecisions: [String]
+    let topics: [String]
+    let notes: String?
+    let meddpicc: [String: String]
+
+    static func normalizedActionItems(from items: [String]) -> [String] {
+        let placeholders: Set<String> = [
+            "none",
+            "n/a",
+            "na",
+            "null",
+            "no action items",
+            "no action items mentioned",
+            "no follow-up actions"
+        ]
+
+        var normalized: [String] = []
+        var seen = Set<String>()
+
+        for item in items {
+            // Some persisted meetings store multiple bullets in one string; split and normalize each line.
+            for rawLine in item.components(separatedBy: .newlines) {
+                let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { continue }
+
+                let withoutBullet = trimmed.replacingOccurrences(
+                    of: #"^\s*(?:(?:[-*•])|(?:\d+[.)]))\s*(?:\[(?: |x|X)\]\s*)?"#,
+                    with: "",
+                    options: .regularExpression
+                )
+
+                let withoutCheckbox = withoutBullet.replacingOccurrences(
+                    of: #"^\s*\[(?: |x|X)\]\s*"#,
+                    with: "",
+                    options: .regularExpression
+                )
+
+                let noControls = withoutCheckbox.unicodeScalars.filter { scalar in
+                    !CharacterSet.controlCharacters.contains(scalar)
+                }
+                let collapsedWhitespace = String(String.UnicodeScalarView(noControls))
+                    .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !collapsedWhitespace.isEmpty else { continue }
+                guard collapsedWhitespace.range(of: #"^[\-\*•\s]+$"#, options: .regularExpression) == nil else { continue }
+
+                let lower = collapsedWhitespace.lowercased()
+                guard !placeholders.contains(lower) else { continue }
+                guard seen.insert(lower).inserted else { continue }
+
+                normalized.append(collapsedWhitespace)
+            }
+        }
+
+        return normalized
+    }
+
+    static func from(meeting: Meeting) -> AttioMeetingPayload {
+        let iso = ISO8601DateFormatter()
+        let meddpiccPairs: [(String, String?)] = [
+            ("metrics", meeting.meddpiccMetrics),
+            ("economic_buyer", meeting.meddpiccEconomicBuyer),
+            ("decision_criteria", meeting.meddpiccDecisionCriteria),
+            ("decision_process", meeting.meddpiccDecisionProcess),
+            ("paper_process", meeting.meddpiccPaperProcess),
+            ("identified_pain", meeting.meddpiccIdentifiedPain),
+            ("champion", meeting.meddpiccChampion),
+            ("competition", meeting.meddpiccCompetition),
+        ]
+        var meddpicc: [String: String] = [:]
+        for (key, value) in meddpiccPairs {
+            guard let value else { continue }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                meddpicc[key] = trimmed
+            }
+        }
+
+        let notesTrimmed = meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines)
+        let summaryTrimmed = meeting.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let actionItems = normalizedActionItems(from: meeting.actionItems)
+
+        return AttioMeetingPayload(
+            title: meeting.title,
+            startedAt: iso.string(from: meeting.startTime),
+            endedAt: meeting.endTime.map { iso.string(from: $0) },
+            durationText: meeting.formattedDuration,
+            summary: (summaryTrimmed?.isEmpty == false) ? summaryTrimmed : nil,
+            discussionFlow: meeting.discussionFlow,
+            actionItems: actionItems,
+            keyDecisions: meeting.keyDecisions,
+            topics: meeting.topics,
+            notes: notesTrimmed.isEmpty ? nil : notesTrimmed,
+            meddpicc: meddpicc
+        )
+    }
+
+    var dictionary: [String: Any] {
+        var result: [String: Any] = [
+            "title": title,
+            "started_at": startedAt,
+            "duration_text": durationText,
+            "discussion_flow": discussionFlow,
+            "action_items": actionItems,
+            "key_decisions": keyDecisions,
+            "topics": topics,
+            "meddpicc": meddpicc,
+        ]
+        if let endedAt { result["ended_at"] = endedAt }
+        if let summary { result["summary"] = summary }
+        if let notes { result["notes"] = notes }
+        return result
     }
 }
 

@@ -121,7 +121,7 @@ final class Meeting {
         for segment in sortedSegments {
             if segment.speaker != currentSpeaker {
                 currentSpeaker = segment.speaker
-                md += "\n**Speaker \(segment.speaker + 1):**\n"
+                md += "\n**\(segment.speakerLabel):**\n"
             }
             md += "\(segment.text) "
         }

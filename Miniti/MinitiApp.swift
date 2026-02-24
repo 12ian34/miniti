@@ -2,6 +2,10 @@ import SwiftUI
 import SwiftData
 import AppKit
 
+extension Notification.Name {
+    static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
+}
+
 @main
 struct MinitiApp: App {
     @StateObject private var appState = AppState()
@@ -36,6 +40,13 @@ struct MinitiApp: App {
                 }
             }
             .environmentObject(appState)
+            .onOpenURL { url in
+                NotificationCenter.default.post(
+                    name: .minitiAttioOAuthCallback,
+                    object: nil,
+                    userInfo: ["url": url]
+                )
+            }
         }
         .modelContainer(sharedModelContainer)
         .windowStyle(.hiddenTitleBar)
@@ -43,8 +54,12 @@ struct MinitiApp: App {
         .defaultSize(width: 800, height: 600)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Meeting") {
-                    appState.startNewMeeting()
+                Button("New Session") {
+                    if let onNewSession = keyboardService.onNewSession {
+                        onNewSession()
+                    } else {
+                        appState.createNewSession()
+                    }
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
@@ -93,7 +108,12 @@ struct MinitiApp: App {
             }
         }
         
+        let existingOnNewSession = keyboardService.onNewSession
         keyboardService.onNewSession = { [weak appState] in
+            if let existingOnNewSession {
+                existingOnNewSession()
+                return
+            }
             guard let appState else { return }
             appState.createNewSession()
         }
