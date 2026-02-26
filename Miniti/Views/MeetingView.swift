@@ -132,7 +132,7 @@ struct ReadyStateView: View {
                 }
             }
             
-            // Audio sources (pre-flight check with waveforms)
+            // Audio sources (opt-in test)
             AudioSourcePanel()
             
             // Update available banner
@@ -613,8 +613,7 @@ struct InsightsSectionHeader: View {
     @State private var showCopied = false
     
     var body: some View {
-        VStack(spacing: 12) {
-            // Top row: insights label + copy
+        VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("◇")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -625,7 +624,6 @@ struct InsightsSectionHeader: View {
                 
                 Spacer()
                 
-                // Copy to markdown button
                 if let onCopyInsights = onCopyInsights {
                     Button {
                         let markdown = onCopyInsights()
@@ -657,51 +655,17 @@ struct InsightsSectionHeader: View {
                     .buttonStyle(.plain)
                     .focusable(false)
                 }
-                
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
             
-            // Mode selector - centered, larger
-            HStack(spacing: 2) {
-                ForEach(Array(InsightsMode.allCases.enumerated()), id: \.element) { index, mode in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.15)) {
-                            appState.switchInsightsMode(to: mode)
-                        }
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(mode.displayName)
-                            .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .monospaced))
-                            .foregroundStyle(appState.insightsMode == mode ? Color(hex: "FAFAFA") : Color(hex: "71717A"))
-                            
-                            Text("⌘\(index + 1)")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundStyle(appState.insightsMode == mode ? Color(hex: "FAFAFA").opacity(0.4) : Color(hex: "3F3F46"))
-                        }
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(appState.insightsMode == mode ? Color(hex: "22C55E").opacity(0.15) : Color.clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 6))
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                }
-            }
-            .padding(3)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(hex: "09090B"))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(Color(hex: "27272A"), lineWidth: 1)
-                    )
+            InsightsModeTabs(
+                selectedMode: Binding(
+                    get: { appState.insightsMode },
+                    set: { appState.switchInsightsMode(to: $0) }
+                )
             )
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(Color(hex: "0F0F11"))
     }
 }
 
@@ -719,10 +683,15 @@ private struct LiveInsightsColumn: View {
                 .frame(height: 1)
             
             HStack {
-                InsightsPaneToggleButton(direction: .collapse) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        appState.isLiveInsightsCollapsed = true
+                HStack(spacing: 4) {
+                    InsightsPaneToggleButton(direction: .collapse) {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            appState.isLiveInsightsCollapsed = true
+                        }
                     }
+                    Text("⌘]")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "71717A").opacity(0.5))
                 }
                 
                 Spacer()
@@ -755,9 +724,14 @@ private struct CollapsedInsightsRail: View {
             
             HStack {
                 Spacer()
-                InsightsPaneToggleButton(direction: .expand) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        appState.isLiveInsightsCollapsed = false
+                VStack(spacing: 3) {
+                    Text("⌘]")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Color(hex: "71717A").opacity(0.5))
+                    InsightsPaneToggleButton(direction: .expand) {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            appState.isLiveInsightsCollapsed = false
+                        }
                     }
                 }
                 Spacer()
@@ -1116,10 +1090,7 @@ struct LiveMEDDPICCSections: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             LiveInsightSection(title: field.title, color: Color(hex: field.color)) {
-                Text(field.value!)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(4)
+                MEDDPICCBulletText(field.value!, fontSize: 12)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1571,7 +1542,7 @@ struct TerminalHeader: View {
                                     .font(.system(size: 8, weight: .semibold))
                                     .foregroundStyle(Color(hex: "3FB950").opacity(0.7))
                                 SourceWaveform(
-                                    level: appState.microphoneLevel,
+                                    level: appState.microphoneLevel < 0.003 ? 0 : appState.microphoneLevel,
                                     color: Color(hex: "3FB950"),
                                     bandCount: 5,
                                     barWidth: 3,
@@ -1775,7 +1746,7 @@ struct SourceWaveform: View {
     @State private var bands: [CGFloat] = []
     @State private var previousLevel: CGFloat = 0
     
-    let timer = Timer.publish(every: 0.06, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
     
     var body: some View {
         HStack(spacing: 2) {
@@ -1790,30 +1761,26 @@ struct SourceWaveform: View {
         }
         .onReceive(timer) { _ in
             guard bands.count == bandCount else { return }
-            withAnimation(.linear(duration: 0.06)) {
-                let rawLevel = CGFloat(max(level, 0.0001))
-                // Aggressive power curve for quiet mics (~0.003 RMS typical)
-                // 0.003 → 0.44, 0.01 → 0.54, 0.05 → 0.66, 0.1 → 0.72, 0.3 → 0.84
-                let amplified = min(1.0, pow(rawLevel, 0.15))
+            withAnimation(.linear(duration: 0.04)) {
+                let rawLevel = CGFloat(max(level, 0))
+                // Noise gate: suppress levels below threshold
+                let gated = rawLevel < 0.001 ? 0.0 : rawLevel
+                let amplified = gated > 0 ? min(1.0, pow(gated, 0.2)) : 0.0
                 let delta = amplified - previousLevel
                 previousLevel = amplified
                 
-                // Distribute across bands with variation
                 for i in 0..<bandCount {
-                    let position = CGFloat(i) / CGFloat(bandCount - 1) // 0..1
-                    let bassWeight = 1.0 - position * 0.4
-                    let transientWeight = position * 3.0
-                    let smoothFactor = 0.4 - position * 0.25
-                    let target = amplified * bassWeight + abs(delta) * transientWeight + CGFloat.random(in: 0...0.1)
-                    bands[i] = smooth(bands[i], to: target, factor: max(0.1, smoothFactor))
-                    bands[i] = min(1.0, max(0.05, bands[i]))
+                    let position = CGFloat(i) / CGFloat(bandCount - 1)
+                    let bassWeight = 1.0 - position * 0.35
+                    let transientWeight = position * 4.0
+                    let jitter = amplified > 0.1 ? CGFloat.random(in: 0...0.08) : 0
+                    let target = amplified * bassWeight + abs(delta) * transientWeight + jitter
+                    let factor: CGFloat = target > bands[i] ? 0.6 : 0.15
+                    bands[i] = bands[i] + (target - bands[i]) * factor
+                    bands[i] = min(1.0, max(0.03, bands[i]))
                 }
             }
         }
-    }
-    
-    private func smooth(_ current: CGFloat, to target: CGFloat, factor: CGFloat) -> CGFloat {
-        current + (target - current) * factor
     }
 }
 
@@ -1821,62 +1788,103 @@ struct SourceWaveform: View {
 
 struct AudioSourcePanel: View {
     @EnvironmentObject var appState: AppState
+    @State private var isTesting = false
+    
+    private var isActive: Bool { isTesting && appState.isMonitoring }
     
     var body: some View {
-        HStack(spacing: 12) {
-            AudioSourcePill(
-                label: "mic",
-                icon: "mic.fill",
-                isEnabled: $appState.captureMicrophone,
-                isActive: appState.audioCaptureService?.isMicActive ?? false,
-                level: appState.microphoneLevel,
-                color: Color(hex: "3FB950")
-            )
+        VStack(spacing: 10) {
+            // Source pills — always visible
+            HStack(spacing: 12) {
+                AudioSourcePill(
+                    label: "mic",
+                    isEnabled: $appState.captureMicrophone,
+                    color: Color(hex: "3FB950")
+                )
+                
+                AudioSourcePill(
+                    label: "system",
+                    isEnabled: $appState.captureSystemAudio,
+                    color: Color(hex: "58A6FF")
+                )
+            }
             
-            AudioSourcePill(
-                label: "system",
-                icon: "speaker.wave.2.fill",
-                isEnabled: $appState.captureSystemAudio,
-                isActive: appState.audioCaptureService?.isSystemAudioActive ?? false,
-                level: appState.systemAudioLevel,
-                color: Color(hex: "58A6FF")
-            )
+            // Test button
+            Button {
+                if isTesting {
+                    isTesting = false
+                    appState.stopAudioMonitoring()
+                } else {
+                    isTesting = true
+                    appState.startAudioMonitoring()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "waveform")
+                        .font(.system(size: 11))
+                    Text(isTesting ? "stop test" : "test audio")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(isTesting ? Color(hex: "3FB950") : Color(hex: "71717A"))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule()
+                        .fill(isTesting ? Color(hex: "3FB950").opacity(0.12) : Color(hex: "0F0F11"))
+                        .overlay(
+                            Capsule()
+                                .strokeBorder(isTesting ? Color(hex: "3FB950").opacity(0.3) : Color(hex: "3F3F46").opacity(0.5), lineWidth: 1)
+                        )
+                )
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            
+            // Waveforms — fixed height, fades in/out below pills
+            HStack(spacing: 16) {
+                if appState.captureMicrophone {
+                    SourceWaveform(level: appState.microphoneLevel < 0.003 ? 0 : appState.microphoneLevel, color: Color(hex: "3FB950"), bandCount: 8, barWidth: 3, maxHeight: 24)
+                        .frame(width: 36, height: 24)
+                }
+                if appState.captureSystemAudio {
+                    SourceWaveform(level: appState.systemAudioLevel, color: Color(hex: "58A6FF"), bandCount: 8, barWidth: 3, maxHeight: 24)
+                        .frame(width: 36, height: 24)
+                }
+            }
+            .frame(height: 28)
+            .opacity(isActive ? 1 : 0)
+            .animation(.easeInOut(duration: 0.2), value: isActive)
         }
-        .onAppear {
-            appState.startAudioMonitoring()
+        .onChange(of: appState.captureMicrophone) { _, _ in
+            if isTesting { appState.restartAudioMonitoring() }
+        }
+        .onChange(of: appState.captureSystemAudio) { _, _ in
+            if isTesting { appState.restartAudioMonitoring() }
         }
         .onDisappear {
-            appState.stopAudioMonitoring()
+            if isTesting {
+                isTesting = false
+                appState.stopAudioMonitoring()
+            }
         }
     }
 }
 
 struct AudioSourcePill: View {
     let label: String
-    let icon: String
     @Binding var isEnabled: Bool
-    let isActive: Bool
-    let level: Float
     let color: Color
     
-    @EnvironmentObject var appState: AppState
     @State private var isHovering = false
     
     var body: some View {
         Button {
             isEnabled.toggle()
-            appState.restartAudioMonitoring()
         } label: {
             HStack(spacing: 6) {
-                // Waveform or status dot
-                if isEnabled && appState.isMonitoring && isActive {
-                    SourceWaveform(level: level, color: color, bandCount: 5, barWidth: 2, maxHeight: 12)
-                        .frame(width: 16, height: 12)
-                } else {
-                    Circle()
-                        .fill(isEnabled ? color.opacity(0.5) : Color(hex: "71717A"))
-                        .frame(width: 6, height: 6)
-                }
+                Circle()
+                    .fill(isEnabled ? color.opacity(0.5) : Color(hex: "71717A"))
+                    .frame(width: 6, height: 6)
                 
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))

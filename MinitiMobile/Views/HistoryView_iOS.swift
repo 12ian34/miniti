@@ -585,10 +585,7 @@ struct SavedMEDDPICCContent: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             HistoricalDetailBlock_iOS(title: field.title, color: Color(hex: field.color)) {
-                Text(field.value!)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(6)
+                MEDDPICCBulletText(field.value!, fontSize: 13)
             }
         }
     }

@@ -74,8 +74,8 @@ struct MainWindow: View {
                 
                 // Main content
                 if let meeting = selectedMeeting {
-                    // Show selected historical meeting
                     MeetingDetailView(meeting: meeting)
+                        .id(meeting.id)
                 } else {
                     // Show current session or ready state
                     MeetingView()
@@ -305,22 +305,27 @@ struct TerminalSidebar: View {
                 
                 HStack {
                     Spacer()
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            isCollapsed = false
+                    VStack(spacing: 3) {
+                        Text("⌘[")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.textDim.opacity(0.5))
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                isCollapsed = false
+                            }
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textDim)
+                                .frame(width: 28, height: 28)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(Theme.bgTertiary)
+                                )
                         }
-                    } label: {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(Theme.textDim)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                RoundedRectangle(cornerRadius: 7)
-                                    .fill(Theme.bgTertiary)
-                            )
+                        .buttonStyle(.plain)
+                        .focusable(false)
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
                     Spacer()
                 }
                 .padding(.vertical, 14)
@@ -521,14 +526,19 @@ struct TerminalSidebar: View {
                             isCollapsed = true
                         }
                     } label: {
-                        Image(systemName: "sidebar.right")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(Theme.textDim)
-                            .frame(width: 26, height: 26)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Theme.bgTertiary)
-                            )
+                        HStack(spacing: 4) {
+                            Text("⌘[")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim.opacity(0.5))
+                            Image(systemName: "sidebar.right")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Theme.textDim)
+                                .frame(width: 26, height: 26)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Theme.bgTertiary)
+                                )
+                        }
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
@@ -718,6 +728,7 @@ struct SidebarItem: View {
                             .stroke(isSelected ? Theme.border : Color.clear, lineWidth: 1)
                     )
             )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .focusable(false)
@@ -769,6 +780,7 @@ struct SidebarSessionItem: View {
                             .stroke(isSelected ? Theme.border : Color.clear, lineWidth: 1)
                     )
             )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
         }
         .buttonStyle(.plain)
         .focusable(false)
@@ -908,10 +920,15 @@ struct MeetingDetailView: View {
                             GradientDivider()
                             
                             HStack {
-                                HistoricalInsightsPaneToggleButton(direction: .collapse) {
-                                    withAnimation(.easeInOut(duration: 0.16)) {
-                                        appState.isLiveInsightsCollapsed = true
+                                HStack(spacing: 4) {
+                                    HistoricalInsightsPaneToggleButton(direction: .collapse) {
+                                        withAnimation(.easeInOut(duration: 0.16)) {
+                                            appState.isLiveInsightsCollapsed = true
+                                        }
                                     }
+                                    Text("⌘]")
+                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Theme.textDim.opacity(0.5))
                                 }
                                 Spacer()
                             }
@@ -1198,9 +1215,14 @@ private struct HistoricalCollapsedInsightsRail: View {
             
             HStack {
                 Spacer()
-                HistoricalInsightsPaneToggleButton(direction: .expand) {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        appState.isLiveInsightsCollapsed = false
+                VStack(spacing: 3) {
+                    Text("⌘]")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Theme.textDim.opacity(0.5))
+                    HistoricalInsightsPaneToggleButton(direction: .expand) {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            appState.isLiveInsightsCollapsed = false
+                        }
                     }
                 }
                 Spacer()
@@ -1273,39 +1295,7 @@ struct HistoricalInsightsModeSelector: View {
     @Binding var selectedMode: InsightsMode
     
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(Array(InsightsMode.allCases.enumerated()), id: \.element) { index, mode in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedMode = mode
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Text(mode.displayName)
-                            .font(.system(size: 11, weight: selectedMode == mode ? .semibold : .medium, design: .monospaced))
-                            .foregroundStyle(selectedMode == mode ? Theme.text : Theme.textDim)
-                        
-                        Text("⌘\(index + 1)")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(selectedMode == mode ? Theme.text.opacity(0.4) : Theme.textDim.opacity(0.5))
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedMode == mode ? Theme.accent.opacity(0.15) : Color.clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-            
-            Spacer()
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Theme.bgSecondary)
+        InsightsModeTabs(selectedMode: $selectedMode)
     }
 }
 
@@ -1407,10 +1397,7 @@ struct SavedMEDDPICCBlocks: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             DetailInsightBlock(title: field.title, color: field.color) {
-                Text(field.value!)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Theme.text)
-                    .lineSpacing(3)
+                MEDDPICCBulletText(field.value!, fontSize: 12, color: Theme.text)
             }
         }
     }
