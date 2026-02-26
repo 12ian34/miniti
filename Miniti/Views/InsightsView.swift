@@ -36,38 +36,54 @@ struct InsightsModeSelector: View {
     @EnvironmentObject var appState: AppState
     
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(InsightsMode.allCases, id: \.self) { mode in
+        InsightsModeTabs(
+            selectedMode: Binding(
+                get: { appState.insightsMode },
+                set: { appState.switchInsightsMode(to: $0) }
+            )
+        )
+    }
+}
+
+struct InsightsModeTabs: View {
+    @Binding var selectedMode: InsightsMode
+    
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(Array(InsightsMode.allCases.enumerated()), id: \.element) { index, mode in
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) {
-                        appState.switchInsightsMode(to: mode)
+                        selectedMode = mode
                     }
                 } label: {
-                    VStack(spacing: 2) {
+                    HStack(spacing: 4) {
                         Text(mode.displayName)
-                            .font(.system(size: 10, weight: appState.insightsMode == mode ? .semibold : .medium, design: .monospaced))
-                            .foregroundStyle(appState.insightsMode == mode ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
+                            .font(.system(size: 10, weight: selectedMode == mode ? .semibold : .medium, design: .monospaced))
+                            .foregroundStyle(selectedMode == mode ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                         
-                        Rectangle()
-                            .fill(appState.insightsMode == mode ? Color(hex: "3FB950") : Color.clear)
-                            .frame(height: 2)
+                        Text("⌘\(index + 1)")
+                            .font(.system(size: 8, weight: .medium, design: .monospaced))
+                            .foregroundStyle(selectedMode == mode ? Color(hex: "E6EDF3").opacity(0.4) : Color(hex: "8B949E").opacity(0.5))
+                            .fixedSize()
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 7)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(selectedMode == mode ? Color(hex: "3FB950").opacity(0.15) : Color.clear)
+                    )
+                    .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
             }
             
             Spacer()
-            
-            // Mode description
-            Text(appState.insightsMode.description)
-                .font(.system(size: 9, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color(hex: "484F58"))
-                .padding(.trailing, 12)
         }
-        .background(Color(hex: "0F0F11"))
+        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
     }
 }
 
@@ -255,10 +271,7 @@ private struct LiveMEDDPICCContent_iOSPlain: View {
     var body: some View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             InsightsPlainBlock_iOS(title: field.title, color: Color(hex: field.color)) {
-                Text(field.value!)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(6)
+                MEDDPICCBulletText(field.value!, fontSize: 13)
             }
         }
     }
@@ -505,10 +518,7 @@ struct MEDDPICCContent: View {
     var body: some View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             TerminalSection(title: field.title, color: Color(hex: field.color)) {
-                Text(field.value!)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(6)
+                MEDDPICCBulletText(field.value!, fontSize: 13)
             }
         }
     }
@@ -518,6 +528,48 @@ private func hasMEDDPICCValue(_ value: String?) -> Bool {
     guard let value else { return false }
     let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
+}
+
+struct MEDDPICCBulletText: View {
+    let text: String
+    let fontSize: CGFloat
+    let color: Color
+    
+    init(_ text: String, fontSize: CGFloat = 12, color: Color = Color(hex: "E6EDF3")) {
+        self.text = text
+        self.fontSize = fontSize
+        self.color = color
+    }
+    
+    private var bullets: [String] {
+        let lines: [String]
+        if text.contains("\n") {
+            lines = text.components(separatedBy: "\n")
+        } else if text.contains(";") {
+            lines = text.components(separatedBy: ";")
+        } else {
+            return [text.trimmingCharacters(in: .whitespaces)]
+        }
+        return lines
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .map { $0.hasPrefix("- ") ? String($0.dropFirst(2)) : $0 }
+            .filter { !$0.isEmpty }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
+                HStack(alignment: .top, spacing: 8) {
+                    Text("•")
+                        .font(.system(size: fontSize, weight: .regular, design: .monospaced))
+                        .foregroundStyle(color.opacity(0.5))
+                    Text(bullet)
+                        .font(.system(size: fontSize, weight: .regular, design: .monospaced))
+                        .foregroundStyle(color)
+                }
+            }
+        }
+    }
 }
 
 // MARK: - Training Content

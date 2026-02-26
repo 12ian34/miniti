@@ -37,10 +37,11 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 ### 4. Record
 
 1. Toggle mic and/or system audio on the home screen
-2. (Optional) Choose transcription + AI models in Settings (`⌘,` on macOS)
-3. Click the start button or press `⌘⇧R`
-4. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
-5. Click stop or press `⌘⇧R` when done
+2. (Optional) Click **test audio** to verify your mic and system audio are working
+3. (Optional) Choose transcription + AI models in Settings (`⌘,` on macOS)
+4. Click the start button or press `⌘⇧R`
+5. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
+6. Click stop or press `⌘⇧R` when done
 
 ## End-to-End Workflow (Recommended)
 

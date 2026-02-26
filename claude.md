@@ -29,7 +29,17 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-24 - v1.9.0 (current)
+### 2026-02-26 - v1.9.1 (current)
+
+- macOS home screen no longer captures audio by default; use the "test audio" button to verify mic and system audio before recording (matching iOS behavior)
+- MEDDPICC fields now display as bullet-pointed lists instead of semicolon-separated text, across all views on both platforms
+- Insight mode tabs (standard/MEDDPICC/training) use a single shared component with consistent pill styling across live and historical views; tabs truncate gracefully at narrow widths and show `⌘1`/`⌘2`/`⌘3` shortcuts
+- Live recording waveforms use the same sensitivity and noise-gate settings as the home screen test audio waveforms
+- All sidebar tiles (live session, new session, history items) are fully clickable across the entire tile area
+- Sidebar and insights pane collapse/expand buttons now show their keyboard shortcut hints (`⌘[` and `⌘]`)
+- Fix a macOS crash when switching between historical meetings in the sidebar
+
+### 2026-02-24 - v1.9.0
 
 **Attio CRM integration (macOS):**
 - Send saved meeting summaries to Attio: connect your account, search people/companies, and push summaries, discussion flow, action items, decisions, topics, MEDDPICC, and notes (transcript and training metrics excluded by default)
@@ -244,7 +254,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 **Critical wiring**: `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view that appears. On macOS this happens in `MainWindow.swift`; on iOS in `MainTabView.swift`. Without it, `saveCurrentMeetingIfNeeded()` silently fails (all saves are no-ops).
 
-**macOS SwiftData stability note (v1.9.0)**: `MainWindow.swift` intentionally avoids a root-level `@Query` for history and stores `selectedMeetingID` (UUID) instead of a `Meeting` object in `@State`. Meetings are fetched manually from `ModelContext` (including on app reactivation) to avoid a SwiftUI/SwiftData crash path seen when clicking the window after it had been backgrounded.
+**macOS SwiftData stability note (v1.9.0)**: `MainWindow.swift` intentionally avoids a root-level `@Query` for history and stores `selectedMeetingID` (UUID) instead of a `Meeting` object in `@State`. Meetings are fetched manually from `ModelContext` (including on app reactivation) to avoid a SwiftUI/SwiftData crash path seen when clicking the window after it had been backgrounded. `MeetingDetailView` uses `.id(meeting.id)` so SwiftUI fully tears down the old view (including `@Bindable` observation tokens and gesture recognizers) before creating a new one when switching meetings — without this, stale AttributeGraph references cause `EXC_BAD_ACCESS` in the button gesture dispatch path.
 
 ## Key patterns
 
@@ -281,7 +291,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - `AppState` is the single source of truth, injected via `@EnvironmentObject`
 - `AppMode` enum (`.byok` / `.managed`) stored in `@AppStorage("appMode")` — purely a routing toggle
 - Audio levels: `microphoneLevel` and `systemAudioLevel` are published separately for per-source waveforms, plus a combined `audioLevel`
-- Audio monitoring: home screen starts lightweight capture (no Deepgram) to verify sources before recording
+- Audio monitoring: opt-in "test audio" button on home screen starts lightweight capture (no Deepgram) to verify sources before recording. On macOS, `AudioSourcePanel` uses local `@State isTesting`; on iOS, `isMicTesting` in `ReadyStateView_iOS`. Monitoring stops on view disappear or when the user taps stop.
 - **Audio engine restart on device change**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. When the audio hardware reconfigures mid-capture (Bluetooth codec switch, device plug/unplug), the mic tap is automatically removed and reinstalled with the new format. On iOS, `AVAudioSession.routeChangeNotification` is also observed to log route changes. This prevents silent audio loss when Bluetooth headphones switch between AAC and HFP codecs (e.g. joining a Zoom call with AirPods). The observer is stored as `engineConfigObserver` and cleaned up in `stopMicrophoneCapture()`.
 - `@AppStorage` persists API keys, model selection, audio source toggles, app mode, and onboarding state
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.

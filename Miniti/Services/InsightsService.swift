@@ -309,20 +309,22 @@ final class InsightsService: Sendable {
             - Champion: Internal advocate for your solution
             - Competition: Other solutions they're considering
             
-            Respond in JSON (use null for fields with no information yet):
+            For each MEDDPICC field, list each distinct point on its own line starting with "- ". Use null if no information.
+            
+            Respond in JSON:
             {
                 \(titleInstruction)
                 "summary": "Brief summary of the sales conversation",
                 "action_items": ["Follow-up actions needed"],
                 "topics": ["Broad themes discussed (1-2 words each)"],
-                "metrics": "What success metrics were mentioned (or null)",
-                "economic_buyer": "Who is the economic buyer (or null)",
-                "decision_criteria": "What decision criteria were mentioned (or null)",
-                "decision_process": "What's their decision process (or null)",
-                "paper_process": "What's their paper/procurement process (or null)",
-                "identified_pain": "What pain points were identified (or null)",
-                "champion": "Who could be a champion (or null)",
-                "competition": "What competitors were mentioned (or null)"
+                "metrics": "- Point one\\n- Point two (or null)",
+                "economic_buyer": "- Point one\\n- Point two (or null)",
+                "decision_criteria": "- Point one\\n- Point two (or null)",
+                "decision_process": "- Point one\\n- Point two (or null)",
+                "paper_process": "- Point one\\n- Point two (or null)",
+                "identified_pain": "- Point one\\n- Point two (or null)",
+                "champion": "- Point one\\n- Point two (or null)",
+                "competition": "- Point one\\n- Point two (or null)"
             }
             
             Latest transcript:
