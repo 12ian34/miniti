@@ -578,7 +578,7 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 1. Bump version in `Miniti/Info.plist`, `MinitiMobile/Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION` — 6 places: 2 per target × 3 targets, Debug + Release). All targets share the same version number.
 2. Xcode: **Product → Archive → Distribute App → Developer ID → Upload** (notarizes automatically)
 3. Export the notarized `miniti.app`
-4. Run `./scripts/build-dmg.sh miniti.app` → produces `miniti-<version>.dmg`
+4. Run `./scripts/build-dmg.sh miniti.app` → produces `miniti.dmg`
 5. replace proton drive dmg
 
 #### iOS
@@ -594,11 +594,13 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
 
 ### `scripts/build-dmg.sh`
+- Tracked in git (not gitignored) — safe because `scripts/` is not referenced in `project.pbxproj`, so Xcode Cloud ignores it entirely
 - Requires `create-dmg` (auto-installed via Homebrew if missing)
 - Validates code signature and notarization before packaging
-- Creates a drag-to-Applications DMG (app on left, Applications symlink on right)
+- Creates a drag-to-Applications DMG with README (app center, Applications symlink right, README left)
 - Staples the notarization ticket to the DMG
-- Version extracted automatically from the app's `Info.plist`
+- Version extracted from the app's `Info.plist` (for display only — output filename is always `miniti.dmg`)
+- Background image: `scripts/dmg-background.png`; volume icon pulled from app's `AppIcon.icns`
 
 ### iOS (MinitiMobile)
 - Bundle ID: `com.miniti.mobile`, deployment target iOS 17.0
