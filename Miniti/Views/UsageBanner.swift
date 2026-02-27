@@ -19,6 +19,7 @@ struct UsageBanner: View {
     }
     
     private var accentColor: Color {
+        if appState.isPro { return Color(hex: "A78BFA") }
         if isCritical { return Color(hex: "F85149") }
         if isLow { return Color(hex: "F59E0B") }
         return Color(hex: "3FB950")
@@ -58,9 +59,9 @@ struct UsageBanner: View {
                     ProgressView()
                         .controlSize(.mini)
                 } else {
-                    Text("free")
+                    Text(appState.isPro ? "pro" : "free")
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "3FB950"))
+                        .foregroundStyle(appState.isPro ? Color(hex: "A78BFA") : Color(hex: "3FB950"))
                 }
             }
             .padding(.horizontal, 10)
@@ -80,6 +81,10 @@ struct UsageBanner: View {
 /// Larger usage display for the home screen in managed mode.
 struct ManagedStatusView: View {
     @EnvironmentObject var appState: AppState
+    @State private var showRestoreSheet = false
+    @State private var licenseKeyInput = ""
+    @State private var isRestoring = false
+    @State private var restoreError: String?
     
     private var usage: MinitiAPIService.UsageInfo? {
         appState.usageInfo
@@ -87,6 +92,7 @@ struct ManagedStatusView: View {
     
     private var accentColor: Color {
         guard let usage else { return Color(hex: "3FB950") }
+        if usage.isPro { return Color(hex: "A78BFA") }
         if usage.minutesRemaining < 15 { return Color(hex: "F85149") }
         if usage.minutesRemaining < 60 { return Color(hex: "F59E0B") }
         return Color(hex: "3FB950")
@@ -94,13 +100,12 @@ struct ManagedStatusView: View {
     
     var body: some View {
         VStack(spacing: 10) {
-            // Managed plan status (textual, not button-like)
             HStack(spacing: 6) {
                 Circle()
                     .fill(accentColor)
                     .frame(width: 5, height: 5)
                 
-                Text("miniti free")
+                Text(appState.isPro ? "miniti pro" : "miniti free")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                 
@@ -113,7 +118,6 @@ struct ManagedStatusView: View {
                 }
             }
             
-            // Usage progress bar
             if let usage {
                 VStack(spacing: 4) {
                     GeometryReader { geo in
@@ -148,7 +152,131 @@ struct ManagedStatusView: View {
                     .frame(width: 200)
                 }
             }
+            
+            #if os(macOS)
+            if !appState.isPro {
+                Button {
+                    Task { await appState.openSubscribePage() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 10))
+                        Text("upgrade to pro")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "A78BFA"))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(Color(hex: "A78BFA").opacity(0.1))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 5)
+                                    .stroke(Color(hex: "A78BFA").opacity(0.25), lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+            #endif
+            
+            Button {
+                showRestoreSheet = true
+            } label: {
+                Text("restore subscription")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "52525B"))
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
         }
+        .sheet(isPresented: $showRestoreSheet) {
+            RestoreLicenseKeySheet(
+                licenseKeyInput: $licenseKeyInput,
+                isRestoring: $isRestoring,
+                restoreError: $restoreError,
+                onRestore: {
+                    isRestoring = true
+                    restoreError = nil
+                    Task {
+                        let success = await appState.restoreSubscription(licenseKey: licenseKeyInput)
+                        isRestoring = false
+                        if success {
+                            showRestoreSheet = false
+                            licenseKeyInput = ""
+                        } else {
+                            restoreError = "Invalid or expired license key"
+                        }
+                    }
+                },
+                onCancel: {
+                    showRestoreSheet = false
+                    licenseKeyInput = ""
+                    restoreError = nil
+                }
+            )
+        }
+    }
+}
+
+/// Sheet for entering a Polar license key to restore a subscription.
+struct RestoreLicenseKeySheet: View {
+    @Binding var licenseKeyInput: String
+    @Binding var isRestoring: Bool
+    @Binding var restoreError: String?
+    let onRestore: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("restore subscription")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+            
+            Text("Enter the license key from your purchase email or Polar account.")
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "A1A1AA"))
+                .multilineTextAlignment(.center)
+            
+            TextField("license key", text: $licenseKeyInput)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 12, design: .monospaced))
+                .frame(width: 300)
+            
+            if let restoreError {
+                Text(restoreError)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "F85149"))
+            }
+            
+            HStack(spacing: 12) {
+                Button("cancel") {
+                    onCancel()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "71717A"))
+                
+                Button {
+                    onRestore()
+                } label: {
+                    if isRestoring {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("restore")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color(hex: "A78BFA"))
+                .disabled(licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRestoring)
+            }
+        }
+        .padding(24)
+        .frame(width: 380)
+        .background(Color(hex: "0F0F11"))
     }
 }
 

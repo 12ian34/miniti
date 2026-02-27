@@ -595,6 +595,7 @@ struct ManagedStatusPill: View {
     
     private var accentColor: Color {
         guard let usage = appState.usageInfo else { return ColorPalette.Status.success }
+        if usage.isPro { return ColorPalette.Accent.purple }
         if usage.minutesRemaining < 15 { return ColorPalette.Status.limitReached }
         if usage.minutesRemaining < 60 { return ColorPalette.Status.warning }
         return ColorPalette.Status.success
@@ -608,7 +609,7 @@ struct ManagedStatusPill: View {
                         .fill(accentColor)
                         .frame(width: 5, height: 5)
                     
-                    Text("miniti free")
+                    Text(appState.isPro ? "miniti pro" : "miniti free")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
                     

@@ -36,6 +36,8 @@ struct MinitiMobileApp: App {
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 appState.saveCurrentMeetingIfNeeded()
+            } else if newPhase == .active && appState.appMode == .managed {
+                Task { await appState.refreshUsage() }
             }
         }
     }

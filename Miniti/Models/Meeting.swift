@@ -15,6 +15,8 @@ final class Meeting {
     var discussionFlow: [String] = []
     var notes: String = ""
     
+    var managedSessionId: String?
+    
     // MEDDPICC fields
     var meddpiccMetrics: String?
     var meddpiccEconomicBuyer: String?

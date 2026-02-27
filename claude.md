@@ -1,6 +1,6 @@
 # Miniti
 
-macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Two modes: managed (500 free min/month) or BYOK (own API keys, unlimited).
+macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month via Polar.sh), or BYOK (own API keys, unlimited).
 
 ## Features
 
@@ -29,7 +29,20 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-26 - v1.9.1 (current)
+### 2026-02-26 - v1.10.0 (current)
+
+**Pro subscription ($5/month):**
+- Upgrade to Pro for 5,000 minutes per month — 10x the free tier
+- One-click upgrade on macOS opens secure checkout in your browser
+- Manage or cancel your subscription anytime from Settings
+- Use your subscription on multiple devices with a license key (enter it on any new Mac or iPhone to restore)
+- Pro status shown across the app with a purple accent
+
+**Other changes:**
+- Limit reached screen now shows an upgrade option alongside the existing BYOK switch
+- iOS shows your subscription status and supports restore, but purchasing happens on macOS or web (App Store guidelines)
+
+### 2026-02-26 - v1.9.1
 
 - macOS home screen no longer captures audio by default; use the "test audio" button to verify mic and system audio before recording (matching iOS behavior)
 - MEDDPICC fields now display as bullet-pointed lists instead of semicolon-separated text, across all views on both platforms
@@ -204,7 +217,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 - **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts, and custom URL callback handling (Attio OAuth return)
 - **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, Live Activity lifecycle (`#if os(iOS)` guarded)
-- **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings
+- **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings. Includes `managedSessionId: String?` to persist the backend session ID across app kills for orphaned-session usage reporting.
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization)
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
@@ -302,7 +315,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **macOS focus rings / tab focus**: Prefer `.focusable(false)` for button-only controls and utility panels (including Attio send sheet controls) unless keyboard tab navigation is explicitly required. This app is shortcut-driven; avoid default tab-focus highlight rings by default.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). Paused time is excluded by re-anchoring `recordingStartDate` from the accumulated active duration on resume; `recordingStartDate` is cleared on stop and `goHome()`.
 - **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. This syncs `liveSegments`, insights, notes, and MEDDPICC to SwiftData continuously. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
-- **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. Title parsing accepts both the current ` - ` separator and legacy em-dash titles for backward compatibility. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS.
+- **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. Title parsing accepts both the current ` - ` separator and legacy em-dash titles for backward compatibility. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS. In managed mode, if the interrupted meeting has a `managedSessionId`, the orphaned session's usage is reported to the backend (duration computed from saved segments) and the session ID is cleared to prevent double-reporting.
 - **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer when recording; when stopped, `elapsedSeconds` is set and the timer switches to a static `Text(formatDuration(_:))` so it freezes. All visual elements (dot, status, title, timer) switch to `pausedGray` when stopped, and transcript is replaced with "tap to return to miniti". `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`. Note: compact Dynamic Island width is system-controlled and cannot be reduced by apps.
 - **iOS background recording & kill recovery**: iOS can terminate backgrounded apps at any time (memory pressure, battery, etc.); there is no way to prevent this. Mitigations: (1) `UIBackgroundModes: [audio]` keeps the app running longer while recording. (2) Periodic auto-save (every 30s) continuously persists transcript to SwiftData. (3) `saveCurrentMeetingIfNeeded()` is also called when the app enters background (`scenePhase == .background`). (4) On launch, `cleanupOrphanedLiveActivities()` ends stale Live Activities, then `resumeInterruptedMeeting()` restores the session from SwiftData so the user lands directly in the stopped-session view with their transcript.
 - **Atomic array mutations for ForEach-bound arrays**: Never do `removeAll` + `append` (or multiple mutations) on a `@Published` array that drives a SwiftUI `ForEach`. Each mutation fires a separate `objectWillChange`, and SwiftUI's AttributeGraph can see intermediate states (items removed but view nodes still referencing them), causing `EXC_BAD_ACCESS` in `AGGraphGetWeakValue`. Instead, build the final array in a local `var`, then assign it once: `liveSegments = updated`. This is especially critical for arrays that grow over long sessions (30+ minutes of recording).
@@ -486,17 +499,27 @@ Assumptions: 75% free / 15% pro / 10% BYOK split. Free users average 150 min/mo.
 
 ### Monetization architecture (current implementation)
 
-Two parallel modes, to be extended with Pro tier:
+Three parallel modes:
 
 - **BYOK Mode**: User's own API keys, unlimited, no backend, no tracking
-- **Managed Mode**: 500 free min/month, Deepgram via temp API keys (backend issues short-lived scoped keys), OpenAI proxied through backend, hard-blocked at limit
-- Mode toggle is a local routing switch only; user-entered BYOK keys persist in `@AppStorage` across mode switches (Secrets defaults are stripped in managed mode)
-- Usage tracking is 100% server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter
+- **Managed Free**: 500 min/month, Deepgram via temp API keys (backend issues short-lived scoped keys), OpenAI proxied through backend, hard-blocked at limit
+- **Managed Pro**: 5,000 min/month for $5/month (or £5/month GBP). Subscription via Polar.sh. Same backend routing as free, just higher limit.
+- Mode toggle is a local routing switch only; user-entered BYOK keys persist in `@AppStorage` across mode switches (Secrets defaults are stripped in managed mode). Pro is a tier within managed mode, not a separate AppMode.
+- Usage tracking is 100% server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter. Pro users' usage resets align with their Polar billing cycle (`current_period_end`), not a fixed calendar date. Free users reset on the 1st of each month UTC.
 - Device ID stored in macOS Keychain (`DeviceIdentifier.swift`) — persists across reinstalls, tamper-resistant
 - Backend API keys (Deepgram/OpenAI) stored as Vercel encrypted env vars, never exposed to client
-- At limit: user must switch to BYOK or wait for monthly reset — no paid tiers yet
-- Cost: ~$3.75/user/month at full 500 min usage
+- At limit: free users can upgrade to Pro, switch to BYOK, or wait for monthly reset
 - Backend is a separate repo (`miniti-api`), deployed at `https://miniti-api.vercel.app`; full spec in `BACKEND_SPEC.md`
+
+#### Polar.sh subscription integration
+- **Checkout flow (macOS only)**: App calls `GET /api/subscribe` → backend creates Polar checkout session with `customerExternalId=deviceId` → returns checkout URL → app opens in system browser → user pays → Polar webhook fires → backend upgrades device tier in Redis
+- **Webhook handling**: `POST /api/webhooks/polar` verifies HMAC-SHA256 signature (Standard Webhooks spec, zero npm dependencies — uses Web Crypto API). Handles `subscription.active`, `subscription.canceled`, `subscription.revoked`, `subscription.updated`. On activation/renewal, extracts `current_period_start`/`current_period_end` from the subscription payload to align the device's usage reset date with the billing cycle. If the billing period rolled over (new `current_period_start`), minutes are reset to 0. Cancellation downgrades ALL devices linked to that subscription via `polar_sub:{subId}:devices` Redis SET and reverts reset dates to 1st-of-month.
+- **License key restore**: Polar auto-generates a license key on subscription. User enters it on any new device via `POST /api/restore` → backend calls Polar's public activation API → verifies active subscription → links device. License keys are auto-revoked on cancellation.
+- **Customer portal**: `GET /api/portal` creates a Polar customer portal session for managing subscription (cancel, update payment, view invoices). Opens in browser.
+- **iOS App Store compliance**: iOS app does NOT show any purchase/upgrade button (Apple guideline 3.1.1). Shows subscription status and restore only. Users subscribe via macOS app or website.
+- **Security**: Polar access token is server-side only (`POLAR_ACCESS_TOKEN` env var). Subscription state enforced in Redis — app cannot fake pro status. Webhook signatures verified cryptographically. Restore rate-limited (5/min).
+- **Env vars**: `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`
+- **Redis per-device additions**: `polarCustomerId`, `polarSubscriptionId`, `subscriptionStatus` (active/canceled/null), `currentPeriodStart` (ISO 8601, from Polar webhook). `polar_sub:{subId}:devices` SET tracks all devices linked to a subscription for bulk downgrade on cancel.
 
 #### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
@@ -506,16 +529,20 @@ Two parallel modes, to be extended with Pro tier:
 - API key is XOR-obfuscated in `MinitiAPIService.swift` (not plain text in source/binary)
 - **Security note**: the client `X-API-Key` is not a true secret (anything shipped in the app can be extracted). XOR obfuscation only reduces casual string scanning. Treat this as a client identifier / coarse gate, not strong authentication.
 - **Safer direction**: keep quota enforcement and abuse protection server-side (`X-Device-ID`, rate limits, caps, anomaly detection), issue short-lived server tokens for sensitive flows (session creation / insights), and optionally add platform attestation later (e.g. App Attest / DeviceCheck on iOS) to raise abuse cost.
-- Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars
+- Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars, `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`
 - Optional Attio env vars for CRM export (backend repo): `ATTIO_CLIENT_ID`, `ATTIO_CLIENT_SECRET`, `ATTIO_OAUTH_REDIRECT_URI`, `ATTIO_OAUTH_SCOPES`
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
 
 **Endpoints:**
 - `GET /api/version` — returns `{ latest_version, download_url, release_notes }`. No device ID required, just `X-API-Key`. Hardcoded JSON — update when publishing a new release.
-- `GET /api/usage` — check device minutes used/remaining (30 req/min)
-- `POST /api/session` — start session, returns temp Deepgram key (4hr TTL, `usage:write` scope); returns 402 if limit reached (5 req/min)
+- `GET /api/usage` — check device minutes used/remaining; returns `tier`, `subscription_status`, tier-aware `minutes_limit` (30 req/min)
+- `POST /api/session` — start session, returns temp Deepgram key (4hr TTL, `usage:write` scope); returns 402 if limit reached; limit is tier-aware (5 req/min)
 - `POST /api/session/end` — report duration, increment usage counter; server caps at wall-clock elapsed (10 req/min)
 - `POST /api/insights` — OpenAI proxy for transcript analysis; modes: `standard` or `meddpicc`; transcript capped at 100KB (10 req/min)
+- `GET /api/subscribe` — create Polar checkout session with `customerExternalId=deviceId`; returns `{ checkout_url }` (5 req/min)
+- `POST /api/webhooks/polar` — Polar webhook receiver; HMAC signature verification (no X-API-Key); handles subscription lifecycle
+- `POST /api/restore` — activate Polar license key on device; verifies active subscription; links device to subscription (5 req/min)
+- `GET /api/portal` — create Polar customer portal session; returns `{ portal_url }`; requires device to have `polarCustomerId` (5 req/min)
 - `POST /api/attio/connect/start`, `GET /api/attio/status`, `POST /api/attio/search`, `POST /api/attio/send` — additive Attio CRM export routes (backend stores OAuth token; older app versions unaffected)
 
 **Session flow:** launch → `GET /api/version` (update check) + `GET /usage` (managed only) → `POST /session` (get temp key) → connect directly to Deepgram WebSocket with temp key → periodic `POST /insights` → stop → `POST /session/end` → final `POST /insights`
