@@ -29,7 +29,7 @@ struct LimitReachedView: View {
                     .font(.system(size: 20, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 
-                Text("You've used all 500 free minutes this month.")
+                Text("You've used all \(Int(appState.usageInfo?.minutesLimit ?? 500)) minutes this month.")
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                     .multilineTextAlignment(.center)
@@ -57,6 +57,41 @@ struct LimitReachedView: View {
                         )
                 )
             }
+            
+            #if os(macOS)
+            if !appState.isPro {
+                // Upgrade option
+                VStack(spacing: 8) {
+                    Button {
+                        Task { await appState.openSubscribePage() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.system(size: 11))
+                            Text("upgrade to pro — 5,000 min/mo")
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundStyle(Color(hex: "A78BFA"))
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(hex: "A78BFA").opacity(0.12))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color(hex: "A78BFA").opacity(0.3), lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    
+                    Text("$5/month")
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "52525B"))
+                }
+            }
+            #endif
             
             // Divider
             Rectangle()

@@ -46,12 +46,16 @@ struct SettingsView: View {
 
 struct AccountSettingsView: View {
     @EnvironmentObject var appState: AppState
+    @State private var showRestoreSheet = false
+    @State private var licenseKeyInput = ""
+    @State private var isRestoring = false
+    @State private var restoreError: String?
     
     var body: some View {
         Form {
             Section("Mode") {
                 Picker("API Mode", selection: $appState.appModeRaw) {
-                    Text("Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
+                    Text(appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
                     Text("Bring Your Own Keys (unlimited)").tag(AppMode.byok.rawValue)
                 }
                 .pickerStyle(.radioGroup)
@@ -62,13 +66,46 @@ struct AccountSettingsView: View {
                 }
                 
                 Text(appState.appMode == .managed
-                     ? "API calls routed through Miniti's backend. 500 free minutes per month."
+                     ? (appState.isPro
+                        ? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month."
+                        : "API calls routed through Miniti's backend. 500 free minutes per month.")
                      : "Use your own Deepgram & OpenAI API keys. No limits, no tracking.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             
             if appState.appMode == .managed {
+                Section("Subscription") {
+                    if appState.isPro {
+                        HStack {
+                            Text("Plan")
+                            Spacer()
+                            Text("Pro — \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
+                                .foregroundStyle(Color(hex: "A78BFA"))
+                                .fontWeight(.medium)
+                        }
+                        
+                        Button("Manage Subscription") {
+                            Task { await appState.openManageSubscriptionPage() }
+                        }
+                    } else {
+                        HStack {
+                            Text("Plan")
+                            Spacer()
+                            Text("Free — 500 min/month")
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Button("Upgrade to Pro ($5/month — 5,000 min)") {
+                            Task { await appState.openSubscribePage() }
+                        }
+                    }
+                    
+                    Button("Restore with License Key") {
+                        showRestoreSheet = true
+                    }
+                }
+                
                 Section("Usage") {
                     if let usage = appState.usageInfo {
                         HStack {
@@ -79,13 +116,13 @@ struct AccountSettingsView: View {
                         }
                         
                         ProgressView(value: usage.usagePercentage)
-                            .tint(usage.minutesRemaining < 60 ? .orange : .green)
+                            .tint(usage.isPro ? .purple : (usage.minutesRemaining < 60 ? .orange : .green))
                         
                         HStack {
                             Text("Remaining")
                             Spacer()
                             Text(usage.formattedRemaining)
-                                .foregroundStyle(usage.minutesRemaining < 60 ? .orange : .green)
+                                .foregroundStyle(usage.minutesRemaining < 60 ? .orange : (usage.isPro ? .purple : .green))
                                 .fontWeight(.medium)
                         }
                         
@@ -128,6 +165,32 @@ struct AccountSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .sheet(isPresented: $showRestoreSheet) {
+            RestoreLicenseKeySheet(
+                licenseKeyInput: $licenseKeyInput,
+                isRestoring: $isRestoring,
+                restoreError: $restoreError,
+                onRestore: {
+                    isRestoring = true
+                    restoreError = nil
+                    Task {
+                        let success = await appState.restoreSubscription(licenseKey: licenseKeyInput)
+                        isRestoring = false
+                        if success {
+                            showRestoreSheet = false
+                            licenseKeyInput = ""
+                        } else {
+                            restoreError = "Invalid or expired license key"
+                        }
+                    }
+                },
+                onCancel: {
+                    showRestoreSheet = false
+                    licenseKeyInput = ""
+                    restoreError = nil
+                }
+            )
+        }
     }
 }
 

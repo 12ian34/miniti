@@ -110,6 +110,9 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshMeetings()
+            if appState.appMode == .managed {
+                Task { await appState.refreshUsage() }
+            }
         }
     }
 

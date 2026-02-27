@@ -69,12 +69,14 @@ final class MinitiAPIService: @unchecked Sendable {
         let minutesLimit: Double
         let resetsAt: Date
         let tier: String
+        let subscriptionStatus: String?
         
         enum CodingKeys: String, CodingKey {
             case minutesUsed = "minutes_used"
             case minutesLimit = "minutes_limit"
             case resetsAt = "resets_at"
             case tier
+            case subscriptionStatus = "subscription_status"
         }
         
         /// Custom decoder: Vercel KV (Redis) may return numbers as strings.
@@ -82,7 +84,7 @@ final class MinitiAPIService: @unchecked Sendable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             tier = try container.decode(String.self, forKey: .tier)
             resetsAt = try container.decode(Date.self, forKey: .resetsAt)
-            // Accept both Double and String for numeric fields (Redis returns strings)
+            subscriptionStatus = try container.decodeIfPresent(String.self, forKey: .subscriptionStatus)
             if let val = try? container.decode(Double.self, forKey: .minutesUsed) {
                 minutesUsed = val
             } else {
@@ -96,6 +98,8 @@ final class MinitiAPIService: @unchecked Sendable {
                 minutesLimit = Double(str) ?? 500
             }
         }
+        
+        var isPro: Bool { tier == "pro" }
         
         var minutesRemaining: Double {
             max(0, minutesLimit - minutesUsed)
@@ -257,6 +261,36 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
     
+    // MARK: - Subscription Response Types
+    
+    struct SubscribeResponse: Decodable {
+        let checkoutUrl: String
+        
+        enum CodingKeys: String, CodingKey {
+            case checkoutUrl = "checkout_url"
+        }
+    }
+    
+    struct PortalResponse: Decodable {
+        let portalUrl: String
+        
+        enum CodingKeys: String, CodingKey {
+            case portalUrl = "portal_url"
+        }
+    }
+    
+    struct RestoreResponse: Decodable {
+        let success: Bool
+        let tier: String
+        let minutesLimit: Double
+        
+        enum CodingKeys: String, CodingKey {
+            case success
+            case tier
+            case minutesLimit = "minutes_limit"
+        }
+    }
+    
     // MARK: - Errors
     
     enum ServiceError: LocalizedError {
@@ -409,6 +443,47 @@ final class MinitiAPIService: @unchecked Sendable {
         return try Self.decoder.decode(ManagedInsightsResponse.self, from: data)
     }
 
+    // MARK: - Subscription
+    
+    /// Get a Polar checkout URL for upgrading to Pro.
+    func getSubscribeURL(deviceId: String) async throws -> URL {
+        let request = makeRequest(path: "/subscribe", deviceId: deviceId)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let result = try Self.decoder.decode(SubscribeResponse.self, from: data)
+        guard let url = URL(string: result.checkoutUrl) else {
+            throw ServiceError.invalidResponse
+        }
+        return url
+    }
+    
+    /// Get a Polar customer portal URL for managing an existing subscription.
+    func getPortalURL(deviceId: String) async throws -> URL {
+        let request = makeRequest(path: "/portal", deviceId: deviceId)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let result = try Self.decoder.decode(PortalResponse.self, from: data)
+        guard let url = URL(string: result.portalUrl) else {
+            throw ServiceError.invalidResponse
+        }
+        return url
+    }
+    
+    /// Restore a subscription on this device using a Polar license key.
+    func restoreSubscription(deviceId: String, licenseKey: String) async throws -> RestoreResponse {
+        let request = makeRequest(
+            path: "/restore",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["license_key": licenseKey]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(RestoreResponse.self, from: data)
+    }
+    
+    // MARK: - Attio
+    
     func attioConnectStart(deviceId: String, callbackScheme: String = "miniti-attio") async throws -> AttioConnectStartResponse {
         let request = makeRequest(
             path: "/attio/connect/start",

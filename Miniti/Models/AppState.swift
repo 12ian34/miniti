@@ -109,10 +109,15 @@ final class AppState: ObservableObject {
     private var tempDeepgramKey: String?
     private var managedSessionStartRecordedDuration: TimeInterval?
     
-    /// Whether managed mode is at its limit (500 min).
+    /// Whether managed mode is at its limit.
     var isLimitReached: Bool {
         guard appMode == .managed else { return false }
         return usageInfo?.isLimitReached ?? false
+    }
+    
+    /// Whether the device has an active Pro subscription.
+    var isPro: Bool {
+        usageInfo?.isPro ?? false
     }
     
     /// Whether the app can start recording right now.
@@ -767,6 +772,28 @@ final class AppState: ObservableObject {
         
         hasUnsavedSession = true
         
+        // Report orphaned managed session usage to backend
+        if appMode == .managed, let sessionId = interrupted.managedSessionId, !sessionId.isEmpty {
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            let durationMinutes = recordingDuration / 60.0
+            Task {
+                do {
+                    let result = try await minitiAPIService?.endSession(
+                        deviceId: deviceId,
+                        sessionId: sessionId,
+                        durationMinutes: durationMinutes
+                    )
+                    if let result {
+                        print("[Resume] Reported orphaned session \(sessionId): \(durationMinutes.rounded())m, total: \(result.minutesUsed)m")
+                    }
+                    await refreshUsage()
+                } catch {
+                    print("[Resume] Failed to report orphaned session: \(error)")
+                }
+            }
+            interrupted.managedSessionId = nil
+        }
+        
         print("[Resume] Session restored with \(liveSegments.count) segments, duration \(formattedDuration)")
     }
     
@@ -1086,6 +1113,7 @@ final class AppState: ObservableObject {
             currentSessionId = session.sessionId
             tempDeepgramKey = session.tempApiKey
             managedSessionStartRecordedDuration = accumulatedRecordedDuration
+            currentMeeting?.managedSessionId = session.sessionId
             print("[AppState] Got temp key for managed session: \(session.sessionId)")
             
             // Now start recording with the temp key
@@ -1161,6 +1189,7 @@ final class AppState: ObservableObject {
             currentSessionId = nil
             tempDeepgramKey = nil
             managedSessionStartRecordedDuration = nil
+            currentMeeting?.managedSessionId = nil
         }
         
         // Finalize meeting (keep as current session so user can resume/save/discard)
@@ -1561,6 +1590,56 @@ final class AppState: ObservableObject {
         }
         
         isLoadingUsage = false
+    }
+    
+    // MARK: - Subscription
+    
+    /// Open the Polar checkout page in the system browser (macOS only).
+    func openSubscribePage() async {
+        guard let minitiAPIService else { return }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let url = try await minitiAPIService.getSubscribeURL(deviceId: deviceId)
+            #if os(iOS)
+            await UIApplication.shared.open(url)
+            #else
+            NSWorkspace.shared.open(url)
+            #endif
+        } catch {
+            print("[AppState] Failed to get subscribe URL: \(error)")
+        }
+    }
+    
+    /// Open the Polar customer portal in the system browser.
+    func openManageSubscriptionPage() async {
+        guard let minitiAPIService else { return }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let url = try await minitiAPIService.getPortalURL(deviceId: deviceId)
+            #if os(iOS)
+            await UIApplication.shared.open(url)
+            #else
+            NSWorkspace.shared.open(url)
+            #endif
+        } catch {
+            print("[AppState] Failed to get portal URL: \(error)")
+        }
+    }
+    
+    /// Restore a subscription using a Polar license key.
+    func restoreSubscription(licenseKey: String) async -> Bool {
+        guard let minitiAPIService else { return false }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let result = try await minitiAPIService.restoreSubscription(deviceId: deviceId, licenseKey: licenseKey)
+            if result.success {
+                await refreshUsage()
+                return true
+            }
+        } catch {
+            print("[AppState] Failed to restore subscription: \(error)")
+        }
+        return false
     }
     
     private func generateMeetingTitle() -> String {
