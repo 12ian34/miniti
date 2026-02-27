@@ -68,11 +68,13 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
         return result
     }
 
-    @MainActor func clear() {
+    func clear() {
         lock.lock()
         buffer.removeAll()
         lock.unlock()
-        entries = []
+        DispatchQueue.main.async { [weak self] in
+            self?.entries = []
+        }
     }
 
     func exportText() -> String {

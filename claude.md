@@ -29,7 +29,27 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-26 - v1.10.0 (current)
+### 2026-02-27 - v1.10.1 (current)
+
+**Audio reliability:**
+- Fix system audio going silent on some Bluetooth headphone configurations
+- Improve reliability when switching audio devices mid-recording (e.g. connecting AirPods after recording starts) — automatic capture recovery instead of transcription silently dying
+- Reduce crash risk during Bluetooth format transitions
+
+**UI improvements:**
+- Insight mode tabs look the same across live and historical views and no longer break at narrow widths
+- Live recording waveforms are more responsive and match the home screen test audio behavior
+- Clicking anywhere on sidebar tiles now works, not just the text
+- Debug log window now has a raw text mode so you can select and copy individual lines
+
+**Under the hood:**
+- All internal logging now goes through the in-app debug log viewer instead of the hidden system console
+- Richer diagnostics for audio capture, route changes, and transcription to help troubleshoot recording issues
+- Managed-mode API diagnostics now log request target and non-2xx response details for session-end/reporting failures
+- DMG output filename simplified to `miniti.dmg`
+- Fix a potential freeze when clearing the debug log
+
+### 2026-02-26 - v1.10.0
 
 **Pro subscription ($5/month):**
 - Upgrade to Pro for 5,000 minutes per month — 10x the free tier
@@ -221,8 +241,8 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization)
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
-- **Miniti/Services/DebugLogger.swift** – In-memory ring-buffer logger (1000 entries) with API key redaction. Thread-safe `log()` callable from audio threads. Categories: audio, deepgram, app. Shared between macOS and iOS.
-- **Miniti/Views/DebugLogView.swift** – Terminal-style log viewer with category filters, copy, and clear. Accessed via hidden 5-tap on version text in Settings.
+- **Miniti/Services/DebugLogger.swift** – In-memory ring-buffer logger (1000 entries) with API key redaction. Thread-safe `log()` callable from audio threads. Categories: audio, deepgram, app. Also mirrors log lines to Xcode/system console output for parity while debugging. Shared between macOS and iOS.
+- **Miniti/Views/DebugLogView.swift** – Terminal-style log viewer with category filters, pretty/raw modes, copy, and clear. Raw mode supports direct text selection for partial copy. Accessed via hidden 5-tap on version text in Settings.
 - **Miniti/Services/KeyboardShortcutsService.swift** – Global `NSEvent.addGlobalMonitorForEvents` keyboard handler. Routes Escape (dismiss sheets → close Settings → close help → go home), shortcuts for recording (⌘⇧R, ⌘N, ⌘S, ⌘⌫), navigation (J/K/⌘H), insight mode switching (⌘1/2/3), sidebar collapse (⌘[), insights pane collapse (⌘]), and help overlay (⌘/). Also defines `allKeyboardShortcuts` array for the help overlay.
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
 - **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking, and Attio CRM export helpers (connect start/status/search/send endpoints). Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
@@ -271,7 +291,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 ## Key patterns
 
-- **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, 10-second heartbeats confirming audio is flowing (buffer count + level), Deepgram WebSocket connect/disconnect/message counts, app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style scrolling log with category filters, copy, and clear. Not discoverable by normal users.
+- **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, route/device-change events, 10-second audio heartbeats, silent-buffer warnings, Deepgram WebSocket/audio/transcript heartbeats, managed-mode API request/response failures (including HTTP status + endpoint/body snippet), and app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style viewer with category filters, pretty/raw view modes, copy, and clear. Raw mode enables partial text selection. Log lines are also mirrored to Xcode/system console via `print` in `DebugLogger.log`.
 - **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, release notes, and a download link (currently Proton Drive). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
 - **Attio CRM send (macOS history only)**: user-initiated from saved meeting detail (`send to attio`). OAuth is backend-mediated (Attio redirects to `miniti-api`, backend stores token in KV keyed by device ID, backend redirects back to app custom URL scheme `miniti-attio://`). macOS registers `miniti-attio` in `Info.plist`; `MinitiApp.onOpenURL` forwards the callback to the sheet via `NotificationCenter`. Frontend calls additive backend routes (`/api/attio/connect/start`, `/status`, `/search`, `/send`) and fails gracefully if backend is not deployed yet (shows a clear message instead of breaking older deployments). App payload omits full transcript by default; backend also ignores transcript if older clients still send it.
 - **Managed MEDDPICC live insights throttling/retry**: MEDDPICC mode uses its own segment thresholds + a minimum refresh interval, and managed-mode insight requests retry once on transient timeout/network failures (e.g. 504 / gateway timeout) to make live MEDDPICC updates less flaky.
@@ -305,7 +325,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - `AppMode` enum (`.byok` / `.managed`) stored in `@AppStorage("appMode")` — purely a routing toggle
 - Audio levels: `microphoneLevel` and `systemAudioLevel` are published separately for per-source waveforms, plus a combined `audioLevel`
 - Audio monitoring: opt-in "test audio" button on home screen starts lightweight capture (no Deepgram) to verify sources before recording. On macOS, `AudioSourcePanel` uses local `@State isTesting`; on iOS, `isMicTesting` in `ReadyStateView_iOS`. Monitoring stops on view disappear or when the user taps stop.
-- **Audio engine restart on device change**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. When the audio hardware reconfigures mid-capture (Bluetooth codec switch, device plug/unplug), the mic tap is automatically removed and reinstalled with the new format. On iOS, `AVAudioSession.routeChangeNotification` is also observed to log route changes. This prevents silent audio loss when Bluetooth headphones switch between AAC and HFP codecs (e.g. joining a Zoom call with AirPods). The observer is stored as `engineConfigObserver` and cleaned up in `stopMicrophoneCapture()`.
+- **Audio engine/device-change recovery**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. On macOS, route changes now trigger a guarded full mic restart and dynamic converter rebuild based on actual callback format (instead of relying on a previously captured format), which prevents tap-install format mismatch crashes during 44.1k/48k transitions. The tap is installed with a nil format so it follows current hardware format. Mic restarts are coalesced (short debounce + rate limit) and skipped when the effective input device/format has not meaningfully changed, reducing restart storms during Bluetooth transitions. Default output changes also schedule a debounced system-tap restart after a short settle delay. On iOS, `AVAudioSession.routeChangeNotification` is also observed to log route changes. Observer lifecycles are cleaned up in `stopMicrophoneCapture()`.
 - `@AppStorage` persists API keys, model selection, audio source toggles, app mode, and onboarding state
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`

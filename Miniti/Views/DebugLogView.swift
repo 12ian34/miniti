@@ -1,9 +1,15 @@
 import SwiftUI
 
 struct DebugLogView: View {
+    enum ViewMode {
+        case pretty
+        case raw
+    }
+
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var logger = DebugLogger.shared
     @State private var filter: DebugLogger.Category? = nil
+    @State private var viewMode: ViewMode = .pretty
     @State private var localEscapeMonitor: Any?
 
     private var filtered: [DebugLogger.Entry] {
@@ -11,18 +17,32 @@ struct DebugLogView: View {
         return logger.entries.filter { $0.category == filter }
     }
 
+    private var rawFilteredText: String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss.SSS"
+        return filtered.map { entry in
+            "[\(fmt.string(from: entry.timestamp))] [\(entry.category.rawValue)] \(entry.message)"
+        }.joined(separator: "\n")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
             Divider()
-            logList
+            if viewMode == .pretty {
+                logList
+            } else {
+                rawLogView
+            }
         }
         .background(Color.black)
         .onAppear {
+            DebugLogger.shared.log(.app, "Debug log opened")
             installLocalEscapeMonitor()
         }
         .onDisappear {
             removeLocalEscapeMonitor()
+            DebugLogger.shared.log(.app, "Debug log closed")
         }
 #if os(macOS) || os(tvOS)
         .onExitCommand {
@@ -51,6 +71,13 @@ struct DebugLogView: View {
                 .background(filter == cat ? Color.white.opacity(0.15) : Color.clear)
                 .cornerRadius(4)
             }
+
+            Button(viewMode == .pretty ? "raw" : "pretty") {
+                viewMode = (viewMode == .pretty) ? .raw : .pretty
+            }
+            .font(.system(.caption, design: .monospaced))
+            .buttonStyle(.plain)
+            .foregroundStyle(.gray)
 
             Button("copy") { copyLogs() }
                 .font(.system(.caption, design: .monospaced))
@@ -94,8 +121,20 @@ struct DebugLogView: View {
         }
     }
 
+    private var rawLogView: some View {
+        ScrollView {
+            Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(.white)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+        }
+    }
+
     private func copyLogs() {
-        let text = logger.exportText()
+        let text = rawFilteredText
         #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)

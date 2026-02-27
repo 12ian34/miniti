@@ -14,7 +14,7 @@ enum DeviceIdentifier {
         }
         let newId = UUID().uuidString
         saveToKeychain(newId)
-        print("[DeviceIdentifier] Created new device ID: \(newId.prefix(8))...")
+        DebugLogger.shared.log(.app, "Created new device ID (\(newId.prefix(8))...)")
         return newId
     }
     
@@ -68,7 +68,7 @@ enum DeviceIdentifier {
         
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         if status != errSecSuccess {
-            print("[DeviceIdentifier] Keychain save failed: \(status)")
+            DebugLogger.shared.log(.app, "Device ID keychain save FAILED: status=\(status)")
         }
     }
 }
