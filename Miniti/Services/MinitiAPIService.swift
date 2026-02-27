@@ -405,6 +405,7 @@ final class MinitiAPIService: @unchecked Sendable {
                 "duration_minutes": durationMinutes
             ]
         )
+        DebugLogger.shared.log(.app, "API request: POST \(Self.baseURL)/session/end")
         
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
@@ -543,6 +544,14 @@ final class MinitiAPIService: @unchecked Sendable {
     private func validateResponse(_ response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ServiceError.invalidResponse
+        }
+        
+        if !(200...299).contains(httpResponse.statusCode) {
+            let bodySnippet = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .prefix(220) ?? ""
+            let urlString = httpResponse.url?.absoluteString ?? "unknown_url"
+            DebugLogger.shared.log(.app, "API response error: status=\(httpResponse.statusCode), url=\(urlString), body=\(bodySnippet)")
         }
         
         switch httpResponse.statusCode {

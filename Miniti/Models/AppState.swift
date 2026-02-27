@@ -463,7 +463,7 @@ final class AppState: ObservableObject {
                 lastMEDDPICCSegmentCount = segmentCount
             }
         } catch {
-            print("Live insights error: \(error)")
+            DebugLogger.shared.log(.app, "Live insights FAILED: \(error.localizedDescription)")
         }
         
         isGeneratingInsights = false
@@ -497,7 +497,7 @@ final class AppState: ObservableObject {
                 currentTitleSuffix = newSuffix
                 meeting.title = "\(meetingTimestamp) - \(newSuffix)"
                 lastTitleUpdateCount = segmentCount
-                print("[AppState] Updated meeting title to: \(meeting.title)")
+                DebugLogger.shared.log(.app, "Live title updated: \(meeting.title)")
                 #if os(iOS)
                 updateLiveActivityState(isRecording: isRecording)
                 #endif
@@ -660,7 +660,7 @@ final class AppState: ObservableObject {
                 meeting.topics = insights.topics
             }
         } catch {
-            print("[AppState] Failed to generate standard insights for history meeting: \(error)")
+            DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
         }
         
         // Generate MEDDPICC insights
@@ -690,7 +690,7 @@ final class AppState: ObservableObject {
             meeting.meddpiccChampion = meddpiccInsights.champion
             meeting.meddpiccCompetition = meddpiccInsights.competition
         } catch {
-            print("[AppState] Failed to generate MEDDPICC insights for history meeting: \(error)")
+            DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
         }
         
         try? modelContext?.save()
@@ -710,7 +710,7 @@ final class AppState: ObservableObject {
             .max(by: { $0.startTime < $1.startTime })
         else { return }
         
-        print("[Resume] Restoring interrupted meeting: \(interrupted.title) (\(interrupted.segments.count) segments)")
+        DebugLogger.shared.log(.app, "Resuming interrupted meeting: \(interrupted.title), segments=\(interrupted.segments.count)")
         
         currentMeeting = interrupted
         
@@ -784,17 +784,17 @@ final class AppState: ObservableObject {
                         durationMinutes: durationMinutes
                     )
                     if let result {
-                        print("[Resume] Reported orphaned session \(sessionId): \(durationMinutes.rounded())m, total: \(result.minutesUsed)m")
+                        DebugLogger.shared.log(.app, "Reported orphaned session: id=\(sessionId), duration=\(durationMinutes.rounded())m, totalUsed=\(result.minutesUsed)m")
                     }
                     await refreshUsage()
                 } catch {
-                    print("[Resume] Failed to report orphaned session: \(error)")
+                    DebugLogger.shared.log(.app, "Report orphaned session FAILED: \(error.localizedDescription)")
                 }
             }
             interrupted.managedSessionId = nil
         }
         
-        print("[Resume] Session restored with \(liveSegments.count) segments, duration \(formattedDuration)")
+        DebugLogger.shared.log(.app, "Interrupted session restored: segments=\(liveSegments.count), duration=\(formattedDuration)")
     }
     
     /// Switch insights mode and re-analyze transcript if switching to MEDDPICC
@@ -877,9 +877,9 @@ final class AppState: ObservableObject {
             
             applyInsights(insights, segmentCount: finalSegments.count)
             lastMEDDPICCSegmentCount = finalSegments.count
-            print("[AppState] Re-analyzed with MEDDPICC framework (\(finalSegments.count) segments)")
+            DebugLogger.shared.log(.app, "Re-analysis complete (meddpicc): segments=\(finalSegments.count)")
         } catch {
-            print("MEDDPICC re-analysis error: \(error)")
+            DebugLogger.shared.log(.app, "Re-analysis FAILED (meddpicc): \(error.localizedDescription)")
         }
         
         isGeneratingInsights = false
@@ -956,10 +956,9 @@ final class AppState: ObservableObject {
         
         do {
             try modelContext.save()
-            print("[Save] Session saved successfully: \(meeting.title)")
             hasUnsavedSession = false
         } catch {
-            print("[Save] Failed to save session: \(error)")
+            DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -981,7 +980,7 @@ final class AppState: ObservableObject {
                     systemAudio: captureSystemAudio
                 )
             } catch {
-                print("Audio monitoring failed: \(error)")
+                DebugLogger.shared.log(.app, "Audio monitoring FAILED: \(error.localizedDescription)")
             }
         }
     }
@@ -1068,7 +1067,6 @@ final class AppState: ObservableObject {
                 )
             } catch {
                 DebugLogger.shared.log(.app, "Audio capture FAILED in startRecording: \(error.localizedDescription)")
-                print("Failed to start audio capture: \(error)")
                 stopRecording()
             }
         }
@@ -1114,7 +1112,7 @@ final class AppState: ObservableObject {
             tempDeepgramKey = session.tempApiKey
             managedSessionStartRecordedDuration = accumulatedRecordedDuration
             currentMeeting?.managedSessionId = session.sessionId
-            print("[AppState] Got temp key for managed session: \(session.sessionId)")
+            DebugLogger.shared.log(.app, "Managed session started: sessionId=\(session.sessionId)")
             
             // Now start recording with the temp key
             startRecording()
@@ -1132,13 +1130,13 @@ final class AppState: ObservableObject {
             default:
                 managedSessionError = error.localizedDescription
             }
-            print("[AppState] Managed session failed: \(error)")
+            DebugLogger.shared.log(.app, "Managed session FAILED: \(error.localizedDescription)")
         } catch {
             managedSessionStartRecordedDuration = nil
             isStartingMeeting = false
             isResumingRecording = false
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
-            print("[AppState] Managed session failed: \(error)")
+            DebugLogger.shared.log(.app, "Managed session FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -1178,12 +1176,12 @@ final class AppState: ObservableObject {
                         durationMinutes: durationMinutes
                     )
                     if let result {
-                        print("[AppState] Session ended. Used: \(result.minutesUsed)m, Remaining: \(result.minutesRemaining)m")
+                        DebugLogger.shared.log(.app, "Managed session ended: used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m")
                     }
                     // Refresh usage info
                     await refreshUsage()
                 } catch {
-                    print("[AppState] Failed to report session end: \(error)")
+                    DebugLogger.shared.log(.app, "Managed session end report FAILED: \(error.localizedDescription)")
                 }
             }
             currentSessionId = nil
@@ -1287,14 +1285,14 @@ final class AppState: ObservableObject {
             return
         }
         
-        print("[AppState] Generating final insights before save...")
+        DebugLogger.shared.log(.app, "Generating final insights before save")
         isGeneratingInsights = true
         
         let selectedModel = OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
         
         // Generate standard insights first
         do {
-            print("[AppState] Generating standard insights...")
+            DebugLogger.shared.log(.app, "Generating final standard insights")
             let insights: InsightsService.LiveInsights
             
             if appMode == .managed, let minitiAPIService {
@@ -1322,18 +1320,18 @@ final class AppState: ObservableObject {
                let meeting = currentMeeting {
                 currentTitleSuffix = suggestedTitle
                 meeting.title = "\(meetingTimestamp) - \(suggestedTitle)"
-                print("[AppState] Final title: \(meeting.title)")
+                DebugLogger.shared.log(.app, "Final title updated: \(meeting.title)")
                 #if os(iOS)
                 updateLiveActivityState(isRecording: isRecording)
                 #endif
             }
         } catch {
-            print("[AppState] Failed to generate standard insights: \(error)")
+            DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
         }
         
         // Also generate MEDDPICC insights
         do {
-            print("[AppState] Generating MEDDPICC insights...")
+            DebugLogger.shared.log(.app, "Generating final meddpicc insights")
             let meddpiccInsights: InsightsService.LiveInsights
             
             if appMode == .managed, minitiAPIService != nil {
@@ -1360,9 +1358,9 @@ final class AppState: ObservableObject {
             liveIdentifiedPain = meddpiccInsights.identifiedPain
             liveChampion = meddpiccInsights.champion
             liveCompetition = meddpiccInsights.competition
-            print("[AppState] MEDDPICC insights generated")
+            DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
         } catch {
-            print("[AppState] Failed to generate MEDDPICC insights: \(error)")
+            DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
         }
         
         isGeneratingInsights = false
@@ -1453,7 +1451,7 @@ final class AppState: ObservableObject {
             
             try? modelContext?.save()
         } catch {
-            print("Failed to generate insights: \(error)")
+            DebugLogger.shared.log(.app, "Generate insights FAILED: \(error.localizedDescription)")
         }
         
         isGeneratingInsights = false
@@ -1499,7 +1497,7 @@ final class AppState: ObservableObject {
                     throw error
                 }
 
-                print("[AppState] Insights request failed (attempt \(attempt)/\(maxAttempts)) with transient error: \(error). Retrying...")
+                DebugLogger.shared.log(.app, "Insights transient error (attempt \(attempt)/\(maxAttempts)); retrying: \(error.localizedDescription)")
                 attempt += 1
                 try? await Task.sleep(nanoseconds: 800_000_000)
             }
@@ -1545,13 +1543,11 @@ final class AppState: ObservableObject {
             
             if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
                 availableUpdate = versionInfo
-                print("[AppState] Update available: \(versionInfo.latestVersion) (current: \(currentVersion))")
-            } else {
-                print("[AppState] App is up to date (\(currentVersion))")
+                DebugLogger.shared.log(.app, "Update available: latest=\(versionInfo.latestVersion), current=\(currentVersion)")
             }
         } catch {
             // Silent failure — update check is non-critical
-            print("[AppState] Version check failed: \(error)")
+            DebugLogger.shared.log(.app, "Version check FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -1581,12 +1577,11 @@ final class AppState: ObservableObject {
         do {
             usageInfo = try await minitiAPIService.checkUsage(deviceId: deviceId)
             isDeviceDisabled = false
-            print("[AppState] Usage: \(usageInfo?.minutesUsed ?? 0)/\(usageInfo?.minutesLimit ?? 0) min")
         } catch MinitiAPIService.ServiceError.deviceDisabled {
             isDeviceDisabled = true
-            print("[AppState] Device is disabled")
+            DebugLogger.shared.log(.app, "Device disabled in managed mode")
         } catch {
-            print("[AppState] Failed to check usage: \(error)")
+            DebugLogger.shared.log(.app, "Usage check FAILED: \(error.localizedDescription)")
         }
         
         isLoadingUsage = false
@@ -1606,7 +1601,7 @@ final class AppState: ObservableObject {
             NSWorkspace.shared.open(url)
             #endif
         } catch {
-            print("[AppState] Failed to get subscribe URL: \(error)")
+            DebugLogger.shared.log(.app, "Subscribe URL FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -1622,7 +1617,7 @@ final class AppState: ObservableObject {
             NSWorkspace.shared.open(url)
             #endif
         } catch {
-            print("[AppState] Failed to get portal URL: \(error)")
+            DebugLogger.shared.log(.app, "Portal URL FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -1637,7 +1632,7 @@ final class AppState: ObservableObject {
                 return true
             }
         } catch {
-            print("[AppState] Failed to restore subscription: \(error)")
+            DebugLogger.shared.log(.app, "Restore subscription FAILED: \(error.localizedDescription)")
         }
         return false
     }
@@ -1661,7 +1656,7 @@ final class AppState: ObservableObject {
     #if os(iOS)
     private func startLiveActivity() {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            print("[AppState] Live Activities not enabled")
+            DebugLogger.shared.log(.app, "Live Activities not enabled")
             return
         }
         
@@ -1688,9 +1683,9 @@ final class AppState: ObservableObject {
                 content: .init(state: state, staleDate: nil),
                 pushType: nil
             )
-            print("[AppState] Live Activity started")
+            DebugLogger.shared.log(.app, "Live Activity started")
         } catch {
-            print("[AppState] Failed to start Live Activity: \(error)")
+            DebugLogger.shared.log(.app, "Live Activity start FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -1739,7 +1734,7 @@ final class AppState: ObservableObject {
             await activity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
         }
         currentActivity = nil
-        print("[AppState] Live Activity ended")
+        DebugLogger.shared.log(.app, "Live Activity ended")
     }
     
     /// On launch, if we have no session but Live Activities exist, the app was killed while recording.
@@ -1751,7 +1746,7 @@ final class AppState: ObservableObject {
         for activity in activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
-        print("[AppState] Cleaned up \(activities.count) orphaned Live Activity(ies)")
+        DebugLogger.shared.log(.app, "Cleaned up orphaned Live Activities: count=\(activities.count)")
     }
     #endif
     

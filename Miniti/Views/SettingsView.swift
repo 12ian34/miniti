@@ -727,7 +727,7 @@ struct GeneralSettingsView: View {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            print("Failed to set launch at login: \(error)")
+            DebugLogger.shared.log(.app, "Launch at login update FAILED: \(error.localizedDescription)")
         }
     }
 }

@@ -115,6 +115,27 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     
     nonisolated(unsafe) private var wsMessageCount: Int = 0
     nonisolated(unsafe) private var lastWsHeartbeat: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var audioPacketsSent: Int = 0
+    nonisolated(unsafe) private var audioBytesSent: Int = 0
+    nonisolated(unsafe) private var audioSendErrors: Int = 0
+    private var transcriptMessageCount: Int = 0
+    private var transcriptWordCount: Int = 0
+    private var finalTranscriptCount: Int = 0
+    private var emptyTranscriptCount: Int = 0
+    private var lastTranscriptAt: CFAbsoluteTime = 0
+    
+    private func resetSessionCounters() {
+        wsMessageCount = 0
+        lastWsHeartbeat = CFAbsoluteTimeGetCurrent()
+        audioPacketsSent = 0
+        audioBytesSent = 0
+        audioSendErrors = 0
+        transcriptMessageCount = 0
+        transcriptWordCount = 0
+        finalTranscriptCount = 0
+        emptyTranscriptCount = 0
+        lastTranscriptAt = 0
+    }
     
     func connect(model: DeepgramModel = .nova3) {
         guard !apiKey.isEmpty else {
@@ -126,8 +147,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         DebugLogger.shared.log(.deepgram, "Connecting with model=\(model.rawValue)")
         connectionState = .connecting
         speakerHistory = [:]
-        wsMessageCount = 0
-        lastWsHeartbeat = CFAbsoluteTimeGetCurrent()
+        resetSessionCounters()
         
         // Build URL with parameters - optimized for speaker diarization
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
@@ -176,7 +196,11 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     }
     
     func disconnect() {
-        DebugLogger.shared.log(.deepgram, "Disconnecting (received \(wsMessageCount) messages)")
+        let mbSent = Double(audioBytesSent) / (1024.0 * 1024.0)
+        DebugLogger.shared.log(
+            .deepgram,
+            "Disconnecting: ws=\(wsMessageCount), audio=\(audioPacketsSent) packets / \(String(format: "%.2f", mbSent))MB, transcript(msg=\(transcriptMessageCount), words=\(transcriptWordCount), final=\(finalTranscriptCount), empty=\(emptyTranscriptCount)), sendErrors=\(audioSendErrors)"
+        )
         _sendConnected = false
         _sendTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -190,10 +214,14 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         // Use nonisolated refs to avoid creating a Task { @MainActor } per audio
         // buffer (~4/sec). URLSessionWebSocketTask.send is thread-safe.
         guard _sendConnected, let task = _sendTask else { return }
+        audioPacketsSent += 1
+        audioBytesSent += data.count
         task.send(.data(data)) { [weak self] error in
             if let error {
+                self?.audioSendErrors += 1
                 Task { @MainActor in
                     guard let self, self.isConnected else { return }
+                    DebugLogger.shared.log(.deepgram, "WS send error: \(error.localizedDescription)")
                     print("WebSocket send error: \(error)")
                     self.error = error
                 }
@@ -211,7 +239,20 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                     let now = CFAbsoluteTimeGetCurrent()
                     if now - self.lastWsHeartbeat > 15.0 {
                         self.lastWsHeartbeat = now
-                        DebugLogger.shared.log(.deepgram, "WS heartbeat: \(self.wsMessageCount) messages, \(self.speakerHistory.count) speakers")
+                        let kbSent = Double(self.audioBytesSent) / 1024.0
+                        let sinceTranscript: String
+                        if self.lastTranscriptAt > 0 {
+                            sinceTranscript = String(format: "%.1fs", now - self.lastTranscriptAt)
+                        } else {
+                            sinceTranscript = "never"
+                        }
+                        DebugLogger.shared.log(
+                            .deepgram,
+                            "WS heartbeat: msg=\(self.wsMessageCount), speakers=\(self.speakerHistory.count), audio=\(self.audioPacketsSent) packets/\(String(format: "%.0f", kbSent))KB, transcript(msg=\(self.transcriptMessageCount), words=\(self.transcriptWordCount), final=\(self.finalTranscriptCount), empty=\(self.emptyTranscriptCount), last=\(sinceTranscript))"
+                        )
+                        if self.wsMessageCount > 20 && self.transcriptWordCount == 0 {
+                            DebugLogger.shared.log(.deepgram, "WS warning: receiving messages but no transcript words yet")
+                        }
                     }
                     self.handleMessage(message)
                     self.receiveMessages()
@@ -251,12 +292,26 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                let alternative = channel.alternatives.first {
                 
                 let isFinal = response.isFinal ?? false
+                let hasTranscriptText = !alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                transcriptMessageCount += 1
+                if alternative.words.isEmpty && !hasTranscriptText {
+                    emptyTranscriptCount += 1
+                } else {
+                    transcriptWordCount += alternative.words.count
+                    lastTranscriptAt = CFAbsoluteTimeGetCurrent()
+                    if isFinal { finalTranscriptCount += 1 }
+                }
                 
                 // Debug: Log speaker info from raw response
                 let speakersInResponse = alternative.words.compactMap { $0.speaker }
                 let uniqueSpeakers = Set(speakersInResponse)
                 if isFinal && !alternative.words.isEmpty {
                     print("[Deepgram] Final result - Speakers detected: \(uniqueSpeakers), Words: \(alternative.words.count)")
+                    let preview = alternative.transcript.prefix(80)
+                    DebugLogger.shared.log(
+                        .deepgram,
+                        "Final transcript: words=\(alternative.words.count), speakers=\(Array(uniqueSpeakers).sorted()), text=\"\(preview)\""
+                    )
                     // Log first few words with speaker info
                     for word in alternative.words.prefix(5) {
                         print("  - '\(word.word)' speaker: \(word.speaker ?? -1)")
@@ -324,6 +379,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
             
             if !isIgnoredType {
                 // Only log unexpected parse errors
+                DebugLogger.shared.log(.deepgram, "Parse warning: \(error.localizedDescription)")
                 print("[Deepgram] Parse warning: \(error.localizedDescription)")
             }
         }

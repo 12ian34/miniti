@@ -51,6 +51,27 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var smoothedMicGain: Float = 1.0
     nonisolated(unsafe) private var smoothedSysGain: Float = 1.0
     
+    // MARK: - Runtime Diagnostics
+    
+    nonisolated(unsafe) private var sysInputFrameCount: Int = 0
+    nonisolated(unsafe) private var sysOutputFrameCount: Int = 0
+    nonisolated(unsafe) private var sysNonSilentCallbacks: Int = 0
+    nonisolated(unsafe) private var sysSilentCallbacks: Int = 0
+    nonisolated(unsafe) private var ringSamplesAppended: Int = 0
+    nonisolated(unsafe) private var ringSamplesDrained: Int = 0
+    nonisolated(unsafe) private var mixWithSystemCount: Int = 0
+    nonisolated(unsafe) private var mixMicOnlyCount: Int = 0
+    nonisolated(unsafe) private var lastSystemHeartbeat: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastNoSystemMixWarning: CFAbsoluteTime = 0
+    private var isRestartingMicAfterConfigChange = false
+    private var isRestartingSystemAfterOutputChange = false
+    private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
+    private var pendingMicRestartTask: Task<Void, Never>?
+    private var lastMicRestartAt: CFAbsoluteTime = 0
+    private var activeMicInputDeviceID: AudioDeviceID?
+    private var activeMicInputSampleRate: Double = 0
+    private var activeMicInputChannels: AVAudioChannelCount = 0
+    
     // MARK: - Source Dominance Tracking
     // Records which audio source (mic vs system) was dominant at each point in the
     // stream. Used to override Deepgram's diarization — mic words → "You",
@@ -119,8 +140,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &inputAddr, DispatchQueue.main
-        ) { _, _ in
+        ) { [weak self] _, _ in
             DebugLogger.shared.log(.audio, "Default INPUT device changed → \(Self.defaultInputDeviceInfo())")
+            Task { @MainActor in
+                self?.handleEngineConfigurationChange()
+            }
         }
         
         var outputAddr = AudioObjectPropertyAddress(
@@ -130,8 +154,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &outputAddr, DispatchQueue.main
-        ) { _, _ in
+        ) { [weak self] _, _ in
             DebugLogger.shared.log(.audio, "Default OUTPUT device changed → \(Self.defaultOutputDeviceInfo())")
+            Task { @MainActor in
+                self?.handleDefaultOutputDeviceChange()
+            }
         }
     }
     
@@ -141,6 +168,27 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     
     nonisolated static func defaultOutputDeviceInfo() -> String {
         return deviceInfo(selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    nonisolated static func defaultInputDeviceID() -> AudioDeviceID? {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        )
+        return err == noErr ? deviceID : nil
+    }
+    
+    nonisolated private static func formatSummary(_ asbd: AudioStreamBasicDescription) -> String {
+        let isFloat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        let isNonInterleaved = (asbd.mFormatFlags & kAudioFormatFlagIsNonInterleaved) != 0
+        let sampleType = isFloat ? "float" : "int"
+        return "\(Int(asbd.mSampleRate))Hz, \(asbd.mChannelsPerFrame)ch, \(sampleType)\(asbd.mBitsPerChannel), interleaved=\(!isNonInterleaved)"
     }
     
     nonisolated private static func deviceInfo(selector: AudioObjectPropertySelector) -> String {
@@ -181,10 +229,31 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         ringBuffer?.deallocate()
     }
     
+    private func resetRuntimeDiagnostics() {
+        sysInputFrameCount = 0
+        sysOutputFrameCount = 0
+        sysNonSilentCallbacks = 0
+        sysSilentCallbacks = 0
+        ringSamplesAppended = 0
+        ringSamplesDrained = 0
+        mixWithSystemCount = 0
+        mixMicOnlyCount = 0
+        lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
+        lastNoSystemMixWarning = 0
+        sysCallbackCount = 0
+    }
+    
+    nonisolated private func currentRingSampleCount() -> Int {
+        ringLock.lock()
+        defer { ringLock.unlock() }
+        return ringCount
+    }
+    
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
         await stopCaptureAsync()
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
+        resetRuntimeDiagnostics()
         var capturedAny = false
         
         if microphone {
@@ -220,8 +289,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     func stopCapture() {
+        if isCapturing {
+            let ringNow = currentRingSampleCount()
+            DebugLogger.shared.log(
+                .audio,
+                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
+            )
+        }
         stopMicrophoneCapture()
         stopSystemAudioCapture()
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = nil
         isCapturing = false
         isMicActive = false
         isSystemAudioActive = false
@@ -229,8 +307,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func stopCaptureAsync() async {
+        if isCapturing {
+            let ringNow = currentRingSampleCount()
+            DebugLogger.shared.log(
+                .audio,
+                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
+            )
+        }
         stopMicrophoneCapture()
         stopSystemAudioCapture()
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = nil
         isCapturing = false
         isMicActive = false
         isSystemAudioActive = false
@@ -242,11 +329,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var micBufferCount: Int = 0
     nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
     
-    private func startMicrophoneCapture() async throws {
-        let granted = await requestMicrophonePermission()
-        guard granted else {
-            DebugLogger.shared.log(.audio, "Mic permission DENIED")
-            throw AudioCaptureError.microphonePermissionDenied
+    private func startMicrophoneCapture(skipPermissionCheck: Bool = false) async throws {
+        if !skipPermissionCheck {
+            let granted = await requestMicrophonePermission()
+            guard granted else {
+                DebugLogger.shared.log(.audio, "Mic permission DENIED")
+                throw AudioCaptureError.microphonePermissionDenied
+            }
         }
         
         DebugLogger.shared.log(.audio, "Default input device: \(Self.defaultInputDeviceInfo())")
@@ -255,14 +344,18 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         guard let audioEngine else { return }
         
         let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
+        let nodeFormat = inputNode.outputFormat(forBus: 0)
         
-        DebugLogger.shared.log(.audio, "Mic input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch, \(inputFormat.commonFormat.rawValue)fmt")
+        DebugLogger.shared.log(.audio, "Mic input format: \(nodeFormat.sampleRate)Hz, \(nodeFormat.channelCount)ch, \(nodeFormat.commonFormat.rawValue)fmt")
         
-        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
+        guard nodeFormat.sampleRate > 0 && nodeFormat.channelCount > 0 else {
             DebugLogger.shared.log(.audio, "INVALID input format (0Hz or 0ch) — audio device may be unavailable")
             throw AudioCaptureError.formatCreationFailed
         }
+
+        activeMicInputDeviceID = Self.defaultInputDeviceID()
+        activeMicInputSampleRate = nodeFormat.sampleRate
+        activeMicInputChannels = nodeFormat.channelCount
         
         guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -271,12 +364,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             interleaved: true
         ) else { throw AudioCaptureError.formatCreationFailed }
         
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            DebugLogger.shared.log(.audio, "FAILED to create converter: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
-            throw AudioCaptureError.converterCreationFailed
-        }
-        
-        DebugLogger.shared.log(.audio, "Mic converter ready: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
+        DebugLogger.shared.log(.audio, "Mic converter armed (dynamic input format) → \(targetSampleRate)Hz")
         micBufferCount = 0
         lastMicHeartbeat = CFAbsoluteTimeGetCurrent()
         
@@ -285,8 +373,30 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         DebugLogger.shared.log(.audio, "Mic tap installing (callback \(hasCallback ? "set" : "nil — monitoring only"))")
         
         let targetRate = targetSampleRate
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
+        // Pass nil tap format to follow the node's current hardware format and avoid
+        // install-time format mismatches during route changes (e.g., AirPods connect).
+        var activeConverter: AVAudioConverter?
+        var activeInputSampleRate: Double = 0
+        var activeInputChannels: AVAudioChannelCount = 0
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
+            guard let self else { return }
+            
+            let inFormat = buffer.format
+            if activeConverter == nil ||
+                abs(activeInputSampleRate - inFormat.sampleRate) > 0.001 ||
+                activeInputChannels != inFormat.channelCount {
+                guard let newConverter = AVAudioConverter(from: inFormat, to: outputFormat) else {
+                    DebugLogger.shared.log(.audio, "FAILED to create mic converter in callback: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetSampleRate)Hz")
+                    return
+                }
+                activeConverter = newConverter
+                activeInputSampleRate = inFormat.sampleRate
+                activeInputChannels = inFormat.channelCount
+                DebugLogger.shared.log(.audio, "Mic converter ready: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetSampleRate)Hz")
+            }
+            
+            guard let converter = activeConverter else { return }
+            self.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
         }
         
         try audioEngine.start()
@@ -308,48 +418,94 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
     }
     
-    /// Re-install the mic tap after the audio hardware changes (Bluetooth codec switch, device unplug, etc.)
+    /// Restart mic capture after audio hardware changes (Bluetooth codec switch, device unplug, etc.).
+    /// Rebuilding the engine avoids format-mismatch crashes during route transitions.
     private func handleEngineConfigurationChange() {
         guard isCapturing, isMicActive else { return }
-        guard let audioEngine else { return }
         
-        DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.defaultInputDeviceInfo())")
-        
-        audioEngine.inputNode.removeTap(onBus: 0)
-        
-        let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        
-        DebugLogger.shared.log(.audio, "New input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
-        
-        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-            DebugLogger.shared.log(.audio, "INVALID new format — mic capture suspended until next device change")
-            return
+        // Coalesce event bursts that happen during Bluetooth route/profile transitions.
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.pendingMicRestartTask = nil }
+            
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard self.isCapturing, self.isMicActive else { return }
+            
+            let currentInputID = Self.defaultInputDeviceID()
+            let currentFormat = self.audioEngine?.inputNode.outputFormat(forBus: 0)
+            let hasMeaningfulInputChange: Bool
+            if let currentFormat {
+                let deviceChanged = currentInputID != self.activeMicInputDeviceID
+                let rateChanged = abs(currentFormat.sampleRate - self.activeMicInputSampleRate) > 0.1
+                let channelChanged = currentFormat.channelCount != self.activeMicInputChannels
+                hasMeaningfulInputChange = deviceChanged || rateChanged || channelChanged
+            } else {
+                hasMeaningfulInputChange = true
+            }
+            
+            guard hasMeaningfulInputChange else {
+                DebugLogger.shared.log(.audio, "Engine config changed but mic input format/device is unchanged — skipping mic restart")
+                return
+            }
+            
+            guard !self.isRestartingMicAfterConfigChange else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - self.lastMicRestartAt > 0.5 else {
+                DebugLogger.shared.log(.audio, "Engine config changed — mic restart coalesced")
+                return
+            }
+            
+            self.lastMicRestartAt = now
+            self.isRestartingMicAfterConfigChange = true
+            defer { self.isRestartingMicAfterConfigChange = false }
+            
+            DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.defaultInputDeviceInfo())")
+            
+            self.stopMicrophoneCapture()
+            do {
+                try await self.startMicrophoneCapture(skipPermissionCheck: true)
+                if let newFormat = self.audioEngine?.inputNode.outputFormat(forBus: 0) {
+                    DebugLogger.shared.log(.audio, "Mic restart complete after config change: \(newFormat.sampleRate)Hz, \(newFormat.channelCount)ch")
+                } else {
+                    DebugLogger.shared.log(.audio, "Mic restart complete after config change")
+                }
+            } catch {
+                self.isMicActive = false
+                DebugLogger.shared.log(.audio, "Mic restart FAILED after config change: \(error.localizedDescription)")
+            }
         }
+    }
+    
+    private func handleDefaultOutputDeviceChange() {
+        guard isCapturing, isSystemAudioActive else { return }
+        guard !isRestartingSystemAfterOutputChange else { return }
         
-        guard let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: targetSampleRate,
-            channels: targetChannels,
-            interleaved: true
-        ) else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastOutputChangeRestartAt > 0.6 else { return }
+        lastOutputChangeRestartAt = now
+        isRestartingSystemAfterOutputChange = true
         
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            DebugLogger.shared.log(.audio, "FAILED to create converter for new format")
-            return
-        }
+        let mixWithMic = isMicActive
+        DebugLogger.shared.log(.audio, "Output device changed during capture — scheduling system tap restart")
         
-        let onBuffer = onAudioBuffer
-        let targetRate = targetSampleRate
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
-        }
-        
-        do {
-            try audioEngine.start()
-            DebugLogger.shared.log(.audio, "Mic capture restarted with \(inputFormat.sampleRate)Hz format")
-        } catch {
-            DebugLogger.shared.log(.audio, "FAILED to restart engine: \(error.localizedDescription)")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.isRestartingSystemAfterOutputChange = false }
+            
+            // Allow CoreAudio route change to settle before rebuilding aggregate device.
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard self.isCapturing else { return }
+            
+            do {
+                self.stopSystemAudioCapture()
+                try self.startSystemAudioCapture(mixWithMic: mixWithMic)
+                self.isSystemAudioActive = true
+                DebugLogger.shared.log(.audio, "System tap restart complete after output change")
+            } catch {
+                self.isSystemAudioActive = false
+                DebugLogger.shared.log(.audio, "System tap restart FAILED after output change: \(error.localizedDescription)")
+            }
         }
     }
     
@@ -358,6 +514,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             NotificationCenter.default.removeObserver(observer)
             engineConfigObserver = nil
         }
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = nil
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
@@ -389,6 +547,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var err = AudioHardwareCreateProcessTap(tapDescription, &tapID)
         guard err == noErr else {
             print("[SystemAudio] AudioHardwareCreateProcessTap failed: \(err)")
+            DebugLogger.shared.log(.audio, "AudioHardwareCreateProcessTap FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioPermissionDenied
         }
         processTapID = tapID
@@ -406,9 +565,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         err = AudioObjectGetPropertyData(tapID, &formatAddr, 0, nil, &formatSize, &tapFormat)
         guard err == noErr else {
             print("[SystemAudio] Failed to read tap format: \(err)")
+            DebugLogger.shared.log(.audio, "Read tap format FAILED: osstatus=\(err)")
             throw AudioCaptureError.formatCreationFailed
         }
         print("[SystemAudio] Tap format: \(tapFormat.mSampleRate)Hz, \(tapFormat.mChannelsPerFrame)ch, \(tapFormat.mBitsPerChannel)bit, Float=\(tapFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0)")
+        DebugLogger.shared.log(.audio, "System tap format: \(Self.formatSummary(tapFormat))")
         
         // 3. Get default output device UID (needed for aggregate device)
         var outputDeviceID: AudioDeviceID = 0
@@ -421,6 +582,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         err = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &outputAddr, 0, nil, &deviceSize, &outputDeviceID)
         guard err == noErr else {
             print("[SystemAudio] Failed to get default output device: \(err)")
+            DebugLogger.shared.log(.audio, "Get default output device FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         
@@ -437,6 +599,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         guard err == noErr, let outputUID = outputUIDCF as String? else {
             print("[SystemAudio] Failed to get output device UID: \(err)")
+            DebugLogger.shared.log(.audio, "Get output device UID FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         print("[SystemAudio] Output device: \(outputUID)")
@@ -465,6 +628,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggDeviceID)
         guard err == noErr else {
             print("[SystemAudio] Failed to create aggregate device: \(err)")
+            DebugLogger.shared.log(.audio, "Create aggregate device FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         aggregateDeviceID = aggDeviceID
@@ -484,9 +648,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let fmtErr = AudioObjectGetPropertyData(aggDeviceID, &ioFmtAddr, 0, nil, &ioFmtSize, &ioFormat)
         if fmtErr == noErr && ioFormat.mSampleRate > 0 {
             print("[SystemAudio] Aggregate IO format: \(ioFormat.mSampleRate)Hz, \(ioFormat.mChannelsPerFrame)ch, Float=\(ioFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0), NonInterleaved=\(ioFormat.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0)")
+            DebugLogger.shared.log(.audio, "Aggregate input format: \(Self.formatSummary(ioFormat))")
         } else {
             print("[SystemAudio] Could not read aggregate IO format (\(fmtErr)), using tap format")
             ioFormat = tapFormat
+            DebugLogger.shared.log(.audio, "Aggregate format read failed (\(fmtErr)) — using tap format")
         }
         
         guard let inputFormat = AVAudioFormat(streamDescription: &ioFormat) else {
@@ -495,6 +661,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         let directCallback = mixWithMic ? nil : onAudioBuffer
         let targetRate = targetSampleRate
+        lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
+        DebugLogger.shared.log(.audio, "System path routing: mixWithMic=\(mixWithMic), directCallback=\(directCallback != nil)")
         
         // 6. IO proc callback on a custom dispatch queue. Uses direct vDSP
         // for mono downmix + decimation + Float→Int16 (no AVAudioConverter).
@@ -513,6 +681,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         guard err == noErr else {
             print("[SystemAudio] Failed to create IO proc: \(err)")
+            DebugLogger.shared.log(.audio, "Create IO proc FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         tapDeviceProcID = procID
@@ -521,6 +690,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         err = AudioDeviceStart(aggDeviceID, procID)
         guard err == noErr else {
             print("[SystemAudio] Failed to start aggregate device: \(err)")
+            DebugLogger.shared.log(.audio, "Start aggregate device FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         
@@ -529,6 +699,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func stopSystemAudioCapture() {
+        if isSystemAudioActive || sysCallbackCount > 0 {
+            let ringNow = currentRingSampleCount()
+            DebugLogger.shared.log(
+                .audio,
+                "System tap stopping: callbacks=\(sysCallbackCount), inFrames=\(sysInputFrameCount), outFrames=\(sysOutputFrameCount), nonSilent=\(sysNonSilentCallbacks), silent=\(sysSilentCallbacks), ring=\(ringNow)/\(ringCapacity)"
+            )
+        }
+        
         // 1. Stop and destroy IO proc
         if aggregateDeviceID != kAudioObjectUnknown {
             if let procID = tapDeviceProcID {
@@ -562,72 +740,142 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         mixWithMic: Bool,
         directCallback: (@Sendable (Data) -> Void)?
     ) {
-        // Access the raw buffer list directly
-        let abl = inInputData.pointee
-        guard abl.mNumberBuffers > 0 else { return }
-        let buf = abl.mBuffers
-        guard let rawData = buf.mData else { return }
-        let byteCount = Int(buf.mDataByteSize)
+        let bufferList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
+        guard let firstBuffer = bufferList.first else { return }
+        guard let rawData = firstBuffer.mData else { return }
+        let byteCount = Int(firstBuffer.mDataByteSize)
         guard byteCount > 0 else { return }
         
-        let floatPtr = rawData.assumingMemoryBound(to: Float.self)
-        let totalFloats = byteCount / MemoryLayout<Float>.size
-        let channels = Int(inputFormat.channelCount)
+        let asbd = inputFormat.streamDescription.pointee
+        let isFloatFormat = (asbd.mFormatFlags & kAudioFormatFlagIsFloat) != 0
+        let bitsPerChannel = Int(asbd.mBitsPerChannel)
+        let bytesPerSample = bitsPerChannel / 8
+        guard bytesPerSample > 0 else { return }
+        
+        let channels = max(1, Int(inputFormat.channelCount))
         let isInterleaved = inputFormat.isInterleaved
+        let totalSamples = byteCount / bytesPerSample
         
         // Determine frame count and channel layout
         let framesPerChannel: Int
         if isInterleaved {
-            framesPerChannel = totalFloats / max(1, channels)
+            framesPerChannel = totalSamples / channels
         } else {
             // Non-interleaved: each buffer is one channel
-            framesPerChannel = totalFloats
+            framesPerChannel = totalSamples
         }
         guard framesPerChannel > 0 else { return }
         
-        let decimation = max(1, Int(inputFormat.sampleRate / targetRate))
-        let outputFrames = framesPerChannel / decimation
+        let sampleRateRatio = inputFormat.sampleRate / targetRate
+        let roundedRatio = round(sampleRateRatio)
+        let canUseDecimation = abs(sampleRateRatio - roundedRatio) < 0.001
+        let decimation = max(1, Int(roundedRatio))
+        let outputFrames = canUseDecimation
+            ? (framesPerChannel / decimation)
+            : Int(Double(framesPerChannel) * targetRate / inputFormat.sampleRate)
         guard outputFrames > 0 else { return }
         
         // One-time format diagnostic
         if sysCallbackCount == 0 {
-            print("[SystemAudio] IO callback: \(inputFormat.sampleRate)Hz, \(channels)ch, interleaved=\(isInterleaved), frames=\(framesPerChannel), decimation=\(decimation), totalFloats=\(totalFloats), mNumberBuffers=\(abl.mNumberBuffers), mDataByteSize=\(byteCount)")
+            let formatLabel = isFloatFormat ? "float\(bitsPerChannel)" : "int\(bitsPerChannel)"
+            let resampleMode = canUseDecimation ? "decimate(x\(decimation))" : "linear(\(String(format: "%.3f", sampleRateRatio))x)"
+            let diag = "System callback format: \(inputFormat.sampleRate)Hz, \(channels)ch, \(formatLabel), interleaved=\(isInterleaved), frames=\(framesPerChannel), mode=\(resampleMode), buffers=\(bufferList.count), bytes=\(byteCount)"
+            print("[SystemAudio] IO callback: \(inputFormat.sampleRate)Hz, \(channels)ch, \(formatLabel), interleaved=\(isInterleaved), frames=\(framesPerChannel), mode=\(resampleMode), mNumberBuffers=\(bufferList.count), mDataByteSize=\(byteCount)")
+            DebugLogger.shared.log(.audio, diag)
         }
         
-        // Calculate system audio level (throttled to ~20Hz)
+        // Step 1: Downmix to mono Float buffer. Supports float and Int16 input.
+        var mono = [Float](repeating: 0, count: framesPerChannel)
+        if isFloatFormat {
+            let floatPtr = rawData.assumingMemoryBound(to: Float.self)
+            if isInterleaved && channels >= 2 {
+                // Interleaved: [L0 R0 L1 R1 ...] — add L+R with stride, then halve
+                vDSP_vadd(floatPtr, vDSP_Stride(channels),
+                          floatPtr + 1, vDSP_Stride(channels),
+                          &mono, 1, vDSP_Length(framesPerChannel))
+                var half: Float = 0.5
+                vDSP_vsmul(mono, 1, &half, &mono, 1, vDSP_Length(framesPerChannel))
+            } else if !isInterleaved && channels >= 2 && bufferList.count >= 2,
+                      let rightData = bufferList[1].mData {
+                let leftPtr = rawData.assumingMemoryBound(to: Float.self)
+                let rightPtr = rightData.assumingMemoryBound(to: Float.self)
+                vDSP_vadd(leftPtr, 1, rightPtr, 1, &mono, 1, vDSP_Length(framesPerChannel))
+                var half: Float = 0.5
+                vDSP_vsmul(mono, 1, &half, &mono, 1, vDSP_Length(framesPerChannel))
+            } else {
+                mono.withUnsafeMutableBufferPointer { dst in
+                    dst.baseAddress?.update(from: floatPtr, count: framesPerChannel)
+                }
+            }
+        } else if bitsPerChannel == 16 {
+            let intPtr = rawData.assumingMemoryBound(to: Int16.self)
+            if isInterleaved && channels >= 2 {
+                for i in 0..<framesPerChannel {
+                    let base = i * channels
+                    mono[i] = (Float(intPtr[base]) + Float(intPtr[base + 1])) * 0.5
+                }
+            } else if !isInterleaved && channels >= 2 && bufferList.count >= 2,
+                      let rightData = bufferList[1].mData {
+                let leftPtr = rawData.assumingMemoryBound(to: Int16.self)
+                let rightPtr = rightData.assumingMemoryBound(to: Int16.self)
+                for i in 0..<framesPerChannel {
+                    mono[i] = (Float(leftPtr[i]) + Float(rightPtr[i])) * 0.5
+                }
+            } else {
+                for i in 0..<framesPerChannel {
+                    mono[i] = Float(intPtr[i])
+                }
+            }
+        } else {
+            if sysCallbackCount == 0 {
+                print("[SystemAudio] Unsupported tap format: bits=\(bitsPerChannel), flags=\(asbd.mFormatFlags)")
+                DebugLogger.shared.log(.audio, "Unsupported system tap format: bits=\(bitsPerChannel), flags=\(asbd.mFormatFlags)")
+            }
+            return
+        }
+        
+        var meanSquare: Float = 0
+        vDSP_measqv(mono, 1, &meanSquare, vDSP_Length(framesPerChannel))
+        let inputRMS = sqrt(meanSquare)
+        let normalizedInputRMS = isFloatFormat ? inputRMS : (inputRMS / 32767.0)
+        
+        sysInputFrameCount += framesPerChannel
+        if normalizedInputRMS > 0.0003 {
+            sysNonSilentCallbacks += 1
+        } else {
+            sysSilentCallbacks += 1
+        }
+        
+        // Calculate system audio level (throttled to ~20Hz). Keep display normalized to 0...1.
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastSystemLevelUpdate > 0.05 {
             lastSystemLevelUpdate = now
-            let levelStride = isInterleaved ? vDSP_Stride(channels) : vDSP_Stride(1)
-            var meanSquare: Float = 0
-            vDSP_measqv(floatPtr, levelStride, &meanSquare, vDSP_Length(framesPerChannel))
-            let rms = sqrt(meanSquare)
             Task { @MainActor [weak self] in
-                self?.systemAudioLevel = min(1.0, rms)
+                self?.systemAudioLevel = min(1.0, normalizedInputRMS)
             }
-            runningSysRMS = runningSysRMS * (1 - rmsAlpha) + rms * rmsAlpha
+            runningSysRMS = runningSysRMS * (1 - rmsAlpha) + normalizedInputRMS * rmsAlpha
         }
         
-        // === Convert: Float32 stereo 48kHz → Int16 mono 16kHz via vDSP ===
-        
-        // Step 1: Stereo → Mono downmix (average L+R for proper mono)
-        var mono = [Float](repeating: 0, count: framesPerChannel)
-        if isInterleaved && channels >= 2 {
-            // Interleaved: [L0 R0 L1 R1 ...] — add L+R with stride, then halve
-            vDSP_vadd(floatPtr, vDSP_Stride(channels),       // L: 0, 2, 4, ...
-                      floatPtr + 1, vDSP_Stride(channels),   // R: 1, 3, 5, ...
-                      &mono, 1, vDSP_Length(framesPerChannel))
-            var half: Float = 0.5
-            vDSP_vsmul(mono, 1, &half, &mono, 1, vDSP_Length(framesPerChannel))
-        } else {
-            // Mono or non-interleaved: just copy first channel
-            memcpy(&mono, floatPtr, framesPerChannel * MemoryLayout<Float>.size)
-        }
-        
-        // Step 2: Decimate (48kHz → 16kHz = take every 3rd sample) + scale to Int16 range
+        // Step 2: Resample to 16kHz and scale to Int16 range.
+        // Integer ratios use cheap decimation (e.g. 48k→16k). Non-integer
+        // ratios (e.g. 24k→16k on Bluetooth HFP) use linear interpolation.
         var scaled = [Float](repeating: 0, count: outputFrames)
-        var scale: Float = 32767.0
-        vDSP_vsmul(mono, vDSP_Stride(decimation), &scale, &scaled, 1, vDSP_Length(outputFrames))
+        let amplitudeScale: Float = isFloatFormat ? 32767.0 : 1.0
+        if canUseDecimation {
+            var scale = amplitudeScale
+            vDSP_vsmul(mono, vDSP_Stride(decimation), &scale, &scaled, 1, vDSP_Length(outputFrames))
+        } else {
+            let sourceStep = Float(inputFormat.sampleRate / targetRate)
+            var sourcePos: Float = 0
+            for i in 0..<outputFrames {
+                let base = Int(sourcePos)
+                let next = min(base + 1, framesPerChannel - 1)
+                let frac = sourcePos - Float(base)
+                let value = mono[base] + (mono[next] - mono[base]) * frac
+                scaled[i] = value * amplitudeScale
+                sourcePos += sourceStep
+            }
+        }
         
         // Step 3: Clamp to Int16 range
         var lo: Float = -32768
@@ -637,6 +885,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         // Step 4: Float32 → Int16
         var int16Out = [Int16](repeating: 0, count: outputFrames)
         vDSP_vfix16(scaled, 1, &int16Out, 1, vDSP_Length(outputFrames))
+        sysOutputFrameCount += outputFrames
         
         // Diagnostic: log first callback's output values + periodic output RMS
         sysCallbackCount += 1
@@ -646,6 +895,22 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             var monoMsq: Float = 0
             vDSP_measqv(mono, 1, &monoMsq, vDSP_Length(framesPerChannel))
             print("[SystemAudio] First output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], monoRMS=\(String(format: "%.4f", sqrt(monoMsq)))")
+            DebugLogger.shared.log(.audio, "System first output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], inRMS=\(String(format: "%.5f", normalizedInputRMS))")
+        }
+        
+        if now - lastSystemHeartbeat > 10.0 {
+            lastSystemHeartbeat = now
+            let ringNow = currentRingSampleCount()
+            let nonSilentPct = sysCallbackCount > 0
+                ? (Double(sysNonSilentCallbacks) / Double(sysCallbackCount) * 100.0)
+                : 0
+            DebugLogger.shared.log(
+                .audio,
+                "System heartbeat: callbacks=\(sysCallbackCount), inFrames=\(sysInputFrameCount), outFrames=\(sysOutputFrameCount), inRMS=\(String(format: "%.5f", normalizedInputRMS)), nonSilent=\(String(format: "%.1f", nonSilentPct))%, ring=\(ringNow)/\(ringCapacity)"
+            )
+            if sysCallbackCount > 60 && sysNonSilentCallbacks == 0 {
+                DebugLogger.shared.log(.audio, "System warning: tap callbacks are active but all buffers are near-silent")
+            }
         }
         
         let data = Data(bytes: int16Out, count: outputFrames * MemoryLayout<Int16>.size)
@@ -664,6 +929,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             guard let basePtr = raw.baseAddress else { return }
             let int16Ptr = basePtr.assumingMemoryBound(to: Int16.self)
             let sampleCount = raw.count / MemoryLayout<Int16>.size
+            ringSamplesAppended += sampleCount
             
             ringLock.lock()
             defer { ringLock.unlock() }
@@ -693,6 +959,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             ringReadIndex = (ringReadIndex + 1) % ringCapacity
         }
         ringCount -= drainCount
+        ringSamplesDrained += drainCount
         return drainCount
     }
     
@@ -708,6 +975,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     
     nonisolated(unsafe) private var lastMicLevelUpdate: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastMixDebugLog: CFAbsoluteTime = 0
+    private let mixScratchCapacity = 4096
     // Scratch buffer for mixing (avoids per-call allocation)
     nonisolated(unsafe) private let mixScratch: UnsafeMutablePointer<Int16> = {
         let ptr = UnsafeMutablePointer<Int16>.allocate(capacity: 4096)
@@ -747,13 +1015,26 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         if now - lastMicHeartbeat > 10.0 {
             lastMicHeartbeat = now
             let level = calculateLevelVDSP(buffer)
-            DebugLogger.shared.log(.audio, "Mic heartbeat: \(micBufferCount) buffers, level=\(String(format: "%.5f", level)), frames=\(micSamples)")
+            let ringNow = currentRingSampleCount()
+            DebugLogger.shared.log(
+                .audio,
+                "Mic heartbeat: buffers=\(micBufferCount), level=\(String(format: "%.5f", level)), frames=\(micSamples), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), sys(cb=\(sysCallbackCount), nonSilent=\(sysNonSilentCallbacks)), ring=\(ringNow)/\(ringCapacity)"
+            )
         }
         
         // Mix with buffered system audio (gain-normalized)
-        let sysDrained = drainRingBuffer(into: mixScratch, maxSamples: micSamples)
+        if micSamples > mixScratchCapacity && now - lastNoSystemMixWarning > 5.0 {
+            lastNoSystemMixWarning = now
+            DebugLogger.shared.log(
+                .audio,
+                "Mix warning: mic frame count (\(micSamples)) exceeds scratch capacity (\(mixScratchCapacity)); draining system audio in chunks"
+            )
+        }
+        let drainCap = min(micSamples, mixScratchCapacity)
+        let sysDrained = drainRingBuffer(into: mixScratch, maxSamples: drainCap)
         
         if sysDrained > 0 {
+            mixWithSystemCount += 1
             // === Adaptive dual AGC ===
             // Measure actual Int16 RMS of each buffer, compute gain to reach
             // target, smooth gain transitions. Works regardless of hardware
@@ -841,6 +1122,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let data = Data(bytes: mixedInt16, count: micSamples * 2)
             callback?(data)
         } else {
+            mixMicOnlyCount += 1
+            if sysCallbackCount > 0 && now - lastNoSystemMixWarning > 5.0 {
+                lastNoSystemMixWarning = now
+                DebugLogger.shared.log(
+                    .audio,
+                    "Mix warning: no system samples drained (ring empty). sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks)"
+                )
+            }
             // No system audio buffered — mic only. Log as mic-dominant.
             let streamTime = Double(cumulativeSamplesSent) / 16000.0
             sourceLogLock.lock()
