@@ -668,9 +668,27 @@ struct GeneralSettingsView: View {
                             handleVersionTap()
                         }
                 }
-                Link(destination: URL(string: "https://ianahuja.com/miniti/privacy/")!) {
+                Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
-                        Text("Privacy & Terms")
+                        Text("miniti.app")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Link(destination: URL(string: "https://miniti.app/privacy")!) {
+                    HStack {
+                        Text("Privacy")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Link(destination: URL(string: "https://miniti.app/terms")!) {
+                    HStack {
+                        Text("Terms")
                         Spacer()
                         Image(systemName: "arrow.up.right")
                             .font(.caption)
