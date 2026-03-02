@@ -291,6 +291,36 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
     
+    struct AppleVerifyResponse: Decodable {
+        let success: Bool
+        let tier: String
+        let minutesLimit: Double
+        let resetsAt: Date
+        let subscriptionStatus: String?
+        
+        enum CodingKeys: String, CodingKey {
+            case success
+            case tier
+            case minutesLimit = "minutes_limit"
+            case resetsAt = "resets_at"
+            case subscriptionStatus = "subscription_status"
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            success = try container.decode(Bool.self, forKey: .success)
+            tier = try container.decode(String.self, forKey: .tier)
+            resetsAt = try container.decode(Date.self, forKey: .resetsAt)
+            subscriptionStatus = try container.decodeIfPresent(String.self, forKey: .subscriptionStatus)
+            if let val = try? container.decode(Double.self, forKey: .minutesLimit) {
+                minutesLimit = val
+            } else {
+                let str = try container.decode(String.self, forKey: .minutesLimit)
+                minutesLimit = Double(str) ?? 5000
+            }
+        }
+    }
+    
     // MARK: - Errors
     
     enum ServiceError: LocalizedError {
@@ -396,21 +426,32 @@ final class MinitiAPIService: @unchecked Sendable {
     
     /// End a transcription session and report duration. Backend increments usage counter.
     func endSession(deviceId: String, sessionId: String, durationMinutes: Double) async throws -> EndSessionResponse {
-        let request = makeRequest(
-            path: "/session/end",
-            method: "POST",
-            deviceId: deviceId,
-            body: [
-                "session_id": sessionId,
-                "duration_minutes": durationMinutes
-            ]
-        )
-        DebugLogger.shared.log(.app, "API request: POST \(Self.baseURL)/session/end")
-        
-        let (data, response) = try await URLSession.shared.data(for: request)
-        try validateResponse(response, data: data)
-        
-        return try Self.decoder.decode(EndSessionResponse.self, from: data)
+        func sendRequest(path: String) async throws -> EndSessionResponse {
+            let request = makeRequest(
+                path: path,
+                method: "POST",
+                deviceId: deviceId,
+                body: [
+                    "session_id": sessionId,
+                    "duration_minutes": durationMinutes
+                ]
+            )
+            DebugLogger.shared.log(.app, "API request: POST \(Self.baseURL)\(path)")
+            
+            let (data, response) = try await URLSession.shared.data(for: request)
+            try validateResponse(response, data: data)
+            return try Self.decoder.decode(EndSessionResponse.self, from: data)
+        }
+
+        do {
+            return try await sendRequest(path: "/session/end")
+        } catch let error as ServiceError {
+            if case .serverError(let message) = error, message == "HTTP 405" {
+                DebugLogger.shared.log(.app, "API 405 on /session/end — retrying with trailing slash")
+                return try await sendRequest(path: "/session/end/")
+            }
+            throw error
+        }
     }
     
     /// Proxy insights generation through the backend (managed mode).
@@ -481,6 +522,19 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         return try Self.decoder.decode(RestoreResponse.self, from: data)
+    }
+    
+    /// Verify an iOS App Store subscription transaction and link it to this device.
+    func verifyAppleSubscription(deviceId: String, signedTransactionJWS: String) async throws -> AppleVerifyResponse {
+        let request = makeRequest(
+            path: "/apple/verify",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["signed_transaction_jws": signedTransactionJWS]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try Self.decoder.decode(AppleVerifyResponse.self, from: data)
     }
     
     // MARK: - Attio

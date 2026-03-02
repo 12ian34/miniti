@@ -63,6 +63,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var mixMicOnlyCount: Int = 0
     nonisolated(unsafe) private var lastSystemHeartbeat: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastNoSystemMixWarning: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
     private var isRestartingMicAfterConfigChange = false
     private var isRestartingSystemAfterOutputChange = false
     private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
@@ -240,6 +242,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         mixMicOnlyCount = 0
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
         lastNoSystemMixWarning = 0
+        lastSystemNonSilentAt = lastSystemHeartbeat
+        lastSystemAutoRestartAt = 0
         sysCallbackCount = 0
     }
     
@@ -506,6 +510,35 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.isSystemAudioActive = false
                 DebugLogger.shared.log(.audio, "System tap restart FAILED after output change: \(error.localizedDescription)")
             }
+        }
+    }
+
+    private func recoverSystemTapAfterSilentStall(
+        mixWithMic: Bool,
+        silenceDuration: CFAbsoluteTime
+    ) async {
+        guard isCapturing, isSystemAudioActive else { return }
+        guard !isRestartingSystemAfterOutputChange else { return }
+        isRestartingSystemAfterOutputChange = true
+        defer { isRestartingSystemAfterOutputChange = false }
+
+        DebugLogger.shared.log(
+            .audio,
+            "System tap recovery starting after \(String(format: "%.1f", silenceDuration))s near-silence"
+        )
+
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard isCapturing else { return }
+
+        do {
+            stopSystemAudioCapture()
+            try startSystemAudioCapture(mixWithMic: mixWithMic)
+            isSystemAudioActive = true
+            lastSystemNonSilentAt = CFAbsoluteTimeGetCurrent()
+            DebugLogger.shared.log(.audio, "System tap recovery complete")
+        } catch {
+            isSystemAudioActive = false
+            DebugLogger.shared.log(.audio, "System tap recovery FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -838,16 +871,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         vDSP_measqv(mono, 1, &meanSquare, vDSP_Length(framesPerChannel))
         let inputRMS = sqrt(meanSquare)
         let normalizedInputRMS = isFloatFormat ? inputRMS : (inputRMS / 32767.0)
+        let now = CFAbsoluteTimeGetCurrent()
         
         sysInputFrameCount += framesPerChannel
         if normalizedInputRMS > 0.0003 {
             sysNonSilentCallbacks += 1
+            lastSystemNonSilentAt = now
         } else {
             sysSilentCallbacks += 1
         }
         
         // Calculate system audio level (throttled to ~20Hz). Keep display normalized to 0...1.
-        let now = CFAbsoluteTimeGetCurrent()
         if now - lastSystemLevelUpdate > 0.05 {
             lastSystemLevelUpdate = now
             Task { @MainActor [weak self] in
@@ -910,6 +944,25 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             )
             if sysCallbackCount > 60 && sysNonSilentCallbacks == 0 {
                 DebugLogger.shared.log(.audio, "System warning: tap callbacks are active but all buffers are near-silent")
+            }
+
+            // Guardrail for process-tap stalls observed on some route states:
+            // callbacks continue, but stream stays near-zero until tap restart.
+            let silenceDuration = now - lastSystemNonSilentAt
+            let hadPriorSignal = sysNonSilentCallbacks >= 120
+            let cooldownElapsed = (now - lastSystemAutoRestartAt) > 45.0
+            if hadPriorSignal && cooldownElapsed && silenceDuration > 18.0 {
+                lastSystemAutoRestartAt = now
+                DebugLogger.shared.log(
+                    .audio,
+                    "System tap appears stalled (silent \(String(format: "%.1f", silenceDuration))s after prior signal) — scheduling restart"
+                )
+                Task { @MainActor [weak self] in
+                    await self?.recoverSystemTapAfterSilentStall(
+                        mixWithMic: mixWithMic,
+                        silenceDuration: silenceDuration
+                    )
+                }
             }
         }
         

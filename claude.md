@@ -1,6 +1,6 @@
 # Miniti
 
-macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month via Polar.sh), or BYOK (own API keys, unlimited).
+macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month), or BYOK (own API keys, unlimited). Pro purchase rail is platform-specific: Polar.sh on macOS and StoreKit auto-renewable subscription on iOS.
 
 ## Features
 
@@ -29,7 +29,26 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-02-27 - v1.10.1 (current)
+### 2026-03-02 - v1.11.0 (current)
+
+- Add a one-time Terms & Privacy step before onboarding on both macOS and iOS
+- Remember which terms version each user accepted, so people are only asked again when terms change
+- Prevent starting recordings (including shortcuts and menu actions) until terms are accepted
+- Simplify the terms screen to one clear line with direct Terms and Privacy links
+- Update Settings links on macOS and iOS to include Website, Roadmap, and Changelog
+- Change the macOS sidebar label from "new_session" to "new session"
+- Add a subtle green highlight animation to the "multi-dimensional meetings" home tagline on macOS and iOS (respects Reduce Motion)
+- Add native iOS StoreKit 2 subscription purchase flow for Pro (`$4.99/month`) and purchase restore flow
+- Replace iOS license-key restore UX with App Store-compliant "Upgrade to Pro" + "Restore Purchases" in Settings and limit-reached state
+- Add iOS deep link for managing subscriptions in Apple account settings
+- Make active App Store subscribers show as Pro immediately in iOS UI and limits display
+- Add iOS managed-mode display helpers for minutes/usage that show Pro allowances consistently (5,000 min/month) when App Store entitlement is active
+- Keep macOS monetization unchanged (Polar checkout + portal + license-key restore)
+- Redesign update-available banner on macOS and iOS with expandable release notes and cleaner layout
+- Auto-recover system audio when the process tap goes silent mid-recording (e.g. after certain Bluetooth route changes)
+- Fix session-end reporting failing on some backend routing configurations
+
+### 2026-02-27 - v1.10.1
 
 **Audio reliability:**
 - Fix system audio going silent on some Bluetooth headphone configurations
@@ -238,19 +257,20 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts, and custom URL callback handling (Attio OAuth return)
 - **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, Live Activity lifecycle (`#if os(iOS)` guarded)
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings. Includes `managedSessionId: String?` to persist the backend session ID across app kills for orphaned-session usage reporting.
-- **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels
+- **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels, auto-recovers system tap on silent stall
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization)
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DebugLogger.swift** – In-memory ring-buffer logger (1000 entries) with API key redaction. Thread-safe `log()` callable from audio threads. Categories: audio, deepgram, app. Also mirrors log lines to Xcode/system console output for parity while debugging. Shared between macOS and iOS.
 - **Miniti/Views/DebugLogView.swift** – Terminal-style log viewer with category filters, pretty/raw modes, copy, and clear. Raw mode supports direct text selection for partial copy. Accessed via hidden 5-tap on version text in Settings.
 - **Miniti/Services/KeyboardShortcutsService.swift** – Global `NSEvent.addGlobalMonitorForEvents` keyboard handler. Routes Escape (dismiss sheets → close Settings → close help → go home), shortcuts for recording (⌘⇧R, ⌘N, ⌘S, ⌘⌫), navigation (J/K/⌘H), insight mode switching (⌘1/2/3), sidebar collapse (⌘[), insights pane collapse (⌘]), and help overlay (⌘/). Also defines `allKeyboardShortcuts` array for the help overlay.
 - **Miniti/Services/DeviceIdentifier.swift** – Keychain-based persistent device UUID (survives reinstalls)
-- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking, and Attio CRM export helpers (connect start/status/search/send endpoints). Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
-- **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home), active session, audio source panel, waveforms
+- **Miniti/Services/MinitiAPIService.swift** – Backend communication: usage checks, temp key sessions, insights proxy, version checking, Apple subscription verification, and Attio CRM export helpers (connect start/status/search/send endpoints). Auth via `X-API-Key` (shared app secret) + `X-Device-ID` + `X-App-Version` + `X-Platform` headers on every request; device ID never sent in body/query. `checkVersion()` is lightweight (no device ID required). Handles 403 `device_disabled` — sets `isDeviceDisabled` on AppState to block recording and show user message.
+- **Miniti/Views/MeetingView.swift** – Main meeting UI: ReadyStateView (home) with animated `FlashingTagline`, active session, audio source panel, waveforms, expandable `UpdateAvailableBanner`
 - **Miniti/Views/MainWindow.swift** – Window chrome, history sidebar, and macOS historical meeting detail (`MeetingDetailView`, includes `send to attio` sheet with OAuth connect/search/send flow)
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette; merges streaming fragments into sentence-level rows for cleaner display
 - **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC + training modes), shared `TrainingContent` view for speech analytics, and shared metric info-help UI (`TerminalSectionInfo*`; macOS popover + iOS floating popup card via `fullScreenCover`)
 - **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, models (Deepgram + OpenAI), general preferences
+- **Miniti/Views/TermsAcceptanceView.swift** – Privacy & terms acceptance gate shown before onboarding; sets `appState.hasAcceptedTerms = true` on accept. Shared between macOS and iOS.
 - **Miniti/Views/OnboardingView.swift** – First-launch mode selection (managed vs BYOK)
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
 - **Miniti/Views/LimitReachedView.swift** – Hard block when 500 min exhausted, offers BYOK switch
@@ -260,11 +280,11 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 Separate iOS target in the same Xcode project. Mic-only recording (no system audio on iOS). Shares models, services, and several views with macOS target.
 
-- **MinitiMobile/MinitiApp_iOS.swift** – `@main` iOS entry point, `WindowGroup` + `ModelContainer`, onboarding gate, forces `.preferredColorScheme(.dark)` app-wide
+- **MinitiMobile/MinitiApp_iOS.swift** – `@main` iOS entry point, `WindowGroup` + `ModelContainer`, terms gate then onboarding gate, forces `.preferredColorScheme(.dark)` app-wide
 - **MinitiMobile/AudioCaptureService_iOS.swift** – Mic-only `AudioCaptureService` (same class name/interface as macOS). Uses `AVAudioSession` for iOS audio session management. Stubs system audio properties (always false/0). `dominantSource()` always returns `.mic`.
 - **MinitiMobile/Views/MainTabView.swift** – `TabView` with Record / History tabs; wires `@Environment(\.modelContext)` → `appState.modelContext` on appear (critical for SwiftData saves)
 - **MinitiMobile/Views/MeetingView_iOS.swift** – Mobile recording UI: terminal-style buttons (stop/resume/save/home matching macOS), custom section picker, `UIPasteboard` for copy, `SourceWaveform_iOS`
-- **MinitiMobile/Views/SettingsView_iOS.swift** – `NavigationStack` + `Form`, no launch-at-login / system audio toggle / radio picker
+- **MinitiMobile/Views/SettingsView_iOS.swift** – `NavigationStack` + `Form`; managed-mode subscription section includes StoreKit upgrade (`$4.99/month`), restore purchases, and Apple subscription management link
 - **MinitiMobile/Views/HistoryView_iOS.swift** – `NavigationStack` + `List` with drill-down to meeting detail; historical training metrics use `HistoricalDetailBlock_iOS` with local metric info popup types (`HistoricalMetricInfo*`) for iOS-only floating overlays
 - **MinitiMobile/Info.plist** – `NSMicrophoneUsageDescription`, `UIBackgroundModes: [audio]`, `NSSupportsLiveActivities: YES`, `UILaunchScreen` (empty dict, required for iOS launch)
 - **MinitiMobile/MinitiMobile.entitlements** – Empty dict (iOS is always sandboxed; macOS sandbox keys like `com.apple.security.app-sandbox` are invalid on iOS and prevent launch)
@@ -279,7 +299,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 - **MinitiLiveActivity/Info.plist** – `NSExtension` with `com.apple.widgetkit-extension` point identifier
 - Bundle ID: `com.miniti.mobile.live-activity`, deployment target iOS 17.0
 
-**Shared files** (macOS + iOS + extension where noted): `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`, `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `DebugLogger.swift`, `Secrets.swift`, `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`, `Assets.xcassets`, `RecordingActivityAttributes.swift` (iOS app + extension only)
+**Shared files** (macOS + iOS + extension where noted): `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`, `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `DebugLogger.swift`, `Secrets.swift`, `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `TermsAcceptanceView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`, `Assets.xcassets`, `RecordingActivityAttributes.swift` (iOS app + extension only)
 
 **macOS-only files**: `MinitiApp.swift`, `AudioCaptureService.swift`, `KeyboardShortcutsService.swift`, `MainWindow.swift`, `MeetingView.swift`, `SettingsView.swift`
 
@@ -292,7 +312,10 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 ## Key patterns
 
 - **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, route/device-change events, 10-second audio heartbeats, silent-buffer warnings, Deepgram WebSocket/audio/transcript heartbeats, managed-mode API request/response failures (including HTTP status + endpoint/body snippet), and app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style viewer with category filters, pretty/raw view modes, copy, and clear. Raw mode enables partial text selection. Log lines are also mirrored to Xcode/system console via `print` in `DebugLogger.log`.
-- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, release notes, and a download link (currently Proton Drive). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
+- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, expandable release notes ("view notes" / "hide notes"), and a download link (macOS: Proton Drive, iOS: TestFlight). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
+- **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
+- **StoreKit state in AppState (iOS)**: `AppStoreSubscriptionService` lives in `AppState.swift` under `#if os(iOS)`. It loads `com.miniti.mobile.pro.monthly`, handles purchase, restore (`AppStore.sync()`), listens to `Transaction.updates`, and publishes `hasActiveSubscription`.
+- **Managed Pro fast-path on iOS**: `AppState.isPro` and `isLimitReached` consider local StoreKit entitlement (`hasActiveAppStoreSubscription`) in addition to backend usage response. Display helpers (`displayMinutesLimit`, `displayMinutesRemaining`, `displayUsagePercentage`) keep iOS UI consistent at 5,000 min/month when StoreKit entitlement is active.
 - **Attio CRM send (macOS history only)**: user-initiated from saved meeting detail (`send to attio`). OAuth is backend-mediated (Attio redirects to `miniti-api`, backend stores token in KV keyed by device ID, backend redirects back to app custom URL scheme `miniti-attio://`). macOS registers `miniti-attio` in `Info.plist`; `MinitiApp.onOpenURL` forwards the callback to the sheet via `NotificationCenter`. Frontend calls additive backend routes (`/api/attio/connect/start`, `/status`, `/search`, `/send`) and fails gracefully if backend is not deployed yet (shows a clear message instead of breaking older deployments). App payload omits full transcript by default; backend also ignores transcript if older clients still send it.
 - **Managed MEDDPICC live insights throttling/retry**: MEDDPICC mode uses its own segment thresholds + a minimum refresh interval, and managed-mode insight requests retry once on transient timeout/network failures (e.g. 504 / gateway timeout) to make live MEDDPICC updates less flaky.
 - **Live transcript display merge**: streaming-finalized chunks from the same speaker are merged in the UI until a sentence terminator is reached. This keeps the live transcript readable without changing stored transcript data.
@@ -301,6 +324,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 ## Changelog style
 
 Changelog entries in `claude.md` should be written as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
+Never modify older changelog entries after they are written. Add corrections, clarifications, or reversals only as a new entry at the top.
 
 `README.md` should not contain a changelog for this project. Keep it focused on current end-user functionality, setup, and usage guides.
 
@@ -326,7 +350,8 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - Audio levels: `microphoneLevel` and `systemAudioLevel` are published separately for per-source waveforms, plus a combined `audioLevel`
 - Audio monitoring: opt-in "test audio" button on home screen starts lightweight capture (no Deepgram) to verify sources before recording. On macOS, `AudioSourcePanel` uses local `@State isTesting`; on iOS, `isMicTesting` in `ReadyStateView_iOS`. Monitoring stops on view disappear or when the user taps stop.
 - **Audio engine/device-change recovery**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. On macOS, route changes now trigger a guarded full mic restart and dynamic converter rebuild based on actual callback format (instead of relying on a previously captured format), which prevents tap-install format mismatch crashes during 44.1k/48k transitions. The tap is installed with a nil format so it follows current hardware format. Mic restarts are coalesced (short debounce + rate limit) and skipped when the effective input device/format has not meaningfully changed, reducing restart storms during Bluetooth transitions. Default output changes also schedule a debounced system-tap restart after a short settle delay. On iOS, `AVAudioSession.routeChangeNotification` is also observed to log route changes. Observer lifecycles are cleaned up in `stopMicrophoneCapture()`.
-- `@AppStorage` persists API keys, model selection, audio source toggles, app mode, and onboarding state
+- `@AppStorage` persists API keys, model selection, audio source toggles, app mode, onboarding state, and terms acceptance state (`acceptedTermsVersion` + legacy `hasAcceptedTerms`)
+- **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
@@ -353,6 +378,8 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Escape key routing (macOS)**: Centralized in `KeyboardShortcutsService`. Order: (1) dismiss any active sheet (debug log, Attio send) via `cancelOperation` + `performClose`, (2) close Settings/Preferences window, (3) close help overlay, (4) go home. Sheet dismissal scans both key window and all visible windows as fallback. Settings detection checks window title and `toolbarStyle == .preference`.
 - **J/K history navigation vs text entry (macOS)**: `KeyboardShortcutsService` ignores unmodified `j`/`k` and arrow-key history navigation when focus is in an editable text responder (`TextField`/`TextEditor` via AppKit `NSTextView`/field editor). This prevents list scrolling while typing in notes or Attio search fields.
 - **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
+- **System tap silent-stall recovery**: `AudioCaptureService` tracks `lastSystemNonSilentAt` during system audio capture. If callbacks continue but all buffers are near-silent for 18+ seconds after the tap previously produced real audio (≥120 non-silent callbacks), `recoverSystemTapAfterSilentStall` tears down and recreates the process tap. A 45-second cooldown (`lastSystemAutoRestartAt`) prevents restart storms. This handles edge cases where certain Bluetooth route changes leave the process tap in a dead state that still fires callbacks.
+- **Session end 405 retry**: `MinitiAPIService.endSession` retries the request with a trailing slash if the backend returns HTTP 405, a defensive measure for routing edge cases in the Vercel deployment.
 
 ## Audio flow
 
@@ -388,8 +415,9 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 ## UI states
 
 ### macOS
-- **Onboarding** (first launch): Mode selection — "Early Adopter" (managed, 500 min/month) or "Bring Your Own Keys"
-- **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; audio source panel, start button; cog button (top-right) opens settings
+- **Terms acceptance** (first launch or existing users who haven't accepted): Privacy & terms gate — shows before onboarding. Links to privacy policy and terms. Single "i agree" button advances to onboarding or home. Backed by versioned acceptance in `@AppStorage` (`acceptedTermsVersion`, with legacy bool migration).
+- **Onboarding** (first launch, after terms): Mode selection — "Early Adopter" (managed, 500 min/month) or "Bring Your Own Keys"
+- **Home** (`ReadyStateView`): Mode-aware — managed shows usage status, BYOK shows API pills; animated "multi-dimensional meetings" tagline; audio source panel, start button; cog button (top-right) opens settings
 - **Home (limit reached)**: In managed mode when 500 min used — inline "switch to BYOK" prompt, start button disabled
 - **Home (device disabled)**: In managed mode when admin has disabled the device — shows "account disabled" message, start button hidden
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup — stays on home screen until recording begins
@@ -399,62 +427,66 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram + OpenAI), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘, or menu bar
 
 ### iOS
-- **Onboarding** (first launch): Same as macOS (shared `OnboardingView`)
-- **Home** (`ReadyStateView_iOS`): Logo, mode status pill, "test mic" button (opt-in waveform), gear icon for settings, start button. Mic-only (no system audio toggle)
+- **Terms acceptance** (first launch or existing users who haven't accepted): Same as macOS (shared `TermsAcceptanceView`)
+- **Onboarding** (first launch, after terms): Same as macOS (shared `OnboardingView`)
+- **Home** (`ReadyStateView_iOS`): Logo with animated "multi-dimensional meetings" tagline, mode status pill, "test mic" button (opt-in waveform), gear icon for settings, start button. Mic-only (no system audio toggle)
+- **Home (limit reached)**: In managed mode when free cap is reached — shows in-app "Upgrade to Pro — $4.99/month", "Restore Purchases", and BYOK fallback
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup
 - **Recording**: Header with red dot + timer (center) + waveform, custom lowercase section picker (transcript/insights/notes), stop button at bottom center
 - **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), start/resume (center, same position as stop), save (right)
 - **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes, lowercase). Transcript collapses consecutive same-speaker segments. Insights contains standard / MEDDPICC / training modes plus generate/update for saved meetings. Training metrics are computed from saved segments. Notes are editable.
-- **Settings**: Accessible via gear icon on home screen (no dedicated tab)
+- **Settings**: Accessible via gear icon on home screen (no dedicated tab). Managed mode includes in-app Pro purchase, restore purchases, and Apple subscription management link.
 - **Tab bar**: Record / History — two-tab navigation
 
 ## Monetization
 
-> **Note:** Strategy below is planning/aspirational; may be outdated. Current implementation is two-mode only (Free/BYOK), no Pro tier yet.
+> **Note:** Current implementation supports three options: Managed Free, Managed Pro, and BYOK. Some financial projections below are legacy scenario modeling and are explicitly marked.
 
 ### Commercial model
 
 | | Free | Pro | BYOK |
 |---|---|---|---|
-| **Price** | $0 | $14/mo or $120/yr | $0 (forever) |
-| **Minutes** | 500/month | Unlimited | Unlimited |
-| **Transcription** | Deepgram Nova-2 | Deepgram Nova-3 | User's own |
-| **LLM** | GPT-5 Nano | GPT-5 Mini | User's own |
-| **AI insights** | Summary, timeline, action items, topics | All free insights + MEDDPICC + future methodologies | All (user pays own API) |
+| **Price** | $0 | $5/mo (or £5/mo) | $0 (forever) |
+| **Minutes** | 500/month | 5000/month | Unlimited |
+| **Transcription** | Managed backend | Managed backend | User's own |
+| **LLM** | Managed backend | Managed backend | User's own |
+| **AI insights** | Standard + MEDDPICC | Standard + MEDDPICC | Standard + MEDDPICC (user pays API) |
 | **History** | Full | Full | Full |
 
 - **BYOK** is always free and unlimited — zero cost, pure evangelists
-- **Free** is generous (500 min) to build habit and word-of-mouth; conversion lever is quality (Nova-3 transcription, GPT-5 Mini analysis, MEDDPICC)
-- **Pro** annual plan (~29% discount vs monthly) drives commitment and reduces churn
+- **Free** is generous (500 min) to build habit and word-of-mouth
+- **Pro** expands managed usage to 5,000 min/month and keeps setup keyless
 - No team/enterprise tier yet — nail individual experience first
 
 ### Payment implementation
 
-**iOS (App Store):**
-- StoreKit 2 for subscription management (auto-renewable subscriptions)
-- Apple handles billing, receipts, renewals, refunds
-- Apple commission: 15% (Small Business Program, <$1M/year proceeds)
-- Receipt validation server-side via App Store Server API
-- Backend tracks entitlements by device ID (existing infrastructure)
+**Current implementation: split rails by platform**
+- **macOS:** Polar.sh web checkout + portal + license-key restore
+- **iOS:** StoreKit 2 auto-renewable subscription (`com.miniti.mobile.pro.monthly`) with in-app purchase + in-app restore (`AppStore.sync()`)
+- Subscription state and limits are still enforced server-side for managed usage; iOS also has a local StoreKit entitlement fast-path for immediate Pro UX
 
 **macOS (direct DMG):**
-- Paddle or LemonSqueezy as Merchant of Record (handles global VAT/tax)
-- LemonSqueezy fee: ~5.5% + $0.50/transaction (+1.5% international, +0.5% subscription)
-- License key or account-based activation via device ID
+- Upgrade and management flows open Polar pages in the browser
 - No Mac App Store (sandbox blocks `AudioHardwareCreateProcessTap`)
 
-**Blended platform fee estimate:** ~12% (weighted ~60% iOS at 15% / ~40% macOS at ~7%)
+**iOS:**
+- In-app subscription purchase button in Settings and limit-reached state
+- In-app "Restore Purchases" flow (`AppStore.sync()`)
+- Manage subscription opens Apple's subscriptions page (`https://apps.apple.com/account/subscriptions`)
+- iOS UI no longer relies on license-key restore flow
 
 ### UK business structure
 
 No company required to start — operate as sole trader:
 - Apple Developer Program accepts individual enrollment
-- Paddle/LemonSqueezy handle VAT collection for macOS sales as Merchant of Record
+- Polar.sh can operate as Merchant of Record for subscription sales and VAT handling
 - Register for Self Assessment with HMRC for income tax
 - VAT registration required only if UK taxable turnover exceeds £90K/year
 - Form a Ltd company when revenue justifies it (£12 at Companies House, better liability protection)
 
-### Financial model
+### Financial model (legacy scenario model)
+
+> Assumes an older `$14/mo + unlimited` Pro concept. Keep as historical/reference math only until recalculated for the current `$5/mo, 5,000 min/month` model.
 
 #### Service pricing (as of Feb 2026, pay-as-you-go)
 
@@ -523,23 +555,93 @@ Three parallel modes:
 
 - **BYOK Mode**: User's own API keys, unlimited, no backend, no tracking
 - **Managed Free**: 500 min/month, Deepgram via temp API keys (backend issues short-lived scoped keys), OpenAI proxied through backend, hard-blocked at limit
-- **Managed Pro**: 5,000 min/month for $5/month (or £5/month GBP). Subscription via Polar.sh. Same backend routing as free, just higher limit.
+- **Managed Pro**: 5,000 min/month for $5/month (or £5/month GBP). Subscription rail is platform-specific: Polar.sh on macOS and StoreKit on iOS. Same backend routing as free, just higher limit.
 - Mode toggle is a local routing switch only; user-entered BYOK keys persist in `@AppStorage` across mode switches (Secrets defaults are stripped in managed mode). Pro is a tier within managed mode, not a separate AppMode.
-- Usage tracking is 100% server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter. Pro users' usage resets align with their Polar billing cycle (`current_period_end`), not a fixed calendar date. Free users reset on the 1st of each month UTC.
+- Usage tracking is server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter. Free users reset on the 1st of each month UTC. Polar-backed Pro resets align to Polar billing cycle (`current_period_end`). iOS StoreKit currently has a local entitlement fast-path in-app for immediate Pro UX while full Apple server verification/webhook sync is being aligned in backend.
 - Device ID stored in macOS Keychain (`DeviceIdentifier.swift`) — persists across reinstalls, tamper-resistant
 - Backend API keys (Deepgram/OpenAI) stored as Vercel encrypted env vars, never exposed to client
 - At limit: free users can upgrade to Pro, switch to BYOK, or wait for monthly reset
 - Backend is a separate repo (`miniti-api`), deployed at `https://miniti-api.vercel.app`; full spec in `BACKEND_SPEC.md`
 
-#### Polar.sh subscription integration
+#### Subscription integration (current split)
 - **Checkout flow (macOS only)**: App calls `GET /api/subscribe` → backend creates Polar checkout session with `customerExternalId=deviceId` → returns checkout URL → app opens in system browser → user pays → Polar webhook fires → backend upgrades device tier in Redis
 - **Webhook handling**: `POST /api/webhooks/polar` verifies HMAC-SHA256 signature (Standard Webhooks spec, zero npm dependencies — uses Web Crypto API). Handles `subscription.active`, `subscription.canceled`, `subscription.revoked`, `subscription.updated`. On activation/renewal, extracts `current_period_start`/`current_period_end` from the subscription payload to align the device's usage reset date with the billing cycle. If the billing period rolled over (new `current_period_start`), minutes are reset to 0. Cancellation downgrades ALL devices linked to that subscription via `polar_sub:{subId}:devices` Redis SET and reverts reset dates to 1st-of-month.
 - **License key restore**: Polar auto-generates a license key on subscription. User enters it on any new device via `POST /api/restore` → backend calls Polar's public activation API → verifies active subscription → links device. License keys are auto-revoked on cancellation.
 - **Customer portal**: `GET /api/portal` creates a Polar customer portal session for managing subscription (cancel, update payment, view invoices). Opens in browser.
-- **iOS App Store compliance**: iOS app does NOT show any purchase/upgrade button (Apple guideline 3.1.1). Shows subscription status and restore only. Users subscribe via macOS app or website.
+- **StoreKit flow (iOS):** iOS app loads `com.miniti.mobile.pro.monthly`, presents native purchase sheet, supports in-app restore via `AppStore.sync()`, and opens Apple subscription management URL for cancellations/changes.
+- **iOS App Store compliance:** iOS purchase and restore are now in-app (no external web checkout button in iOS purchase UX).
+- **Cross-platform policy:** subscriptions are intentionally separate by platform (Apple IAP does not unlock macOS Polar Pro, and Polar does not auto-unlock Apple IAP).
 - **Security**: Polar access token is server-side only (`POLAR_ACCESS_TOKEN` env var). Subscription state enforced in Redis — app cannot fake pro status. Webhook signatures verified cryptographically. Restore rate-limited (5/min).
 - **Env vars**: `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`
 - **Redis per-device additions**: `polarCustomerId`, `polarSubscriptionId`, `subscriptionStatus` (active/canceled/null), `currentPeriodStart` (ISO 8601, from Polar webhook). `polar_sub:{subId}:devices` SET tracks all devices linked to a subscription for bulk downgrade on cancel.
+
+#### Apple backend implementation plan (required next, in `miniti-api`)
+
+Status right now: iOS purchase UI exists in-app, but backend entitlement is still Polar-centric. Without Apple backend verification, paid iOS users can still hit backend free-tier limits.
+
+Implementation target:
+- Keep separate rails: macOS Pro = Polar, iOS Pro = Apple.
+- Do not implement Apple→macOS restore/linking.
+- Optional and recommended: share iOS Pro entitlement across iOS devices using Apple `originalTransactionId`.
+
+Data model changes (`lib/usage.ts` `DeviceData` + Redis):
+- Add `subscriptionSource: "polar" | "apple" | null`.
+- Add `appleOriginalTransactionId: string | null`.
+- Add `appleSubscriptionStatus: "active" | "grace" | "billing_retry" | "expired" | "revoked" | null`.
+- Add `applePeriodStart: string | null` and `applePeriodEnd: string | null`.
+- Add `appleEnvironment: "Sandbox" | "Production" | null`.
+- Add set `apple_sub:{originalTransactionId}:devices`.
+- Add hash `apple_sub_state:{originalTransactionId}` for canonical Apple subscription state.
+- Add idempotency key `apple_event:{notificationUUID}` for webhook dedupe.
+
+New Apple verification utilities (`lib/apple.ts`):
+- Verify signed transaction JWS (StoreKit 2 purchase/restore payload).
+- Verify App Store Server Notifications v2 signed payload.
+- Validate `bundleId` and `productId` (`com.miniti.mobile.pro.monthly`).
+- Extract `originalTransactionId`, period start/end, status, environment.
+- Provide helpers for linking/unlinking Apple subscriptions to device records.
+
+New endpoint: `POST /api/apple/verify`:
+- Auth: existing `X-API-Key` + `X-Device-ID`.
+- Input: signed transaction payload from iOS.
+- Verify JWS, enforce allowed product ID, enforce bundle ID.
+- Link device to Apple subscription, set tier to Pro for iOS rail, align `resetDate` to Apple period end, reset minutes on new period start.
+- Return usage payload shape compatible with app (`tier`, `minutes_limit`, `subscription_status`, `resets_at`).
+
+New endpoint: `POST /api/webhooks/apple`:
+- Verify App Store Server Notification v2 signature.
+- Enforce idempotency via `notificationUUID`.
+- Handle at least: subscribed/renewed, grace/retry, expired/revoked/refund.
+- Update all linked iOS devices for the `originalTransactionId`.
+- Recompute effective tier/source after each event.
+
+Usage gating/reset updates:
+- `POST /api/session` and `GET /api/usage` must use effective entitlement state, not just Polar fields.
+- Free resets stay monthly UTC.
+- Polar Pro resets stay billing-cycle aligned (existing behavior).
+- Apple Pro resets must align to Apple subscription period boundaries.
+
+Rate limiting:
+- Add dedicated buckets for `apple_verify` and `webhooks/apple`.
+
+Env vars to add:
+- `APPLE_BUNDLE_ID` (`com.miniti.mobile`)
+- `APPLE_IAP_PRODUCT_ID` (`com.miniti.mobile.pro.monthly`)
+- For App Store Server API access if needed: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`
+
+Admin/reporting expectations:
+- App Store does not provide subscriber emails for IAP users.
+- Keep Polar email enrichment for Polar customers only.
+- For Apple subscribers, rely on internal device IDs + Apple transaction identifiers + App Store Connect aggregate reports.
+
+Test matrix before release:
+- New iOS purchase upgrades backend entitlement immediately.
+- Renewal advances reset date and resets minutes on new period.
+- Grace/retry states behave as intended.
+- Expiry/revoke/refund downgrades entitlement.
+- Restore purchases works on same/new iOS device.
+- Polar flows still work unchanged.
+- Apple iOS purchase does not unlock macOS Polar Pro.
 
 #### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
@@ -561,7 +663,7 @@ Three parallel modes:
 - `POST /api/insights` — OpenAI proxy for transcript analysis; modes: `standard` or `meddpicc`; transcript capped at 100KB (10 req/min)
 - `GET /api/subscribe` — create Polar checkout session with `customerExternalId=deviceId`; returns `{ checkout_url }` (5 req/min)
 - `POST /api/webhooks/polar` — Polar webhook receiver; HMAC signature verification (no X-API-Key); handles subscription lifecycle
-- `POST /api/restore` — activate Polar license key on device; verifies active subscription; links device to subscription (5 req/min)
+- `POST /api/restore` — activate Polar license key on device; verifies active subscription; links device to subscription (5 req/min, macOS/web restore path)
 - `GET /api/portal` — create Polar customer portal session; returns `{ portal_url }`; requires device to have `polarCustomerId` (5 req/min)
 - `POST /api/attio/connect/start`, `GET /api/attio/status`, `POST /api/attio/search`, `POST /api/attio/send` — additive Attio CRM export routes (backend stores OAuth token; older app versions unaffected)
 
@@ -630,12 +732,12 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 
 #### iOS
 1. Bump version (same step as macOS — shared version across all targets)
-2. Xcode: **Product → Archive → Distribute App → App Store Connect → Upload**
-3. Wait for Apple to process the build (~5–15 min)
-4. Go to [App Store Connect](https://appstoreconnect.apple.com) → MinitiMobile → TestFlight → External Testing
-5. Add the new build to the external testers group
-6. Add test instructions describing what changed and what to test
-7. Submit for review — wait for Apple's TestFlight review (can take a few days). The TestFlight link stays the same; testers get the new build automatically once approved.
+2. Confirm App Store Connect auto-renewable subscription exists: `com.miniti.mobile.pro.monthly` (USD `$4.99`), with localized display name/description
+3. Confirm app metadata includes privacy URL + terms URL and that subscription metadata is complete
+4. Xcode: **Product → Archive → Distribute App → App Store Connect → Upload**
+5. Wait for Apple to process the build (~5–15 min)
+6. If doing TestFlight first: add build to external testing group and submit for TestFlight review
+7. For same-day App Store submission: create app version in App Store Connect, attach the uploaded build, complete screenshots/review notes, and submit for App Review
 
 #### After both platforms
 1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
@@ -652,6 +754,7 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 ### iOS (MinitiMobile)
 - Bundle ID: `com.miniti.mobile`, deployment target iOS 17.0
 - Distribution: App Store (no sandbox restrictions for mic-only recording)
+- In-app purchase: StoreKit 2 auto-renewable subscription product `com.miniti.mobile.pro.monthly` (`$4.99/month`)
 - Background audio: `UIBackgroundModes: [audio]` + `AVAudioSession` category `.playAndRecord` enables recording while backgrounded
 - Live Activity: `MinitiLiveActivityExtension` widget extension (bundle ID: `com.miniti.mobile.live-activity`), embedded in MinitiMobile via "Embed App Extensions" build phase. Shows recording on Dynamic Island + Lock Screen.
 - No system audio capture — iOS sandbox prevents it entirely

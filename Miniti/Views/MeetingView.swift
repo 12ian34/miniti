@@ -103,10 +103,7 @@ struct ReadyStateView: View {
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 
-                Text("multi-dimensional meetings")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "A1A1AA"))
-                    .tracking(2)
+                FlashingTagline(text: "multi-dimensional meetings")
             }
             
             // Mode-aware status section
@@ -253,6 +250,99 @@ struct ReadyStateView: View {
             .padding(12)
         }
     }
+}
+
+private struct FlashingTagline: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    
+    var body: some View {
+        Group {
+            if reduceMotion {
+                baseText
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { context in
+                    let motion = flashMotion(at: context.date.timeIntervalSinceReferenceDate)
+                    ZStack {
+                        baseText
+                        highlightedText(motion: motion)
+                    }
+                }
+            }
+        }
+    }
+    
+    private var baseText: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(Color(hex: "A1A1AA"))
+            .tracking(2)
+    }
+    
+    private func highlightedText(motion: FlashMotion) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(Color(hex: "3FB950"))
+            .tracking(2)
+            .opacity(0.72 + (0.20 * motion.spark))
+            .blendMode(.plusLighter)
+            .mask {
+                GeometryReader { proxy in
+                    let width = max(proxy.size.width, 1)
+                    let height = max(proxy.size.height, 1)
+                    let primaryX = width * motion.primaryCenter
+                    let secondaryX = width * motion.secondaryCenter
+                    let primaryWidth = max(width * motion.primaryWidth, 22)
+                    let secondaryWidth = max(width * motion.secondaryWidth, 14)
+                    
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.05 + (0.04 * motion.spark)))
+                        
+                        Capsule()
+                            .fill(Color.white.opacity(0.92))
+                            .frame(width: primaryWidth, height: max(height * 0.95, 12))
+                            .blur(radius: 5)
+                            .offset(x: primaryX - (width / 2))
+                        
+                        Capsule()
+                            .fill(Color.white.opacity(0.62))
+                            .frame(width: secondaryWidth, height: max(height * 0.8, 10))
+                            .blur(radius: 7)
+                            .offset(x: secondaryX - (width / 2))
+                    }
+                }
+            }
+    }
+    
+    private func flashMotion(at time: TimeInterval) -> FlashMotion {
+        let t = time * 0.9
+        let primaryCenter = clamp01(0.5 + (0.36 * sin(t * 1.4)) + (0.12 * sin((t * 3.1) + 0.8)))
+        let secondaryCenter = clamp01(0.5 + (0.41 * sin((t * 1.95) + 1.9)) + (0.08 * sin((t * 5.3) + 0.3)))
+        let primaryWidth = CGFloat(0.18 + (0.22 * (0.5 + (0.5 * sin((t * 2.45) + 0.4)))))
+        let secondaryWidth = CGFloat(0.09 + (0.14 * (0.5 + (0.5 * sin((t * 3.8) + 2.0)))))
+        let spark = CGFloat(0.5 + (0.5 * sin((t * 6.7) + (0.5 * sin(t * 2.2)))))
+        
+        return FlashMotion(
+            primaryCenter: primaryCenter,
+            secondaryCenter: secondaryCenter,
+            primaryWidth: primaryWidth,
+            secondaryWidth: secondaryWidth,
+            spark: spark
+        )
+    }
+    
+    private func clamp01(_ value: Double) -> CGFloat {
+        CGFloat(min(max(value, 0), 1))
+    }
+}
+
+private struct FlashMotion {
+    let primaryCenter: CGFloat
+    let secondaryCenter: CGFloat
+    let primaryWidth: CGFloat
+    let secondaryWidth: CGFloat
+    let spark: CGFloat
 }
 
 // MARK: - API Status Pill
@@ -1922,38 +2012,68 @@ struct AudioSourcePill: View {
 
 struct UpdateAvailableBanner: View {
     let versionInfo: MinitiAPIService.VersionInfo
+    @State private var isShowingFullNotes = false
+    
+    private var releaseNotes: String? {
+        guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !notes.isEmpty else { return nil }
+        return notes
+    }
+    
+    private var downloadURL: URL? {
+        guard let url = URL(string: versionInfo.downloadUrl),
+              url.scheme?.lowercased() == "https" else { return nil }
+        return url
+    }
     
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: 10))
-                .foregroundStyle(ColorPalette.Accent.blue)
-            
-            Text("v\(versionInfo.latestVersion) available")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(ColorPalette.Accent.blue)
-            
-            if let notes = versionInfo.releaseNotes, !notes.isEmpty {
-                Text("— \(notes)")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
-                    .lineLimit(1)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 10))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                
+                Text("v\(versionInfo.latestVersion) available")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                
+                if releaseNotes != nil {
+                    Button(isShowingFullNotes ? "hide notes" : "view notes") {
+                        isShowingFullNotes.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.85))
+                }
+                
+                if let url = downloadURL {
+                    Link(destination: url) {
+                        Text("download")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Accent.blue)
+                    }
+                    .focusable(false)
+                }
             }
             
-            Spacer()
-            
-            if let url = URL(string: versionInfo.downloadUrl),
-               url.scheme?.lowercased() == "https" {
-                Link(destination: url) {
-                    Text("download")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Accent.blue)
-                }
-                .focusable(false)
+            if let notes = releaseNotes {
+                Text(notes)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
+                    .lineLimit(isShowingFullNotes ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: isShowingFullNotes)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !isShowingFullNotes {
+                            isShowingFullNotes = true
+                        }
+                    }
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+        .frame(maxWidth: 440, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(Color(hex: "58A6FF").opacity(0.08))

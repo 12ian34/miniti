@@ -6,10 +6,9 @@ struct SettingsView_iOS: View {
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
     @State private var showDebugLog = false
-    @State private var showRestoreSheet = false
-    @State private var licenseKeyInput = ""
-    @State private var isRestoring = false
-    @State private var restoreError: String?
+    @State private var isPurchasing = false
+    @State private var isRestoringPurchases = false
+    @State private var subscriptionMessage: String?
     
     var body: some View {
         NavigationStack {
@@ -28,7 +27,7 @@ struct SettingsView_iOS: View {
                     
                     Text(appState.appMode == .managed
                          ? (appState.isPro
-                            ? "Pro subscription active. \(Int(appState.usageInfo?.minutesLimit ?? 5000)) minutes per month."
+                            ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
                             : "500 free minutes per month via Miniti's backend.")
                          : "Use your own Deepgram & OpenAI API keys. No limits.")
                         .font(.caption)
@@ -41,7 +40,7 @@ struct SettingsView_iOS: View {
                             Text("Plan")
                             Spacer()
                             if appState.isPro {
-                                Text("Pro — \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
+                                Text("Pro — \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
                                     .fontWeight(.medium)
                             } else {
@@ -54,11 +53,62 @@ struct SettingsView_iOS: View {
                             Button("Manage Subscription") {
                                 Task { await appState.openManageSubscriptionPage() }
                             }
+                        } else {
+                            Button {
+                                guard !isPurchasing else { return }
+                                isPurchasing = true
+                                subscriptionMessage = nil
+                                Task {
+                                    let success = await appState.purchaseProSubscription()
+                                    isPurchasing = false
+                                    if success {
+                                        subscriptionMessage = "Pro subscription is now active."
+                                    } else {
+                                        subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                                    }
+                                }
+                            } label: {
+                                if isPurchasing {
+                                    HStack {
+                                        ProgressView()
+                                        Text("Purchasing...")
+                                    }
+                                } else {
+                                    Text("Upgrade to Pro — $4.99/month")
+                                }
+                            }
                         }
                         
-                        Button("Restore with License Key") {
-                            showRestoreSheet = true
+                        Button {
+                            guard !isRestoringPurchases else { return }
+                            isRestoringPurchases = true
+                            subscriptionMessage = nil
+                            Task {
+                                let restored = await appState.restoreAppStorePurchases()
+                                isRestoringPurchases = false
+                                if restored {
+                                    subscriptionMessage = "Purchases restored."
+                                } else {
+                                    subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "No active App Store subscription found."
+                                }
+                            }
+                        } label: {
+                            if isRestoringPurchases {
+                                HStack {
+                                    ProgressView()
+                                    Text("Restoring...")
+                                }
+                            } else {
+                                Text("Restore Purchases")
+                            }
                         }
+                        
+                        if let subscriptionMessage {
+                            Text(subscriptionMessage)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        
                     }
                     
                     Section("Usage") {
@@ -66,18 +116,18 @@ struct SettingsView_iOS: View {
                             HStack {
                                 Text("Minutes Used")
                                 Spacer()
-                                Text("\(Int(usage.minutesUsed.rounded())) / \(Int(usage.minutesLimit))")
+                                Text("\(Int(appState.displayMinutesUsed.rounded())) / \(Int(appState.displayMinutesLimit))")
                                     .foregroundStyle(.secondary)
                             }
                             
-                            ProgressView(value: usage.usagePercentage)
-                                .tint(usage.isPro ? .purple : (usage.minutesRemaining < 60 ? .orange : .green))
+                            ProgressView(value: appState.displayUsagePercentage)
+                                .tint(appState.isPro ? .purple : (appState.displayMinutesRemaining < 60 ? .orange : .green))
                             
                             HStack {
                                 Text("Remaining")
                                 Spacer()
-                                Text(usage.formattedRemaining)
-                                    .foregroundStyle(usage.minutesRemaining < 60 ? .orange : (usage.isPro ? .purple : .green))
+                                Text(appState.formattedDisplayRemaining)
+                                    .foregroundStyle(appState.displayMinutesRemaining < 60 ? .orange : (appState.isPro ? .purple : .green))
                                     .fontWeight(.medium)
                             }
                             
@@ -175,9 +225,30 @@ struct SettingsView_iOS: View {
                                 handleVersionTap()
                             }
                     }
+                    Text("Pro is an auto-renewable subscription. Cancel anytime in Apple ID subscriptions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Link(destination: URL(string: "https://miniti.app")!) {
                         HStack {
-                            Text("miniti.app")
+                            Text("Website")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Link(destination: URL(string: "https://miniti.app/roadmap")!) {
+                        HStack {
+                            Text("Roadmap")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Link(destination: URL(string: "https://miniti.app/changelog")!) {
+                        HStack {
+                            Text("Changelog")
                             Spacer()
                             Image(systemName: "arrow.up.right")
                                 .font(.caption)
@@ -210,68 +281,6 @@ struct SettingsView_iOS: View {
             .background(ColorPalette.Background.primary)
             .sheet(isPresented: $showDebugLog) {
                 DebugLogView()
-            }
-            .sheet(isPresented: $showRestoreSheet) {
-                NavigationStack {
-                    Form {
-                        Section {
-                            Text("Enter the license key from your purchase email or Polar account.")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            
-                            TextField("License key", text: $licenseKeyInput)
-                                .font(.system(.body, design: .monospaced))
-                                .autocorrectionDisabled()
-                                .textInputAutocapitalization(.never)
-                            
-                            if let restoreError {
-                                Text(restoreError)
-                                    .font(.caption)
-                                    .foregroundStyle(.red)
-                            }
-                        }
-                        
-                        Section {
-                            Button {
-                                isRestoring = true
-                                restoreError = nil
-                                Task {
-                                    let success = await appState.restoreSubscription(licenseKey: licenseKeyInput)
-                                    isRestoring = false
-                                    if success {
-                                        showRestoreSheet = false
-                                        licenseKeyInput = ""
-                                    } else {
-                                        restoreError = "Invalid or expired license key"
-                                    }
-                                }
-                            } label: {
-                                if isRestoring {
-                                    HStack {
-                                        Spacer()
-                                        ProgressView()
-                                        Spacer()
-                                    }
-                                } else {
-                                    Text("Restore")
-                                }
-                            }
-                            .disabled(licenseKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isRestoring)
-                        }
-                    }
-                    .navigationTitle("Restore Subscription")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Cancel") {
-                                showRestoreSheet = false
-                                licenseKeyInput = ""
-                                restoreError = nil
-                            }
-                        }
-                    }
-                }
-                .preferredColorScheme(.dark)
             }
         }
         .preferredColorScheme(.dark)

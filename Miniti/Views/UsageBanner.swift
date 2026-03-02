@@ -181,6 +181,7 @@ struct ManagedStatusView: View {
             }
             #endif
             
+            #if os(macOS)
             Button {
                 showRestoreSheet = true
             } label: {
@@ -190,7 +191,9 @@ struct ManagedStatusView: View {
             }
             .buttonStyle(.plain)
             .focusable(false)
+            #endif
         }
+        #if os(macOS)
         .sheet(isPresented: $showRestoreSheet) {
             RestoreLicenseKeySheet(
                 licenseKeyInput: $licenseKeyInput,
@@ -217,10 +220,12 @@ struct ManagedStatusView: View {
                 }
             )
         }
+        #endif
     }
 }
 
 /// Sheet for entering a Polar license key to restore a subscription.
+#if os(macOS)
 struct RestoreLicenseKeySheet: View {
     @Binding var licenseKeyInput: String
     @Binding var isRestoring: Bool
@@ -279,6 +284,7 @@ struct RestoreLicenseKeySheet: View {
         .background(Color(hex: "0F0F11"))
     }
 }
+#endif
 
 #Preview {
     VStack(spacing: 20) {
