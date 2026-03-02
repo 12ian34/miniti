@@ -415,6 +415,9 @@ struct ReadyStateView_iOS: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
     @State private var isMicTesting = false
+    @State private var isPurchasingPro = false
+    @State private var isRestoringPro = false
+    @State private var subscriptionMessage: String?
     
     var body: some View {
         VStack(spacing: 24) {
@@ -441,6 +444,8 @@ struct ReadyStateView_iOS: View {
                 Text("miniti")
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.primary)
+                
+                FlashingTagline_iOS(text: "multi-dimensional meetings")
             }
             
             // Mode status
@@ -522,10 +527,77 @@ struct ReadyStateView_iOS: View {
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
             } else if appState.isLimitReached {
-                VStack(spacing: 8) {
+                VStack(spacing: 10) {
                     Text("Monthly limit reached")
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundStyle(ColorPalette.Status.limitReached)
+                    
+                    Button {
+                        guard !isPurchasingPro else { return }
+                        isPurchasingPro = true
+                        subscriptionMessage = nil
+                        Task {
+                            let success = await appState.purchaseProSubscription()
+                            isPurchasingPro = false
+                            if success {
+                                subscriptionMessage = "Pro subscription is now active."
+                            } else {
+                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isPurchasingPro {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.8)
+                                Text("purchasing...")
+                            } else {
+                                Text("Upgrade to Pro — $4.99/month")
+                            }
+                        }
+                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(
+                            Capsule()
+                                .fill(ColorPalette.Accent.purple)
+                        )
+                    }
+                    .disabled(isPurchasingPro)
+                    
+                    Button {
+                        guard !isRestoringPro else { return }
+                        isRestoringPro = true
+                        subscriptionMessage = nil
+                        Task {
+                            let restored = await appState.restoreAppStorePurchases()
+                            isRestoringPro = false
+                            if restored {
+                                subscriptionMessage = "Purchases restored."
+                            } else {
+                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "No active App Store subscription found."
+                            }
+                        }
+                    } label: {
+                        if isRestoringPro {
+                            Text("restoring...")
+                        } else {
+                            Text("Restore Purchases")
+                        }
+                    }
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .disabled(isRestoringPro)
+                    
+                    if let subscriptionMessage {
+                        Text(subscriptionMessage)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    }
                     
                     Button("Switch to BYOK") {
                         appState.appMode = .byok
@@ -588,21 +660,114 @@ struct ReadyStateView_iOS: View {
     }
 }
 
+private struct FlashingTagline_iOS: View {
+    let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    
+    var body: some View {
+        Group {
+            if reduceMotion {
+                baseText
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { context in
+                    let motion = flashMotion(at: context.date.timeIntervalSinceReferenceDate)
+                    ZStack {
+                        baseText
+                        highlightedText(motion: motion)
+                    }
+                }
+            }
+        }
+    }
+    
+    private var baseText: some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(ColorPalette.Text.muted)
+            .tracking(2)
+    }
+    
+    private func highlightedText(motion: FlashMotion_iOS) -> some View {
+        Text(text)
+            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .foregroundStyle(ColorPalette.Accent.green)
+            .tracking(2)
+            .opacity(0.72 + (0.20 * motion.spark))
+            .blendMode(.plusLighter)
+            .mask {
+                GeometryReader { proxy in
+                    let width = max(proxy.size.width, 1)
+                    let height = max(proxy.size.height, 1)
+                    let primaryX = width * motion.primaryCenter
+                    let secondaryX = width * motion.secondaryCenter
+                    let primaryWidth = max(width * motion.primaryWidth, 22)
+                    let secondaryWidth = max(width * motion.secondaryWidth, 14)
+                    
+                    ZStack {
+                        Rectangle()
+                            .fill(Color.white.opacity(0.05 + (0.04 * motion.spark)))
+                        
+                        Capsule()
+                            .fill(Color.white.opacity(0.92))
+                            .frame(width: primaryWidth, height: max(height * 0.95, 12))
+                            .blur(radius: 5)
+                            .offset(x: primaryX - (width / 2))
+                        
+                        Capsule()
+                            .fill(Color.white.opacity(0.62))
+                            .frame(width: secondaryWidth, height: max(height * 0.8, 10))
+                            .blur(radius: 7)
+                            .offset(x: secondaryX - (width / 2))
+                    }
+                }
+            }
+    }
+    
+    private func flashMotion(at time: TimeInterval) -> FlashMotion_iOS {
+        let t = time * 0.9
+        let primaryCenter = clamp01(0.5 + (0.36 * sin(t * 1.4)) + (0.12 * sin((t * 3.1) + 0.8)))
+        let secondaryCenter = clamp01(0.5 + (0.41 * sin((t * 1.95) + 1.9)) + (0.08 * sin((t * 5.3) + 0.3)))
+        let primaryWidth = CGFloat(0.18 + (0.22 * (0.5 + (0.5 * sin((t * 2.45) + 0.4)))))
+        let secondaryWidth = CGFloat(0.09 + (0.14 * (0.5 + (0.5 * sin((t * 3.8) + 2.0)))))
+        let spark = CGFloat(0.5 + (0.5 * sin((t * 6.7) + (0.5 * sin(t * 2.2)))))
+        
+        return FlashMotion_iOS(
+            primaryCenter: primaryCenter,
+            secondaryCenter: secondaryCenter,
+            primaryWidth: primaryWidth,
+            secondaryWidth: secondaryWidth,
+            spark: spark
+        )
+    }
+    
+    private func clamp01(_ value: Double) -> CGFloat {
+        CGFloat(min(max(value, 0), 1))
+    }
+}
+
+private struct FlashMotion_iOS {
+    let primaryCenter: CGFloat
+    let secondaryCenter: CGFloat
+    let primaryWidth: CGFloat
+    let secondaryWidth: CGFloat
+    let spark: CGFloat
+}
+
 // MARK: - Status Pills
 
 struct ManagedStatusPill: View {
     @EnvironmentObject var appState: AppState
     
     private var accentColor: Color {
-        guard let usage = appState.usageInfo else { return ColorPalette.Status.success }
-        if usage.isPro { return ColorPalette.Accent.purple }
-        if usage.minutesRemaining < 15 { return ColorPalette.Status.limitReached }
-        if usage.minutesRemaining < 60 { return ColorPalette.Status.warning }
+        guard appState.usageInfo != nil else { return appState.isPro ? ColorPalette.Accent.purple : ColorPalette.Status.success }
+        if appState.isPro { return ColorPalette.Accent.purple }
+        if appState.displayMinutesRemaining < 15 { return ColorPalette.Status.limitReached }
+        if appState.displayMinutesRemaining < 60 { return ColorPalette.Status.warning }
         return ColorPalette.Status.success
     }
     
     var body: some View {
-        if let usage = appState.usageInfo {
+        if appState.usageInfo != nil {
             VStack(spacing: 6) {
                 HStack(spacing: 6) {
                     Circle()
@@ -617,7 +782,7 @@ struct ManagedStatusPill: View {
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.disabled)
                     
-                    Text("\(Int(usage.minutesRemaining.rounded())) min left")
+                    Text("\(Int(appState.displayMinutesRemaining.rounded())) min left")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(accentColor)
                 }
@@ -628,7 +793,7 @@ struct ManagedStatusPill: View {
                             .fill(ColorPalette.Background.secondary)
                         RoundedRectangle(cornerRadius: 3)
                             .fill(accentColor.opacity(0.85))
-                            .frame(width: max(2, geo.size.width * usage.usagePercentage))
+                            .frame(width: max(2, geo.size.width * appState.displayUsagePercentage))
                     }
                 }
                 .frame(width: 180, height: 6)
@@ -685,38 +850,70 @@ struct StatusPill: View {
 struct UpdateAvailableBanner_iOS: View {
     let versionInfo: MinitiAPIService.VersionInfo
     @Environment(\.openURL) private var openURL
+    @State private var isShowingFullNotes = false
+    
+    private var releaseNotes: String? {
+        guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !notes.isEmpty else { return nil }
+        return notes
+    }
     
     var body: some View {
-        Button {
-            if let url = URL(string: "itms-beta://") {
-                openURL(url)
-            }
-        } label: {
-            VStack(spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 11))
-                    Text("v\(versionInfo.latestVersion) available")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                }
-                .foregroundStyle(ColorPalette.Accent.blue)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 11))
+                Text("v\(versionInfo.latestVersion) available")
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
                 
-                Text("update via TestFlight")
+                if releaseNotes != nil {
+                    Button(isShowingFullNotes ? "hide" : "notes") {
+                        isShowingFullNotes.toggle()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.85))
+                }
+            }
+            .foregroundStyle(ColorPalette.Accent.blue)
+            
+            if let notes = releaseNotes {
+                Text(notes)
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                    .lineLimit(isShowingFullNotes ? nil : 1)
+                    .fixedSize(horizontal: false, vertical: isShowingFullNotes)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !isShowingFullNotes {
+                            isShowingFullNotes = true
+                        }
+                    }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(ColorPalette.Accent.blue.opacity(0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
-                    )
-            )
+            
+            Button {
+                if let url = URL(string: "itms-beta://") {
+                    openURL(url)
+                }
+            } label: {
+                Text("update via TestFlight")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.8))
+            }
+            .buttonStyle(.plain)
+            .padding(.top, 1)
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .frame(maxWidth: 320, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.blue.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
+                )
+        )
     }
 }
 

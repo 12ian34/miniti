@@ -29,7 +29,9 @@ struct MinitiApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if appState.hasCompletedOnboarding {
+                if !appState.hasAcceptedTerms {
+                    TermsAcceptanceView()
+                } else if appState.hasCompletedOnboarding {
                     MainWindow()
                         .environmentObject(keyboardService)
                         .onAppear {
@@ -71,6 +73,7 @@ struct MinitiApp: App {
                     toggleRecording()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(!appState.hasAcceptedTerms && !appState.isRecording)
                 
                 Button("Generate Insights") {
                     generateInsights()
@@ -148,6 +151,8 @@ struct MinitiApp: App {
     }
     
     private func toggleRecording(appState: AppState) {
+        guard appState.hasAcceptedTerms || appState.isRecording else { return }
+
         if appState.isRecording {
             appState.stopRecording()
         } else if appState.currentMeeting != nil {
@@ -278,6 +283,7 @@ struct MenuBarView: View {
                 )
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(!appState.hasAcceptedTerms && !appState.isRecording)
             
             if appState.currentMeeting != nil && !appState.liveSegments.isEmpty {
                 Button {

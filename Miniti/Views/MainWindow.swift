@@ -388,7 +388,7 @@ struct TerminalSidebar: View {
                     // New session button when no current meeting
                     SidebarItem(
                         icon: "+",
-                        label: "new_session",
+                        label: "new session",
                         isSelected: selectedMeetingID == nil,
                         accentColor: Theme.accent,
                         shortcut: "⌘N"

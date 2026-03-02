@@ -670,7 +670,25 @@ struct GeneralSettingsView: View {
                 }
                 Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
-                        Text("miniti.app")
+                        Text("Website")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Link(destination: URL(string: "https://miniti.app/roadmap")!) {
+                    HStack {
+                        Text("Roadmap")
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Link(destination: URL(string: "https://miniti.app/changelog")!) {
+                    HStack {
+                        Text("Changelog")
                         Spacer()
                         Image(systemName: "arrow.up.right")
                             .font(.caption)

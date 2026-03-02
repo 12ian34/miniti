@@ -4,6 +4,7 @@ import SwiftData
 import Combine
 #if os(iOS)
 import ActivityKit
+import StoreKit
 #endif
 
 // MARK: - App Mode
@@ -90,6 +91,22 @@ final class AppState: ObservableObject {
     /// Raw storage — use `appMode` computed property for type-safe access.
     @AppStorage("appMode") var appModeRaw: String = AppMode.managed.rawValue
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
+    @AppStorage("hasAcceptedTerms") private var legacyHasAcceptedTerms: Bool = false
+    @AppStorage("acceptedTermsVersion") private var acceptedTermsVersion: Int = 0
+    private let currentTermsVersion = 1
+
+    var hasAcceptedTerms: Bool {
+        get { acceptedTermsVersion >= currentTermsVersion }
+        set {
+            if newValue {
+                acceptedTermsVersion = currentTermsVersion
+                legacyHasAcceptedTerms = true
+            } else {
+                acceptedTermsVersion = 0
+                legacyHasAcceptedTerms = false
+            }
+        }
+    }
     
     /// Type-safe app mode. Changing this is a pure routing toggle — doesn't reset anything.
     var appMode: AppMode {
@@ -105,6 +122,9 @@ final class AppState: ObservableObject {
     @Published var isLoadingUsage = false
     @Published var managedSessionError: String?
     @Published var isDeviceDisabled = false
+    #if os(iOS)
+    @Published var hasActiveAppStoreSubscription = false
+    #endif
     private var currentSessionId: String?
     private var tempDeepgramKey: String?
     private var managedSessionStartRecordedDuration: TimeInterval?
@@ -112,12 +132,63 @@ final class AppState: ObservableObject {
     /// Whether managed mode is at its limit.
     var isLimitReached: Bool {
         guard appMode == .managed else { return false }
+        #if os(iOS)
+        if hasActiveAppStoreSubscription {
+            return false
+        }
+        #endif
         return usageInfo?.isLimitReached ?? false
     }
     
     /// Whether the device has an active Pro subscription.
     var isPro: Bool {
-        usageInfo?.isPro ?? false
+        let backendPro = usageInfo?.isPro ?? false
+        #if os(iOS)
+        return backendPro || hasActiveAppStoreSubscription
+        #else
+        return backendPro
+        #endif
+    }
+    
+    /// Managed mode minutes limit displayed in UI.
+    var displayMinutesLimit: Double {
+        guard appMode == .managed else { return 0 }
+        #if os(iOS)
+        if hasActiveAppStoreSubscription {
+            return 5000
+        }
+        #endif
+        if let serverLimit = usageInfo?.minutesLimit {
+            return serverLimit
+        }
+        return isPro ? 5000 : 500
+    }
+    
+    /// Managed mode minutes used displayed in UI.
+    var displayMinutesUsed: Double {
+        usageInfo?.minutesUsed ?? 0
+    }
+    
+    /// Managed mode minutes remaining displayed in UI.
+    var displayMinutesRemaining: Double {
+        max(0, displayMinutesLimit - displayMinutesUsed)
+    }
+    
+    /// Managed mode usage bar value displayed in UI.
+    var displayUsagePercentage: Double {
+        guard displayMinutesLimit > 0 else { return 0 }
+        return min(1.0, displayMinutesUsed / displayMinutesLimit)
+    }
+    
+    /// Managed mode compact remaining-time string used in UI.
+    var formattedDisplayRemaining: String {
+        let rounded = Int(displayMinutesRemaining.rounded())
+        if rounded >= 60 {
+            let hours = rounded / 60
+            let mins = rounded % 60
+            return "\(hours)h \(mins)m"
+        }
+        return "\(rounded)m"
     }
     
     /// Whether the app can start recording right now.
@@ -126,7 +197,7 @@ final class AppState: ObservableObject {
         case .byok:
             return !deepgramApiKey.isEmpty
         case .managed:
-            return !isDeviceDisabled && !(usageInfo?.isLimitReached ?? false)
+            return !isDeviceDisabled && !isLimitReached
         }
     }
     
@@ -135,6 +206,9 @@ final class AppState: ObservableObject {
     var deepgramService: DeepgramService?
     var insightsService: InsightsService?
     var minitiAPIService: MinitiAPIService?
+    #if os(iOS)
+    var storeKitService: AppStoreSubscriptionService?
+    #endif
     
     // MARK: - Settings (persisted via @AppStorage)
     @AppStorage("deepgramApiKey") var deepgramApiKey: String = "" {
@@ -183,6 +257,11 @@ final class AppState: ObservableObject {
     }
     
     init() {
+        // One-time migration from legacy boolean acceptance storage.
+        if acceptedTermsVersion == 0, legacyHasAcceptedTerms {
+            acceptedTermsVersion = 1
+        }
+
         // Seed default keys from Secrets.swift only in BYOK mode.
         // In managed mode, API calls go through the backend — user should
         // never see or need the app's own API keys.
@@ -230,6 +309,21 @@ final class AppState: ObservableObject {
         deepgramService = DeepgramService()
         insightsService = InsightsService()
         minitiAPIService = MinitiAPIService()
+        #if os(iOS)
+        let storeKitService = AppStoreSubscriptionService()
+        self.storeKitService = storeKitService
+        storeKitService.$hasActiveSubscription
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] hasActive in
+                guard let self else { return }
+                let changed = self.hasActiveAppStoreSubscription != hasActive
+                self.hasActiveAppStoreSubscription = hasActive
+                if changed && self.appMode == .managed {
+                    Task { await self.refreshUsage() }
+                }
+            }
+            .store(in: &cancellables)
+        #endif
         
         // Subscribe to transcript updates (handles both interim and final)
         deepgramService?.$transcriptUpdate
@@ -508,6 +602,11 @@ final class AppState: ObservableObject {
     func startNewMeeting() {
         DebugLogger.shared.log(.app, "startNewMeeting (mode=\(appMode.rawValue))")
         updateLogRedaction()
+
+        guard hasAcceptedTerms else {
+            DebugLogger.shared.log(.app, "startNewMeeting blocked: terms not accepted")
+            return
+        }
         
         switch appMode {
         case .byok:
@@ -1003,6 +1102,11 @@ final class AppState: ObservableObject {
     
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
+
+        guard hasAcceptedTerms else {
+            DebugLogger.shared.log(.app, "startRecording blocked: terms not accepted")
+            return
+        }
         
         DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
         isStartingMeeting = false
@@ -1096,6 +1200,12 @@ final class AppState: ObservableObject {
     
     /// Managed mode: request a temp Deepgram key from backend, then start recording.
     private func startManagedRecording() async {
+        guard hasAcceptedTerms else {
+            isStartingMeeting = false
+            isResumingRecording = false
+            return
+        }
+
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
             isStartingMeeting = false
@@ -1123,7 +1233,15 @@ final class AppState: ObservableObject {
             switch error {
             case .limitReached(_, _):
                 await refreshUsage()
+                #if os(iOS)
+                if hasActiveAppStoreSubscription {
+                    managedSessionError = "Pro is active, but usage sync is still catching up. Please try again in a moment."
+                } else {
+                    managedSessionError = error.localizedDescription
+                }
+                #else
                 managedSessionError = error.localizedDescription
+                #endif
             case .deviceDisabled:
                 isDeviceDisabled = true
                 managedSessionError = error.localizedDescription
@@ -1589,37 +1707,87 @@ final class AppState: ObservableObject {
     
     // MARK: - Subscription
     
-    /// Open the Polar checkout page in the system browser (macOS only).
+    /// Start upgrade flow: StoreKit purchase on iOS, Polar checkout on macOS.
     func openSubscribePage() async {
+        #if os(iOS)
+        _ = await purchaseProSubscription()
+        #else
         guard let minitiAPIService else { return }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
             let url = try await minitiAPIService.getSubscribeURL(deviceId: deviceId)
-            #if os(iOS)
-            await UIApplication.shared.open(url)
-            #else
             NSWorkspace.shared.open(url)
-            #endif
         } catch {
             DebugLogger.shared.log(.app, "Subscribe URL FAILED: \(error.localizedDescription)")
         }
+        #endif
     }
     
-    /// Open the Polar customer portal in the system browser.
+    /// Open subscription management: Apple subscriptions on iOS, Polar portal on macOS.
     func openManageSubscriptionPage() async {
+        #if os(iOS)
+        if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
+            await UIApplication.shared.open(url)
+        }
+        #else
         guard let minitiAPIService else { return }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
             let url = try await minitiAPIService.getPortalURL(deviceId: deviceId)
-            #if os(iOS)
-            await UIApplication.shared.open(url)
-            #else
             NSWorkspace.shared.open(url)
-            #endif
         } catch {
             DebugLogger.shared.log(.app, "Portal URL FAILED: \(error.localizedDescription)")
         }
+        #endif
     }
+    
+    #if os(iOS)
+    /// Purchase the App Store Pro monthly subscription.
+    func purchaseProSubscription() async -> Bool {
+        guard let storeKitService else { return false }
+        let purchased = await storeKitService.purchaseProMonthly()
+        guard purchased else { return false }
+        return await syncAppleEntitlementToBackend()
+    }
+    
+    /// Restore App Store purchases on this device.
+    func restoreAppStorePurchases() async -> Bool {
+        guard let storeKitService else { return false }
+        let restored = await storeKitService.restorePurchases()
+        guard restored else { return false }
+        return await syncAppleEntitlementToBackend()
+    }
+    
+    /// Send the current verified App Store entitlement to backend for server-side usage enforcement.
+    private func syncAppleEntitlementToBackend() async -> Bool {
+        guard let storeKitService, let minitiAPIService else { return false }
+        let signedJWS: String?
+        if let cachedJWS = storeKitService.lastVerifiedTransactionJWS {
+            signedJWS = cachedJWS
+        } else {
+            signedJWS = await storeKitService.activeProTransactionJWS()
+        }
+        
+        guard let signedJWS else {
+            storeKitService.purchaseErrorMessage = "No active App Store subscription found."
+            return false
+        }
+        
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            _ = try await minitiAPIService.verifyAppleSubscription(
+                deviceId: deviceId,
+                signedTransactionJWS: signedJWS
+            )
+            await refreshUsage()
+            return true
+        } catch {
+            storeKitService.purchaseErrorMessage = "Purchase verified by Apple, but backend sync failed. Please try Restore Purchases."
+            DebugLogger.shared.log(.app, "Apple verify FAILED: \(error.localizedDescription)")
+            return false
+        }
+    }
+    #endif
     
     /// Restore a subscription using a Polar license key.
     func restoreSubscription(licenseKey: String) async -> Bool {
@@ -1842,3 +2010,150 @@ final class AppState: ObservableObject {
         return md
     }
 }
+
+#if os(iOS)
+@MainActor
+final class AppStoreSubscriptionService: ObservableObject {
+    enum PurchaseState {
+        case idle
+        case purchasing
+        case pending
+        case purchased
+        case failed
+    }
+    
+    static let proMonthlyProductID = "com.miniti.mobile.pro.monthly"
+    
+    @Published private(set) var proMonthlyProduct: Product?
+    @Published private(set) var hasActiveSubscription = false
+    @Published private(set) var lastVerifiedTransactionJWS: String?
+    @Published private(set) var purchaseState: PurchaseState = .idle
+    @Published var purchaseErrorMessage: String?
+    
+    private var updatesTask: Task<Void, Never>?
+    
+    init() {
+        updatesTask = Task { [weak self] in
+            await self?.listenForTransactionUpdates()
+        }
+        
+        Task {
+            await loadProducts()
+            await refreshEntitlementStatus()
+        }
+    }
+    
+    func loadProducts() async {
+        do {
+            let products = try await Product.products(for: [Self.proMonthlyProductID])
+            proMonthlyProduct = products.first
+        } catch {
+            purchaseErrorMessage = "Failed to load subscriptions."
+            purchaseState = .failed
+            DebugLogger.shared.log(.app, "StoreKit products load FAILED: \(error.localizedDescription)")
+        }
+    }
+    
+    func purchaseProMonthly() async -> Bool {
+        purchaseErrorMessage = nil
+        purchaseState = .purchasing
+        
+        if proMonthlyProduct == nil {
+            await loadProducts()
+        }
+        
+        guard let proMonthlyProduct else {
+            purchaseState = .failed
+            purchaseErrorMessage = "Pro subscription is unavailable right now."
+            return false
+        }
+        
+        do {
+            let result = try await proMonthlyProduct.purchase()
+            switch result {
+            case .success(let verification):
+                guard case .verified(let transaction) = verification else {
+                    purchaseState = .failed
+                    purchaseErrorMessage = "Purchase verification failed."
+                    return false
+                }
+                lastVerifiedTransactionJWS = verification.jwsRepresentation
+                await transaction.finish()
+                await refreshEntitlementStatus()
+                if hasActiveSubscription {
+                    purchaseState = .purchased
+                    return true
+                } else {
+                    purchaseState = .failed
+                    purchaseErrorMessage = "Purchase completed, but entitlement is not active yet."
+                    return false
+                }
+            case .pending:
+                purchaseState = .pending
+                return false
+            case .userCancelled:
+                purchaseState = .idle
+                return false
+            @unknown default:
+                purchaseState = .failed
+                purchaseErrorMessage = "Unknown purchase result."
+                return false
+            }
+        } catch {
+            purchaseState = .failed
+            purchaseErrorMessage = error.localizedDescription
+            DebugLogger.shared.log(.app, "StoreKit purchase FAILED: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    func restorePurchases() async -> Bool {
+        purchaseErrorMessage = nil
+        do {
+            try await AppStore.sync()
+            await refreshEntitlementStatus()
+            return hasActiveSubscription
+        } catch {
+            purchaseErrorMessage = "Restore failed. Please try again."
+            purchaseState = .failed
+            DebugLogger.shared.log(.app, "StoreKit restore FAILED: \(error.localizedDescription)")
+            return false
+        }
+    }
+    
+    func refreshEntitlementStatus() async {
+        let now = Date()
+        var active = false
+        var activeJWS: String?
+        
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result else { continue }
+            guard transaction.productID == Self.proMonthlyProductID else { continue }
+            guard transaction.revocationDate == nil else { continue }
+            if let expirationDate = transaction.expirationDate, expirationDate <= now {
+                continue
+            }
+            active = true
+            activeJWS = result.jwsRepresentation
+            break
+        }
+        
+        hasActiveSubscription = active
+        lastVerifiedTransactionJWS = activeJWS
+    }
+    
+    /// Returns the active verified App Store entitlement JWS for Pro, if present.
+    func activeProTransactionJWS() async -> String? {
+        await refreshEntitlementStatus()
+        return lastVerifiedTransactionJWS
+    }
+    
+    private func listenForTransactionUpdates() async {
+        for await result in Transaction.updates {
+            guard case .verified(let transaction) = result else { continue }
+            await transaction.finish()
+            await refreshEntitlementStatus()
+        }
+    }
+}
+#endif
