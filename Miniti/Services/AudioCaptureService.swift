@@ -1346,8 +1346,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                     "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks) — scheduling restart"
                 )
                 Task { @MainActor [weak self] in
-                    await self?.recoverSystemTapAfterCallbackStall(
-                        mixWithMic: isMicActiveForWatchdog,
+                    guard let self else { return }
+                    await self.recoverSystemTapAfterCallbackStall(
+                        mixWithMic: self.isMicActiveForWatchdog,
                         callbackGap: callbackGap
                     )
                 }
