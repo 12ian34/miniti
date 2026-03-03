@@ -190,12 +190,18 @@ final class MinitiAPIService: @unchecked Sendable {
     struct EndSessionResponse: Decodable {
         let minutesUsed: Double
         let minutesRemaining: Double
+        let sessionFinalized: Bool?
+        let idempotentReplay: Bool?
         
         enum CodingKeys: String, CodingKey {
             case minutesUsed = "minutes_used"
             case minutesRemaining = "minutes_remaining"
+            case sessionFinalized = "session_finalized"
+            case idempotentReplay = "idempotent_replay"
             case minutesUsedCamel = "minutesUsed"
             case minutesRemainingCamel = "minutesRemaining"
+            case sessionFinalizedCamel = "sessionFinalized"
+            case idempotentReplayCamel = "idempotentReplay"
         }
         
         init(from decoder: Decoder) throws {
@@ -221,6 +227,13 @@ final class MinitiAPIService: @unchecked Sendable {
                     (try? container.decode(String.self, forKey: .minutesRemainingCamel))
                 minutesRemaining = str.flatMap(Double.init) ?? 0
             }
+            
+            sessionFinalized =
+                (try? container.decodeIfPresent(Bool.self, forKey: .sessionFinalized)) ??
+                (try? container.decodeIfPresent(Bool.self, forKey: .sessionFinalizedCamel))
+            idempotentReplay =
+                (try? container.decodeIfPresent(Bool.self, forKey: .idempotentReplay)) ??
+                (try? container.decodeIfPresent(Bool.self, forKey: .idempotentReplayCamel))
         }
     }
     

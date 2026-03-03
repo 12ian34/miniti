@@ -62,14 +62,20 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var mixWithSystemCount: Int = 0
     nonisolated(unsafe) private var mixMicOnlyCount: Int = 0
     nonisolated(unsafe) private var lastSystemHeartbeat: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemCallbackAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastNoSystemMixWarning: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemCallbackStallCheck: CFAbsoluteTime = 0
     private var isRestartingMicAfterConfigChange = false
     private var isRestartingSystemAfterOutputChange = false
     private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
     private var pendingMicRestartTask: Task<Void, Never>?
+    private var pendingSystemRetryTask: Task<Void, Never>?
+    private var systemRetryAttempt = 0
+    private let maxSystemRetryAttempts = 4
+    private var expectsSystemAudio = false
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeMicInputDeviceID: AudioDeviceID?
     private var activeMicInputSampleRate: Double = 0
@@ -335,10 +341,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         mixWithSystemCount = 0
         mixMicOnlyCount = 0
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
+        lastSystemCallbackAt = lastSystemHeartbeat
         lastNoSystemMixWarning = 0
         lastSystemNonSilentAt = lastSystemHeartbeat
         lastSystemAutoRestartAt = 0
         lastSilenceCheck = 0
+        lastSystemCallbackStallCheck = 0
         sysCallbackCount = 0
     }
     
@@ -353,6 +361,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
         resetRuntimeDiagnostics()
+        pendingSystemRetryTask?.cancel()
+        pendingSystemRetryTask = nil
+        systemRetryAttempt = 0
+        expectsSystemAudio = systemAudio
         var capturedAny = false
         
         if microphone {
@@ -379,6 +391,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 print("System audio capture failed: \(error.localizedDescription)")
                 DebugLogger.shared.log(.audio, "System audio FAILED: \(error.localizedDescription)")
                 isSystemAudioActive = false
+                if case AudioCaptureError.systemAudioPermissionDenied = error {
+                    // Permission errors should not auto-retry.
+                } else if capturedAny {
+                    scheduleSystemTapRetry(
+                        reason: "initial start failed",
+                        mixWithMic: microphone
+                    )
+                }
                 if !capturedAny { throw error }
             }
         }
@@ -399,6 +419,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         stopSystemAudioCapture()
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = nil
+        pendingSystemRetryTask?.cancel()
+        pendingSystemRetryTask = nil
+        systemRetryAttempt = 0
+        expectsSystemAudio = false
         isCapturing = false
         isMicActive = false
         isSystemAudioActive = false
@@ -417,6 +441,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         stopSystemAudioCapture()
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = nil
+        pendingSystemRetryTask?.cancel()
+        pendingSystemRetryTask = nil
+        systemRetryAttempt = 0
+        expectsSystemAudio = false
         isCapturing = false
         isMicActive = false
         isSystemAudioActive = false
@@ -597,13 +625,26 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             guard self.isCapturing else { return }
             
             do {
+                self.resetRingBuffer()
                 self.stopSystemAudioCapture()
                 try self.startSystemAudioCapture(mixWithMic: mixWithMic)
                 self.isSystemAudioActive = true
+                let restartedAt = CFAbsoluteTimeGetCurrent()
+                self.lastSystemNonSilentAt = restartedAt
+                self.lastSystemCallbackAt = restartedAt
+                self.lastSystemAutoRestartAt = restartedAt
                 DebugLogger.shared.log(.audio, "System tap restart complete after output change")
             } catch {
                 self.isSystemAudioActive = false
                 DebugLogger.shared.log(.audio, "System tap restart FAILED after output change: \(error.localizedDescription)")
+                if case AudioCaptureError.systemAudioPermissionDenied = error {
+                    // Permission errors should not auto-retry.
+                } else {
+                    self.scheduleSystemTapRetry(
+                        reason: "output-change restart failed",
+                        mixWithMic: mixWithMic
+                    )
+                }
             }
         }
     }
@@ -612,7 +653,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         mixWithMic: Bool,
         silenceDuration: CFAbsoluteTime
     ) async {
-        guard isCapturing, isSystemAudioActive else { return }
+        guard isCapturing, isSystemAudioActive, expectsSystemAudio else { return }
         guard !isRestartingSystemAfterOutputChange else { return }
         isRestartingSystemAfterOutputChange = true
         defer { isRestartingSystemAfterOutputChange = false }
@@ -626,14 +667,125 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         guard isCapturing else { return }
 
         do {
+            resetRingBuffer()
             stopSystemAudioCapture()
             try startSystemAudioCapture(mixWithMic: mixWithMic)
             isSystemAudioActive = true
-            lastSystemNonSilentAt = CFAbsoluteTimeGetCurrent()
+            let restartedAt = CFAbsoluteTimeGetCurrent()
+            lastSystemNonSilentAt = restartedAt
+            lastSystemCallbackAt = restartedAt
+            lastSystemAutoRestartAt = restartedAt
             DebugLogger.shared.log(.audio, "System tap recovery complete")
         } catch {
             isSystemAudioActive = false
             DebugLogger.shared.log(.audio, "System tap recovery FAILED: \(error.localizedDescription)")
+            if case AudioCaptureError.systemAudioPermissionDenied = error {
+                // Permission errors should not auto-retry.
+            } else {
+                scheduleSystemTapRetry(
+                    reason: "silent-stall recovery failed",
+                    mixWithMic: mixWithMic
+                )
+            }
+        }
+    }
+    
+    private func recoverSystemTapAfterCallbackStall(
+        mixWithMic: Bool,
+        callbackGap: CFAbsoluteTime
+    ) async {
+        guard isCapturing, isSystemAudioActive, expectsSystemAudio else { return }
+        guard !isRestartingSystemAfterOutputChange else { return }
+        isRestartingSystemAfterOutputChange = true
+        defer { isRestartingSystemAfterOutputChange = false }
+        
+        DebugLogger.shared.log(
+            .audio,
+            "System tap callback-stall recovery starting after \(String(format: "%.1f", callbackGap))s without callbacks"
+        )
+        
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        guard isCapturing else { return }
+        
+        do {
+            resetRingBuffer()
+            stopSystemAudioCapture()
+            try startSystemAudioCapture(mixWithMic: mixWithMic)
+            isSystemAudioActive = true
+            let restartedAt = CFAbsoluteTimeGetCurrent()
+            lastSystemNonSilentAt = restartedAt
+            lastSystemCallbackAt = restartedAt
+            lastSystemAutoRestartAt = restartedAt
+            DebugLogger.shared.log(.audio, "System tap callback-stall recovery complete")
+        } catch {
+            isSystemAudioActive = false
+            DebugLogger.shared.log(.audio, "System tap callback-stall recovery FAILED: \(error.localizedDescription)")
+            if case AudioCaptureError.systemAudioPermissionDenied = error {
+                // Permission errors should not auto-retry.
+            } else {
+                scheduleSystemTapRetry(
+                    reason: "callback-stall recovery failed",
+                    mixWithMic: mixWithMic
+                )
+            }
+        }
+    }
+    
+    private func scheduleSystemTapRetry(reason: String, mixWithMic: Bool) {
+        guard isCapturing, expectsSystemAudio else { return }
+        guard pendingSystemRetryTask == nil else { return }
+        guard systemRetryAttempt < maxSystemRetryAttempts else {
+            DebugLogger.shared.log(
+                .audio,
+                "System tap auto-retry exhausted (\(systemRetryAttempt) attempts), reason=\(reason)"
+            )
+            return
+        }
+        
+        systemRetryAttempt += 1
+        let attempt = systemRetryAttempt
+        let delaySeconds = min(8, 1 << max(0, attempt - 1))
+        DebugLogger.shared.log(
+            .audio,
+            "Scheduling system tap retry \(attempt)/\(maxSystemRetryAttempts) in \(delaySeconds)s (\(reason))"
+        )
+        
+        pendingSystemRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: UInt64(delaySeconds) * 1_000_000_000)
+            guard !Task.isCancelled else {
+                self.pendingSystemRetryTask = nil
+                return
+            }
+            self.pendingSystemRetryTask = nil
+            guard self.isCapturing, self.expectsSystemAudio else { return }
+            guard !self.isSystemAudioActive else {
+                self.systemRetryAttempt = 0
+                return
+            }
+            guard !self.isRestartingSystemAfterOutputChange else {
+                self.scheduleSystemTapRetry(
+                    reason: "retry deferred; restart in progress",
+                    mixWithMic: mixWithMic
+                )
+                return
+            }
+            
+            do {
+                self.resetRingBuffer()
+                self.stopSystemAudioCapture()
+                try self.startSystemAudioCapture(mixWithMic: mixWithMic)
+                self.isSystemAudioActive = true
+                self.systemRetryAttempt = 0
+                DebugLogger.shared.log(.audio, "System tap auto-retry succeeded")
+            } catch {
+                self.isSystemAudioActive = false
+                DebugLogger.shared.log(.audio, "System tap auto-retry FAILED: \(error.localizedDescription)")
+                if case AudioCaptureError.systemAudioPermissionDenied = error {
+                    return
+                }
+                self.scheduleSystemTapRetry(reason: "retry failed", mixWithMic: mixWithMic)
+            }
         }
     }
     
@@ -664,6 +816,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // permission and per-window Gatekeeper popups.
     
     private func startSystemAudioCapture(mixWithMic: Bool) throws {
+        var started = false
+        defer {
+            if !started {
+                stopSystemAudioCapture()
+            }
+        }
+        
         // 1. Create a global stereo tap capturing all processes
         let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
         tapDescription.uuid = UUID()
@@ -789,6 +948,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let directCallback = mixWithMic ? nil : onAudioBuffer
         let targetRate = targetSampleRate
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
+        lastSystemCallbackAt = lastSystemHeartbeat
         DebugLogger.shared.log(.audio, "System path routing: mixWithMic=\(mixWithMic), directCallback=\(directCallback != nil)")
         
         // 6. IO proc callback on a custom dispatch queue. Uses direct vDSP
@@ -823,6 +983,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         print("[SystemAudio] Process tap started successfully (audio-only mode)")
         DebugLogger.shared.log(.audio, "System audio tap started. Output device: \(Self.defaultOutputDeviceInfo())")
+        pendingSystemRetryTask?.cancel()
+        pendingSystemRetryTask = nil
+        systemRetryAttempt = 0
+        started = true
     }
     
     private func stopSystemAudioCapture() {
@@ -966,6 +1130,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let inputRMS = sqrt(meanSquare)
         let normalizedInputRMS = isFloatFormat ? inputRMS : (inputRMS / 32767.0)
         let now = CFAbsoluteTimeGetCurrent()
+        lastSystemCallbackAt = now
         
         sysInputFrameCount += framesPerChannel
         if normalizedInputRMS > 0.0003 {
@@ -1153,6 +1318,30 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         // Update mic level with vDSP (throttled to ~20Hz)
         let now = CFAbsoluteTimeGetCurrent()
+        
+        // Callback-stall watchdog: detect when system callbacks stop entirely
+        // (different failure mode from silent-buffer stalls).
+        if expectsSystemAudio && isSystemAudioActive && now - lastSystemCallbackStallCheck > 2.0 {
+            lastSystemCallbackStallCheck = now
+            let callbackGap = now - lastSystemCallbackAt
+            let startupGraceElapsed = (now - lastSystemHeartbeat) > 8.0
+            let hadPriorCallbacks = sysCallbackCount > 10
+            let cooldownElapsed = (now - lastSystemAutoRestartAt) > 45.0
+            if callbackGap > 6.0 && cooldownElapsed && (hadPriorCallbacks || startupGraceElapsed) {
+                lastSystemAutoRestartAt = now
+                DebugLogger.shared.log(
+                    .audio,
+                    "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks) — scheduling restart"
+                )
+                Task { @MainActor [weak self] in
+                    await self?.recoverSystemTapAfterCallbackStall(
+                        mixWithMic: true,
+                        callbackGap: callbackGap
+                    )
+                }
+            }
+        }
+        
         if now - lastMicLevelUpdate > 0.05 {
             lastMicLevelUpdate = now
             let level = calculateLevelVDSP(buffer)

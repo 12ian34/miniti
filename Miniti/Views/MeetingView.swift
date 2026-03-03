@@ -1479,6 +1479,17 @@ struct TerminalHeader: View {
         isStopped && appState.isResumingRecording
     }
     
+    private var recoveryAccent: Color {
+        switch appState.audioRecoveryState {
+        case .healthy:
+            return Color(hex: "3FB950")
+        case .recovering:
+            return Color(hex: "D29922")
+        case .degraded:
+            return Color(hex: "F85149")
+        }
+    }
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
@@ -1609,6 +1620,28 @@ struct TerminalHeader: View {
                 }
                 
                 Spacer(minLength: 0)
+            }
+            
+            if appState.audioRecoveryState != .healthy {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(recoveryAccent)
+                        .frame(width: 6, height: 6)
+                    Text(appState.audioRecoveryState.label)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(recoveryAccent)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(recoveryAccent.opacity(0.12))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(recoveryAccent.opacity(0.24), lineWidth: 1)
+                )
             }
             
             HStack(spacing: 12) {
