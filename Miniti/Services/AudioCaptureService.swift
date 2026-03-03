@@ -26,6 +26,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     @Published var systemAudioLevel: Float = 0
     @Published var isMicActive = false
     @Published var isSystemAudioActive = false
+    nonisolated(unsafe) private var isSystemAudioActiveForWatchdog = false
     
     // MARK: - Ring Buffer for Audio Mixing
     // System audio is buffered and mixed into the mic stream so Deepgram
@@ -75,7 +76,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var pendingSystemRetryTask: Task<Void, Never>?
     private var systemRetryAttempt = 0
     private let maxSystemRetryAttempts = 4
-    private var expectsSystemAudio = false
+    nonisolated(unsafe) private var expectsSystemAudio = false
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeMicInputDeviceID: AudioDeviceID?
     private var activeMicInputSampleRate: Double = 0
@@ -355,6 +356,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         defer { ringLock.unlock() }
         return ringCount
     }
+
+    private func setSystemAudioActive(_ active: Bool) {
+        isSystemAudioActive = active
+        isSystemAudioActiveForWatchdog = active
+    }
     
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
         await stopCaptureAsync()
@@ -385,12 +391,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             do {
                 try startSystemAudioCapture(mixWithMic: microphone)
                 capturedAny = true
-                isSystemAudioActive = true
+                setSystemAudioActive(true)
                 print("System audio capture started")
             } catch {
                 print("System audio capture failed: \(error.localizedDescription)")
                 DebugLogger.shared.log(.audio, "System audio FAILED: \(error.localizedDescription)")
-                isSystemAudioActive = false
+                setSystemAudioActive(false)
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
                     // Permission errors should not auto-retry.
                 } else if capturedAny {
@@ -425,7 +431,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         expectsSystemAudio = false
         isCapturing = false
         isMicActive = false
-        isSystemAudioActive = false
+        setSystemAudioActive(false)
         resetRingBuffer()
     }
     
@@ -447,7 +453,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         expectsSystemAudio = false
         isCapturing = false
         isMicActive = false
-        isSystemAudioActive = false
+        setSystemAudioActive(false)
         resetRingBuffer()
     }
     
@@ -628,14 +634,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
                 try self.startSystemAudioCapture(mixWithMic: mixWithMic)
-                self.isSystemAudioActive = true
+                self.setSystemAudioActive(true)
                 let restartedAt = CFAbsoluteTimeGetCurrent()
                 self.lastSystemNonSilentAt = restartedAt
                 self.lastSystemCallbackAt = restartedAt
                 self.lastSystemAutoRestartAt = restartedAt
                 DebugLogger.shared.log(.audio, "System tap restart complete after output change")
             } catch {
-                self.isSystemAudioActive = false
+                self.setSystemAudioActive(false)
                 DebugLogger.shared.log(.audio, "System tap restart FAILED after output change: \(error.localizedDescription)")
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
                     // Permission errors should not auto-retry.
@@ -670,14 +676,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             resetRingBuffer()
             stopSystemAudioCapture()
             try startSystemAudioCapture(mixWithMic: mixWithMic)
-            isSystemAudioActive = true
+            setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
             lastSystemCallbackAt = restartedAt
             lastSystemAutoRestartAt = restartedAt
             DebugLogger.shared.log(.audio, "System tap recovery complete")
         } catch {
-            isSystemAudioActive = false
+            setSystemAudioActive(false)
             DebugLogger.shared.log(.audio, "System tap recovery FAILED: \(error.localizedDescription)")
             if case AudioCaptureError.systemAudioPermissionDenied = error {
                 // Permission errors should not auto-retry.
@@ -711,14 +717,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             resetRingBuffer()
             stopSystemAudioCapture()
             try startSystemAudioCapture(mixWithMic: mixWithMic)
-            isSystemAudioActive = true
+            setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
             lastSystemCallbackAt = restartedAt
             lastSystemAutoRestartAt = restartedAt
             DebugLogger.shared.log(.audio, "System tap callback-stall recovery complete")
         } catch {
-            isSystemAudioActive = false
+            setSystemAudioActive(false)
             DebugLogger.shared.log(.audio, "System tap callback-stall recovery FAILED: \(error.localizedDescription)")
             if case AudioCaptureError.systemAudioPermissionDenied = error {
                 // Permission errors should not auto-retry.
@@ -775,11 +781,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
                 try self.startSystemAudioCapture(mixWithMic: mixWithMic)
-                self.isSystemAudioActive = true
+                self.setSystemAudioActive(true)
                 self.systemRetryAttempt = 0
                 DebugLogger.shared.log(.audio, "System tap auto-retry succeeded")
             } catch {
-                self.isSystemAudioActive = false
+                self.setSystemAudioActive(false)
                 DebugLogger.shared.log(.audio, "System tap auto-retry FAILED: \(error.localizedDescription)")
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
                     return
@@ -1321,7 +1327,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         // Callback-stall watchdog: detect when system callbacks stop entirely
         // (different failure mode from silent-buffer stalls).
-        if expectsSystemAudio && isSystemAudioActive && now - lastSystemCallbackStallCheck > 2.0 {
+        if expectsSystemAudio && isSystemAudioActiveForWatchdog && now - lastSystemCallbackStallCheck > 2.0 {
             lastSystemCallbackStallCheck = now
             let callbackGap = now - lastSystemCallbackAt
             let startupGraceElapsed = (now - lastSystemHeartbeat) > 8.0
