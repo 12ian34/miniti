@@ -9,6 +9,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var audioEngine: AVAudioEngine?
     private var engineConfigObserver: Any?
     private var routeChangeObserver: Any?
+    private var pendingMicRestartTask: Task<Void, Never>?
+    private var isRestartingMicAfterRouteChange = false
+    private var lastMicRestartAt: CFAbsoluteTime = 0
+    private var activeInputIdentity: String = ""
     
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (Data) -> Void)?
     
@@ -66,9 +70,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var micBufferCount: Int = 0
     nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
     
-    private func startMicrophoneCapture() async throws {
+    private func startMicrophoneCapture(skipPermissionCheck: Bool = false) async throws {
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker, .allowBluetoothA2DP])
+        try session.setCategory(
+            .playAndRecord,
+            mode: .default,
+            options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowBluetoothHFP]
+        )
         try session.setActive(true)
         
         let route = session.currentRoute
@@ -76,10 +84,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let inputType = route.inputs.first?.portType.rawValue ?? "none"
         DebugLogger.shared.log(.audio, "iOS audio route: input=\(inputName) (\(inputType)), sampleRate=\(session.sampleRate)Hz")
         
-        let granted = await requestMicrophonePermission()
-        guard granted else {
-            DebugLogger.shared.log(.audio, "Mic permission DENIED")
-            throw AudioCaptureError.microphonePermissionDenied
+        if !skipPermissionCheck {
+            let granted = await requestMicrophonePermission()
+            guard granted else {
+                DebugLogger.shared.log(.audio, "Mic permission DENIED")
+                throw AudioCaptureError.microphonePermissionDenied
+            }
         }
         
         audioEngine = AVAudioEngine()
@@ -87,6 +97,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         let inputNode = audioEngine.inputNode
         let inputFormat = inputNode.outputFormat(forBus: 0)
+        activeInputIdentity = currentInputIdentity()
         
         DebugLogger.shared.log(.audio, "Mic input format: \(inputFormat.sampleRate)Hz, \(inputFormat.channelCount)ch")
         
@@ -97,19 +108,39 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             interleaved: true
         ) else { throw AudioCaptureError.formatCreationFailed }
         
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            DebugLogger.shared.log(.audio, "FAILED to create converter: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
-            throw AudioCaptureError.converterCreationFailed
-        }
-        
-        DebugLogger.shared.log(.audio, "Mic converter ready: \(inputFormat.sampleRate)Hz → \(targetSampleRate)Hz")
+        DebugLogger.shared.log(.audio, "Mic converter armed (dynamic input format) → \(targetSampleRate)Hz")
         micBufferCount = 0
         lastMicHeartbeat = CFAbsoluteTimeGetCurrent()
         
         let onBuffer = onAudioBuffer
         let targetRate = targetSampleRate
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
+        var activeConverter: AVAudioConverter?
+        var activeInputSampleRate: Double = 0
+        var activeInputChannels: AVAudioChannelCount = 0
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
+            guard let self else { return }
+            let inFormat = buffer.format
+            if activeConverter == nil ||
+                abs(activeInputSampleRate - inFormat.sampleRate) > 0.001 ||
+                activeInputChannels != inFormat.channelCount {
+                guard let newConverter = AVAudioConverter(from: inFormat, to: outputFormat) else {
+                    DebugLogger.shared.log(.audio, "FAILED to create mic converter in callback: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetRate)Hz")
+                    return
+                }
+                activeConverter = newConverter
+                activeInputSampleRate = inFormat.sampleRate
+                activeInputChannels = inFormat.channelCount
+                DebugLogger.shared.log(.audio, "Mic converter ready: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetRate)Hz")
+            }
+            
+            guard let converter = activeConverter else { return }
+            self.processAudioBuffer(
+                buffer,
+                converter: converter,
+                outputFormat: outputFormat,
+                targetRate: targetRate,
+                callback: onBuffer
+            )
         }
         
         try audioEngine.start()
@@ -145,48 +176,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func handleEngineConfigurationChange() {
-        guard isCapturing, isMicActive else { return }
-        guard let audioEngine else { return }
-        
-        let session = AVAudioSession.sharedInstance()
-        let route = session.currentRoute
-        let inputName = route.inputs.first?.portName ?? "none"
-        DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. Input: \(inputName), \(session.sampleRate)Hz")
-        
-        audioEngine.inputNode.removeTap(onBus: 0)
-        
-        let inputNode = audioEngine.inputNode
-        let inputFormat = inputNode.outputFormat(forBus: 0)
-        
-        guard inputFormat.sampleRate > 0 && inputFormat.channelCount > 0 else {
-            DebugLogger.shared.log(.audio, "INVALID new format — mic capture suspended")
-            return
-        }
-        
-        guard let outputFormat = AVAudioFormat(
-            commonFormat: .pcmFormatInt16,
-            sampleRate: targetSampleRate,
-            channels: targetChannels,
-            interleaved: true
-        ) else { return }
-        
-        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
-            DebugLogger.shared.log(.audio, "FAILED to create converter for new format")
-            return
-        }
-        
-        let onBuffer = onAudioBuffer
-        let targetRate = targetSampleRate
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
-        }
-        
-        do {
-            try audioEngine.start()
-            DebugLogger.shared.log(.audio, "Mic capture restarted with \(inputFormat.sampleRate)Hz format")
-        } catch {
-            DebugLogger.shared.log(.audio, "FAILED to restart engine: \(error.localizedDescription)")
-        }
+        scheduleMicRestart(reason: "engine configuration changed")
     }
     
     private func handleRouteChange(reason: UInt?) {
@@ -196,6 +186,51 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let inputName = route.inputs.first?.portName ?? "none"
         let inputType = route.inputs.first?.portType.rawValue ?? "none"
         DebugLogger.shared.log(.audio, "Audio route changed (\(changeReason.debugLabel)): input=\(inputName) (\(inputType))")
+        
+        guard isCapturing, isMicActive else { return }
+        let newIdentity = currentInputIdentity()
+        guard !newIdentity.isEmpty, newIdentity != activeInputIdentity else { return }
+        activeInputIdentity = newIdentity
+        scheduleMicRestart(reason: "input route changed")
+    }
+    
+    private func scheduleMicRestart(reason: String) {
+        guard isCapturing, isMicActive else { return }
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.pendingMicRestartTask = nil }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard self.isCapturing, self.isMicActive else { return }
+            guard !self.isRestartingMicAfterRouteChange else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            guard now - self.lastMicRestartAt > 0.5 else { return }
+            self.lastMicRestartAt = now
+            self.isRestartingMicAfterRouteChange = true
+            defer { self.isRestartingMicAfterRouteChange = false }
+            
+            let session = AVAudioSession.sharedInstance()
+            let route = session.currentRoute
+            let inputName = route.inputs.first?.portName ?? "none"
+            DebugLogger.shared.log(.audio, "Restarting iOS mic tap (\(reason)). Input: \(inputName), \(session.sampleRate)Hz")
+            
+            self.stopMicrophoneCapture()
+            do {
+                try await self.startMicrophoneCapture(skipPermissionCheck: true)
+                DebugLogger.shared.log(.audio, "iOS mic capture restart complete")
+            } catch {
+                self.isMicActive = false
+                DebugLogger.shared.log(.audio, "iOS mic capture restart FAILED: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func currentInputIdentity() -> String {
+        let session = AVAudioSession.sharedInstance()
+        let input = session.currentRoute.inputs.first
+        let uid = input?.uid ?? "unknown"
+        let port = input?.portType.rawValue ?? "none"
+        return "\(uid)|\(port)"
     }
     
     private func stopMicrophoneCapture() {
@@ -207,6 +242,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             NotificationCenter.default.removeObserver(observer)
             routeChangeObserver = nil
         }
+        pendingMicRestartTask?.cancel()
+        pendingMicRestartTask = nil
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil

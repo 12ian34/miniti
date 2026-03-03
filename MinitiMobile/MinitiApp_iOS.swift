@@ -39,7 +39,10 @@ struct MinitiMobileApp: App {
             if newPhase == .background {
                 appState.saveCurrentMeetingIfNeeded()
             } else if newPhase == .active && appState.appMode == .managed {
-                Task { await appState.refreshUsage() }
+                Task {
+                    await appState.refreshUsage()
+                    await appState.retryPendingSessionEndReports()
+                }
             }
         }
     }

@@ -118,6 +118,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     nonisolated(unsafe) private var audioPacketsSent: Int = 0
     nonisolated(unsafe) private var audioBytesSent: Int = 0
     nonisolated(unsafe) private var audioSendErrors: Int = 0
+    nonisolated(unsafe) private var consecutiveSendErrors: Int = 0
     private var transcriptMessageCount: Int = 0
     private var transcriptWordCount: Int = 0
     private var finalTranscriptCount: Int = 0
@@ -130,11 +131,20 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         audioPacketsSent = 0
         audioBytesSent = 0
         audioSendErrors = 0
+        consecutiveSendErrors = 0
         transcriptMessageCount = 0
         transcriptWordCount = 0
         finalTranscriptCount = 0
         emptyTranscriptCount = 0
         lastTranscriptAt = 0
+    }
+    
+    var lastTranscriptTimestamp: CFAbsoluteTime {
+        lastTranscriptAt
+    }
+    
+    var packetsSentCount: Int {
+        audioPacketsSent
     }
     
     func connect(model: DeepgramModel = .nova3) {
@@ -190,6 +200,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         _sendConnected = true
         _sendTask = webSocketTask
         connectionState = .connected
+        error = nil
         DebugLogger.shared.log(.deepgram, "WebSocket connected")
         
         receiveMessages()
@@ -207,6 +218,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         webSocketTask = nil
         urlSession = nil
         isConnected = false
+        consecutiveSendErrors = 0
         connectionState = .disconnected
     }
     
@@ -221,9 +233,16 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                 self?.audioSendErrors += 1
                 Task { @MainActor in
                     guard let self, self.isConnected else { return }
+                    self.consecutiveSendErrors += 1
                     DebugLogger.shared.log(.deepgram, "WS send error: \(error.localizedDescription)")
                     print("WebSocket send error: \(error)")
                     self.error = error
+                    if self.consecutiveSendErrors >= 5 {
+                        self.isConnected = false
+                        self._sendConnected = false
+                        self.connectionState = .error
+                        DebugLogger.shared.log(.deepgram, "WS marked unhealthy after consecutive send failures")
+                    }
                 }
             }
         }
@@ -235,6 +254,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                 guard let self else { return }
                 switch result {
                 case .success(let message):
+                    self.consecutiveSendErrors = 0
                     self.wsMessageCount += 1
                     let now = CFAbsoluteTimeGetCurrent()
                     if now - self.lastWsHeartbeat > 15.0 {
@@ -262,6 +282,8 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
                     DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
                     print("WebSocket receive error: \(error)")
                     self.error = error
+                    self.isConnected = false
+                    self._sendConnected = false
                     self.connectionState = .error
                 }
             }

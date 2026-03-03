@@ -378,8 +378,9 @@ It does **not** send:
 
 ### Bluetooth headphones/audio devices changed and audio looks wrong
 
-- Stop and resume the session after the device switch if needed
-- If audio still looks stuck, start a fresh session (`⌘N`)
+- The app now tries to auto-recover after route/profile changes (for example AirPods switching call modes)
+- Allow up to ~20 seconds for automatic system-audio recovery after a device switch
+- If audio still looks stuck after that window, stop/resume the session or start a fresh session (`⌘N`)
 - Use the debug log (hidden Settings shortcut if you use it internally) only for deeper diagnosis
 
 ### Managed mode says limit reached / recording is blocked

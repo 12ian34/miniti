@@ -19,6 +19,48 @@ enum AppMode: String {
 
 @MainActor
 final class AppState: ObservableObject {
+    enum AudioRecoveryState: String {
+        case healthy
+        case recovering
+        case degraded
+        
+        var label: String {
+            switch self {
+            case .healthy: return "audio healthy"
+            case .recovering: return "recovering audio..."
+            case .degraded: return "audio degraded"
+            }
+        }
+    }
+    
+    private struct PendingSessionEndReport: Codable, Identifiable, Equatable {
+        let id: UUID
+        let deviceId: String
+        let sessionId: String
+        let durationMinutes: Double
+        let createdAt: Date
+        var retryCount: Int
+        var meetingId: UUID?
+        
+        init(
+            id: UUID = UUID(),
+            deviceId: String,
+            sessionId: String,
+            durationMinutes: Double,
+            createdAt: Date = Date(),
+            retryCount: Int = 0,
+            meetingId: UUID? = nil
+        ) {
+            self.id = id
+            self.deviceId = deviceId
+            self.sessionId = sessionId
+            self.durationMinutes = durationMinutes
+            self.createdAt = createdAt
+            self.retryCount = retryCount
+            self.meetingId = meetingId
+        }
+    }
+    
     // MARK: - Recording State
     @Published var isRecording = false
     @Published var isStartingMeeting = false
@@ -47,6 +89,7 @@ final class AppState: ObservableObject {
     @Published var microphoneLevel: Float = 0  // Mic-only level
     @Published var systemAudioLevel: Float = 0  // System audio-only level
     @Published var isMonitoring = false  // Audio monitoring active (home screen)
+    @Published var audioRecoveryState: AudioRecoveryState = .healthy
     
     // MARK: - Insights Mode
     @Published var insightsMode: InsightsMode = .standard
@@ -224,6 +267,15 @@ final class AppState: ObservableObject {
     
     private var recordingTimer: Timer?
     private var periodicSaveTimer: Timer?
+    private var transcriptHealthTimer: Timer?
+    private var lastTranscriptReceivedAt: CFAbsoluteTime = 0
+    private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
+    private var deepgramReconnectTask: Task<Void, Never>?
+    private var deepgramReconnectGeneration = 0
+    private var systemAudioInactiveSince: CFAbsoluteTime = 0
+    private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
+    private var pendingSessionEndReports: [PendingSessionEndReport] = []
+    private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
     private var accumulatedRecordedDuration: TimeInterval = 0
     private var cancellables = Set<AnyCancellable>()
@@ -285,10 +337,14 @@ final class AppState: ObservableObject {
         }
         setupServices()
         updateLogRedaction()
+        pendingSessionEndReports = loadPendingSessionEndReports()
         
         // Load usage info for managed mode
         if appMode == .managed {
-            Task { await refreshUsage() }
+            Task {
+                await refreshUsage()
+                await flushPendingSessionEndReports(trigger: "launch")
+            }
         }
         
         // Check for app updates (all modes)
@@ -342,6 +398,13 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
         
+        deepgramService?.$connectionState
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] state in
+                self?.handleDeepgramConnectionState(state)
+            }
+            .store(in: &cancellables)
+        
         // Subscribe to audio levels for visualization (separate + combined)
         if let audioService = audioCaptureService {
             audioService.$microphoneLevel
@@ -365,12 +428,37 @@ final class AppState: ObservableObject {
                     self?.audioLevel = max(micLevel, sysLevel)
                 }
                 .store(in: &cancellables)
+            
+            #if os(macOS)
+            audioService.$isSystemAudioActive
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] isActive in
+                    guard let self else { return }
+                    guard self.captureSystemAudio else {
+                        self.systemAudioInactiveSince = 0
+                        self.updateAudioRecoveryState()
+                        return
+                    }
+                    if isActive {
+                        self.systemAudioInactiveSince = 0
+                    } else if self.isRecording {
+                        if self.systemAudioInactiveSince == 0 {
+                            self.systemAudioInactiveSince = CFAbsoluteTimeGetCurrent()
+                        }
+                    } else {
+                        self.systemAudioInactiveSince = 0
+                    }
+                    self.updateAudioRecoveryState()
+                }
+                .store(in: &cancellables)
+            #endif
         }
     }
     
     private func handleTranscriptUpdate(_ update: DeepgramService.TranscriptUpdate) {
         // Skip empty updates
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         
         if update.isFinal {
             // Final result - will be handled by speaker segments for better accuracy
@@ -390,6 +478,146 @@ final class AppState: ObservableObject {
             updateLiveActivityTranscript()
             #endif
         }
+    }
+    
+    private func handleDeepgramConnectionState(_ state: DeepgramService.ConnectionState) {
+        guard isRecording else {
+            updateAudioRecoveryState()
+            return
+        }
+        
+        switch state {
+        case .connected:
+            deepgramReconnectTask?.cancel()
+            deepgramReconnectTask = nil
+            deepgramReconnectGeneration += 1
+            updateAudioRecoveryState()
+        case .connecting:
+            updateAudioRecoveryState()
+        case .error:
+            scheduleDeepgramReconnect(reason: "connection error")
+        case .disconnected:
+            // If disconnected while recording, treat as transient and attempt reconnect.
+            scheduleDeepgramReconnect(reason: "unexpected disconnect")
+        }
+    }
+    
+    private func scheduleDeepgramReconnect(reason: String) {
+        guard isRecording else { return }
+        guard deepgramReconnectTask == nil else { return }
+        guard let deepgramService else { return }
+        
+        deepgramReconnectGeneration += 1
+        let generation = deepgramReconnectGeneration
+        updateAudioRecoveryState()
+        DebugLogger.shared.log(.app, "Deepgram reconnect scheduled: \(reason)")
+        
+        deepgramReconnectTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.deepgramReconnectTask = nil }
+            let backoffSeconds: [UInt64] = [1, 2, 5]
+            
+            for (idx, delay) in backoffSeconds.enumerated() {
+                try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
+                guard !Task.isCancelled else { return }
+                guard self.isRecording else { return }
+                guard generation == self.deepgramReconnectGeneration else { return }
+                
+                DebugLogger.shared.log(.app, "Deepgram reconnect attempt \(idx + 1)/\(backoffSeconds.count)")
+                deepgramService.disconnect()
+                let model = DeepgramModel(rawValue: self.deepgramModel) ?? .nova3
+                deepgramService.connect(model: model)
+                
+                // Give the socket a short window to establish before next retry.
+                for _ in 0..<12 {
+                    try? await Task.sleep(nanoseconds: 250_000_000)
+                    guard !Task.isCancelled else { return }
+                    guard generation == self.deepgramReconnectGeneration else { return }
+                    if deepgramService.connectionState == .connected {
+                        DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
+                        self.updateAudioRecoveryState()
+                        return
+                    }
+                }
+            }
+            
+            if self.isRecording && generation == self.deepgramReconnectGeneration {
+                DebugLogger.shared.log(.app, "Deepgram reconnect exhausted")
+                self.audioRecoveryState = .degraded
+            }
+        }
+    }
+    
+    private func startTranscriptHealthMonitoring() {
+        transcriptHealthTimer?.invalidate()
+        transcriptHealthTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkTranscriptHealth()
+            }
+        }
+    }
+    
+    private func stopTranscriptHealthMonitoring() {
+        transcriptHealthTimer?.invalidate()
+        transcriptHealthTimer = nil
+    }
+    
+    private func checkTranscriptHealth() {
+        guard isRecording else { return }
+        guard let deepgramService else { return }
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        let speechLikely = microphoneLevel > 0.008 || (captureSystemAudio && systemAudioLevel > 0.006)
+        if speechLikely {
+            let transcriptGap = now - lastTranscriptReceivedAt
+            if transcriptGap > 20.0,
+               now - lastTranscriptStarvationRecoveryAt > 30.0,
+               deepgramService.connectionState == .connected {
+                lastTranscriptStarvationRecoveryAt = now
+                DebugLogger.shared.log(
+                    .app,
+                    "Transcript starvation detected (\(String(format: "%.1f", transcriptGap))s gap with active audio) — reconnecting Deepgram"
+                )
+                scheduleDeepgramReconnect(reason: "transcript starvation")
+            }
+        }
+        
+        updateAudioRecoveryState()
+    }
+    
+    private func updateAudioRecoveryState() {
+        guard isRecording else {
+            audioRecoveryState = .healthy
+            return
+        }
+        
+        if deepgramReconnectTask != nil || deepgramService?.connectionState == .connecting {
+            audioRecoveryState = .recovering
+            return
+        }
+        
+        if deepgramService?.connectionState == .error {
+            audioRecoveryState = .degraded
+            return
+        }
+        
+        #if os(macOS)
+        if captureSystemAudio {
+            let isSystemActive = audioCaptureService?.isSystemAudioActive ?? false
+            if !isSystemActive {
+                let now = CFAbsoluteTimeGetCurrent()
+                if systemAudioInactiveSince == 0 {
+                    systemAudioInactiveSince = now
+                }
+                let inactiveFor = now - systemAudioInactiveSince
+                audioRecoveryState = inactiveFor > 12 ? .degraded : .recovering
+                return
+            }
+            systemAudioInactiveSince = 0
+        }
+        #endif
+        
+        audioRecoveryState = .healthy
     }
     
     private func handleSpeakerSegments(_ segments: [DeepgramService.SpeakerSegment]) {
@@ -876,21 +1104,14 @@ final class AppState: ObservableObject {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
             let durationMinutes = recordingDuration / 60.0
             Task {
-                do {
-                    let result = try await minitiAPIService?.endSession(
-                        deviceId: deviceId,
-                        sessionId: sessionId,
-                        durationMinutes: durationMinutes
-                    )
-                    if let result {
-                        DebugLogger.shared.log(.app, "Reported orphaned session: id=\(sessionId), duration=\(durationMinutes.rounded())m, totalUsed=\(result.minutesUsed)m")
-                    }
-                    await refreshUsage()
-                } catch {
-                    DebugLogger.shared.log(.app, "Report orphaned session FAILED: \(error.localizedDescription)")
-                }
+                let report = PendingSessionEndReport(
+                    deviceId: deviceId,
+                    sessionId: sessionId,
+                    durationMinutes: durationMinutes,
+                    meetingId: interrupted.id
+                )
+                await reportManagedSessionEnd(report, trigger: "orphaned resume")
             }
-            interrupted.managedSessionId = nil
         }
         
         DebugLogger.shared.log(.app, "Interrupted session restored: segments=\(liveSegments.count), duration=\(formattedDuration)")
@@ -1126,6 +1347,14 @@ final class AppState: ObservableObject {
         }
         
         isRecording = true
+        audioRecoveryState = .healthy
+        systemAudioInactiveSince = 0
+        deepgramReconnectTask?.cancel()
+        deepgramReconnectTask = nil
+        deepgramReconnectGeneration += 1
+        lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
+        lastTranscriptStarvationRecoveryAt = 0
+        startTranscriptHealthMonitoring()
         
         // Determine which API key to use
         let apiKey: String
@@ -1223,6 +1452,7 @@ final class AppState: ObservableObject {
             managedSessionStartRecordedDuration = accumulatedRecordedDuration
             currentMeeting?.managedSessionId = session.sessionId
             DebugLogger.shared.log(.app, "Managed session started: sessionId=\(session.sessionId)")
+            await flushPendingSessionEndReports(trigger: "session started")
             
             // Now start recording with the temp key
             startRecording()
@@ -1266,11 +1496,17 @@ final class AppState: ObservableObject {
         }
         
         isRecording = false
+        audioRecoveryState = .healthy
         recordingTimer?.invalidate()
         recordingTimer = nil
         recordingStartDate = nil
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
+        stopTranscriptHealthMonitoring()
+        deepgramReconnectTask?.cancel()
+        deepgramReconnectTask = nil
+        deepgramReconnectGeneration += 1
+        systemAudioInactiveSince = 0
         
         // Update Live Activity to show paused state (keep it alive for resume)
         #if os(iOS)
@@ -1286,26 +1522,18 @@ final class AppState: ObservableObject {
             let sessionStart = managedSessionStartRecordedDuration ?? 0
             let sessionDuration = max(0, recordingDuration - sessionStart)
             let durationMinutes = sessionDuration / 60.0
+            let meetingId = currentMeeting?.id
+            let report = PendingSessionEndReport(
+                deviceId: deviceId,
+                sessionId: sessionId,
+                durationMinutes: durationMinutes,
+                meetingId: meetingId
+            )
             Task {
-                do {
-                    let result = try await minitiAPIService?.endSession(
-                        deviceId: deviceId,
-                        sessionId: sessionId,
-                        durationMinutes: durationMinutes
-                    )
-                    if let result {
-                        DebugLogger.shared.log(.app, "Managed session ended: used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m")
-                    }
-                    // Refresh usage info
-                    await refreshUsage()
-                } catch {
-                    DebugLogger.shared.log(.app, "Managed session end report FAILED: \(error.localizedDescription)")
-                }
+                await reportManagedSessionEnd(report, trigger: "stop recording")
             }
-            currentSessionId = nil
             tempDeepgramKey = nil
             managedSessionStartRecordedDuration = nil
-            currentMeeting?.managedSessionId = nil
         }
         
         // Finalize meeting (keep as current session so user can resume/save/discard)
@@ -1330,6 +1558,10 @@ final class AppState: ObservableObject {
     private func clearCurrentSession() {
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
+        stopTranscriptHealthMonitoring()
+        deepgramReconnectTask?.cancel()
+        deepgramReconnectTask = nil
+        deepgramReconnectGeneration += 1
         currentMeeting = nil
         isStartingMeeting = false
         isResumingRecording = false
@@ -1340,6 +1572,8 @@ final class AppState: ObservableObject {
         recordingDuration = 0
         recordingStartDate = nil
         accumulatedRecordedDuration = 0
+        audioRecoveryState = .healthy
+        systemAudioInactiveSince = 0
         hasUnsavedSession = false
         
         // Reset live notes and insights
@@ -1649,6 +1883,150 @@ final class AppState: ObservableObject {
         return false
     }
     
+    // MARK: - Managed Session End Durability
+    
+    private func reportManagedSessionEnd(_ report: PendingSessionEndReport, trigger: String) async {
+        guard appMode == .managed else { return }
+        guard let minitiAPIService else {
+            enqueuePendingSessionEndReport(report, reason: "\(trigger): service unavailable")
+            return
+        }
+        
+        do {
+            let result = try await minitiAPIService.endSession(
+                deviceId: report.deviceId,
+                sessionId: report.sessionId,
+                durationMinutes: report.durationMinutes
+            )
+            DebugLogger.shared.log(
+                .app,
+                "Managed session end reported (\(trigger)): id=\(report.sessionId), used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m"
+            )
+            clearManagedSessionReference(sessionId: report.sessionId, meetingId: report.meetingId)
+            await refreshUsage()
+            await flushPendingSessionEndReports(trigger: "post-success")
+        } catch {
+            DebugLogger.shared.log(.app, "Managed session end report FAILED (\(trigger)): \(error.localizedDescription)")
+            enqueuePendingSessionEndReport(report, reason: "\(trigger): request failed")
+        }
+    }
+    
+    private func enqueuePendingSessionEndReport(_ report: PendingSessionEndReport, reason: String) {
+        if let existingIndex = pendingSessionEndReports.firstIndex(
+            where: { $0.sessionId == report.sessionId && $0.deviceId == report.deviceId }
+        ) {
+            var existing = pendingSessionEndReports[existingIndex]
+            existing.retryCount = max(existing.retryCount + 1, report.retryCount + 1)
+            existing.meetingId = existing.meetingId ?? report.meetingId
+            pendingSessionEndReports[existingIndex] = existing
+        } else {
+            var queued = report
+            queued.retryCount += 1
+            pendingSessionEndReports.append(queued)
+        }
+        persistPendingSessionEndReports()
+        clearManagedSessionReference(sessionId: report.sessionId, meetingId: report.meetingId)
+        DebugLogger.shared.log(
+            .app,
+            "Queued pending managed session end: id=\(report.sessionId), reason=\(reason), pending=\(pendingSessionEndReports.count)"
+        )
+    }
+    
+    private func flushPendingSessionEndReports(trigger: String) async {
+        guard appMode == .managed else { return }
+        guard !isFlushingPendingSessionReports else { return }
+        guard !pendingSessionEndReports.isEmpty else { return }
+        guard let minitiAPIService else { return }
+        
+        isFlushingPendingSessionReports = true
+        defer { isFlushingPendingSessionReports = false }
+        
+        DebugLogger.shared.log(
+            .app,
+            "Flushing pending managed session reports (\(trigger)): count=\(pendingSessionEndReports.count)"
+        )
+        
+        var nextPending: [PendingSessionEndReport] = []
+        var hadSuccess = false
+        
+        for report in pendingSessionEndReports {
+            var attemptReport = report
+            do {
+                let result = try await minitiAPIService.endSession(
+                    deviceId: attemptReport.deviceId,
+                    sessionId: attemptReport.sessionId,
+                    durationMinutes: attemptReport.durationMinutes
+                )
+                hadSuccess = true
+                DebugLogger.shared.log(
+                    .app,
+                    "Flushed pending session end: id=\(attemptReport.sessionId), used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m"
+                )
+                clearManagedSessionReference(sessionId: attemptReport.sessionId, meetingId: attemptReport.meetingId)
+            } catch {
+                attemptReport.retryCount += 1
+                nextPending.append(attemptReport)
+                DebugLogger.shared.log(
+                    .app,
+                    "Pending session end flush FAILED: id=\(attemptReport.sessionId), retries=\(attemptReport.retryCount), error=\(error.localizedDescription)"
+                )
+            }
+        }
+        
+        pendingSessionEndReports = nextPending
+        persistPendingSessionEndReports()
+        
+        if hadSuccess {
+            await refreshUsage()
+        }
+    }
+    
+    private func clearManagedSessionReference(sessionId: String, meetingId: UUID?) {
+        if currentSessionId == sessionId {
+            currentSessionId = nil
+        }
+        
+        if currentMeeting?.managedSessionId == sessionId || currentMeeting?.id == meetingId {
+            currentMeeting?.managedSessionId = nil
+        }
+        
+        guard let modelContext else { return }
+        let descriptor = FetchDescriptor<Meeting>()
+        guard let meetings = try? modelContext.fetch(descriptor) else { return }
+        if let targetID = meetingId,
+           let target = meetings.first(where: { $0.id == targetID }) {
+            target.managedSessionId = nil
+            try? modelContext.save()
+            return
+        }
+        
+        if let fallback = meetings.first(where: { $0.managedSessionId == sessionId }) {
+            fallback.managedSessionId = nil
+            try? modelContext.save()
+        }
+    }
+    
+    private func loadPendingSessionEndReports() -> [PendingSessionEndReport] {
+        guard let data = UserDefaults.standard.data(forKey: pendingSessionReportsDefaultsKey) else {
+            return []
+        }
+        do {
+            return try JSONDecoder().decode([PendingSessionEndReport].self, from: data)
+        } catch {
+            DebugLogger.shared.log(.app, "Failed to decode pending session-end reports: \(error.localizedDescription)")
+            return []
+        }
+    }
+    
+    private func persistPendingSessionEndReports() {
+        do {
+            let data = try JSONEncoder().encode(pendingSessionEndReports)
+            UserDefaults.standard.set(data, forKey: pendingSessionReportsDefaultsKey)
+        } catch {
+            DebugLogger.shared.log(.app, "Failed to persist pending session-end reports: \(error.localizedDescription)")
+        }
+    }
+    
     // MARK: - Update Check
     
     /// Check if a newer version is available. Runs on launch for all modes.
@@ -1703,6 +2081,11 @@ final class AppState: ObservableObject {
         }
         
         isLoadingUsage = false
+    }
+    
+    /// Retry any managed session-end reports that were queued due transient failures.
+    func retryPendingSessionEndReports() async {
+        await flushPendingSessionEndReports(trigger: "manual retry")
     }
     
     // MARK: - Subscription

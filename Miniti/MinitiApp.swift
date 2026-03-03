@@ -11,6 +11,7 @@ struct MinitiApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var keyboardService = KeyboardShortcutsService.shared
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
+    @Environment(\.scenePhase) private var scenePhase
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -51,6 +52,16 @@ struct MinitiApp: App {
             }
         }
         .modelContainer(sharedModelContainer)
+        .onChange(of: scenePhase) { _, newPhase in
+            if newPhase == .background {
+                appState.saveCurrentMeetingIfNeeded()
+            } else if newPhase == .active && appState.appMode == .managed {
+                Task {
+                    await appState.refreshUsage()
+                    await appState.retryPendingSessionEndReports()
+                }
+            }
+        }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultSize(width: 800, height: 600)
