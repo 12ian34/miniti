@@ -1214,7 +1214,7 @@ final class AppState: ObservableObject {
         }
         
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-        let model = deepgramModel
+        let model = (DeepgramModel(rawValue: deepgramModel) ?? .nova3).rawValue
         
         do {
             let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: model)
