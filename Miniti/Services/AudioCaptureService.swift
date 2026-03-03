@@ -25,6 +25,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     @Published var microphoneLevel: Float = 0
     @Published var systemAudioLevel: Float = 0
     @Published var isMicActive = false
+    nonisolated(unsafe) private var isMicActiveForWatchdog = false
     @Published var isSystemAudioActive = false
     nonisolated(unsafe) private var isSystemAudioActiveForWatchdog = false
     
@@ -362,6 +363,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         isSystemAudioActiveForWatchdog = active
     }
     
+    private func setMicActive(_ active: Bool) {
+        isMicActive = active
+        isMicActiveForWatchdog = active
+    }
+    
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
         await stopCaptureAsync()
         
@@ -377,12 +383,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             do {
                 try await startMicrophoneCapture()
                 capturedAny = true
-                isMicActive = true
+                setMicActive(true)
                 print("Microphone capture started")
             } catch {
                 print("Microphone capture failed: \(error.localizedDescription)")
                 DebugLogger.shared.log(.audio, "Mic capture FAILED: \(error.localizedDescription)")
-                isMicActive = false
+                setMicActive(false)
                 if !systemAudio { throw error }
             }
         }
@@ -430,7 +436,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         systemRetryAttempt = 0
         expectsSystemAudio = false
         isCapturing = false
-        isMicActive = false
+        setMicActive(false)
         setSystemAudioActive(false)
         resetRingBuffer()
     }
@@ -452,7 +458,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         systemRetryAttempt = 0
         expectsSystemAudio = false
         isCapturing = false
-        isMicActive = false
+        setMicActive(false)
         setSystemAudioActive(false)
         resetRingBuffer()
     }
@@ -604,7 +610,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                     DebugLogger.shared.log(.audio, "Mic restart complete after config change")
                 }
             } catch {
-                self.isMicActive = false
+                self.setMicActive(false)
                 DebugLogger.shared.log(.audio, "Mic restart FAILED after config change: \(error.localizedDescription)")
             }
         }
@@ -1341,7 +1347,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 )
                 Task { @MainActor [weak self] in
                     await self?.recoverSystemTapAfterCallbackStall(
-                        mixWithMic: true,
+                        mixWithMic: isMicActiveForWatchdog,
                         callbackGap: callbackGap
                     )
                 }
