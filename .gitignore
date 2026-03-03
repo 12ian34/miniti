@@ -27,6 +27,6 @@ Miniti*.app/
 # Build artifacts
 *.zip
 *.dmg
-miniti-icon.png
+miniti-icon*.png
 
 shn.md
