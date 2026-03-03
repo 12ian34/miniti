@@ -65,6 +65,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastNoSystemMixWarning: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
     private var isRestartingMicAfterConfigChange = false
     private var isRestartingSystemAfterOutputChange = false
     private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
@@ -193,6 +194,99 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         return "\(Int(asbd.mSampleRate))Hz, \(asbd.mChannelsPerFrame)ch, \(sampleType)\(asbd.mBitsPerChannel), interleaved=\(!isNonInterleaved)"
     }
     
+    nonisolated private static func deviceNominalSampleRate(_ deviceID: AudioDeviceID) -> Double {
+        var sampleRate: Float64 = 0
+        var size = UInt32(MemoryLayout<Float64>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyNominalSampleRate,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &sampleRate)
+        return sampleRate
+    }
+
+    nonisolated private static func deviceUID(_ deviceID: AudioDeviceID) -> String? {
+        var uidCF: CFString?
+        var size = UInt32(MemoryLayout<CFString?>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = withUnsafeMutablePointer(to: &uidCF) { ptr in
+            AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, UnsafeMutableRawPointer(ptr))
+        }
+        return err == noErr ? (uidCF as String?) : nil
+    }
+    
+    nonisolated private static func deviceTransportType(_ deviceID: AudioDeviceID) -> UInt32? {
+        var transportType: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyTransportType,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &transportType)
+        return err == noErr ? transportType : nil
+    }
+    
+    nonisolated private static func hasOutputStreams(_ deviceID: AudioDeviceID) -> Bool {
+        var streamSize: UInt32 = 0
+        var streamAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioObjectPropertyScopeOutput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        return AudioObjectGetPropertyDataSize(deviceID, &streamAddr, 0, nil, &streamSize) == noErr
+            && streamSize > 0
+    }
+    
+    nonisolated private static func defaultOutputDeviceID() -> AudioDeviceID? {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        )
+        return err == noErr ? deviceID : nil
+    }
+
+    /// Find a built-in output device to use as a stable clock source when the
+    /// default output has a sample rate mismatch with the process tap (e.g.
+    /// Bluetooth HFP at 24kHz vs tap at 48kHz).
+    nonisolated private static func findBuiltInOutputDevice() -> AudioDeviceID? {
+        var propSize: UInt32 = 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize
+        ) == noErr else { return nil }
+
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize, &deviceIDs
+        ) == noErr else { return nil }
+
+        for id in deviceIDs {
+            guard let transportType = deviceTransportType(id) else { continue }
+            guard transportType == kAudioDeviceTransportTypeBuiltIn else { continue }
+            guard hasOutputStreams(id) else { continue }
+
+            return id
+        }
+        return nil
+    }
+
     nonisolated private static func deviceInfo(selector: AudioObjectPropertySelector) -> String {
         var deviceID: AudioDeviceID = 0
         var size = UInt32(MemoryLayout<AudioDeviceID>.size)
@@ -244,6 +338,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastNoSystemMixWarning = 0
         lastSystemNonSilentAt = lastSystemHeartbeat
         lastSystemAutoRestartAt = 0
+        lastSilenceCheck = 0
         sysCallbackCount = 0
     }
     
@@ -604,38 +699,37 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         print("[SystemAudio] Tap format: \(tapFormat.mSampleRate)Hz, \(tapFormat.mChannelsPerFrame)ch, \(tapFormat.mBitsPerChannel)bit, Float=\(tapFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0)")
         DebugLogger.shared.log(.audio, "System tap format: \(Self.formatSummary(tapFormat))")
         
-        // 3. Get default output device UID (needed for aggregate device)
-        var outputDeviceID: AudioDeviceID = 0
-        var deviceSize = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var outputAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        err = AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &outputAddr, 0, nil, &deviceSize, &outputDeviceID)
-        guard err == noErr else {
-            print("[SystemAudio] Failed to get default output device: \(err)")
-            DebugLogger.shared.log(.audio, "Get default output device FAILED: osstatus=\(err)")
+        // 3. Pick a clock source for the aggregate device.
+        // The process tap captures ALL system audio from the mixer regardless
+        // of which device clocks the aggregate — it only needs a stable clock.
+        // The built-in output shares the same hardware oscillator as the system
+        // mixer, so there is zero drift. External devices (Bluetooth, USB, HDMI)
+        // have independent oscillators — even when sample rates nominally match,
+        // real clock drift accumulates and can cause the tap to deliver silent
+        // buffers (especially severe with Bluetooth HFP at 24kHz vs tap at
+        // 48kHz). Always prefer built-in; fall back to default output only if
+        // no built-in device exists.
+        var clockDeviceID: AudioDeviceID
+        var clockSource: String
+        
+        if let builtInID = Self.findBuiltInOutputDevice() {
+            clockDeviceID = builtInID
+            let rate = Self.deviceNominalSampleRate(builtInID)
+            clockSource = "built-in output (\(Int(rate))Hz)"
+        } else if let defaultID = Self.defaultOutputDeviceID() {
+            clockDeviceID = defaultID
+            let rate = Self.deviceNominalSampleRate(defaultID)
+            clockSource = "default output fallback (\(Int(rate))Hz, no built-in found)"
+        } else {
+            DebugLogger.shared.log(.audio, "No output device available for aggregate clock source")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         
-        var outputUIDCF: CFString?
-        var uidSize = UInt32(MemoryLayout<CFString?>.size)
-        var uidAddr = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyDeviceUID,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        err = withUnsafeMutablePointer(to: &outputUIDCF) { ptr in
-            AudioObjectGetPropertyData(outputDeviceID, &uidAddr, 0, nil, &uidSize,
-                                       UnsafeMutableRawPointer(ptr))
-        }
-        guard err == noErr, let outputUID = outputUIDCF as String? else {
-            print("[SystemAudio] Failed to get output device UID: \(err)")
-            DebugLogger.shared.log(.audio, "Get output device UID FAILED: osstatus=\(err)")
+        guard let outputUID = Self.deviceUID(clockDeviceID) else {
+            DebugLogger.shared.log(.audio, "Get clock device UID FAILED")
             throw AudioCaptureError.systemAudioSetupFailed
         }
-        print("[SystemAudio] Output device: \(outputUID)")
+        DebugLogger.shared.log(.audio, "Aggregate clock source: \(clockSource)")
         
         // 4. Create private aggregate device with the tap
         let aggregateUID = UUID().uuidString
@@ -932,22 +1026,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             DebugLogger.shared.log(.audio, "System first output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], inRMS=\(String(format: "%.5f", normalizedInputRMS))")
         }
         
-        if now - lastSystemHeartbeat > 10.0 {
-            lastSystemHeartbeat = now
-            let ringNow = currentRingSampleCount()
-            let nonSilentPct = sysCallbackCount > 0
-                ? (Double(sysNonSilentCallbacks) / Double(sysCallbackCount) * 100.0)
-                : 0
-            DebugLogger.shared.log(
-                .audio,
-                "System heartbeat: callbacks=\(sysCallbackCount), inFrames=\(sysInputFrameCount), outFrames=\(sysOutputFrameCount), inRMS=\(String(format: "%.5f", normalizedInputRMS)), nonSilent=\(String(format: "%.1f", nonSilentPct))%, ring=\(ringNow)/\(ringCapacity)"
-            )
-            if sysCallbackCount > 60 && sysNonSilentCallbacks == 0 {
-                DebugLogger.shared.log(.audio, "System warning: tap callbacks are active but all buffers are near-silent")
-            }
-
-            // Guardrail for process-tap stalls observed on some route states:
-            // callbacks continue, but stream stays near-zero until tap restart.
+        // Silence detection safety net (every 3s). With the built-in clock
+        // source, tap stalls should not occur, but this catches unknown edge
+        // cases. Threshold is 18s to avoid false positives during normal
+        // conversation (one person talking while the other is silent).
+        if now - lastSilenceCheck > 3.0 {
+            lastSilenceCheck = now
             let silenceDuration = now - lastSystemNonSilentAt
             let hadPriorSignal = sysNonSilentCallbacks >= 120
             let cooldownElapsed = (now - lastSystemAutoRestartAt) > 45.0
@@ -963,6 +1047,21 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                         silenceDuration: silenceDuration
                     )
                 }
+            }
+        }
+        
+        if now - lastSystemHeartbeat > 10.0 {
+            lastSystemHeartbeat = now
+            let ringNow = currentRingSampleCount()
+            let nonSilentPct = sysCallbackCount > 0
+                ? (Double(sysNonSilentCallbacks) / Double(sysCallbackCount) * 100.0)
+                : 0
+            DebugLogger.shared.log(
+                .audio,
+                "System heartbeat: callbacks=\(sysCallbackCount), inFrames=\(sysInputFrameCount), outFrames=\(sysOutputFrameCount), inRMS=\(String(format: "%.5f", normalizedInputRMS)), nonSilent=\(String(format: "%.1f", nonSilentPct))%, ring=\(ringNow)/\(ringCapacity)"
+            )
+            if sysCallbackCount > 60 && sysNonSilentCallbacks == 0 {
+                DebugLogger.shared.log(.audio, "System warning: tap callbacks are active but all buffers are near-silent")
             }
         }
         

@@ -77,25 +77,42 @@ final class MinitiAPIService: @unchecked Sendable {
             case resetsAt = "resets_at"
             case tier
             case subscriptionStatus = "subscription_status"
+            case minutesUsedCamel = "minutesUsed"
+            case minutesLimitCamel = "minutesLimit"
+            case resetsAtCamel = "resetsAt"
+            case subscriptionStatusCamel = "subscriptionStatus"
         }
         
         /// Custom decoder: Vercel KV (Redis) may return numbers as strings.
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            tier = try container.decode(String.self, forKey: .tier)
-            resetsAt = try container.decode(Date.self, forKey: .resetsAt)
-            subscriptionStatus = try container.decodeIfPresent(String.self, forKey: .subscriptionStatus)
+            tier = (try? container.decode(String.self, forKey: .tier)) ?? "free"
+            resetsAt =
+                (try? container.decode(Date.self, forKey: .resetsAt)) ??
+                (try? container.decode(Date.self, forKey: .resetsAtCamel)) ??
+                MinitiAPIService.fallbackResetDate()
+            subscriptionStatus =
+                (try? container.decodeIfPresent(String.self, forKey: .subscriptionStatus)) ??
+                (try? container.decodeIfPresent(String.self, forKey: .subscriptionStatusCamel))
             if let val = try? container.decode(Double.self, forKey: .minutesUsed) {
                 minutesUsed = val
+            } else if let val = try? container.decode(Double.self, forKey: .minutesUsedCamel) {
+                minutesUsed = val
             } else {
-                let str = try container.decode(String.self, forKey: .minutesUsed)
-                minutesUsed = Double(str) ?? 0
+                let str =
+                    (try? container.decode(String.self, forKey: .minutesUsed)) ??
+                    (try? container.decode(String.self, forKey: .minutesUsedCamel))
+                minutesUsed = str.flatMap(Double.init) ?? 0
             }
             if let val = try? container.decode(Double.self, forKey: .minutesLimit) {
                 minutesLimit = val
+            } else if let val = try? container.decode(Double.self, forKey: .minutesLimitCamel) {
+                minutesLimit = val
             } else {
-                let str = try container.decode(String.self, forKey: .minutesLimit)
-                minutesLimit = Double(str) ?? 500
+                let str =
+                    (try? container.decode(String.self, forKey: .minutesLimit)) ??
+                    (try? container.decode(String.self, forKey: .minutesLimitCamel))
+                minutesLimit = str.flatMap(Double.init) ?? 500
             }
         }
         
@@ -125,7 +142,7 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
     
-    struct SessionResponse: Codable {
+    struct SessionResponse: Decodable {
         let tempApiKey: String
         let expiresAt: Date
         let sessionId: String
@@ -134,20 +151,80 @@ final class MinitiAPIService: @unchecked Sendable {
             case tempApiKey = "temp_api_key"
             case expiresAt = "expires_at"
             case sessionId = "session_id"
+            case tempApiKeyCamel = "tempApiKey"
+            case expiresAtCamel = "expiresAt"
+            case sessionIdCamel = "sessionId"
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            tempApiKey =
+                (try? container.decode(String.self, forKey: .tempApiKey)) ??
+                (try? container.decode(String.self, forKey: .tempApiKeyCamel)) ??
+                ""
+            expiresAt =
+                (try? container.decode(Date.self, forKey: .expiresAt)) ??
+                (try? container.decode(Date.self, forKey: .expiresAtCamel)) ??
+                Date().addingTimeInterval(4 * 60 * 60)
+            sessionId =
+                (try? container.decode(String.self, forKey: .sessionId)) ??
+                (try? container.decode(String.self, forKey: .sessionIdCamel)) ??
+                {
+                    if let intValue = try? container.decode(Int.self, forKey: .sessionId) {
+                        return String(intValue)
+                    }
+                    if let intValue = try? container.decode(Int.self, forKey: .sessionIdCamel) {
+                        return String(intValue)
+                    }
+                    return ""
+                }()
+            
+            if tempApiKey.isEmpty || sessionId.isEmpty {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: container.codingPath, debugDescription: "Missing session token fields")
+                )
+            }
         }
     }
     
-    struct EndSessionResponse: Codable {
+    struct EndSessionResponse: Decodable {
         let minutesUsed: Double
         let minutesRemaining: Double
         
         enum CodingKeys: String, CodingKey {
             case minutesUsed = "minutes_used"
             case minutesRemaining = "minutes_remaining"
+            case minutesUsedCamel = "minutesUsed"
+            case minutesRemainingCamel = "minutesRemaining"
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            if let val = try? container.decode(Double.self, forKey: .minutesUsed) {
+                minutesUsed = val
+            } else if let val = try? container.decode(Double.self, forKey: .minutesUsedCamel) {
+                minutesUsed = val
+            } else {
+                let str =
+                    (try? container.decode(String.self, forKey: .minutesUsed)) ??
+                    (try? container.decode(String.self, forKey: .minutesUsedCamel))
+                minutesUsed = str.flatMap(Double.init) ?? 0
+            }
+            
+            if let val = try? container.decode(Double.self, forKey: .minutesRemaining) {
+                minutesRemaining = val
+            } else if let val = try? container.decode(Double.self, forKey: .minutesRemainingCamel) {
+                minutesRemaining = val
+            } else {
+                let str =
+                    (try? container.decode(String.self, forKey: .minutesRemaining)) ??
+                    (try? container.decode(String.self, forKey: .minutesRemainingCamel))
+                minutesRemaining = str.flatMap(Double.init) ?? 0
+            }
         }
     }
     
-    struct APIError: Codable {
+    struct APIError: Decodable {
         let error: String
         let message: String?
         let minutesUsed: Double?
@@ -159,6 +236,36 @@ final class MinitiAPIService: @unchecked Sendable {
             case minutesUsed = "minutes_used"
             case limit
             case resetsAt = "resets_at"
+            case minutesUsedCamel = "minutesUsed"
+            case resetsAtCamel = "resetsAt"
+        }
+        
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            error = (try? container.decode(String.self, forKey: .error)) ?? "unknown_error"
+            message = try? container.decodeIfPresent(String.self, forKey: .message)
+            
+            if let val = try? container.decode(Double.self, forKey: .minutesUsed) {
+                minutesUsed = val
+            } else if let val = try? container.decode(Double.self, forKey: .minutesUsedCamel) {
+                minutesUsed = val
+            } else {
+                let str =
+                    (try? container.decode(String.self, forKey: .minutesUsed)) ??
+                    (try? container.decode(String.self, forKey: .minutesUsedCamel))
+                minutesUsed = str.flatMap(Double.init)
+            }
+            
+            if let val = try? container.decode(Double.self, forKey: .limit) {
+                limit = val
+            } else {
+                let str = try? container.decode(String.self, forKey: .limit)
+                limit = str.flatMap(Double.init)
+            }
+            
+            resetsAt =
+                (try? container.decode(Date.self, forKey: .resetsAt)) ??
+                (try? container.decode(Date.self, forKey: .resetsAtCamel))
         }
     }
 
@@ -353,7 +460,9 @@ final class MinitiAPIService: @unchecked Sendable {
     
     private static let decoder: JSONDecoder = {
         let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
+        decoder.dateDecodingStrategy = .custom { decoder in
+            try MinitiAPIService.decodeFlexibleDate(from: decoder)
+        }
         return decoder
     }()
     
@@ -362,6 +471,50 @@ final class MinitiAPIService: @unchecked Sendable {
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
+    
+    private static func decodeFlexibleDate(from decoder: Decoder) throws -> Date {
+        let container = try decoder.singleValueContainer()
+        
+        if let seconds = try? container.decode(Double.self) {
+            return timestampToDate(seconds)
+        }
+        if let milliseconds = try? container.decode(Int64.self) {
+            return timestampToDate(Double(milliseconds))
+        }
+        if let string = try? container.decode(String.self) {
+            if let asDouble = Double(string) {
+                return timestampToDate(asDouble)
+            }
+            let withFractional = ISO8601DateFormatter()
+            withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            let withoutFractional = ISO8601DateFormatter()
+            withoutFractional.formatOptions = [.withInternetDateTime]
+            if let parsed = withFractional.date(from: string)
+                ?? withoutFractional.date(from: string) {
+                return parsed
+            }
+        }
+        
+        throw DecodingError.dataCorruptedError(
+            in: container,
+            debugDescription: "Unsupported date format"
+        )
+    }
+    
+    private static func timestampToDate(_ value: Double) -> Date {
+        // Accept both seconds and milliseconds timestamps.
+        if value > 10_000_000_000 {
+            return Date(timeIntervalSince1970: value / 1_000)
+        }
+        return Date(timeIntervalSince1970: value)
+    }
+    
+    private static func fallbackResetDate() -> Date {
+        let calendar = Calendar(identifier: .gregorian)
+        let now = Date()
+        let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) ?? now
+        return calendar.date(byAdding: .month, value: 1, to: startOfMonth) ?? now.addingTimeInterval(30 * 24 * 60 * 60)
+    }
     
     // MARK: - Version Check
     
@@ -393,7 +546,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         
-        return try Self.decoder.decode(VersionInfo.self, from: data)
+        return try decode(VersionInfo.self, from: data, endpoint: "/version")
     }
     
     // MARK: - API Methods
@@ -405,7 +558,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         
-        return try Self.decoder.decode(UsageInfo.self, from: data)
+        return try decode(UsageInfo.self, from: data, endpoint: "/usage")
     }
     
     /// Request a new transcription session. Returns a temporary Deepgram API key.
@@ -421,7 +574,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         
-        return try Self.decoder.decode(SessionResponse.self, from: data)
+        return try decode(SessionResponse.self, from: data, endpoint: "/session")
     }
     
     /// End a transcription session and report duration. Backend increments usage counter.
@@ -440,7 +593,7 @@ final class MinitiAPIService: @unchecked Sendable {
             
             let (data, response) = try await URLSession.shared.data(for: request)
             try validateResponse(response, data: data)
-            return try Self.decoder.decode(EndSessionResponse.self, from: data)
+            return try decode(EndSessionResponse.self, from: data, endpoint: path)
         }
 
         do {
@@ -482,7 +635,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         
-        return try Self.decoder.decode(ManagedInsightsResponse.self, from: data)
+        return try decode(ManagedInsightsResponse.self, from: data, endpoint: "/insights")
     }
 
     // MARK: - Subscription
@@ -492,7 +645,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let request = makeRequest(path: "/subscribe", deviceId: deviceId)
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        let result = try Self.decoder.decode(SubscribeResponse.self, from: data)
+        let result = try decode(SubscribeResponse.self, from: data, endpoint: "/subscribe")
         guard let url = URL(string: result.checkoutUrl) else {
             throw ServiceError.invalidResponse
         }
@@ -504,7 +657,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let request = makeRequest(path: "/portal", deviceId: deviceId)
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        let result = try Self.decoder.decode(PortalResponse.self, from: data)
+        let result = try decode(PortalResponse.self, from: data, endpoint: "/portal")
         guard let url = URL(string: result.portalUrl) else {
             throw ServiceError.invalidResponse
         }
@@ -521,7 +674,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(RestoreResponse.self, from: data)
+        return try decode(RestoreResponse.self, from: data, endpoint: "/restore")
     }
     
     /// Verify an iOS App Store subscription transaction and link it to this device.
@@ -534,7 +687,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(AppleVerifyResponse.self, from: data)
+        return try decode(AppleVerifyResponse.self, from: data, endpoint: "/apple/verify")
     }
     
     // MARK: - Attio
@@ -548,14 +701,14 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(AttioConnectStartResponse.self, from: data)
+        return try decode(AttioConnectStartResponse.self, from: data, endpoint: "/attio/connect/start")
     }
 
     func attioStatus(deviceId: String) async throws -> AttioStatusResponse {
         let request = makeRequest(path: "/attio/status", deviceId: deviceId)
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(AttioStatusResponse.self, from: data)
+        return try decode(AttioStatusResponse.self, from: data, endpoint: "/attio/status")
     }
 
     func attioSearch(deviceId: String, query: String, objects: [String]) async throws -> [AttioSearchRecord] {
@@ -567,7 +720,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(AttioSearchResponse.self, from: data).data
+        return try decode(AttioSearchResponse.self, from: data, endpoint: "/attio/search").data
     }
 
     func attioSendMeeting(
@@ -590,20 +743,76 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        return try Self.decoder.decode(AttioSendResponse.self, from: data)
+        return try decode(AttioSendResponse.self, from: data, endpoint: "/attio/send")
     }
     
     // MARK: - Response Validation
     
+    private func decode<T: Decodable>(_ type: T.Type, from data: Data, endpoint: String) throws -> T {
+        do {
+            return try Self.decoder.decode(type, from: data)
+        } catch {
+            let responseSnippet = Self.redactedBodySnippet(from: data)
+            let errorSummary = Self.describeDecodingError(error)
+            DebugLogger.shared.log(
+                .app,
+                "API decode FAILED: endpoint=\(endpoint), type=\(String(describing: type)), error=\(errorSummary), body=\(responseSnippet)"
+            )
+            
+            if let apiError = try? Self.decoder.decode(APIError.self, from: data) {
+                throw ServiceError.serverError(apiError.message ?? apiError.error)
+            }
+            throw ServiceError.invalidResponse
+        }
+    }
+    
+    private static func redactedBodySnippet(from data: Data) -> String {
+        guard var text = String(data: data, encoding: .utf8) else {
+            return "<non-utf8 body (\(data.count) bytes)>"
+        }
+        
+        text = text.replacingOccurrences(
+            of: #""temp_api_key"\s*:\s*"[^"]+""#,
+            with: #""temp_api_key":"<redacted>""#,
+            options: .regularExpression
+        )
+        text = text.replacingOccurrences(
+            of: #""api_key"\s*:\s*"[^"]+""#,
+            with: #""api_key":"<redacted>""#,
+            options: .regularExpression
+        )
+        
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(trimmed.prefix(220))
+    }
+    
+    private static func describeDecodingError(_ error: Error) -> String {
+        switch error {
+        case let DecodingError.keyNotFound(key, context):
+            return "keyNotFound(\(key.stringValue)) path=\(format(codingPath: context.codingPath)) \(context.debugDescription)"
+        case let DecodingError.typeMismatch(type, context):
+            return "typeMismatch(\(type)) path=\(format(codingPath: context.codingPath)) \(context.debugDescription)"
+        case let DecodingError.valueNotFound(type, context):
+            return "valueNotFound(\(type)) path=\(format(codingPath: context.codingPath)) \(context.debugDescription)"
+        case let DecodingError.dataCorrupted(context):
+            return "dataCorrupted path=\(format(codingPath: context.codingPath)) \(context.debugDescription)"
+        default:
+            return error.localizedDescription
+        }
+    }
+    
+    private static func format(codingPath: [CodingKey]) -> String {
+        if codingPath.isEmpty { return "<root>" }
+        return codingPath.map { $0.stringValue }.joined(separator: ".")
+    }
+
     private func validateResponse(_ response: URLResponse, data: Data) throws {
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ServiceError.invalidResponse
         }
         
         if !(200...299).contains(httpResponse.statusCode) {
-            let bodySnippet = String(data: data, encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .prefix(220) ?? ""
+            let bodySnippet = Self.redactedBodySnippet(from: data)
             let urlString = httpResponse.url?.absoluteString ?? "unknown_url"
             DebugLogger.shared.log(.app, "API response error: status=\(httpResponse.statusCode), url=\(urlString), body=\(bodySnippet)")
         }

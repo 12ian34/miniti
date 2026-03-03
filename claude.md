@@ -29,7 +29,11 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-02 - v1.11.0 (current)
+### 2026-03-03 - v1.11.1 (current)
+
+- Fix the other person's voice dropping out during calls when using AirPods or other Bluetooth headphones
+
+### 2026-03-02 - v1.11.0
 
 - Add a one-time Terms & Privacy step before onboarding on both macOS and iOS
 - Remember which terms version each user accepted, so people are only asked again when terms change
@@ -378,7 +382,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Escape key routing (macOS)**: Centralized in `KeyboardShortcutsService`. Order: (1) dismiss any active sheet (debug log, Attio send) via `cancelOperation` + `performClose`, (2) close Settings/Preferences window, (3) close help overlay, (4) go home. Sheet dismissal scans both key window and all visible windows as fallback. Settings detection checks window title and `toolbarStyle == .preference`.
 - **J/K history navigation vs text entry (macOS)**: `KeyboardShortcutsService` ignores unmodified `j`/`k` and arrow-key history navigation when focus is in an editable text responder (`TextField`/`TextEditor` via AppKit `NSTextView`/field editor). This prevents list scrolling while typing in notes or Attio search fields.
 - **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
-- **System tap silent-stall recovery**: `AudioCaptureService` tracks `lastSystemNonSilentAt` during system audio capture. If callbacks continue but all buffers are near-silent for 18+ seconds after the tap previously produced real audio (≥120 non-silent callbacks), `recoverSystemTapAfterSilentStall` tears down and recreates the process tap. A 45-second cooldown (`lastSystemAutoRestartAt`) prevents restart storms. This handles edge cases where certain Bluetooth route changes leave the process tap in a dead state that still fires callbacks.
+- **System tap silent-stall recovery**: `AudioCaptureService` tracks `lastSystemNonSilentAt` during system audio capture. A silence check runs every 3 seconds: if callbacks continue but all buffers are near-silent for 18+ seconds after the tap previously produced real audio (≥120 non-silent callbacks), `recoverSystemTapAfterSilentStall` tears down and recreates the process tap. A 45-second cooldown (`lastSystemAutoRestartAt`) prevents restart storms. This is a safety net for unknown edge cases — the primary fix (built-in clock source) should prevent stalls entirely.
 - **Session end 405 retry**: `MinitiAPIService.endSession` retries the request with a trailing slash if the backend returns HTTP 405, a defensive measure for routing edge cases in the Vercel deployment.
 
 ## Audio flow
@@ -386,7 +390,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 1. `AudioCaptureService.startCapture(microphone:systemAudio:)` starts AVAudioEngine (mic) and/or Core Audio process tap + AVAudioEngine (system)
 2. Mic audio: converted to 16kHz mono PCM16 via AVAudioConverter, level via `vDSP_measqv`
 3. System audio: `AudioHardwareCreateProcessTap` → `CATapDescription(stereoGlobalTapButExcludeProcesses: [])` → aggregate device → IO proc callback → direct vDSP conversion (mono downmix via `vDSP_vadd` + decimation via stride + `vDSP_vsmul`/`vDSP_vclip`/`vDSP_vfix16`) → 16kHz mono PCM16. The aggregate device's IO format is read from `kAudioDevicePropertyStreamFormat` (input scope) to handle cases where it differs from the tap format. Level via `vDSP_measqv`.
-4. **Process Tap setup**: Creates a `CATapDescription` (global stereo, captures all processes), then an aggregate device with the tap as a sub-tap. IO proc callback runs on a custom DispatchQueue (not RT thread). Cleanup: stop IO proc → destroy aggregate device → destroy process tap.
+4. **Process Tap setup**: Creates a `CATapDescription` (global stereo, captures all processes), then an aggregate device with the tap as a sub-tap. The aggregate's main sub-device provides the clock — always the built-in output device (shares the same hardware oscillator as the system mixer, guaranteeing zero drift). The default output device is never used as the clock because external/Bluetooth devices can run at different sample rates (e.g. AirPods HFP at 24kHz vs tap at 48kHz), causing drift compensation to fail and the tap to deliver silent buffers. Falls back to default output only if no built-in device exists. IO proc callback runs on a custom DispatchQueue (not RT thread). Cleanup: stop IO proc → destroy aggregate device → destroy process tap.
 5. **Mixing**: When both sources active, system audio PCM16 goes into a pre-allocated Int16 ring buffer (8000 samples, ~500ms at 16kHz, NSLock-protected, zero allocations). Mic callback drains the ring buffer and mixes via vDSP (`vDSP_vadd` after float conversion). **Adaptive dual AGC**: each buffer's Int16 RMS is measured in real-time, and independent gain is computed to bring mic to ~3000 and system to ~2000 Int16 RMS (mic 1.5x louder for diarization). Gains are smoothed (fast attack 0.15, slow release 0.02) to avoid pumping. A noise gate (floor=30) prevents boosting silence. Max gain capped at 25x. This handles any hardware level (process tap, ScreenCaptureKit, Bluetooth, built-in, etc.) without manual tuning. Debug log `[AudioMix]` prints every 30s, only when system audio is active.
 6. **Source dominance tracking**: Each buffer's pre-AGC mic/sys RMS is logged with its stream timestamp. `dominantSource(from:to:)` returns `.mic` or `.system` for a time range. Deepgram words are tagged: mic-dominant → speaker `1000` ("You"), system-dominant → keep Deepgram's speaker ID (for multi-speaker remote diarization). Threshold: system must exceed mic × 1.5 to be tagged as system (avoids false positives from amplified mic noise). Source log bounded at 6000 entries (~10 min).
 7. `onAudioBuffer` callback → DeepgramService (nil during monitoring)
