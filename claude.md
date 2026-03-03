@@ -32,6 +32,10 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 ### 2026-03-03 - v1.11.1 (current)
 
 - Fix the other person's voice dropping out during calls when using AirPods or other Bluetooth headphones
+- Fix rare crashes and failures when talking to the backend after server-side changes
+- Fix the app sometimes sending a bad transcription model choice to the server
+- Better troubleshooting info in the debug log when something goes wrong with the backend
+- New app icon
 
 ### 2026-03-02 - v1.11.0
 
