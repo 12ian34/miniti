@@ -14,6 +14,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeInputIdentity: String = ""
     
+    // Keep legacy option for compatibility with older Xcode/iOS SDK overlays.
+    // `.allowBluetoothHFP` is preferred in newer SDKs but may be unavailable
+    // on older toolchains still used by external contributors.
+    private let bluetoothCallProfileOption: AVAudioSession.CategoryOptions = .allowBluetooth
+    
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (Data) -> Void)?
     
     private let targetSampleRate: Double = 16000
@@ -75,7 +80,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         try session.setCategory(
             .playAndRecord,
             mode: .default,
-            options: [.defaultToSpeaker, .allowBluetoothA2DP, .allowBluetoothHFP]
+            options: [.defaultToSpeaker, .allowBluetoothA2DP, bluetoothCallProfileOption]
         )
         try session.setActive(true)
         

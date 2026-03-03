@@ -34,9 +34,11 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - Stronger audio auto-recovery when Bluetooth headphones switch modes mid-call, including faster detection when system audio callbacks stop entirely
 - Cleaner audio restarts after output/device changes, reducing stale audio bleed and repeated restart loops
 - iOS mic capture now hardens against route/format shifts (including Bluetooth call profile changes) with proactive restart behavior
+- Improve iOS Bluetooth call-audio compatibility across different build/toolchain environments
 - Live transcription now auto-recovers from transient Deepgram transport failures without forcing the user to stop recording
 - Managed usage reporting is now durable across transient network failures (failed stop reports are queued and retried automatically)
 - Backend session-end accounting is now idempotent for duplicate stop requests, preventing double-counting on retries
+- Fix an edge case where automatic system-audio recovery could restart with the wrong mix mode after source changes
 - Subtle in-session recovery status indicator added so users can see when audio is recovering vs degraded
 
 ### 2026-03-02 - v1.11.0
@@ -390,7 +392,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Escape key routing (macOS)**: Centralized in `KeyboardShortcutsService`. Order: (1) dismiss any active sheet (debug log, Attio send) via `cancelOperation` + `performClose`, (2) close Settings/Preferences window, (3) close help overlay, (4) go home. Sheet dismissal scans both key window and all visible windows as fallback. Settings detection checks window title and `toolbarStyle == .preference`.
 - **J/K history navigation vs text entry (macOS)**: `KeyboardShortcutsService` ignores unmodified `j`/`k` and arrow-key history navigation when focus is in an editable text responder (`TextField`/`TextEditor` via AppKit `NSTextView`/field editor). This prevents list scrolling while typing in notes or Attio search fields.
 - **Stop = save + stay**: `stopRecording()` saves the meeting to SwiftData and generates final insights (standard + MEDDPICC) in the background. The user stays in the stopped state with resume/save/discard controls on both iOS and macOS.
-- **System tap stall recovery**: `AudioCaptureService` now handles two failure modes: (1) silent-stall (callbacks keep arriving but stay near-silent) and (2) callback-stall (callbacks stop arriving). Both paths rebuild the system tap with ring-buffer reset and bounded cooldowns, and failed rebuilds automatically retry with bounded exponential backoff (except explicit permission-denied cases).
+- **System tap stall recovery**: `AudioCaptureService` now handles two failure modes: (1) silent-stall (callbacks keep arriving but stay near-silent) and (2) callback-stall (callbacks stop arriving). Both paths rebuild the system tap with ring-buffer reset and bounded cooldowns, preserve the active mix mode (mic+system vs system-only), and retry failed rebuilds with bounded exponential backoff (except explicit permission-denied cases).
 - **Session-end robustness**: `MinitiAPIService.endSession` still retries trailing-slash 405 routing edge cases, and now also consumes backend idempotency/session-finalization diagnostics while the app maintains a durable retry queue for failed reports.
 
 ## Audio flow
@@ -406,7 +408,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 9. **Level display**: `SourceWaveform` uses `pow(level, 0.2)` power curve (not linear) so quiet mic signals (~0.003 RMS) show visible bar movement.
 
 ### iOS audio flow (mic-only)
-1. `AVAudioSession` configured with `.playAndRecord` category, `.defaultToSpeaker` + `.allowBluetoothA2DP` + `.allowBluetoothHFP` options
+1. `AVAudioSession` configured with `.playAndRecord` category, `.defaultToSpeaker` + `.allowBluetoothA2DP` + Bluetooth call-profile option (implemented with `.allowBluetooth` for toolchain compatibility)
 2. `AVAudioEngine` with input node tap → AVAudioConverter → 16kHz mono PCM16 (same format as macOS mic path)
 3. `onAudioBuffer` callback → DeepgramService
 4. No system audio, no mixing, no ring buffer, no source dominance tracking (all stubs)
