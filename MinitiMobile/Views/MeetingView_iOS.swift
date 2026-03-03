@@ -567,6 +567,21 @@ struct ReadyStateView_iOS: View {
                     }
                     .disabled(isPurchasingPro)
                     
+                    VStack(spacing: 4) {
+                        Text("Miniti Pro Monthly · $4.99/month · auto-renewable")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .multilineTextAlignment(.center)
+
+                        HStack(spacing: 8) {
+                            Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
+                            Text("•")
+                                .foregroundStyle(ColorPalette.Text.disabled)
+                            Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    }
+                    
                     Button {
                         guard !isRestoringPro else { return }
                         isRestoringPro = true

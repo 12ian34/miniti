@@ -78,6 +78,24 @@ struct SettingsView_iOS: View {
                                 }
                             }
                         }
+
+                        if !appState.isPro {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Miniti Pro Monthly")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                Text("$4.99/month · auto-renewable")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                HStack(spacing: 8) {
+                                    Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
+                                    Text("•")
+                                        .foregroundStyle(.secondary)
+                                    Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
+                                }
+                                .font(.caption2)
+                            }
+                        }
                         
                         Button {
                             guard !isRestoringPurchases else { return }
