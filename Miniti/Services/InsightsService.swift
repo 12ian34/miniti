@@ -254,6 +254,11 @@ final class InsightsService: Sendable {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
         }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        DebugLogger.shared.log(
+            .app,
+            "BYOK insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil)"
+        )
         
         let contextNote = existingSummary != nil 
             ? "Previous summary: \"\(existingSummary!)\"\n\nUpdate this summary with new information from the transcript below. Keep it concise (2-3 sentences max)."
@@ -373,6 +378,8 @@ final class InsightsService: Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            DebugLogger.shared.log(.app, "BYOK insights response error: mode=\(mode.rawValue), status=\(statusCode)")
             if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
                 throw InsightsError.apiError(errorResponse.error.message)
             }
@@ -383,10 +390,29 @@ final class InsightsService: Sendable {
         
         guard let content = openAIResponse.choices.first?.message.content,
               let jsonData = content.data(using: .utf8) else {
+            DebugLogger.shared.log(.app, "BYOK insights response missing content: mode=\(mode.rawValue)")
             throw InsightsError.noContent
         }
         
         let insightsResponse = try JSONDecoder().decode(LiveInsightsResponse.self, from: jsonData)
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        let meddpiccFieldCount = [
+            insightsResponse.metrics,
+            insightsResponse.economicBuyer,
+            insightsResponse.decisionCriteria,
+            insightsResponse.decisionProcess,
+            insightsResponse.paperProcess,
+            insightsResponse.identifiedPain,
+            insightsResponse.champion,
+            insightsResponse.competition
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && $0.lowercased() != "null" }
+        .count
+        DebugLogger.shared.log(
+            .app,
+            "BYOK insights response: mode=\(mode.rawValue), duration=\(String(format: "%.2fs", duration)), summaryChars=\(insightsResponse.summary.count), actionItems=\(insightsResponse.actionItems.count), topics=\(insightsResponse.topics.count), meddpiccFields=\(meddpiccFieldCount)"
+        )
         
         return LiveInsights(
             summary: insightsResponse.summary,
@@ -410,6 +436,11 @@ final class InsightsService: Sendable {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
         }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        DebugLogger.shared.log(
+            .app,
+            "BYOK final insights request: model=\(model.rawValue), transcriptChars=\(transcript.count)"
+        )
         
         let prompt = """
         Analyze this meeting transcript and provide structured insights.
@@ -449,10 +480,12 @@ final class InsightsService: Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
+            DebugLogger.shared.log(.app, "BYOK final insights response error: invalid HTTP response")
             throw InsightsError.invalidResponse
         }
         
         guard httpResponse.statusCode == 200 else {
+            DebugLogger.shared.log(.app, "BYOK final insights response error: status=\(httpResponse.statusCode)")
             if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
                 throw InsightsError.apiError(errorResponse.error.message)
             }
@@ -462,6 +495,7 @@ final class InsightsService: Sendable {
         let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
         
         guard let content = openAIResponse.choices.first?.message.content else {
+            DebugLogger.shared.log(.app, "BYOK final insights response missing content")
             throw InsightsError.noContent
         }
         
@@ -471,6 +505,11 @@ final class InsightsService: Sendable {
         }
         
         let insightsResponse = try JSONDecoder().decode(InsightsResponse.self, from: jsonData)
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "BYOK final insights response: duration=\(String(format: "%.2fs", duration)), summaryChars=\(insightsResponse.summary.count), actionItems=\(insightsResponse.actionItems.count), decisions=\(insightsResponse.decisions.count), topics=\(insightsResponse.topics.count)"
+        )
         
         return MeetingInsights(
             summary: insightsResponse.summary,

@@ -630,6 +630,7 @@ final class MinitiAPIService: @unchecked Sendable {
         mode: String,
         model: String
     ) async throws -> ManagedInsightsResponse {
+        let startedAt = CFAbsoluteTimeGetCurrent()
         var body: [String: Any] = [
             "transcript": transcript,
             "mode": mode,
@@ -644,11 +645,33 @@ final class MinitiAPIService: @unchecked Sendable {
             deviceId: deviceId,
             body: body
         )
+        DebugLogger.shared.log(
+            .app,
+            "API insights request: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil)"
+        )
         
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
-        
-        return try decode(ManagedInsightsResponse.self, from: data, endpoint: "/insights")
+        let decoded = try decode(ManagedInsightsResponse.self, from: data, endpoint: "/insights")
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        let meddpiccFieldCount = [
+            decoded.metrics,
+            decoded.economicBuyer,
+            decoded.decisionCriteria,
+            decoded.decisionProcess,
+            decoded.paperProcess,
+            decoded.identifiedPain,
+            decoded.champion,
+            decoded.competition
+        ]
+        .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .filter { !$0.isEmpty && $0.lowercased() != "null" }
+        .count
+        DebugLogger.shared.log(
+            .app,
+            "API insights response: mode=\(mode), duration=\(String(format: "%.2fs", duration)), summaryChars=\(decoded.summary.count), actionItems=\(decoded.actionItems.count), topics=\(decoded.topics.count), meddpiccFields=\(meddpiccFieldCount)"
+        )
+        return decoded
     }
 
     // MARK: - Subscription

@@ -344,6 +344,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 }
                 
                 // Parse words with speaker info, overriding with source dominance
+                var micTaggedWordCount = 0
+                var unknownTaggedWordCount = 0
                 let words = alternative.words.map { word in
                     var speaker = word.speaker ?? 0
                     
@@ -354,6 +356,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         let source = lookup(word.start, word.end)
                         if source == .mic {
                             speaker = DeepgramService.micSpeakerID
+                            micTaggedWordCount += 1
+                        } else if source == .unknown {
+                            unknownTaggedWordCount += 1
                         }
                         // .system → keep Deepgram's speaker (for multi-speaker remote diarization)
                         // .unknown → keep Deepgram's speaker as fallback
@@ -370,6 +375,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 
                 // Update speaker history for final results
                 if isFinal {
+                    if sourceLookup != nil {
+                        DebugLogger.shared.log(
+                            .deepgram,
+                            "Source tagging: mic=\(micTaggedWordCount), unknown=\(unknownTaggedWordCount), total=\(alternative.words.count)"
+                        )
+                    }
                     for word in alternative.words {
                         let speaker = word.speaker ?? 0
                         var info = speakerHistory[speaker] ?? SpeakerInfo()

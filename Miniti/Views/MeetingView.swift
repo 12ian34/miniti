@@ -577,7 +577,7 @@ struct SectionHeader: View {
                     HStack(spacing: 4) {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .medium))
-                        Text(showCopied ? "copied" : "md")
+                        Text(showCopied ? "copied" : "copy")
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
                     }
                     .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
@@ -731,7 +731,7 @@ struct InsightsSectionHeader: View {
                         HStack(spacing: 4) {
                             Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 9, weight: .medium))
-                            Text(showCopied ? "copied" : "md")
+                            Text(showCopied ? "copied" : "copy")
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                         }
                         .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
