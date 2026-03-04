@@ -272,6 +272,11 @@ final class AppState: ObservableObject {
     private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
     private var deepgramReconnectTask: Task<Void, Never>?
     private var deepgramReconnectGeneration = 0
+    private var lastDeepgramReconnectScheduledAt: CFAbsoluteTime = 0
+    private var pendingAudioRecoveryTransitionTask: Task<Void, Never>?
+    private var desiredAudioRecoveryState: AudioRecoveryState = .healthy
+    private var pendingMeddpiccReanalysisTask: Task<Void, Never>?
+    private var isGeneratingFinalInsights = false
     private var systemAudioInactiveSince: CFAbsoluteTime = 0
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
@@ -491,6 +496,7 @@ final class AppState: ObservableObject {
             deepgramReconnectTask?.cancel()
             deepgramReconnectTask = nil
             deepgramReconnectGeneration += 1
+            lastDeepgramReconnectScheduledAt = 0
             updateAudioRecoveryState()
         case .connecting:
             updateAudioRecoveryState()
@@ -506,6 +512,12 @@ final class AppState: ObservableObject {
         guard isRecording else { return }
         guard deepgramReconnectTask == nil else { return }
         guard let deepgramService else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastDeepgramReconnectScheduledAt < 1.0 {
+            DebugLogger.shared.log(.app, "Deepgram reconnect suppressed (cooldown): \(reason)")
+            return
+        }
+        lastDeepgramReconnectScheduledAt = now
         
         deepgramReconnectGeneration += 1
         let generation = deepgramReconnectGeneration
@@ -535,6 +547,7 @@ final class AppState: ObservableObject {
                     guard generation == self.deepgramReconnectGeneration else { return }
                     if deepgramService.connectionState == .connected {
                         DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
+                        self.lastDeepgramReconnectScheduledAt = 0
                         self.updateAudioRecoveryState()
                         return
                     }
@@ -543,7 +556,7 @@ final class AppState: ObservableObject {
             
             if self.isRecording && generation == self.deepgramReconnectGeneration {
                 DebugLogger.shared.log(.app, "Deepgram reconnect exhausted")
-                self.audioRecoveryState = .degraded
+                self.applyAudioRecoveryState(.degraded)
             }
         }
     }
@@ -587,17 +600,20 @@ final class AppState: ObservableObject {
     
     private func updateAudioRecoveryState() {
         guard isRecording else {
+            pendingAudioRecoveryTransitionTask?.cancel()
+            pendingAudioRecoveryTransitionTask = nil
+            desiredAudioRecoveryState = .healthy
             audioRecoveryState = .healthy
             return
         }
         
         if deepgramReconnectTask != nil || deepgramService?.connectionState == .connecting {
-            audioRecoveryState = .recovering
+            applyAudioRecoveryState(.recovering)
             return
         }
         
         if deepgramService?.connectionState == .error {
-            audioRecoveryState = .degraded
+            applyAudioRecoveryState(.degraded)
             return
         }
         
@@ -610,14 +626,48 @@ final class AppState: ObservableObject {
                     systemAudioInactiveSince = now
                 }
                 let inactiveFor = now - systemAudioInactiveSince
-                audioRecoveryState = inactiveFor > 12 ? .degraded : .recovering
+                applyAudioRecoveryState(inactiveFor > 12 ? .degraded : .recovering)
                 return
             }
             systemAudioInactiveSince = 0
         }
         #endif
         
-        audioRecoveryState = .healthy
+        applyAudioRecoveryState(.healthy)
+    }
+    
+    private func recoverySeverity(_ state: AudioRecoveryState) -> Int {
+        switch state {
+        case .healthy: return 0
+        case .recovering: return 1
+        case .degraded: return 2
+        }
+    }
+    
+    private func applyAudioRecoveryState(_ nextState: AudioRecoveryState) {
+        desiredAudioRecoveryState = nextState
+        guard nextState != audioRecoveryState else { return }
+        
+        pendingAudioRecoveryTransitionTask?.cancel()
+        pendingAudioRecoveryTransitionTask = nil
+        
+        let currentSeverity = recoverySeverity(audioRecoveryState)
+        let nextSeverity = recoverySeverity(nextState)
+        if nextSeverity > currentSeverity {
+            audioRecoveryState = nextState
+            return
+        }
+        
+        // Hold healthier transitions briefly so status doesn't flicker.
+        let delayNanoseconds: UInt64 = nextState == .healthy ? 1_400_000_000 : 700_000_000
+        pendingAudioRecoveryTransitionTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
+            guard let self else { return }
+            guard self.isRecording else { return }
+            guard self.desiredAudioRecoveryState == nextState else { return }
+            self.audioRecoveryState = nextState
+            self.pendingAudioRecoveryTransitionTask = nil
+        }
     }
     
     private func handleSpeakerSegments(_ segments: [DeepgramService.SpeakerSegment]) {
@@ -1122,6 +1172,11 @@ final class AppState: ObservableObject {
         let previousMode = insightsMode
         insightsMode = mode
         
+        if mode != .meddpicc {
+            pendingMeddpiccReanalysisTask?.cancel()
+            pendingMeddpiccReanalysisTask = nil
+        }
+        
         if mode == .training {
             recomputeTrainingMetrics()
             return
@@ -1133,10 +1188,22 @@ final class AppState: ObservableObject {
             
             // Only re-analyze if we have new content since last MEDDPICC analysis
             if currentSegmentCount > lastMEDDPICCSegmentCount {
-                Task {
-                    await reanalyzeWithMEDDPICC()
-                }
+                scheduleMeddpiccReanalysis()
             }
+        }
+    }
+    
+    private func scheduleMeddpiccReanalysis() {
+        pendingMeddpiccReanalysisTask?.cancel()
+        pendingMeddpiccReanalysisTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.pendingMeddpiccReanalysisTask = nil }
+            while self.isGeneratingInsights {
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                guard !Task.isCancelled else { return }
+            }
+            guard self.insightsMode == .meddpicc else { return }
+            await self.reanalyzeWithMEDDPICC()
         }
     }
     
@@ -1347,11 +1414,15 @@ final class AppState: ObservableObject {
         }
         
         isRecording = true
+        pendingAudioRecoveryTransitionTask?.cancel()
+        pendingAudioRecoveryTransitionTask = nil
         audioRecoveryState = .healthy
+        desiredAudioRecoveryState = .healthy
         systemAudioInactiveSince = 0
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
+        lastDeepgramReconnectScheduledAt = 0
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         lastTranscriptStarvationRecoveryAt = 0
         startTranscriptHealthMonitoring()
@@ -1496,7 +1567,12 @@ final class AppState: ObservableObject {
         }
         
         isRecording = false
+        pendingAudioRecoveryTransitionTask?.cancel()
+        pendingAudioRecoveryTransitionTask = nil
+        pendingMeddpiccReanalysisTask?.cancel()
+        pendingMeddpiccReanalysisTask = nil
         audioRecoveryState = .healthy
+        desiredAudioRecoveryState = .healthy
         recordingTimer?.invalidate()
         recordingTimer = nil
         recordingStartDate = nil
@@ -1506,6 +1582,7 @@ final class AppState: ObservableObject {
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
+        lastDeepgramReconnectScheduledAt = 0
         systemAudioInactiveSince = 0
         
         // Update Live Activity to show paused state (keep it alive for resume)
@@ -1562,6 +1639,12 @@ final class AppState: ObservableObject {
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
+        lastDeepgramReconnectScheduledAt = 0
+        pendingAudioRecoveryTransitionTask?.cancel()
+        pendingAudioRecoveryTransitionTask = nil
+        pendingMeddpiccReanalysisTask?.cancel()
+        pendingMeddpiccReanalysisTask = nil
+        isGeneratingFinalInsights = false
         currentMeeting = nil
         isStartingMeeting = false
         isResumingRecording = false
@@ -1573,6 +1656,7 @@ final class AppState: ObservableObject {
         recordingStartDate = nil
         accumulatedRecordedDuration = 0
         audioRecoveryState = .healthy
+        desiredAudioRecoveryState = .healthy
         systemAudioInactiveSince = 0
         hasUnsavedSession = false
         
@@ -1612,6 +1696,13 @@ final class AppState: ObservableObject {
     }
     
     private func generateFinalInsightsAndSave() async {
+        guard !isGeneratingFinalInsights else {
+            DebugLogger.shared.log(.app, "Skipping duplicate final insights request")
+            return
+        }
+        isGeneratingFinalInsights = true
+        defer { isGeneratingFinalInsights = false }
+        
         // Check if we can generate insights (mode-aware)
         let canGenerate: Bool
         if appMode == .managed {
@@ -1991,16 +2082,22 @@ final class AppState: ObservableObject {
         }
         
         guard let modelContext else { return }
-        let descriptor = FetchDescriptor<Meeting>()
-        guard let meetings = try? modelContext.fetch(descriptor) else { return }
         if let targetID = meetingId,
-           let target = meetings.first(where: { $0.id == targetID }) {
+           let target = try? modelContext.fetch(
+            FetchDescriptor<Meeting>(
+                predicate: #Predicate<Meeting> { $0.id == targetID }
+            )
+           ).first {
             target.managedSessionId = nil
             try? modelContext.save()
             return
         }
         
-        if let fallback = meetings.first(where: { $0.managedSessionId == sessionId }) {
+        if let fallback = try? modelContext.fetch(
+            FetchDescriptor<Meeting>(
+                predicate: #Predicate<Meeting> { $0.managedSessionId == sessionId }
+            )
+        ).first {
             fallback.managedSessionId = nil
             try? modelContext.save()
         }
