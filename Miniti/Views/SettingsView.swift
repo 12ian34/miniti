@@ -535,10 +535,6 @@ struct ModelsSettingsView: View {
         DeepgramModel(rawValue: appState.deepgramModel) ?? .nova3
     }
     
-    private var selectedOpenAIModel: OpenAIModel {
-        OpenAIModel(rawValue: appState.openaiModel) ?? .gpt5Mini
-    }
-    
     var body: some View {
         Form {
             Section("Transcription") {
@@ -560,29 +556,6 @@ struct ModelsSettingsView: View {
                 }
                 
                 Text("Deepgram model used for real-time speech-to-text transcription.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Section("Insights") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Picker("Model", selection: $appState.openaiModel) {
-                        ForEach(OpenAIModel.allCases, id: \.self) { model in
-                            Text(model.displayName).tag(model.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    
-                    SettingsModelSummaryCard(
-                        title: selectedOpenAIModel.displayName,
-                        subtitle: selectedOpenAIModel.shortDescription,
-                        pros: selectedOpenAIModel.pros.prefix(2).joined(separator: " • "),
-                        cons: selectedOpenAIModel.cons.prefix(2).joined(separator: " • ")
-                    )
-                }
-                
-                Text("OpenAI model used for generating summaries, action items, and MEDDPICC analysis.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -38,6 +38,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - Subtle in-session status indicator shows when audio is recovering or temporarily degraded, without flickering or causing the header to jump around
 - MEDDPICC insights now update independently in the background during recording, so data is already there when you switch tabs. Switching tabs no longer triggers extra API calls or blocks standard insight updates.
 - MEDDPICC insights now use a more reliable model for better results on long transcripts
+- Remove the GPT model selector from Settings on both macOS and iOS — all insights now use GPT-5 Mini (the backend default) for consistent quality
 - Fix insights from one mode (e.g. MEDDPICC) accidentally overwriting data in another mode (e.g. Standard) after switching
 - Fix live insight updates sometimes wiping action items, topics, and discussion flow when the backend returns a partial or fallback response
 - Transcript and debug-log panes now support manual scroll lock with a one-click "resume auto-scroll", and debug logs can be saved as a `.txt` file
@@ -286,7 +287,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Views/MainWindow.swift** – Window chrome, history sidebar, and macOS historical meeting detail (`MeetingDetailView`, includes `send to attio` sheet with OAuth connect/search/send flow)
 - **Miniti/Views/TranscriptView.swift** – Live transcript with speaker colors; mic speaker shown as "You" (green), remote speakers use blue/purple palette; merges streaming fragments into sentence-level rows for cleaner display
 - **Miniti/Views/InsightsView.swift** – AI insights panel (standard + MEDDPICC + training modes), shared `TrainingContent` view for speech analytics, and shared metric info-help UI (`TerminalSectionInfo*`; macOS popover + iOS floating popup card via `fullScreenCover`)
-- **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, models (Deepgram + OpenAI), general preferences
+- **Miniti/Views/SettingsView.swift** – Account mode toggle, API keys (BYOK only), audio, models (Deepgram only; OpenAI hardcoded to gpt-5-mini), general preferences
 - **Miniti/Views/TermsAcceptanceView.swift** – Privacy & terms acceptance gate shown before onboarding; sets `appState.hasAcceptedTerms = true` on accept. Shared between macOS and iOS.
 - **Miniti/Views/OnboardingView.swift** – First-launch mode selection (managed vs BYOK)
 - **Miniti/Views/UsageBanner.swift** – Remaining minutes display + ManagedStatusView for home screen
@@ -369,7 +370,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Audio engine/device-change recovery**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. On macOS, route changes trigger a guarded full mic restart and dynamic converter rebuild based on callback format (tap installed with nil format), with coalescing/rate-limit checks to avoid restart storms. Default output changes schedule a debounced system-tap restart and reset recovery timers so the app does not immediately re-restart. On iOS, route changes are actively inspected for input-identity changes and trigger a debounced proactive mic restart (not just logging), improving Bluetooth route/profile reliability. Observer lifecycles are cleaned up in `stopMicrophoneCapture()`.
 - **Deepgram reconnect + transcript starvation watchdog**: While recording, Deepgram connection errors/disconnects trigger bounded reconnect attempts (1s/2s/5s). A transcript-health watchdog also triggers one reconnect cycle if speech-like audio levels continue but no transcript arrives for an extended window, and recording continues during transport recovery.
 - **Managed session-end durability queue**: If managed `session/end` reporting fails, the app persists pending reports locally and retries on launch, foreground, and after managed-session success paths. `managedSessionId` is only cleared after successful acknowledgment or durable queue persistence.
-- `@AppStorage` persists API keys, model selection, audio source toggles, app mode, onboarding state, and terms acceptance state (`acceptedTermsVersion` + legacy `hasAcceptedTerms`)
+- `@AppStorage` persists API keys, Deepgram model selection, audio source toggles, app mode, onboarding state, and terms acceptance state (`acceptedTermsVersion` + legacy `hasAcceptedTerms`). OpenAI model is hardcoded to `gpt-5-mini` (no user selection).
 - **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`
@@ -444,7 +445,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Recording**: TerminalHeader with red dot + timer, stop button, dual labeled waveforms (mic green, system blue), transcript, notes, live insights
 - **Stopped session**: Same layout; header shows discard (left), cont (center, same position as stop), save (right) with `⌘⌫` / `⌘S` shortcuts on macOS. Status dot hidden when not recording. Resumes the current session (no new meeting created). In managed mode, resuming requests a fresh temp Deepgram key (the previous one is cleared on stop).
 - **History**: Sidebar list → detail view with tabs (transcript / insights / meddpicc / training). macOS uses split panes (transcript + notes on left, insights on right) and the insights pane has mode tabs (standard / MEDDPICC / training) with `⌘1` / `⌘2` / `⌘3`.
-- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram + OpenAI), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘, or menu bar
+- **Settings**: Account tab (mode toggle + usage stats + full device UUID, selectable), API Keys (BYOK only), Models (Deepgram only), Audio, General. Opened via cog button (`@Environment(\.openSettings)`), ⌘, or menu bar
 
 ### iOS
 - **Terms acceptance** (first launch or existing users who haven't accepted): Same as macOS (shared `TermsAcceptanceView`)

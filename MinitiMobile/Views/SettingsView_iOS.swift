@@ -213,11 +213,6 @@ struct SettingsView_iOS: View {
                         Text("Nova-2").tag(DeepgramModel.nova2.rawValue)
                         Text("Nova-3").tag(DeepgramModel.nova3.rawValue)
                     }
-                    
-                    Picker("Insights", selection: $appState.openaiModel) {
-                        Text("GPT-5 Mini").tag(OpenAIModel.gpt5Mini.rawValue)
-                        Text("GPT-5 Nano").tag(OpenAIModel.gpt5Nano.rawValue)
-                    }
                 }
                 
                 // Device
