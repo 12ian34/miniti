@@ -265,7 +265,6 @@ final class AppState: ObservableObject {
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
     @AppStorage("deepgramModel") var deepgramModel: String = DeepgramModel.nova3.rawValue
-    @AppStorage("openaiModel") var openaiModel: String = OpenAIModel.gpt5Mini.rawValue
     @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = false {
         didSet {
             if !shareDiagnostics {
@@ -897,10 +896,10 @@ final class AppState: ObservableObject {
         existingSummary: String?,
         existingTitle: String?
     ) async -> InsightsService.LiveInsights? {
-        let selectedLLMModel = selectedModelForMode(mode)
+        let model = OpenAIModel.gpt5Mini
         DebugLogger.shared.log(
             .app,
-            "Live insights request: mode=\(mode.rawValue), model=\(selectedLLMModel.rawValue), transcriptChars=\(transcript.count)"
+            "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count)"
         )
         
         do {
@@ -913,13 +912,13 @@ final class AppState: ObservableObject {
                     response = try await generateManagedInsightsWithRetry(
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: existingSummary, existingTitle: existingTitle,
-                        mode: mode.rawValue, model: selectedLLMModel.rawValue
+                        mode: mode.rawValue, model: model.rawValue
                     )
                 } else {
                     response = try await minitiAPIService.generateInsights(
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: existingSummary, existingTitle: existingTitle,
-                        mode: mode.rawValue, model: selectedLLMModel.rawValue
+                        mode: mode.rawValue, model: model.rawValue
                     )
                 }
                 insights = response.toLiveInsights()
@@ -928,7 +927,7 @@ final class AppState: ObservableObject {
                 insights = try await insightsService.generateLiveInsights(
                     transcript: transcript, existingSummary: existingSummary,
                     existingTitle: existingTitle, mode: mode,
-                    model: selectedLLMModel, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey
                 )
             }
             return insights
@@ -1117,8 +1116,7 @@ final class AppState: ObservableObject {
         guard !meeting.fullTranscript.isEmpty else { return }
         
         isGeneratingInsights = true
-        let standardModel = selectedModelForMode(.standard)
-        let meddpiccModel = selectedModelForMode(.meddpicc)
+        let model = OpenAIModel.gpt5Mini
         
         // Generate standard insights
         do {
@@ -1127,7 +1125,7 @@ final class AppState: ObservableObject {
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: standardModel.rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue
                 )
                 let insights = response.toLiveInsights()
                 meeting.summaryText = insights.summary
@@ -1137,7 +1135,7 @@ final class AppState: ObservableObject {
             } else {
                 let insights = try await insightsService!.generateInsights(
                     transcript: meeting.fullTranscript,
-                    model: standardModel, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey
                 )
                 meeting.summaryText = insights.summary
                 meeting.actionItems = insights.actionItems
@@ -1157,14 +1155,14 @@ final class AppState: ObservableObject {
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: meeting.summaryText, existingTitle: nil,
-                    mode: InsightsMode.meddpicc.rawValue, model: meddpiccModel.rawValue
+                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue
                 )
                 meddpiccInsights = response.toLiveInsights()
             } else {
                 meddpiccInsights = try await insightsService!.generateLiveInsights(
                     transcript: meeting.fullTranscript, existingSummary: meeting.summaryText,
                     existingTitle: nil, mode: .meddpicc,
-                    model: meddpiccModel, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey
                 )
             }
             meeting.meddpiccMetrics = meddpiccInsights.metrics
@@ -1751,8 +1749,7 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "Generating final insights before save")
         isGeneratingInsights = true
         
-        let standardModel = selectedModelForMode(.standard)
-        let meddpiccModel = selectedModelForMode(.meddpicc)
+        let model = OpenAIModel.gpt5Mini
         
         // Generate standard insights first
         do {
@@ -1764,13 +1761,13 @@ final class AppState: ObservableObject {
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: standardModel.rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue
                 )
                 insights = response.toLiveInsights()
             } else {
                 insights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: nil, existingTitle: nil,
-                    mode: .standard, model: standardModel, apiKey: openaiApiKey
+                    mode: .standard, model: model, apiKey: openaiApiKey
                 )
             }
             
@@ -1804,14 +1801,14 @@ final class AppState: ObservableObject {
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: liveSummary, existingTitle: currentTitleSuffix,
-                    mode: InsightsMode.meddpicc.rawValue, model: meddpiccModel.rawValue
+                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue
                 )
                 meddpiccInsights = response.toLiveInsights()
             } else {
                 meddpiccInsights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: liveSummary,
                     existingTitle: currentTitleSuffix, mode: .meddpicc,
-                    model: meddpiccModel, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey
                 )
             }
             
@@ -1854,7 +1851,7 @@ final class AppState: ObservableObject {
         
         do {
             let requestedMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
-            let selectedModel = selectedModelForMode(requestedMode)
+            let model = OpenAIModel.gpt5Mini
             
             if requestedMode == .meddpicc {
                 let meddpiccInsights: InsightsService.LiveInsights
@@ -1867,7 +1864,7 @@ final class AppState: ObservableObject {
                         existingSummary: meeting.summaryText,
                         existingTitle: nil,
                         mode: InsightsMode.meddpicc.rawValue,
-                        model: selectedModel.rawValue
+                        model: model.rawValue
                     )
                     meddpiccInsights = response.toLiveInsights()
                 } else {
@@ -1876,7 +1873,7 @@ final class AppState: ObservableObject {
                         existingSummary: meeting.summaryText,
                         existingTitle: nil,
                         mode: .meddpicc,
-                        model: selectedModel,
+                        model: model,
                         apiKey: openaiApiKey
                     )
                 }
@@ -1890,12 +1887,11 @@ final class AppState: ObservableObject {
                 meeting.meddpiccChampion = meddpiccInsights.champion
                 meeting.meddpiccCompetition = meddpiccInsights.competition
             } else if appMode == .managed, let minitiAPIService {
-                // Managed mode: proxy through backend
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: selectedModelForMode(.standard).rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue
                 )
                 let insights = response.toLiveInsights()
                 meeting.summaryText = insights.summary
@@ -1903,10 +1899,9 @@ final class AppState: ObservableObject {
                 meeting.topics = insights.topics
                 meeting.discussionFlow = insights.discussionFlow
             } else {
-                // BYOK mode: direct OpenAI call
                 let insights = try await insightsService!.generateInsights(
                     transcript: meeting.fullTranscript,
-                    model: selectedModelForMode(.standard),
+                    model: model,
                     apiKey: openaiApiKey
                 )
                 meeting.summaryText = insights.summary
@@ -2002,14 +1997,6 @@ final class AppState: ObservableObject {
         return false
     }
     
-    private func selectedModelForMode(_ mode: InsightsMode) -> OpenAIModel {
-        if mode == .meddpicc {
-            // MEDDPICC extraction is more token/structure heavy; keep on mini for reliability.
-            return .gpt5Mini
-        }
-        return OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
-    }
-
     // MARK: - Diagnostics Events
 
     private func enqueueDiagnosticEvent(

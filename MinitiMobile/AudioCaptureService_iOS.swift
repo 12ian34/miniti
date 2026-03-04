@@ -14,10 +14,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeInputIdentity: String = ""
     
-    // Keep legacy option for compatibility with older Xcode/iOS SDK overlays.
-    // `.allowBluetoothHFP` is preferred in newer SDKs but may be unavailable
-    // on older toolchains still used by external contributors.
+    #if compiler(>=6.2)
+    private let bluetoothCallProfileOption: AVAudioSession.CategoryOptions = .allowBluetoothHFP
+    #else
     private let bluetoothCallProfileOption: AVAudioSession.CategoryOptions = .allowBluetooth
+    #endif
     
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (Data) -> Void)?
     

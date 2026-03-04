@@ -2,44 +2,8 @@ import Foundation
 
 // MARK: - OpenAI Model
 
-enum OpenAIModel: String, CaseIterable, Codable {
+enum OpenAIModel: String, Codable {
     case gpt5Mini = "gpt-5-mini-2025-08-07"
-    case gpt5Nano = "gpt-5-nano-2025-08-07"
-    
-    var displayName: String {
-        switch self {
-        case .gpt5Mini: return "GPT-5 Mini"
-        case .gpt5Nano: return "GPT-5 Nano"
-        }
-    }
-    
-    var shortName: String {
-        switch self {
-        case .gpt5Mini: return "5-mini"
-        case .gpt5Nano: return "5-nano"
-        }
-    }
-    
-    var shortDescription: String {
-        switch self {
-        case .gpt5Mini: return "Best quality insights"
-        case .gpt5Nano: return "Fast and efficient"
-        }
-    }
-    
-    var pros: [String] {
-        switch self {
-        case .gpt5Mini: return ["Higher accuracy", "Better reasoning", "More nuanced insights"]
-        case .gpt5Nano: return ["2x faster", "Lower cost", "Great for real-time"]
-        }
-    }
-    
-    var cons: [String] {
-        switch self {
-        case .gpt5Mini: return ["Slower response", "Higher API cost"]
-        case .gpt5Nano: return ["Less detailed", "May miss nuances"]
-        }
-    }
 }
 
 // MARK: - Insights Mode
