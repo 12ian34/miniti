@@ -89,7 +89,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // system words → remote speaker(s). Keyed by stream time (seconds from start).
     
     struct SourceSample {
-        let streamTime: Double   // seconds from recording start
+        let startTime: Double    // seconds from recording start
+        let endTime: Double      // seconds from recording start
         let micEnergy: Float     // Int16-scale RMS of mic buffer
         let sysEnergy: Float     // Int16-scale RMS of system buffer
     }
@@ -108,22 +109,53 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         sourceLogLock.lock()
         defer { sourceLogLock.unlock() }
         
-        var micTotal: Float = 0
-        var sysTotal: Float = 0
-        var count: Float = 0
+        let windowStart = min(startTime, endTime)
+        let windowEnd = max(startTime, endTime)
+        let fallbackMidpoint = (windowStart + windowEnd) * 0.5
+        let fallbackMaxDistance: Double = 1.5
+        
+        var micWeightedTotal: Double = 0
+        var sysWeightedTotal: Double = 0
+        var overlapSecondsTotal: Double = 0
+        var nearestSample: SourceSample?
+        var nearestDistance = Double.greatestFiniteMagnitude
         
         for sample in sourceLog {
-            if sample.streamTime >= startTime && sample.streamTime <= endTime {
-                micTotal += sample.micEnergy
-                sysTotal += sample.sysEnergy
-                count += 1
+            let overlapStart = max(windowStart, sample.startTime)
+            let overlapEnd = min(windowEnd, sample.endTime)
+            if overlapEnd > overlapStart {
+                let overlapSeconds = overlapEnd - overlapStart
+                micWeightedTotal += Double(sample.micEnergy) * overlapSeconds
+                sysWeightedTotal += Double(sample.sysEnergy) * overlapSeconds
+                overlapSecondsTotal += overlapSeconds
+                continue
+            }
+            
+            let distance: Double
+            if fallbackMidpoint < sample.startTime {
+                distance = sample.startTime - fallbackMidpoint
+            } else if fallbackMidpoint > sample.endTime {
+                distance = fallbackMidpoint - sample.endTime
+            } else {
+                distance = 0
+            }
+            if distance < nearestDistance {
+                nearestDistance = distance
+                nearestSample = sample
             }
         }
         
-        guard count > 0 else { return .unknown }
+        if overlapSecondsTotal <= 0 {
+            guard let nearestSample, nearestDistance <= fallbackMaxDistance else {
+                return .unknown
+            }
+            micWeightedTotal = Double(nearestSample.micEnergy)
+            sysWeightedTotal = Double(nearestSample.sysEnergy)
+        }
+        
         // Require system to be meaningfully louder (>1.5x) to tag as system,
         // since mic noise gets amplified and may match system during pauses.
-        return sysTotal > micTotal * 1.5 ? .system : .mic
+        return sysWeightedTotal > micWeightedTotal * 1.5 ? .system : .mic
     }
     
     /// Clears source log (call when starting a new recording).
@@ -1412,11 +1444,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             vDSP_measqv(sysFloat, 1, &sysMsq, vDSP_Length(mixCount))
             let sysRMS = sqrt(sysMsq)
             
-            // Record source dominance for this buffer (raw energy, before AGC)
-            let streamTime = Double(cumulativeSamplesSent) / 16000.0
+            // Record source dominance for this buffer interval (raw energy, before AGC).
+            let bufferStartTime = Double(cumulativeSamplesSent) / 16000.0
+            let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
-            sourceLog.append(SourceSample(streamTime: streamTime, micEnergy: micRMS, sysEnergy: sysRMS))
-            // Trim entries older than 10 minutes to bound memory
+            sourceLog.append(SourceSample(startTime: bufferStartTime, endTime: bufferEndTime, micEnergy: micRMS, sysEnergy: sysRMS))
+            // Trim entries to bound memory (~25 minutes at current callback cadence).
             if sourceLog.count > 6000 { sourceLog.removeFirst(sourceLog.count - 6000) }
             sourceLogLock.unlock()
             
@@ -1485,9 +1518,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 )
             }
             // No system audio buffered — mic only. Log as mic-dominant.
-            let streamTime = Double(cumulativeSamplesSent) / 16000.0
+            let bufferStartTime = Double(cumulativeSamplesSent) / 16000.0
+            let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
-            sourceLog.append(SourceSample(streamTime: streamTime, micEnergy: 1.0, sysEnergy: 0.0))
+            sourceLog.append(SourceSample(startTime: bufferStartTime, endTime: bufferEndTime, micEnergy: 1.0, sysEnergy: 0.0))
             if sourceLog.count > 6000 { sourceLog.removeFirst(sourceLog.count - 6000) }
             sourceLogLock.unlock()
             

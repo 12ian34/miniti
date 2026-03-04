@@ -43,6 +43,9 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - Recovery status now avoids rapid flicker after transient reconnect spikes, and the header no longer jerks the layout up/down while recovery toggles
 - Switching to MEDDPICC during an in-flight insight update now queues the MEDDPICC re-analysis instead of silently skipping it
 - Transcript and debug-log panes now support manual scroll lock with a one-click "resume auto-scroll", and debug logs can be saved directly as a `.txt` file
+- MEDDPICC insight generation now consistently uses `gpt-5-mini` across live updates, re-analysis, and final-save generation for better reliability under long transcripts
+- Insight debug logs now include request/response metadata (mode, model, duration, and MEDDPICC field counts) to make production failures easier to diagnose
+- Copy-to-clipboard buttons now say `copy` instead of `md` to reduce user confusion in the macOS UI
 
 ### 2026-03-02 - v1.11.0
 
