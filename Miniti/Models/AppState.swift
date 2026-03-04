@@ -129,6 +129,8 @@ final class AppState: ObservableObject {
     private let titleUpdateThreshold = 15 // Update title less often (every 15 segments)
     private var currentTitleSuffix: String = "" // Track the descriptive part of title
     private var meetingTimestamp: String = "" // Store the ISO timestamp prefix
+    private var lastStandardSummaryContext: String = ""
+    private var lastMeddpiccSummaryContext: String = ""
     
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
@@ -264,6 +266,16 @@ final class AppState: ObservableObject {
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
     @AppStorage("deepgramModel") var deepgramModel: String = DeepgramModel.nova3.rawValue
     @AppStorage("openaiModel") var openaiModel: String = OpenAIModel.gpt5Mini.rawValue
+    @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = false {
+        didSet {
+            if !shareDiagnostics {
+                pendingClientEvents.removeAll()
+                persistPendingClientEvents()
+            } else {
+                Task { await flushClientEvents(trigger: "setting enabled") }
+            }
+        }
+    }
     
     private var recordingTimer: Timer?
     private var periodicSaveTimer: Timer?
@@ -275,11 +287,14 @@ final class AppState: ObservableObject {
     private var lastDeepgramReconnectScheduledAt: CFAbsoluteTime = 0
     private var pendingAudioRecoveryTransitionTask: Task<Void, Never>?
     private var desiredAudioRecoveryState: AudioRecoveryState = .healthy
-    private var pendingMeddpiccReanalysisTask: Task<Void, Never>?
     private var isGeneratingFinalInsights = false
     private var systemAudioInactiveSince: CFAbsoluteTime = 0
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
+    private let pendingClientEventsDefaultsKey = "pendingClientEvents"
+    private var pendingClientEvents: [MinitiAPIService.ClientEventPayload] = []
+    private var clientEventsFlushTask: Task<Void, Never>?
+    private let diagnosticsSessionId = UUID().uuidString
     private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
     private var accumulatedRecordedDuration: TimeInterval = 0
@@ -343,12 +358,14 @@ final class AppState: ObservableObject {
         setupServices()
         updateLogRedaction()
         pendingSessionEndReports = loadPendingSessionEndReports()
+        pendingClientEvents = loadPendingClientEvents()
         
         // Load usage info for managed mode
         if appMode == .managed {
             Task {
                 await refreshUsage()
                 await flushPendingSessionEndReports(trigger: "launch")
+                await flushClientEvents(trigger: "launch")
             }
         }
         
@@ -497,13 +514,16 @@ final class AppState: ObservableObject {
             deepgramReconnectTask = nil
             deepgramReconnectGeneration += 1
             lastDeepgramReconnectScheduledAt = 0
+            enqueueDiagnosticEvent("deepgram_connected", category: .deepgram)
             updateAudioRecoveryState()
         case .connecting:
             updateAudioRecoveryState()
         case .error:
+            enqueueDiagnosticEvent("deepgram_connection_error", category: .deepgram, level: .error)
             scheduleDeepgramReconnect(reason: "connection error")
         case .disconnected:
             // If disconnected while recording, treat as transient and attempt reconnect.
+            enqueueDiagnosticEvent("deepgram_unexpected_disconnect", category: .deepgram, level: .warning)
             scheduleDeepgramReconnect(reason: "unexpected disconnect")
         }
     }
@@ -523,6 +543,12 @@ final class AppState: ObservableObject {
         let generation = deepgramReconnectGeneration
         updateAudioRecoveryState()
         DebugLogger.shared.log(.app, "Deepgram reconnect scheduled: \(reason)")
+        enqueueDiagnosticEvent(
+            "deepgram_reconnect_scheduled",
+            category: .deepgram,
+            level: .warning,
+            details: ["reason": reason]
+        )
         
         deepgramReconnectTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -536,6 +562,14 @@ final class AppState: ObservableObject {
                 guard generation == self.deepgramReconnectGeneration else { return }
                 
                 DebugLogger.shared.log(.app, "Deepgram reconnect attempt \(idx + 1)/\(backoffSeconds.count)")
+                self.enqueueDiagnosticEvent(
+                    "deepgram_reconnect_attempt",
+                    category: .deepgram,
+                    details: [
+                        "attempt": "\(idx + 1)",
+                        "max_attempts": "\(backoffSeconds.count)"
+                    ]
+                )
                 deepgramService.disconnect()
                 let model = DeepgramModel(rawValue: self.deepgramModel) ?? .nova3
                 deepgramService.connect(model: model)
@@ -547,6 +581,7 @@ final class AppState: ObservableObject {
                     guard generation == self.deepgramReconnectGeneration else { return }
                     if deepgramService.connectionState == .connected {
                         DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
+                        self.enqueueDiagnosticEvent("deepgram_reconnect_succeeded", category: .deepgram)
                         self.lastDeepgramReconnectScheduledAt = 0
                         self.updateAudioRecoveryState()
                         return
@@ -556,6 +591,7 @@ final class AppState: ObservableObject {
             
             if self.isRecording && generation == self.deepgramReconnectGeneration {
                 DebugLogger.shared.log(.app, "Deepgram reconnect exhausted")
+                self.enqueueDiagnosticEvent("deepgram_reconnect_exhausted", category: .deepgram, level: .error)
                 self.applyAudioRecoveryState(.degraded)
             }
         }
@@ -590,6 +626,16 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(
                     .app,
                     "Transcript starvation detected (\(String(format: "%.1f", transcriptGap))s gap with active audio) — reconnecting Deepgram"
+                )
+                enqueueDiagnosticEvent(
+                    "transcript_starvation_detected",
+                    category: .deepgram,
+                    level: .warning,
+                    details: [
+                        "gap_seconds": String(format: "%.1f", transcriptGap),
+                        "mic_level": String(format: "%.4f", microphoneLevel),
+                        "system_level": String(format: "%.4f", systemAudioLevel)
+                    ]
                 )
                 scheduleDeepgramReconnect(reason: "transcript starvation")
             }
@@ -647,6 +693,14 @@ final class AppState: ObservableObject {
     private func applyAudioRecoveryState(_ nextState: AudioRecoveryState) {
         desiredAudioRecoveryState = nextState
         guard nextState != audioRecoveryState else { return }
+
+        if nextState == .degraded {
+            enqueueDiagnosticEvent("audio_recovery_degraded", category: .audio, level: .warning)
+        } else if nextState == .recovering {
+            enqueueDiagnosticEvent("audio_recovery_recovering", category: .audio)
+        } else if audioRecoveryState != .healthy {
+            enqueueDiagnosticEvent("audio_recovery_healthy", category: .audio)
+        }
         
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
@@ -731,32 +785,17 @@ final class AppState: ObservableObject {
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
         }.count
         
-        if insightsMode == .meddpicc {
-            let threshold = lastMEDDPICCSegmentCount == 0
-                ? firstMEDDPICCInsightThreshold
-                : meddpiccInsightUpdateThreshold
-            let meetsSegmentThreshold = finalCount >= lastMEDDPICCSegmentCount + threshold
-            let meetsTimeThreshold = lastMEDDPICCRequestAt.map {
-                Date().timeIntervalSince($0) >= meddpiccMinUpdateInterval
-            } ?? true
-            
-            if meetsSegmentThreshold && meetsTimeThreshold {
-                Task {
-                    await updateLiveInsights()
-                }
-            }
-        } else {
-            // Use lower threshold for first insight, then normal threshold after
-            let threshold = lastInsightSegmentCount == 0 ? firstInsightThreshold : insightUpdateThreshold
-            
-            if finalCount >= lastInsightSegmentCount + threshold {
-                lastInsightSegmentCount = finalCount
-                Task {
-                    await updateLiveInsights()
-                }
+        let threshold = lastInsightSegmentCount == 0 ? firstInsightThreshold : insightUpdateThreshold
+        
+        if finalCount >= lastInsightSegmentCount + threshold {
+            lastInsightSegmentCount = finalCount
+            Task {
+                await updateLiveInsights()
             }
         }
     }
+    
+    private var isGeneratingMeddpiccInsights = false
     
     private func updateLiveInsights() async {
         guard !isGeneratingInsights else {
@@ -764,7 +803,6 @@ final class AppState: ObservableObject {
             return
         }
         
-        // Build transcript from final segments
         let finalSegments = liveSegments
             .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         
@@ -775,116 +813,164 @@ final class AppState: ObservableObject {
         
         guard !transcript.isEmpty else { return }
         
-        // Check if we should request a title update (less frequent than insights)
         let segmentCount = finalSegments.count
         let shouldUpdateTitle = segmentCount >= lastTitleUpdateCount + titleUpdateThreshold
         let existingTitle = shouldUpdateTitle ? nil : currentTitleSuffix
-        let effectiveMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
+        let titleForRequest = existingTitle.flatMap { $0.isEmpty ? nil : $0 }
+        
         DebugLogger.shared.log(
             .app,
-            "Live insights start: mode=\(effectiveMode.rawValue), segments=\(segmentCount), transcriptChars=\(transcript.count), updateTitle=\(shouldUpdateTitle)"
+            "Live insights start: segments=\(segmentCount), transcriptChars=\(transcript.count), updateTitle=\(shouldUpdateTitle)"
         )
         
+        // Standard insights — inline, applies immediately
         isGeneratingInsights = true
-        
-        // Training mode is locally computed — use standard for LLM generation
-        if effectiveMode == .meddpicc {
-            lastMEDDPICCRequestAt = Date()
+        let standardSummary = lastStandardSummaryContext.isEmpty ? nil : lastStandardSummaryContext
+        if let standard = await fetchLiveInsights(
+            mode: .standard,
+            transcript: transcript,
+            existingSummary: standardSummary,
+            existingTitle: titleForRequest
+        ) {
+            lastStandardSummaryContext = standard.summary
+            applyInsights(standard, segmentCount: segmentCount, mode: .standard)
         }
-        let selectedLLMModel = selectedModelForMode(effectiveMode)
+        isGeneratingInsights = false
+        
+        // MEDDPICC — independent background task, never blocks standard
+        let shouldRunMeddpicc: Bool = {
+            guard !isGeneratingMeddpiccInsights else { return false }
+            let meetsSegmentThreshold = segmentCount >= lastMEDDPICCSegmentCount + (
+                lastMEDDPICCSegmentCount == 0 ? firstMEDDPICCInsightThreshold : meddpiccInsightUpdateThreshold
+            )
+            let meetsTimeThreshold = lastMEDDPICCRequestAt.map {
+                Date().timeIntervalSince($0) >= meddpiccMinUpdateInterval
+            } ?? true
+            return meetsSegmentThreshold && meetsTimeThreshold
+        }()
+        
+        if shouldRunMeddpicc {
+            let capturedTranscript = transcript
+            let capturedSegmentCount = segmentCount
+            let capturedTitle = titleForRequest
+            Task {
+                await self.updateMeddpiccInBackground(
+                    transcript: capturedTranscript,
+                    segmentCount: capturedSegmentCount,
+                    existingTitle: capturedTitle
+                )
+            }
+        }
+    }
+    
+    private func updateMeddpiccInBackground(transcript: String, segmentCount: Int, existingTitle: String?) async {
+        guard !isGeneratingMeddpiccInsights else { return }
+        isGeneratingMeddpiccInsights = true
+        defer { isGeneratingMeddpiccInsights = false }
+        
+        let meddpiccSummary = lastMeddpiccSummaryContext.isEmpty ? nil : lastMeddpiccSummaryContext
+        
+        if let meddpicc = await fetchLiveInsights(
+            mode: .meddpicc,
+            transcript: transcript,
+            existingSummary: meddpiccSummary,
+            existingTitle: existingTitle
+        ) {
+            lastMeddpiccSummaryContext = meddpicc.summary
+            lastMEDDPICCRequestAt = Date()
+            applyInsights(meddpicc, segmentCount: segmentCount, mode: .meddpicc)
+            lastMEDDPICCSegmentCount = segmentCount
+            let meddpiccFieldCount = [
+                liveMetrics, liveEconomicBuyer, liveDecisionCriteria, liveDecisionProcess,
+                livePaperProcess, liveIdentifiedPain, liveChampion, liveCompetition
+            ]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0.lowercased() != "null" }
+            .count
+            DebugLogger.shared.log(.app, "Live MEDDPICC applied: fields=\(meddpiccFieldCount), segmentCount=\(segmentCount)")
+        }
+    }
+    
+    private func fetchLiveInsights(
+        mode: InsightsMode,
+        transcript: String,
+        existingSummary: String?,
+        existingTitle: String?
+    ) async -> InsightsService.LiveInsights? {
+        let selectedLLMModel = selectedModelForMode(mode)
+        DebugLogger.shared.log(
+            .app,
+            "Live insights request: mode=\(mode.rawValue), model=\(selectedLLMModel.rawValue), transcriptChars=\(transcript.count)"
+        )
         
         do {
             let insights: InsightsService.LiveInsights
             
             if appMode == .managed, let minitiAPIService {
-                // Managed mode: proxy through backend
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response: ManagedInsightsResponse
-                if effectiveMode == .meddpicc {
+                if mode == .meddpicc {
                     response = try await generateManagedInsightsWithRetry(
-                        deviceId: deviceId,
-                        transcript: transcript,
-                        existingSummary: liveSummary.isEmpty ? nil : liveSummary,
-                        existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                        mode: effectiveMode.rawValue,
-                        model: selectedLLMModel.rawValue
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: existingSummary, existingTitle: existingTitle,
+                        mode: mode.rawValue, model: selectedLLMModel.rawValue
                     )
                 } else {
                     response = try await minitiAPIService.generateInsights(
-                        deviceId: deviceId,
-                        transcript: transcript,
-                        existingSummary: liveSummary.isEmpty ? nil : liveSummary,
-                        existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                        mode: effectiveMode.rawValue,
-                        model: selectedLLMModel.rawValue
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: existingSummary, existingTitle: existingTitle,
+                        mode: mode.rawValue, model: selectedLLMModel.rawValue
                     )
                 }
                 insights = response.toLiveInsights()
             } else {
-                // BYOK mode: call OpenAI directly
-                guard let insightsService, !openaiApiKey.isEmpty else {
-                    isGeneratingInsights = false
-                    return
-                }
+                guard let insightsService, !openaiApiKey.isEmpty else { return nil }
                 insights = try await insightsService.generateLiveInsights(
-                    transcript: transcript,
-                    existingSummary: liveSummary.isEmpty ? nil : liveSummary,
-                    existingTitle: existingTitle.flatMap { $0.isEmpty ? nil : $0 },
-                    mode: effectiveMode,
-                    model: selectedLLMModel,
-                    apiKey: openaiApiKey
+                    transcript: transcript, existingSummary: existingSummary,
+                    existingTitle: existingTitle, mode: mode,
+                    model: selectedLLMModel, apiKey: openaiApiKey
                 )
             }
-            
-            // Apply insights (same for both modes)
-            applyInsights(insights, segmentCount: segmentCount)
-            if effectiveMode == .meddpicc {
-                lastMEDDPICCSegmentCount = segmentCount
-                let meddpiccFieldCount = [
-                    liveMetrics,
-                    liveEconomicBuyer,
-                    liveDecisionCriteria,
-                    liveDecisionProcess,
-                    livePaperProcess,
-                    liveIdentifiedPain,
-                    liveChampion,
-                    liveCompetition
-                ]
-                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty && $0.lowercased() != "null" }
-                .count
-                DebugLogger.shared.log(.app, "Live MEDDPICC applied: fields=\(meddpiccFieldCount), segmentCount=\(segmentCount)")
-            }
+            return insights
         } catch {
-            DebugLogger.shared.log(.app, "Live insights FAILED (\(effectiveMode.rawValue)): \(error.localizedDescription)")
+            DebugLogger.shared.log(.app, "Live insights FAILED (\(mode.rawValue)): \(error.localizedDescription)")
+            enqueueDiagnosticEvent(
+                "insights_live_failed",
+                category: .insights,
+                level: .warning,
+                details: ["mode": mode.rawValue, "error": error.localizedDescription]
+            )
+            return nil
         }
-        
-        isGeneratingInsights = false
     }
     
     /// Apply insights from either BYOK or managed mode to the live state.
-    private func applyInsights(_ insights: InsightsService.LiveInsights, segmentCount: Int) {
-        liveSummary = insights.summary
-        liveActionItems = insights.actionItems
-        liveTopics = insights.topics
-        liveDiscussionFlow = insights.discussionFlow
-        
-        // Only overwrite MEDDPICC fields when in MEDDPICC mode (standard mode returns nil for these)
-        if insightsMode == .meddpicc {
-            liveMetrics = insights.metrics
-            liveEconomicBuyer = insights.economicBuyer
-            liveDecisionCriteria = insights.decisionCriteria
-            liveDecisionProcess = insights.decisionProcess
-            livePaperProcess = insights.paperProcess
-            liveIdentifiedPain = insights.identifiedPain
-            liveChampion = insights.champion
-            liveCompetition = insights.competition
+    private func applyInsights(
+        _ insights: InsightsService.LiveInsights,
+        segmentCount: Int,
+        mode: InsightsMode
+    ) {
+        if mode == .meddpicc {
+            if let v = insights.metrics, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveMetrics = v }
+            if let v = insights.economicBuyer, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveEconomicBuyer = v }
+            if let v = insights.decisionCriteria, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveDecisionCriteria = v }
+            if let v = insights.decisionProcess, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveDecisionProcess = v }
+            if let v = insights.paperProcess, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { livePaperProcess = v }
+            if let v = insights.identifiedPain, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveIdentifiedPain = v }
+            if let v = insights.champion, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveChampion = v }
+            if let v = insights.competition, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveCompetition = v }
+        } else {
+            if !insights.summary.isEmpty { liveSummary = insights.summary }
+            if !insights.actionItems.isEmpty { liveActionItems = insights.actionItems }
+            if !insights.topics.isEmpty { liveTopics = insights.topics }
+            if !insights.discussionFlow.isEmpty { liveDiscussionFlow = insights.discussionFlow }
         }
         
-        // Update meeting title if we got a suggestion
+        // Only standard insights can update title to avoid MEDDPICC-only phrasing leaking into generic context.
         if let suggestedTitle = insights.suggestedTitle,
            !suggestedTitle.isEmpty,
-           let meeting = currentMeeting {
+           let meeting = currentMeeting,
+           mode == .standard {
             let newSuffix = suggestedTitle.trimmingCharacters(in: .whitespaces)
             if newSuffix != currentTitleSuffix {
                 currentTitleSuffix = newSuffix
@@ -1060,6 +1146,7 @@ final class AppState: ObservableObject {
             }
         } catch {
             DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
+            enqueueDiagnosticEvent("insights_history_standard_failed", category: .insights, level: .warning)
         }
         
         // Generate MEDDPICC insights
@@ -1090,6 +1177,7 @@ final class AppState: ObservableObject {
             meeting.meddpiccCompetition = meddpiccInsights.competition
         } catch {
             DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
+            enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
         }
         
         try? modelContext?.save()
@@ -1189,43 +1277,11 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "Interrupted session restored: segments=\(liveSegments.count), duration=\(formattedDuration)")
     }
     
-    /// Switch insights mode and re-analyze transcript if switching to MEDDPICC
     func switchInsightsMode(to mode: InsightsMode) {
-        let previousMode = insightsMode
         insightsMode = mode
-        
-        if mode != .meddpicc {
-            pendingMeddpiccReanalysisTask?.cancel()
-            pendingMeddpiccReanalysisTask = nil
-        }
         
         if mode == .training {
             recomputeTrainingMetrics()
-            return
-        }
-        
-        // If switching to MEDDPICC and we have transcript content, check if re-analysis needed
-        if mode == .meddpicc && previousMode != .meddpicc {
-            let currentSegmentCount = liveSegments.filter({ $0.isFinal && !$0.text.isEmpty }).count
-            
-            // Only re-analyze if we have new content since last MEDDPICC analysis
-            if currentSegmentCount > lastMEDDPICCSegmentCount {
-                scheduleMeddpiccReanalysis()
-            }
-        }
-    }
-    
-    private func scheduleMeddpiccReanalysis() {
-        pendingMeddpiccReanalysisTask?.cancel()
-        pendingMeddpiccReanalysisTask = Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.pendingMeddpiccReanalysisTask = nil }
-            while self.isGeneratingInsights {
-                try? await Task.sleep(nanoseconds: 250_000_000)
-                guard !Task.isCancelled else { return }
-            }
-            guard self.insightsMode == .meddpicc else { return }
-            await self.reanalyzeWithMEDDPICC()
         }
     }
     
@@ -1235,66 +1291,6 @@ final class AppState: ObservableObject {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
         }
         trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
-    }
-    
-    /// Re-analyze the current transcript with MEDDPICC framework
-    private func reanalyzeWithMEDDPICC() async {
-        guard !isGeneratingInsights else { return }
-        
-        // Build transcript from final segments
-        let finalSegments = liveSegments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        
-        let transcript = finalSegments
-            .sorted { $0.timestamp < $1.timestamp }
-            .map { "[\($0.speakerLabel)] \($0.text)" }
-            .joined(separator: "\n")
-        
-        guard !transcript.isEmpty else { return }
-        DebugLogger.shared.log(
-            .app,
-            "MEDDPICC re-analysis start: segments=\(finalSegments.count), transcriptChars=\(transcript.count)"
-        )
-        
-        isGeneratingInsights = true
-        
-        do {
-            let insights: InsightsService.LiveInsights
-            
-            if appMode == .managed, minitiAPIService != nil {
-                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId,
-                    transcript: transcript,
-                    existingSummary: nil,
-                    existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
-                    mode: InsightsMode.meddpicc.rawValue,
-                    model: selectedModelForMode(.meddpicc).rawValue
-                )
-                insights = response.toLiveInsights()
-            } else {
-                guard let insightsService, !openaiApiKey.isEmpty else {
-                    isGeneratingInsights = false
-                    return
-                }
-                insights = try await insightsService.generateLiveInsights(
-                    transcript: transcript,
-                    existingSummary: nil,
-                    existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
-                    mode: .meddpicc,
-                    model: selectedModelForMode(.meddpicc),
-                    apiKey: openaiApiKey
-                )
-            }
-            
-            applyInsights(insights, segmentCount: finalSegments.count)
-            lastMEDDPICCSegmentCount = finalSegments.count
-            DebugLogger.shared.log(.app, "Re-analysis complete (meddpicc): segments=\(finalSegments.count)")
-        } catch {
-            DebugLogger.shared.log(.app, "Re-analysis FAILED (meddpicc): \(error.localizedDescription)")
-        }
-        
-        isGeneratingInsights = false
     }
     
     /// Save current meeting to SwiftData if it has transcript content.
@@ -1594,8 +1590,6 @@ final class AppState: ObservableObject {
         isRecording = false
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
-        pendingMeddpiccReanalysisTask?.cancel()
-        pendingMeddpiccReanalysisTask = nil
         audioRecoveryState = .healthy
         desiredAudioRecoveryState = .healthy
         recordingTimer?.invalidate()
@@ -1617,6 +1611,7 @@ final class AppState: ObservableObject {
         
         audioCaptureService?.stopCapture()
         deepgramService?.disconnect()
+        Task { await flushClientEvents(trigger: "stop recording") }
         
         // Report usage to backend in managed mode
         if appMode == .managed, let sessionId = currentSessionId {
@@ -1667,8 +1662,6 @@ final class AppState: ObservableObject {
         lastDeepgramReconnectScheduledAt = 0
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
-        pendingMeddpiccReanalysisTask?.cancel()
-        pendingMeddpiccReanalysisTask = nil
         isGeneratingFinalInsights = false
         currentMeeting = nil
         isStartingMeeting = false
@@ -1691,6 +1684,8 @@ final class AppState: ObservableObject {
         liveActionItems = []
         liveTopics = []
         liveDiscussionFlow = []
+        lastStandardSummaryContext = ""
+        lastMeddpiccSummaryContext = ""
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
@@ -1796,6 +1791,7 @@ final class AppState: ObservableObject {
             }
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
+            enqueueDiagnosticEvent("insights_final_standard_failed", category: .insights, level: .warning)
         }
         
         // Also generate MEDDPICC insights
@@ -1830,6 +1826,7 @@ final class AppState: ObservableObject {
             DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
+            enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
         }
         
         isGeneratingInsights = false
@@ -1921,6 +1918,7 @@ final class AppState: ObservableObject {
             try? modelContext?.save()
         } catch {
             DebugLogger.shared.log(.app, "Generate insights FAILED: \(error.localizedDescription)")
+            enqueueDiagnosticEvent("insights_generate_failed", category: .insights, level: .warning)
         }
         
         isGeneratingInsights = false
@@ -2010,6 +2008,115 @@ final class AppState: ObservableObject {
             return .gpt5Mini
         }
         return OpenAIModel(rawValue: openaiModel) ?? .gpt5Mini
+    }
+
+    // MARK: - Diagnostics Events
+
+    private func enqueueDiagnosticEvent(
+        _ name: String,
+        category: MinitiAPIService.ClientEventPayload.EventCategory,
+        level: MinitiAPIService.ClientEventPayload.EventLevel = .info,
+        details: [String: String] = [:]
+    ) {
+        guard shareDiagnostics else { return }
+        guard appMode == .managed else { return }
+        guard minitiAPIService != nil else { return }
+
+        let cappedDetails = details.reduce(into: [String: String]()) { partial, pair in
+            guard partial.count < 20 else { return }
+            let key = String(pair.key.prefix(40))
+            let value = String(pair.value.prefix(240))
+            partial[key] = value
+        }
+
+        let event = MinitiAPIService.ClientEventPayload(
+            name: String(name.prefix(60)),
+            category: category,
+            level: level,
+            occurredAt: Date(),
+            diagnosticsSessionId: diagnosticsSessionId,
+            appMode: appMode.rawValue,
+            meetingId: currentMeeting?.id.uuidString,
+            details: cappedDetails.isEmpty ? nil : cappedDetails
+        )
+        pendingClientEvents.append(event)
+        if pendingClientEvents.count > 200 {
+            pendingClientEvents.removeFirst(pendingClientEvents.count - 200)
+        }
+        persistPendingClientEvents()
+        scheduleClientEventsFlush()
+    }
+
+    private func scheduleClientEventsFlush() {
+        guard shareDiagnostics, appMode == .managed else { return }
+        guard !pendingClientEvents.isEmpty else { return }
+        guard clientEventsFlushTask == nil else { return }
+
+        clientEventsFlushTask = Task { @MainActor [weak self] in
+            defer { self?.clientEventsFlushTask = nil }
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard !Task.isCancelled else { return }
+            await self?.flushClientEvents(trigger: "debounced")
+        }
+    }
+
+    private func flushClientEvents(trigger: String) async {
+        guard shareDiagnostics else { return }
+        guard appMode == .managed else { return }
+        guard let minitiAPIService else { return }
+        guard !pendingClientEvents.isEmpty else { return }
+
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        var remaining = pendingClientEvents
+        var sentCount = 0
+
+        while !remaining.isEmpty {
+            let batch = Array(remaining.prefix(25))
+            do {
+                try await minitiAPIService.sendClientEvents(
+                    deviceId: deviceId,
+                    events: batch
+                )
+                sentCount += batch.count
+                remaining.removeFirst(batch.count)
+            } catch {
+                DebugLogger.shared.log(
+                    .app,
+                    "Client events flush FAILED (\(trigger)): \(error.localizedDescription)"
+                )
+                break
+            }
+        }
+
+        pendingClientEvents = remaining
+        persistPendingClientEvents()
+        if sentCount > 0 {
+            DebugLogger.shared.log(
+                .app,
+                "Client events flushed (\(trigger)): sent=\(sentCount), pending=\(pendingClientEvents.count)"
+            )
+        }
+    }
+
+    private func persistPendingClientEvents() {
+        do {
+            let data = try JSONEncoder().encode(pendingClientEvents)
+            UserDefaults.standard.set(data, forKey: pendingClientEventsDefaultsKey)
+        } catch {
+            DebugLogger.shared.log(.app, "Persist client events FAILED: \(error.localizedDescription)")
+        }
+    }
+
+    private func loadPendingClientEvents() -> [MinitiAPIService.ClientEventPayload] {
+        guard let data = UserDefaults.standard.data(forKey: pendingClientEventsDefaultsKey) else {
+            return []
+        }
+        do {
+            return try JSONDecoder().decode([MinitiAPIService.ClientEventPayload].self, from: data)
+        } catch {
+            DebugLogger.shared.log(.app, "Load client events FAILED: \(error.localizedDescription)")
+            return []
+        }
     }
     
     // MARK: - Managed Session End Durability

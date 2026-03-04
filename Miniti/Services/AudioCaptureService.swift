@@ -74,9 +74,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var isRestartingSystemAfterOutputChange = false
     private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
     private var pendingMicRestartTask: Task<Void, Never>?
+    private var pendingMicRetryTask: Task<Void, Never>?
+    private var micRetryAttempt = 0
+    private let maxMicRetryAttempts = 3
     private var pendingSystemRetryTask: Task<Void, Never>?
     private var systemRetryAttempt = 0
     private let maxSystemRetryAttempts = 4
+    nonisolated(unsafe) private var expectsMicAudio = false
     nonisolated(unsafe) private var expectsSystemAudio = false
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeMicInputDeviceID: AudioDeviceID?
@@ -405,9 +409,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
         resetRuntimeDiagnostics()
+        pendingMicRetryTask?.cancel()
+        pendingMicRetryTask = nil
+        micRetryAttempt = 0
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
         systemRetryAttempt = 0
+        expectsMicAudio = microphone
         expectsSystemAudio = systemAudio
         var capturedAny = false
         
@@ -463,9 +471,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         stopSystemAudioCapture()
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = nil
+        pendingMicRetryTask?.cancel()
+        pendingMicRetryTask = nil
+        micRetryAttempt = 0
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
         systemRetryAttempt = 0
+        expectsMicAudio = false
         expectsSystemAudio = false
         isCapturing = false
         setMicActive(false)
@@ -485,9 +497,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         stopSystemAudioCapture()
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = nil
+        pendingMicRetryTask?.cancel()
+        pendingMicRetryTask = nil
+        micRetryAttempt = 0
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
         systemRetryAttempt = 0
+        expectsMicAudio = false
         expectsSystemAudio = false
         isCapturing = false
         setMicActive(false)
@@ -644,6 +660,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             } catch {
                 self.setMicActive(false)
                 DebugLogger.shared.log(.audio, "Mic restart FAILED after config change: \(error.localizedDescription)")
+                self.scheduleMicRestartRetry(reason: "config change restart failed")
             }
         }
     }
@@ -657,7 +674,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastOutputChangeRestartAt = now
         isRestartingSystemAfterOutputChange = true
         
-        let mixWithMic = isMicActive
         DebugLogger.shared.log(.audio, "Output device changed during capture — scheduling system tap restart")
         
         Task { @MainActor [weak self] in
@@ -668,6 +684,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             try? await Task.sleep(nanoseconds: 300_000_000)
             guard self.isCapturing else { return }
             
+            let mixWithMic = self.isMicActive
             do {
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
@@ -693,6 +710,89 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
     }
 
+    private func scheduleMicRestartRetry(reason: String) {
+        guard isCapturing, expectsMicAudio else { return }
+        guard pendingMicRetryTask == nil else { return }
+        guard micRetryAttempt < maxMicRetryAttempts else {
+            DebugLogger.shared.log(
+                .audio,
+                "Mic auto-retry exhausted (\(micRetryAttempt) attempts), reason=\(reason)"
+            )
+            return
+        }
+        
+        micRetryAttempt += 1
+        let attempt = micRetryAttempt
+        let delayNanos: UInt64 = [500_000_000, 1_500_000_000, 3_000_000_000][min(attempt - 1, 2)]
+        let delaySec = String(format: "%.1f", Double(delayNanos) / 1_000_000_000)
+        DebugLogger.shared.log(
+            .audio,
+            "Scheduling mic restart retry \(attempt)/\(maxMicRetryAttempts) in \(delaySec)s (\(reason))"
+        )
+        
+        pendingMicRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: delayNanos)
+            guard !Task.isCancelled else {
+                self.pendingMicRetryTask = nil
+                return
+            }
+            self.pendingMicRetryTask = nil
+            guard self.isCapturing, self.expectsMicAudio else { return }
+            guard !self.isMicActive else {
+                self.micRetryAttempt = 0
+                return
+            }
+            
+            DebugLogger.shared.log(.audio, "Mic restart retry \(attempt)/\(self.maxMicRetryAttempts) — attempting. Input: \(Self.defaultInputDeviceInfo())")
+            
+            self.stopMicrophoneCapture()
+            do {
+                try await self.startMicrophoneCapture(skipPermissionCheck: true)
+                self.setMicActive(true)
+                self.micRetryAttempt = 0
+                if let fmt = self.audioEngine?.inputNode.outputFormat(forBus: 0) {
+                    DebugLogger.shared.log(.audio, "Mic restart retry succeeded: \(fmt.sampleRate)Hz, \(fmt.channelCount)ch")
+                } else {
+                    DebugLogger.shared.log(.audio, "Mic restart retry succeeded")
+                }
+                
+                if self.isSystemAudioActive, self.expectsSystemAudio {
+                    await self.restartSystemTapForMixMode()
+                }
+            } catch {
+                self.setMicActive(false)
+                DebugLogger.shared.log(.audio, "Mic restart retry FAILED: \(error.localizedDescription)")
+                self.scheduleMicRestartRetry(reason: "retry \(attempt) failed")
+            }
+        }
+    }
+    
+    private func restartSystemTapForMixMode() async {
+        guard isCapturing, isSystemAudioActive, !isRestartingSystemAfterOutputChange else { return }
+        
+        DebugLogger.shared.log(.audio, "Restarting system tap with mixing after mic recovery")
+        
+        do {
+            resetRingBuffer()
+            stopSystemAudioCapture()
+            try startSystemAudioCapture(mixWithMic: true)
+            setSystemAudioActive(true)
+            let now = CFAbsoluteTimeGetCurrent()
+            lastSystemNonSilentAt = now
+            lastSystemCallbackAt = now
+            lastSystemAutoRestartAt = now
+            DebugLogger.shared.log(.audio, "System tap restarted with mixing after mic recovery")
+        } catch {
+            setSystemAudioActive(false)
+            DebugLogger.shared.log(.audio, "System tap mix-mode restart FAILED: \(error.localizedDescription)")
+            if case AudioCaptureError.systemAudioPermissionDenied = error {
+                return
+            }
+            scheduleSystemTapRetry(reason: "mix-mode restart failed", mixWithMic: true)
+        }
+    }
+    
     private func recoverSystemTapAfterSilentStall(
         mixWithMic: Bool,
         silenceDuration: CFAbsoluteTime
