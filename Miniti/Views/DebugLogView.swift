@@ -11,6 +11,7 @@ struct DebugLogView: View {
     @State private var filter: DebugLogger.Category? = nil
     @State private var viewMode: ViewMode = .pretty
     @State private var localEscapeMonitor: Any?
+    @State private var isAutoScrollEnabled = true
 
     private var filtered: [DebugLogger.Entry] {
         guard let filter else { return logger.entries }
@@ -43,6 +44,12 @@ struct DebugLogView: View {
         .onDisappear {
             removeLocalEscapeMonitor()
             DebugLogger.shared.log(.app, "Debug log closed")
+        }
+        .onChange(of: filter) { _, _ in
+            isAutoScrollEnabled = true
+        }
+        .onChange(of: viewMode) { _, _ in
+            isAutoScrollEnabled = true
         }
 #if os(macOS) || os(tvOS)
         .onExitCommand {
@@ -83,6 +90,13 @@ struct DebugLogView: View {
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
                 .foregroundStyle(.gray)
+            
+#if os(macOS)
+            Button("save") { saveLogsToFile() }
+                .font(.system(.caption, design: .monospaced))
+                .buttonStyle(.plain)
+                .foregroundStyle(.gray)
+#endif
 
             Button("clear") { logger.clear() }
                 .font(.system(.caption, design: .monospaced))
@@ -101,35 +115,110 @@ struct DebugLogView: View {
 
     private var logList: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(filtered) { entry in
-                        LogEntryRow(entry: entry)
-                            .id(entry.id)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 1) {
+                        ForEach(filtered) { entry in
+                            LogEntryRow(entry: entry)
+                                .id(entry.id)
+                        }
+                        Color.clear
+                            .frame(height: 1)
+                            .id("pretty-bottom")
                     }
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-            }
-            .onChange(of: logger.entries.count) {
-                if let last = filtered.last {
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { _ in
+                            if isAutoScrollEnabled {
+                                isAutoScrollEnabled = false
+                            }
+                        }
+                )
+                .onChange(of: logger.entries.count) {
+                    guard isAutoScrollEnabled else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo(last.id, anchor: .bottom)
+                        proxy.scrollTo("pretty-bottom", anchor: .bottom)
                     }
+                }
+                
+                if !isAutoScrollEnabled {
+                    Button {
+                        isAutoScrollEnabled = true
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo("pretty-bottom", anchor: .bottom)
+                        }
+                    } label: {
+                        Text("resume auto-scroll")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.9))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 10)
                 }
             }
         }
     }
 
     private var rawLogView: some View {
-        ScrollView {
-            Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.white)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+        ScrollViewReader { proxy in
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                        Color.clear
+                            .frame(height: 1)
+                            .id("raw-bottom")
+                    }
+                }
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 4)
+                        .onChanged { _ in
+                            if isAutoScrollEnabled {
+                                isAutoScrollEnabled = false
+                            }
+                        }
+                )
+                .onChange(of: logger.entries.count) {
+                    guard isAutoScrollEnabled else { return }
+                    withAnimation(.easeOut(duration: 0.15)) {
+                        proxy.scrollTo("raw-bottom", anchor: .bottom)
+                    }
+                }
+                
+                if !isAutoScrollEnabled {
+                    Button {
+                        isAutoScrollEnabled = true
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            proxy.scrollTo("raw-bottom", anchor: .bottom)
+                        }
+                    } label: {
+                        Text("resume auto-scroll")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(Color.blue.opacity(0.9))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 10)
+                }
+            }
         }
     }
 
@@ -142,6 +231,31 @@ struct DebugLogView: View {
         UIPasteboard.general.string = text
         #endif
     }
+
+    #if os(macOS)
+    private func saveLogsToFile() {
+        let panel = NSSavePanel()
+        panel.title = "Save Debug Log"
+        panel.nameFieldStringValue = "miniti-debug-log-\(timestampForFilename()).txt"
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            do {
+                try rawFilteredText.write(to: url, atomically: true, encoding: .utf8)
+                DebugLogger.shared.log(.app, "Debug log saved to \(url.path)")
+            } catch {
+                DebugLogger.shared.log(.app, "Debug log save FAILED: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    private func timestampForFilename() -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyyMMdd-HHmmss"
+        return fmt.string(from: Date())
+    }
+    #endif
 
     #if os(macOS)
     private func installLocalEscapeMonitor() {
@@ -202,6 +316,7 @@ private struct LogEntryRow: View {
 
 #if os(macOS)
 import AppKit
+import UniformTypeIdentifiers
 #else
 import UIKit
 #endif

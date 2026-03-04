@@ -41,7 +41,7 @@ enum DeepgramModel: String, CaseIterable, Codable {
 }
 
 @MainActor
-final class DeepgramService: ObservableObject, @unchecked Sendable {
+final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var apiKey: String = ""
@@ -154,10 +154,18 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
             return
         }
         
+        if webSocketTask != nil {
+            disconnect()
+        }
+        
         DebugLogger.shared.log(.deepgram, "Connecting with model=\(model.rawValue)")
         connectionState = .connecting
         speakerHistory = [:]
         resetSessionCounters()
+        isConnected = false
+        _sendConnected = false
+        _sendTask = nil
+        error = nil
         
         // Build URL with parameters - optimized for speaker diarization
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
@@ -192,16 +200,10 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         
-        urlSession = URLSession(configuration: .default)
+        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
         webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()
-        
-        isConnected = true
-        _sendConnected = true
-        _sendTask = webSocketTask
-        connectionState = .connected
-        error = nil
-        DebugLogger.shared.log(.deepgram, "WebSocket connected")
+        DebugLogger.shared.log(.deepgram, "WebSocket resume requested")
         
         receiveMessages()
     }
@@ -216,6 +218,7 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
         _sendTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
+        urlSession?.invalidateAndCancel()
         urlSession = nil
         isConnected = false
         consecutiveSendErrors = 0
@@ -496,6 +499,47 @@ final class DeepgramService: ObservableObject, @unchecked Sendable {
     /// Get the number of unique speakers detected so far
     var detectedSpeakerCount: Int {
         speakerHistory.count
+    }
+}
+
+extension DeepgramService {
+    nonisolated func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didOpenWithProtocol protocol: String?
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, webSocketTask == self.webSocketTask else { return }
+            self.isConnected = true
+            self._sendConnected = true
+            self._sendTask = webSocketTask
+            self.connectionState = .connected
+            self.error = nil
+            DebugLogger.shared.log(.deepgram, "WebSocket connected")
+        }
+    }
+    
+    nonisolated func urlSession(
+        _ session: URLSession,
+        webSocketTask: URLSessionWebSocketTask,
+        didCloseWith closeCode: URLSessionWebSocketTask.CloseCode,
+        reason: Data?
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self, webSocketTask == self.webSocketTask else { return }
+            self.isConnected = false
+            self._sendConnected = false
+            if self.connectionState != .error {
+                self.connectionState = .disconnected
+            }
+            let reasonText: String
+            if let reason, let decoded = String(data: reason, encoding: .utf8), !decoded.isEmpty {
+                reasonText = decoded
+            } else {
+                reasonText = "none"
+            }
+            DebugLogger.shared.log(.deepgram, "WebSocket closed: code=\(closeCode.rawValue), reason=\(reasonText)")
+        }
     }
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct TranscriptView: View {
     @EnvironmentObject var appState: AppState
+    @State private var isAutoScrollEnabled = true
     
     // Filter out empty segments
     private var visibleSegments: [AppState.LiveSegment] {
@@ -96,45 +97,79 @@ struct TranscriptView: View {
                     }
                     
                     ScrollViewReader { proxy in
-                        ScrollView {
-                            LazyVStack(alignment: .leading, spacing: 6) {
-                                ForEach(Array(displaySegments.enumerated()), id: \.element.id) { index, segment in
-                                    TerminalSegmentRow(
-                                        segment: segment,
-                                        isNewTurn: isNewSpeakerTurn(at: index, in: displaySegments),
-                                        isFirst: index == 0
-                                    )
-                                    .id(segment.id)
+                        ZStack(alignment: .bottomTrailing) {
+                            ScrollView {
+                                LazyVStack(alignment: .leading, spacing: 6) {
+                                    ForEach(Array(displaySegments.enumerated()), id: \.element.id) { index, segment in
+                                        TerminalSegmentRow(
+                                            segment: segment,
+                                            isNewTurn: isNewSpeakerTurn(at: index, in: displaySegments),
+                                            isFirst: index == 0
+                                        )
+                                        .id(segment.id)
+                                    }
+                                    
+                                    // Interim (live typing) text
+                                    if hasInterimText {
+                                        TerminalInterimRow(
+                                            text: appState.interimText,
+                                            speaker: appState.interimSpeaker ?? appState.currentSpeaker,
+                                            isNewTurn: displaySegments.last?.speaker != (appState.interimSpeaker ?? appState.currentSpeaker)
+                                        )
+                                        .id("interim")
+                                    }
+                                    
+                                    // Bottom anchor for scrolling
+                                    Color.clear
+                                        .frame(height: 20)
+                                        .id("bottom")
                                 }
-                                
-                                // Interim (live typing) text
-                                if hasInterimText {
-                                    TerminalInterimRow(
-                                        text: appState.interimText,
-                                        speaker: appState.interimSpeaker ?? appState.currentSpeaker,
-                                        isNewTurn: displaySegments.last?.speaker != (appState.interimSpeaker ?? appState.currentSpeaker)
-                                    )
-                                    .id("interim")
-                                }
-                                
-                                // Bottom anchor for scrolling
-                                Color.clear
-                                    .frame(height: 20)
-                                    .id("bottom")
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
                             }
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                        }
-                        .scrollIndicators(.hidden)
-                        .onChange(of: visibleSegments.count) { _, _ in
-                            scrollToBottom(proxy: proxy)
-                        }
-                        .onChange(of: appState.interimText) { _, _ in
-                            scrollToBottom(proxy: proxy)
-                        }
-                        .onChange(of: appState.isRecording) { _, isRecording in
-                            if isRecording {
+                            .scrollIndicators(.hidden)
+                            .simultaneousGesture(
+                                DragGesture(minimumDistance: 4)
+                                    .onChanged { _ in
+                                        if isAutoScrollEnabled {
+                                            isAutoScrollEnabled = false
+                                        }
+                                    }
+                            )
+                            .onChange(of: visibleSegments.count) { _, newCount in
+                                if newCount == 0 {
+                                    isAutoScrollEnabled = true
+                                }
+                                guard isAutoScrollEnabled else { return }
                                 scrollToBottom(proxy: proxy)
+                            }
+                            .onChange(of: appState.interimText) { _, _ in
+                                guard isAutoScrollEnabled else { return }
+                                scrollToBottom(proxy: proxy)
+                            }
+                            .onChange(of: appState.isRecording) { _, isRecording in
+                                if isRecording {
+                                    isAutoScrollEnabled = true
+                                    scrollToBottom(proxy: proxy)
+                                }
+                            }
+                            
+                            if !isAutoScrollEnabled {
+                                Button {
+                                    isAutoScrollEnabled = true
+                                    scrollToBottom(proxy: proxy)
+                                } label: {
+                                    Text("resume auto-scroll")
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "E6EDF3"))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color(hex: "1F6FEB").opacity(0.95))
+                                        .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                                .padding(.trailing, 16)
+                                .padding(.bottom, 12)
                             }
                         }
                     }
