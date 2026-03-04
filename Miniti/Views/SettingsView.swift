@@ -35,6 +35,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
+
+            AboutSettingsView()
+                .tabItem {
+                    Label("About", systemImage: "info.circle")
+                }
         }
         .frame(width: 500, height: 400)
         
@@ -627,9 +632,7 @@ struct GeneralSettingsView: View {
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
-    @State private var versionTapCount = 0
-    @State private var lastVersionTap: Date?
-    @State private var showDebugLog = false
+    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
     
     var body: some View {
         Form {
@@ -657,7 +660,38 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            
+
+            Section("Diagnostics") {
+                Toggle("Share Diagnostics", isOn: $shareDiagnostics)
+                Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+    
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "Launch at login update FAILED: \(error.localizedDescription)")
+        }
+    }
+}
+
+struct AboutSettingsView: View {
+    @State private var versionTapCount = 0
+    @State private var lastVersionTap: Date?
+    @State private var showDebugLog = false
+
+    var body: some View {
+        Form {
             Section("About") {
                 HStack {
                     Text("Version")
@@ -722,7 +756,7 @@ struct GeneralSettingsView: View {
                 .frame(width: 700, height: 500)
         }
     }
-    
+
     private func handleVersionTap() {
         let now = Date()
         if let last = lastVersionTap, now.timeIntervalSince(last) < 1.5 {
@@ -734,18 +768,6 @@ struct GeneralSettingsView: View {
         if versionTapCount >= 5 {
             showDebugLog = true
             versionTapCount = 0
-        }
-    }
-    
-    private func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            DebugLogger.shared.log(.app, "Launch at login update FAILED: \(error.localizedDescription)")
         }
     }
 }

@@ -3,6 +3,7 @@ import AVFoundation
 
 struct SettingsView_iOS: View {
     @EnvironmentObject var appState: AppState
+    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
     @State private var showDebugLog = false
@@ -230,6 +231,13 @@ struct SettingsView_iOS: View {
                             .lineLimit(1)
                             .textSelection(.enabled)
                     }
+                }
+
+                Section("Diagnostics") {
+                    Toggle("Share Diagnostics", isOn: $shareDiagnostics)
+                    Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 
                 // About

@@ -282,6 +282,41 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
 
+    struct ClientEventPayload: Codable {
+        enum EventCategory: String, Codable {
+            case app
+            case audio
+            case deepgram
+            case insights
+        }
+
+        enum EventLevel: String, Codable {
+            case info
+            case warning
+            case error
+        }
+
+        let name: String
+        let category: EventCategory
+        let level: EventLevel
+        let occurredAt: Date
+        let diagnosticsSessionId: String
+        let appMode: String
+        let meetingId: String?
+        let details: [String: String]?
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case category
+            case level
+            case occurredAt = "occurred_at"
+            case diagnosticsSessionId = "diagnostics_session_id"
+            case appMode = "app_mode"
+            case meetingId = "meeting_id"
+            case details
+        }
+    }
+
     // MARK: - Attio
 
     struct AttioConnectStartResponse: Decodable {
@@ -672,6 +707,24 @@ final class MinitiAPIService: @unchecked Sendable {
             "API insights response: mode=\(mode), duration=\(String(format: "%.2fs", duration)), summaryChars=\(decoded.summary.count), actionItems=\(decoded.actionItems.count), topics=\(decoded.topics.count), meddpiccFields=\(meddpiccFieldCount)"
         )
         return decoded
+    }
+
+    func sendClientEvents(deviceId: String, events: [ClientEventPayload]) async throws {
+        guard !events.isEmpty else { return }
+
+        struct ClientEventsRequest: Encodable {
+            let events: [ClientEventPayload]
+        }
+
+        var request = makeRequest(
+            path: "/client-events",
+            method: "POST",
+            deviceId: deviceId
+        )
+        request.httpBody = try Self.encoder.encode(ClientEventsRequest(events: events))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
     }
 
     // MARK: - Subscription
