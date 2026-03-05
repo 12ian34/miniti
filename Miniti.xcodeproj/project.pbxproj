@@ -27,6 +27,12 @@
 		A10000010000000000000019 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
 		A10000010000000000000020 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
 		A10000010000000000000023 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
+		AB0000010000000000000003 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* DebugLogger.swift */; };
+		AB0000010000000000000004 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* DebugLogView.swift */; };
+		AB0000010000000000000005 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* DebugLogger.swift */; };
+		AB0000010000000000000006 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* DebugLogView.swift */; };
+		AC0000010000000000000002 /* TermsAcceptanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000010000000000000001 /* TermsAcceptanceView.swift */; };
+		AC0000010000000000000003 /* TermsAcceptanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000010000000000000001 /* TermsAcceptanceView.swift */; };
 		C10000010000000000000001 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		C10000010000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		C10000010000000000000003 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
@@ -52,12 +58,6 @@
 		E10000010000000000000003 /* MinitiLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000002 /* MinitiLiveActivityBundle.swift */; };
 		E10000010000000000000004 /* MinitiLiveActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */; };
 		E10000010000000000000005 /* MinitiLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E30000010000000000000001 /* MinitiLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		AB0000010000000000000003 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* DebugLogger.swift */; };
-		AB0000010000000000000004 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* DebugLogView.swift */; };
-		AB0000010000000000000005 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* DebugLogger.swift */; };
-		AB0000010000000000000006 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* DebugLogView.swift */; };
-		AC0000010000000000000002 /* TermsAcceptanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000010000000000000001 /* TermsAcceptanceView.swift */; };
-		AC0000010000000000000003 /* TermsAcceptanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000010000000000000001 /* TermsAcceptanceView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,7 +107,10 @@
 		A20000010000000000000021 /* UsageBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBanner.swift; sourceTree = "<group>"; };
 		A20000010000000000000022 /* LimitReachedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitReachedView.swift; sourceTree = "<group>"; };
 		A20000010000000000000023 /* ColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPalette.swift; sourceTree = "<group>"; };
-		A30000010000000000000001 /* Miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; name = Miniti.app; path = miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A30000010000000000000001 /* miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB0000010000000000000001 /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
+		AB0000010000000000000002 /* DebugLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogView.swift; sourceTree = "<group>"; };
+		AC0000010000000000000001 /* TermsAcceptanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TermsAcceptanceView.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000002 /* AudioCaptureService_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000003 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -122,9 +125,6 @@
 		E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiLiveActivityLiveActivity.swift; sourceTree = "<group>"; };
 		E20000010000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E30000010000000000000001 /* MinitiLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MinitiLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		AB0000010000000000000001 /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
-		AB0000010000000000000002 /* DebugLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogView.swift; sourceTree = "<group>"; };
-		AC0000010000000000000001 /* TermsAcceptanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TermsAcceptanceView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,7 +181,7 @@
 		A50000010000000000000003 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				A30000010000000000000001 /* Miniti.app */,
+				A30000010000000000000001 /* miniti.app */,
 				C30000010000000000000001 /* MinitiMobile.app */,
 				E30000010000000000000001 /* MinitiLiveActivityExtension.appex */,
 			);
@@ -295,7 +295,7 @@
 			);
 			name = Miniti;
 			productName = Miniti;
-			productReference = A30000010000000000000001 /* Miniti.app */;
+			productReference = A30000010000000000000001 /* miniti.app */;
 			productType = "com.apple.product-type.application";
 		};
 		C60000010000000000000001 /* MinitiMobile */ = {
@@ -613,7 +613,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_APP_SANDBOX = YES;
@@ -632,7 +632,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -650,7 +650,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_APP_SANDBOX = YES;
@@ -669,7 +669,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -704,7 +704,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -744,7 +744,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -775,7 +775,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -803,7 +803,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.12.1;
+				MARKETING_VERSION = 1.12.2;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
