@@ -2653,6 +2653,11 @@ final class AppStoreSubscriptionService: ObservableObject {
         do {
             let products = try await Product.products(for: [Self.proMonthlyProductID])
             proMonthlyProduct = products.first
+            if proMonthlyProduct != nil {
+                DebugLogger.shared.log(.app, "StoreKit product loaded: \(Self.proMonthlyProductID)")
+            } else {
+                DebugLogger.shared.log(.app, "StoreKit product NOT FOUND: \(Self.proMonthlyProductID) (returned \(products.count) products)")
+            }
         } catch {
             purchaseErrorMessage = "Failed to load subscriptions."
             purchaseState = .failed
@@ -2665,12 +2670,14 @@ final class AppStoreSubscriptionService: ObservableObject {
         purchaseState = .purchasing
         
         if proMonthlyProduct == nil {
+            DebugLogger.shared.log(.app, "StoreKit product nil at purchase time, reloading...")
             await loadProducts()
         }
         
         guard let proMonthlyProduct else {
             purchaseState = .failed
             purchaseErrorMessage = "Pro subscription is unavailable right now."
+            DebugLogger.shared.log(.app, "StoreKit purchase aborted: product still nil after reload")
             return false
         }
         

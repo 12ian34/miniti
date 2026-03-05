@@ -31,14 +31,14 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 
 | Mode | What it means |
 |---|---|
-| **Early Adopter** (managed) | No API keys needed — 500 free minutes/month of transcription + AI insights |
+| **Early Adopter** (managed) | No API keys needed — 500 free minutes/month (upgrade to Pro for 5,000) |
 | **Bring Your Own Keys** (BYOK) | Use your own Deepgram + OpenAI API keys for unlimited usage |
 
 ### 4. Record
 
 1. Toggle mic and/or system audio on the home screen
 2. (Optional) Click **test audio** to verify your mic and system audio are working
-3. (Optional) Choose transcription + AI models in Settings (`⌘,` on macOS)
+3. (Optional) Choose transcription model in Settings (`⌘,` on macOS)
 4. Click the start button or press `⌘⇧R`
 5. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
 6. Click stop or press `⌘⇧R` when done
@@ -66,12 +66,23 @@ Use this flow for the smoothest experience on macOS:
 - **iOS 17.0** or later
 - iPhone or iPad
 
-## Two Modes
+## Tiers
 
-### Early Adopter (Managed)
+| | Free | Pro | BYOK |
+|---|---|---|---|
+| **Price** | $0 | $5/month | $0 (forever) |
+| **Minutes** | 500/month | 5,000/month | Unlimited |
+| **API keys needed** | No | No | Yes (your own) |
+
+### Free (Managed)
 - **No API keys needed** — just open and go
 - 500 free minutes per month of transcription + AI insights
 - Usage tracked per device; resets monthly
+
+### Pro (Managed)
+- Everything in Free, with 5,000 minutes per month
+- Upgrade from Settings or when the free limit is reached
+- macOS: one-click checkout via web; iOS: in-app subscription ($4.99/month)
 
 ### Bring Your Own Keys (BYOK)
 - Use your own API keys for unlimited usage
@@ -80,25 +91,25 @@ Use this flow for the smoothest experience on macOS:
   - OpenAI API key ([get one here](https://platform.openai.com/api-keys))
 - Enter keys on the home screen or in Settings → API Keys
 
-## Which Mode Should I Choose?
+## Which Tier Should I Choose?
 
-Choose **Early Adopter (managed)** if:
+Choose **Free** if:
 
 - You want the fastest setup (no API keys)
 - You are evaluating the app
 - 500 minutes/month is enough for your usage
 
+Choose **Pro** if:
+
+- You need more than 500 minutes/month but want zero setup
+- You prefer a managed service without handling API keys
+
 Choose **BYOK** if:
 
-- You need more than 500 minutes/month
-- You want full control of your API usage/costs
+- You want full control of your API usage and costs
 - You already have Deepgram + OpenAI accounts
 
-What changes between modes:
-
-- **Managed**: usage is tracked per device and capped monthly; keys are not required
-- **BYOK**: no built-in usage cap, but you must provide your own API keys
-- Your BYOK keys stay saved when switching modes (you can switch back later)
+Your BYOK keys stay saved when switching modes — you can switch back later.
 
 ## macOS Features
 
@@ -125,7 +136,6 @@ What changes between modes:
 ### AI Insights
 - **Live Insights**: Summaries, action items, topics, and discussion flow update during recording
 - **Auto-updating Titles**: Meeting names update based on conversation content
-- **Configurable AI Model**: Choose between GPT-5 Mini (higher quality) or GPT-5 Nano (faster)
 - **Multiple Insight Modes**:
   - **Standard**: General meeting insights (summary, actions, topics, discussion flow)
   - **MEDDPICC**: Sales qualification framework for discovery calls
@@ -189,15 +199,6 @@ Select your transcription model in Settings (macOS: `⌘,` → Models):
 | **Nova-2** | Lower latency, battle-tested, slightly cheaper | Less accurate diarization |
 | **Nova-3** | Better diarization, higher accuracy, handles accents better | Slightly higher latency |
 
-## AI Models
-
-Select your AI model in Settings (macOS: `⌘,` → Models):
-
-| Model | Pros | Cons |
-|-------|------|------|
-| **GPT-5 Mini** | Higher accuracy, better reasoning, more nuanced | Slower, higher cost |
-| **GPT-5 Nano** | 2x faster, lower cost, great for real-time | Less detailed, may miss nuances |
-
 ## Insight Modes
 
 ### Standard Mode
@@ -256,7 +257,7 @@ How to interpret the metrics:
 
 ## Markdown Export
 
-Click the `md` button on any section header to copy formatted markdown:
+Click the `copy` button on any section header to copy formatted markdown:
 
 **Transcript** exports with speaker labels:
 ```markdown
@@ -381,12 +382,12 @@ It does **not** send:
 - The app now tries to auto-recover after route/profile changes (for example AirPods switching call modes)
 - Allow up to ~20 seconds for automatic system-audio recovery after a device switch
 - If audio still looks stuck after that window, stop/resume the session or start a fresh session (`⌘N`)
-- Use the debug log (hidden Settings shortcut if you use it internally) only for deeper diagnosis
+- For deeper diagnosis, open the [debug log](#debug-log) (5 taps on version in Settings)
 
 ### Managed mode says limit reached / recording is blocked
 
-- Managed mode has a monthly usage cap (500 minutes)
-- Wait for the reset date shown in the app, or switch to **BYOK** for unlimited usage
+- Free tier has a 500 minute monthly cap; Pro has 5,000 minutes
+- Upgrade to Pro, switch to **BYOK** for unlimited usage, or wait for the monthly reset
 
 ### Attio issues
 
@@ -417,7 +418,6 @@ It does **not** send:
 ### AI Insights
 - **Live Insights**: Summaries, action items, topics, and discussion flow — same engine as macOS
 - **MEDDPICC Mode**: Full sales qualification analysis on mobile
-- **Configurable AI Model**: GPT-5 Mini or GPT-5 Nano
 
 ### Meeting History
 - **Browse Past Meetings**: Searchable list with swipe-to-delete
@@ -431,11 +431,42 @@ It does **not** send:
 - **Live Notes**: Take notes during meetings
 - **Copy to Clipboard**: Export transcript, insights, or full meeting as markdown
 
+## Debug Log
+
+A built-in debug log viewer helps diagnose audio, transcription, and connection issues.
+
+### How to open it
+
+1. Open **Settings** (`⌘,` on macOS, gear icon on iOS)
+2. Scroll to the **About** section
+3. Tap the **version number** 5 times quickly
+
+The debug log opens as a terminal-style viewer with:
+- Category filters (audio, deepgram, app)
+- Pretty and raw view modes (raw mode supports text selection for partial copy)
+- Copy and clear buttons
+
+The debug log contains structured diagnostic data only — never transcript content or audio.
+
+## Links
+
+These links are also available in the app under **Settings → About**.
+
+- [Website](https://miniti.app)
+- [Roadmap](https://miniti.app/roadmap)
+- [Changelog](https://miniti.app/changelog)
+- [Privacy Policy](https://miniti.app/privacy)
+- [Terms of Service](https://miniti.app/terms)
+
+## Contact
+
+For support, questions, or feedback: **miniti@ianahuja.com**
+
 ---
 
 ## License
 
-Copyright (c) 2026 miniti. All rights reserved.
+Copyright (c) 2026 moonquake tech. All rights reserved.
 
 This software is proprietary and confidential. No part of this software may be reproduced, distributed, modified, reverse engineered, decompiled, or used to create derivative works without the prior written permission of the copyright holder.
 
