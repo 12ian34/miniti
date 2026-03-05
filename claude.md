@@ -29,6 +29,11 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
+### 2026-03-04 - v1.12.1
+
+- Improved reliability of live meeting insights when network conditions are unstable
+- Added diagnostic logging for iOS subscription purchase flow to help troubleshoot StoreKit product loading failures
+
 ### 2026-03-03 - v1.12.0 (released)
 
 - Much more resilient audio when Bluetooth headphones switch modes mid-call: faster detection when system audio goes silent, cleaner restarts with less stale audio bleed, mic auto-retries instead of going silent for the rest of the session, and system audio automatically returns to mixed mode after mic recovery. Also fixes an edge case where recovery could restart with the wrong recording mode.
