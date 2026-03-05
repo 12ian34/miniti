@@ -2628,7 +2628,7 @@ final class AppStoreSubscriptionService: ObservableObject {
         case failed
     }
     
-    static let proMonthlyProductID = "com.miniti.mobile.pro.monthly"
+    static let proMonthlyProductID = "com.miniti.mobile.pro.month"
     
     @Published private(set) var proMonthlyProduct: Product?
     @Published private(set) var hasActiveSubscription = false
