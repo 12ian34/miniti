@@ -29,4 +29,11 @@ Miniti*.app/
 *.dmg
 miniti-icon*.png
 
+# fastlane
+fastlane/Preview.html
+fastlane/report.xml
+fastlane/test_output/
+fastlane/*.p8
+fastlane/*.mobileprovision
+
 shn.md
