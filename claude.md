@@ -767,13 +767,35 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 5. replace proton drive dmg
 
 #### iOS
-1. Bump version (same step as macOS — shared version across all targets)
-2. Confirm App Store Connect auto-renewable subscription exists: `com.miniti.mobile.pro.monthly` (USD `$4.99`), with localized display name/description
-3. Confirm app metadata includes privacy URL + terms URL and that subscription metadata is complete
-4. Xcode: **Product → Archive → Distribute App → App Store Connect → Upload**
-5. Wait for Apple to process the build (~5–15 min)
-6. If doing TestFlight first: add build to external testing group and submit for TestFlight review
-7. For same-day App Store submission: create app version in App Store Connect, attach the uploaded build, complete screenshots/review notes, and submit for App Review
+1. Confirm local signing state once in Xcode:
+   - Xcode → Settings → Accounts: signed into the Apple account that owns team `9AUR5U5KTF`
+   - target `MinitiMobile`: automatic signing on, team `9AUR5U5KTF`, bundle ID `com.miniti.mobile`
+   - target `MinitiLiveActivityExtension`: automatic signing on, team `9AUR5U5KTF`, bundle ID `com.miniti.mobile.live-activity`
+   - if Xcode shows **Fix Issue**, click it before using Fastlane
+2. Confirm the repo root `.env` contains App Store Connect credentials:
+   - `APP_STORE_CONNECT_KEY_ID`
+   - `APP_STORE_CONNECT_ISSUER_ID`
+   - `APP_STORE_CONNECT_API_KEY`
+   - Fastlane loads the root `.env` directly; no separate `fastlane/.env` or `.p8` file is required
+3. Bump version (same step as macOS — shared version across all targets) if doing a new release version
+4. Sanity-check the local archive flow:
+   - `fastlane ios build`
+   - this builds `MinitiMobile` with scheme `MinitiMobile`, configuration `Release`, automatic signing via `-allowProvisioningUpdates`, derived data in `DerivedDataLocal/`, and outputs `build/ios/MinitiMobile.ipa`
+5. For a TestFlight build:
+   - `fastlane ios beta version:1.12.4 changelog:"release notes here"`
+   - auto-increments build number unless `build:` is provided explicitly
+   - uploads to TestFlight, but does not add testers/groups or submit external review automatically
+6. For an App Store upload:
+   - `fastlane ios release version:1.12.4`
+   - auto-increments build number unless `build:` is provided explicitly
+   - uploads the binary to App Store Connect, but does not upload metadata/screenshots or submit for review automatically
+7. Confirm App Store Connect auto-renewable subscription exists: `com.miniti.mobile.pro.monthly` (USD `$4.99`), with localized display name/description
+8. Confirm app metadata includes privacy URL + terms URL and that subscription metadata is complete
+9. Wait for Apple to process the build (~5–15 min)
+10. If doing TestFlight first: add build to external testing group and submit for TestFlight review
+11. For same-day App Store submission: create/select the app version in App Store Connect, attach the uploaded build, complete screenshots/review notes, and submit for App Review
+12. Xcode fallback if Fastlane is blocked for any reason: **Product → Archive → Distribute App → App Store Connect → Upload**
+13. `fastlane/README.md` is the practical runbook for the exact lane behavior and parameters in this repo
 
 #### After both platforms
 1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
