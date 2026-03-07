@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleShortVersionString</key>
-	<string>1.12.2</string>
+	<string>1.12.3</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

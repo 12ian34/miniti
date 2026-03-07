@@ -1257,6 +1257,10 @@ final class AppState: ObservableObject {
         
         hasUnsavedSession = true
         
+        #if os(iOS)
+        restorePausedLiveActivity()
+        #endif
+        
         // Report orphaned managed session usage to backend
         if appMode == .managed, let sessionId = interrupted.managedSessionId, !sessionId.isEmpty {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
@@ -1418,6 +1422,7 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
         isStartingMeeting = false
         isResumingRecording = false
+        currentMeeting?.endTime = nil
         
         // In managed mode, if we don't have a temp key (e.g. resuming after stop),
         // we must request a new one before connecting to Deepgram.
@@ -2429,42 +2434,19 @@ final class AppState: ObservableObject {
     
     #if os(iOS)
     private func startLiveActivity() {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
-            DebugLogger.shared.log(.app, "Live Activities not enabled")
-            return
-        }
-        
-        // End any existing activity first
-        if let existing = currentActivity {
-            Task {
-                await existing.end(nil, dismissalPolicy: .immediate)
-            }
-            currentActivity = nil
-        }
-        
-        let startTime = recordingStartDate ?? Date()
-        let attributes = RecordingActivityAttributes(startTime: startTime)
-        let state = RecordingActivityAttributes.ContentState(
-            meetingTitle: currentMeeting?.title ?? "",
-            isRecording: true,
-            currentTranscript: "",
-            elapsedSeconds: nil
-        )
-        
-        do {
-            currentActivity = try Activity.request(
-                attributes: attributes,
-                content: .init(state: state, staleDate: nil),
-                pushType: nil
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.replaceLiveActivity(
+                isRecording: true,
+                transcript: "",
+                elapsedSeconds: nil,
+                reason: "started"
             )
-            DebugLogger.shared.log(.app, "Live Activity started")
-        } catch {
-            DebugLogger.shared.log(.app, "Live Activity start FAILED: \(error.localizedDescription)")
         }
     }
     
     private func updateLiveActivityState(isRecording: Bool) {
-        guard let activity = currentActivity else { return }
+        guard let activity = resolveCurrentActivity() else { return }
         let state = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.title ?? "",
             isRecording: isRecording,
@@ -2479,7 +2461,7 @@ final class AppState: ObservableObject {
     
     /// Push transcript text to the Live Activity, throttled to avoid exceeding update budget.
     private func updateLiveActivityTranscript() {
-        guard currentActivity != nil else { return }
+        guard resolveCurrentActivity() != nil else { return }
         let now = Date()
         guard now.timeIntervalSince(lastLiveActivityUpdate) >= liveActivityUpdateInterval else { return }
         updateLiveActivityState(isRecording: isRecording)
@@ -2497,18 +2479,16 @@ final class AppState: ObservableObject {
     }
     
     private func endLiveActivity() {
-        guard let activity = currentActivity else { return }
         let finalState = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.title ?? "",
             isRecording: false,
             currentTranscript: "",
             elapsedSeconds: Int(recordingDuration)
         )
-        Task {
-            await activity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.endAllLiveActivities(finalState: finalState)
         }
-        currentActivity = nil
-        DebugLogger.shared.log(.app, "Live Activity ended")
     }
     
     /// On launch, if we have no session but Live Activities exist, the app was killed while recording.
@@ -2520,7 +2500,90 @@ final class AppState: ObservableObject {
         for activity in activities {
             await activity.end(nil, dismissalPolicy: .immediate)
         }
+        currentActivity = nil
         DebugLogger.shared.log(.app, "Cleaned up orphaned Live Activities: count=\(activities.count)")
+    }
+    
+    private func restorePausedLiveActivity() {
+        Task { @MainActor [weak self] in
+            guard let self, self.currentMeeting != nil else { return }
+            await self.replaceLiveActivity(
+                isRecording: false,
+                transcript: self.currentTranscriptLine,
+                elapsedSeconds: Int(self.recordingDuration),
+                reason: "restored paused session"
+            )
+        }
+    }
+    
+    private func resolveCurrentActivity() -> Activity<RecordingActivityAttributes>? {
+        if let currentActivity {
+            return currentActivity
+        }
+        guard let meetingID = currentMeeting?.id.uuidString else { return nil }
+        let resolved = Activity<RecordingActivityAttributes>.activities.first {
+            $0.attributes.meetingID == meetingID
+        }
+        currentActivity = resolved
+        return resolved
+    }
+    
+    private func replaceLiveActivity(
+        isRecording: Bool,
+        transcript: String,
+        elapsedSeconds: Int?,
+        reason: String
+    ) async {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+            currentActivity = nil
+            DebugLogger.shared.log(.app, "Live Activities not enabled")
+            return
+        }
+        guard let meeting = currentMeeting else {
+            await endAllLiveActivities(finalState: nil)
+            return
+        }
+        
+        let state = RecordingActivityAttributes.ContentState(
+            meetingTitle: meeting.title,
+            isRecording: isRecording,
+            currentTranscript: transcript,
+            elapsedSeconds: elapsedSeconds
+        )
+        await endAllLiveActivities(finalState: nil)
+        
+        let attributes = RecordingActivityAttributes(
+            meetingID: meeting.id.uuidString,
+            startTime: recordingStartDate ?? Date()
+        )
+        
+        do {
+            currentActivity = try Activity.request(
+                attributes: attributes,
+                content: .init(state: state, staleDate: nil),
+                pushType: nil
+            )
+            lastLiveActivityUpdate = Date()
+            DebugLogger.shared.log(.app, "Live Activity \(reason)")
+        } catch {
+            currentActivity = nil
+            DebugLogger.shared.log(.app, "Live Activity replace FAILED: \(error.localizedDescription)")
+        }
+    }
+    
+    private func endAllLiveActivities(finalState: RecordingActivityAttributes.ContentState?) async {
+        let activities = Activity<RecordingActivityAttributes>.activities
+        for activity in activities {
+            if let finalState {
+                await activity.end(.init(state: finalState, staleDate: nil), dismissalPolicy: .immediate)
+            } else {
+                await activity.end(nil, dismissalPolicy: .immediate)
+            }
+        }
+        currentActivity = nil
+        if !activities.isEmpty {
+            DebugLogger.shared.log(.app, "Live Activity ended: count=\(activities.count)")
+        }
     }
     #endif
     

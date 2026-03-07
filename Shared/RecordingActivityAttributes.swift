@@ -4,6 +4,8 @@ import ActivityKit
 /// Shared between the MinitiMobile app target and the MinitiLiveActivity widget extension.
 /// Defines the static and dynamic data for the recording Live Activity.
 struct RecordingActivityAttributes: ActivityAttributes {
+    /// Stable meeting identifier so the app can reconcile existing activities after lifecycle resets.
+    let meetingID: String
     /// Static data — set once when the activity starts.
     let startTime: Date
 
