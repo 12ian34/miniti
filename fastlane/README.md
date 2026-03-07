@@ -1,149 +1,85 @@
-# Fastlane for Miniti iOS
+fastlane documentation
+----
 
-This Fastlane setup is only for the iOS target `MinitiMobile`.
+# Installation
 
-It uses:
-- the project root `.env`
-- your existing Xcode Apple account / automatic signing setup
-- App Store Connect API key credentials already stored in the root `.env`
-
-## Required root `.env` keys
+Make sure you have the latest version of the Xcode command line tools installed:
 
 ```sh
-APP_STORE_CONNECT_KEY_ID=...
-APP_STORE_CONNECT_ISSUER_ID=...
-APP_STORE_CONNECT_API_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----"
+xcode-select --install
 ```
 
-The inline private key is expected to use escaped `\n`. Fastlane converts that into real newlines automatically.
+For _fastlane_ installation instructions, see [Installing _fastlane_](https://docs.fastlane.tools/#installing-fastlane)
 
-## Before using Fastlane
+# Available Actions
 
-Check this once in Xcode:
-- Xcode -> Settings -> Accounts: signed into the Apple account that owns team `9AUR5U5KTF`
-- target `MinitiMobile`: automatic signing enabled, team `9AUR5U5KTF`
-- target `MinitiLiveActivityExtension`: automatic signing enabled, team `9AUR5U5KTF`
-- if Xcode shows **Fix Issue**, resolve that first
+## iOS
 
-If Xcode Organizer can archive/upload this iOS app on this Mac, Fastlane should be able to use that same signing state.
-
-## Commands
-
-### `fastlane lanes`
-
-Lists the available lanes.
-
-### `fastlane ios build`
-
-Purpose:
-- validate the local archive/export flow without uploading anything
-
-What it does:
-- loads the root `.env`
-- builds project `Miniti.xcodeproj`
-- uses scheme `MinitiMobile`
-- uses configuration `Release`
-- enables Xcode-managed signing with `-allowProvisioningUpdates`
-- writes derived data to `DerivedDataLocal/`
-- exports `build/ios/MinitiMobile.ipa`
-
-What it does not do:
-- does not change marketing version
-- does not change build number
-- does not upload anything
-
-### `fastlane ios beta`
-
-Purpose:
-- build and upload to TestFlight
-
-Examples:
+### ios build
 
 ```sh
-fastlane ios beta version:1.12.4
-fastlane ios beta version:1.12.4 build:3
-fastlane ios beta version:1.12.4 changelog:"fixes recording resume bug"
+[bundle exec] fastlane ios build
 ```
 
-What it does:
-- sets `MARKETING_VERSION` if `version:` is provided
-- increments `CURRENT_PROJECT_VERSION` by 1 unless `build:` is provided
-- builds the archive and exports the IPA
-- uploads the IPA to TestFlight
-- sends TestFlight release notes if `changelog:` is provided
+Build the current iOS release archive locally
 
-What it does not do:
-- does not add testers to groups
-- does not submit external TestFlight review
-- does not upload screenshots
-- does not upload App Store metadata
-
-### `fastlane ios release`
-
-Purpose:
-- build and upload the binary to App Store Connect for App Store release prep
-
-Examples:
+### ios beta
 
 ```sh
-fastlane ios release version:1.12.4
-fastlane ios release version:1.12.4 build:3
+[bundle exec] fastlane ios beta
 ```
 
-What it does:
-- sets `MARKETING_VERSION` if `version:` is provided
-- increments `CURRENT_PROJECT_VERSION` by 1 unless `build:` is provided
-- builds the archive and exports the IPA
-- uploads the IPA to App Store Connect
+Bump build/version if needed, build, and upload to TestFlight
 
-What it does not do:
-- does not upload metadata
-- does not upload screenshots
-- does not submit for App Review
-- does not auto-release the app
-
-After `fastlane ios release`, finish manually in App Store Connect:
-- create/select the app version
-- attach the uploaded build
-- complete review information and screenshots if needed
-- submit for review
-
-## Recommended flows
-
-### TestFlight release flow
+### ios release
 
 ```sh
-fastlane ios build
-fastlane ios beta version:1.12.4 changelog:"release notes here"
+[bundle exec] fastlane ios release
 ```
 
-Then in App Store Connect:
-- wait for processing
-- add the build to the right testing group
-- submit for external TestFlight review if needed
+Bump build/version if needed, build, and upload to App Store Connect without auto-submitting
 
-### App Store upload flow
+----
+
+
+## Mac
+
+### mac build
 
 ```sh
-fastlane ios build
-fastlane ios release version:1.12.4
+[bundle exec] fastlane mac build
 ```
 
-Then in App Store Connect:
-- wait for processing
-- create/select the app version
-- attach the build
-- complete metadata / review info
-- submit for App Review
+Build the current macOS Developer ID export locally
 
-## Not set up here
+### mac notarize_app
 
-These Fastlane areas are intentionally not configured in this repo:
-- `match`
-- certificate/profile management
-- screenshot automation
-- metadata sync
-- automatic App Review submission
-- automatic App Store release
+```sh
+[bundle exec] fastlane mac notarize_app
+```
 
-This setup is intentionally narrow: it wraps the existing Xcode-managed signing and App Store upload process instead of replacing it.
+Notarize the exported macOS app in build/macos/miniti.app
+
+### mac dmg
+
+```sh
+[bundle exec] fastlane mac dmg
+```
+
+Build a DMG from a notarized macOS app
+
+### mac release
+
+```sh
+[bundle exec] fastlane mac release
+```
+
+Build, notarize, and package the macOS app as miniti.dmg
+
+----
+
+This README.md is auto-generated and will be re-generated every time [_fastlane_](https://fastlane.tools) is run.
+
+More information about _fastlane_ can be found on [fastlane.tools](https://fastlane.tools).
+
+The documentation of _fastlane_ can be found on [docs.fastlane.tools](https://docs.fastlane.tools).
