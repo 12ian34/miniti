@@ -1,4 +1,5 @@
 require "dotenv"
+require "shellwords"
 
 Dotenv.load(File.expand_path("../.env", __dir__))
 
@@ -12,6 +13,12 @@ IOS_CONFIGURATION = "Release"
 IOS_OUTPUT_DIRECTORY = "build/ios"
 IOS_OUTPUT_NAME = "MinitiMobile.ipa"
 IOS_DERIVED_DATA_PATH = "DerivedDataLocal"
+MAC_SCHEME = "Miniti"
+MAC_CONFIGURATION = "Release"
+MAC_OUTPUT_DIRECTORY = "build/macos"
+MAC_OUTPUT_NAME = "miniti"
+MAC_DERIVED_DATA_PATH = "DerivedDataLocal"
+MAC_ARCHIVE_PATH = "build/macos/miniti.xcarchive"
 
 def first_env(*keys)
   keys.each do |key|
@@ -139,5 +146,69 @@ platform :ios do
     UI.user_error!("Missing App Store Connect API key. This repo expects APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID, and APP_STORE_CONNECT_API_KEY in the root .env. Fastlane-style APP_STORE_CONNECT_API_KEY_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID / APP_STORE_CONNECT_API_KEY_KEY_FILEPATH or APP_STORE_CONNECT_API_KEY_KEY_CONTENT also work.") if api_key.nil?
 
     api_key
+  end
+end
+
+platform :mac do
+  desc "Build the current macOS Developer ID export locally"
+  lane :build do
+    build_mac_release
+  end
+
+  desc "Notarize the exported macOS app in build/macos/miniti.app"
+  lane :notarize_app do |options|
+    api_key = load_app_store_connect_api_key
+    app_path = options[:app] || mac_app_path
+
+    UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
+
+    notarize(
+      package: app_path,
+      api_key: api_key,
+      use_notarytool: true,
+      print_log: true
+    )
+  end
+
+  desc "Build a DMG from a notarized macOS app"
+  lane :dmg do |options|
+    app_path = options[:app] || mac_app_path
+
+    UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
+
+    sh("./scripts/build-dmg.sh #{Shellwords.escape(app_path)}")
+  end
+
+  desc "Build, notarize, and package the macOS app as miniti.dmg"
+  lane :release do
+    app_path = build_mac_release
+
+    notarize(
+      package: app_path,
+      api_key: load_app_store_connect_api_key,
+      use_notarytool: true,
+      print_log: true
+    )
+
+    sh("./scripts/build-dmg.sh #{Shellwords.escape(app_path)}")
+  end
+
+  private_lane :build_mac_release do
+    build_mac_app(
+      project: PROJECT_PATH,
+      scheme: MAC_SCHEME,
+      configuration: MAC_CONFIGURATION,
+      clean: true,
+      derived_data_path: MAC_DERIVED_DATA_PATH,
+      archive_path: MAC_ARCHIVE_PATH,
+      export_method: "developer-id",
+      skip_package_pkg: true,
+      output_directory: MAC_OUTPUT_DIRECTORY,
+      output_name: MAC_OUTPUT_NAME
+    )
+  end
+
+  private_lane :mac_app_path do
+    File.expand_path("#{MAC_OUTPUT_DIRECTORY}/#{MAC_OUTPUT_NAME}.app")
   end
 end
