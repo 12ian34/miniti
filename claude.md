@@ -29,7 +29,13 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-04 - v1.12.2 (current)
+### 2026-03-07 - v1.12.3 (current)
+
+- Fix an iPhone bug where a recording could keep running on the Lock Screen, but the app reopened showing an older paused session
+- Fix a bug where resuming after that could create two Live Activities instead of one
+- Make long-recording insights more reliable so temporary OpenAI timeouts are less likely to show up as errors
+
+### 2026-03-04 - v1.12.2
 
 - Fix iOS Pro subscription purchase not prompting on some devices due to a stale App Store product configuration
 
