@@ -772,10 +772,10 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 3. Bump version in `Miniti/Info.plist`, `MinitiMobile/Info.plist` (`CFBundleShortVersionString`) and `project.pbxproj` (`MARKETING_VERSION` — 6 places: 2 per target × 3 targets, Debug + Release). All targets share the same version number.
 4. Sanity-check the local macOS export flow:
    - `fastlane mac build`
-   - this builds `Miniti` with configuration `Release`, exports a Developer ID `.app`, writes `build/macos/miniti.app`, and stores the archive in `build/macos/miniti.xcarchive`
+   - this builds `Miniti` with configuration `Release`, forces Developer ID signing during archive/export, writes `build/macos/miniti.app`, and stores the archive in `build/macos/miniti.xcarchive`
 5. Notarize the macOS app:
    - `fastlane mac notarize_app`
-   - submits `build/macos/miniti.app` to Apple notarization and staples the notarization ticket to the app
+   - submits `build/macos/miniti.app` to Apple notarization, staples the notarization ticket, and also copies the notarized app to repo root as `miniti.app`
 6. Build the DMG:
    - `fastlane mac dmg`
    - runs `./scripts/build-dmg.sh build/macos/miniti.app` and creates `miniti.dmg` in the repo root

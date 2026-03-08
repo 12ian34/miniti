@@ -64,6 +64,28 @@ Afterward in App Store Connect:
 
 ## macOS
 
+### First-time Developer ID setup (required for notarization)
+
+If `security find-identity` only shows `Apple Development`, notarization will fail.
+
+1. In **Keychain Access** (menu bar): `Certificate Assistant` -> `Request a Certificate From a Certificate Authority...`
+2. Set:
+   - `Request is`: `Saved to disk`
+   - enable `Let me specify key pair information`
+   - key algorithm `RSA`, key size `2048`
+3. In Apple Developer: **Certificates, Identifiers & Profiles** -> **Certificates** -> `+` -> choose **Developer ID Application** (G2 Sub-CA), upload the CSR, download the `.cer`.
+4. Open the downloaded `.cer` to import it into the `login` keychain.
+5. In Keychain Access -> `login` -> `My Certificates`, confirm `Developer ID Application: ... (9AUR5U5KTF)` appears with a private key under it.
+6. Verify in terminal:
+
+```sh
+security find-identity -v -p codesigning | rg "Developer ID Application|Apple Development"
+```
+
+Notes:
+- `fastlane mac build` now auto-detects the first local `Developer ID Application` identity in your keychain.
+- Optional override: set `MAC_CODESIGN_IDENTITY` (in shell profile or root `.env`) to force a specific identity.
+
 ### `fastlane mac build`
 
 What it does:
@@ -83,12 +105,31 @@ What it does:
 - submits `build/macos/miniti.app` to Apple notarization using `notarytool`
 - uses the same App Store Connect API key from the root `.env`
 - staples the notarization ticket to the `.app`
+- copies the notarized app to repo root as `miniti.app`
 
 Optional:
 
 ```sh
 fastlane mac notarize_app app:/path/to/miniti.app
 ```
+
+### Notarization troubleshooting
+
+- Error: `The binary is not signed with a valid Developer ID certificate.`
+  - Your app is signed with `Apple Development` instead of `Developer ID Application`.
+- Error: `The signature does not include a secure timestamp.`
+  - Rebuild with `Developer ID Application` signing; timestamping is applied during correct distribution signing.
+
+Sanity check after `fastlane mac build`:
+
+```sh
+codesign -dv --verbose=4 /Users/ian/dev/miniti/build/macos/miniti.app 2>&1 | rg "Authority=|Timestamp=|TeamIdentifier="
+```
+
+Expected output includes:
+- `Authority=Developer ID Application: ...`
+- `Timestamp=...`
+- `TeamIdentifier=9AUR5U5KTF`
 
 ### `fastlane mac dmg`
 
