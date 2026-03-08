@@ -62,6 +62,31 @@ Afterward in App Store Connect:
 - complete review info/screenshots
 - submit manually
 
+### `fastlane ios assets`
+
+What it does:
+- uploads App Store metadata from `fastlane/metadata`
+- updates "What's New in This Version" from locale-specific `release_notes.txt` files (for example `fastlane/metadata/en-US/release_notes.txt`)
+- uploads screenshots by default (pass `screenshots:false` to skip)
+- replaces existing screenshots for uploaded locales/device sets (`overwrite_screenshots: true` when screenshots are enabled)
+- includes App Review notes from `fastlane/metadata/app_review_notes.txt` when present
+
+What it does not do:
+- no binary upload
+- no App Review submission
+- no automatic release
+
+Release prep checklist for this lane:
+- update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `claude.md` changelog
+- verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
+
+Examples:
+
+```sh
+fastlane ios assets
+fastlane ios assets screenshots:false
+```
+
 ## macOS
 
 ### First-time Developer ID setup (required for notarization)
@@ -180,3 +205,9 @@ Or:
 ```sh
 fastlane mac release
 ```
+
+## Roadmap
+
+- expand App Store metadata/screenshot localization beyond `en-US`
+- add a single-command lane that chains `ios release` + `ios assets` for fully scripted App Store Connect prep
+- optionally add structured review/submission config files (beyond notes-only) for more automation
