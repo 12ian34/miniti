@@ -1,4 +1,6 @@
 require "dotenv"
+require "fileutils"
+require "open3"
 require "shellwords"
 
 Dotenv.load(File.expand_path("../.env", __dir__))
@@ -7,18 +9,38 @@ opt_out_usage
 
 default_platform(:ios)
 
-PROJECT_PATH = "Miniti.xcodeproj"
+REPO_ROOT = File.expand_path("..", __dir__)
+PROJECT_PATH = File.join(REPO_ROOT, "Miniti.xcodeproj")
 IOS_SCHEME = "MinitiMobile"
 IOS_CONFIGURATION = "Release"
-IOS_OUTPUT_DIRECTORY = "build/ios"
+IOS_OUTPUT_DIRECTORY = File.join(REPO_ROOT, "build", "ios")
 IOS_OUTPUT_NAME = "MinitiMobile.ipa"
-IOS_DERIVED_DATA_PATH = "DerivedDataLocal"
+IOS_DERIVED_DATA_PATH = File.join(REPO_ROOT, "DerivedDataLocal")
 MAC_SCHEME = "Miniti"
 MAC_CONFIGURATION = "Release"
-MAC_OUTPUT_DIRECTORY = "build/macos"
+MAC_OUTPUT_DIRECTORY = File.join(REPO_ROOT, "build", "macos")
 MAC_OUTPUT_NAME = "miniti"
-MAC_DERIVED_DATA_PATH = "DerivedDataLocal"
-MAC_ARCHIVE_PATH = "build/macos/miniti.xcarchive"
+MAC_DERIVED_DATA_PATH = File.join(REPO_ROOT, "DerivedDataLocal")
+MAC_ARCHIVE_PATH = File.join(MAC_OUTPUT_DIRECTORY, "miniti.xcarchive")
+DMG_SCRIPT_PATH = File.join(REPO_ROOT, "scripts", "build-dmg.sh")
+MAC_ROOT_APP_PATH = File.join(REPO_ROOT, "#{MAC_OUTPUT_NAME}.app")
+APPLE_TEAM_ID = "9AUR5U5KTF"
+
+def mac_codesign_identity
+  explicit_identity = ENV["MAC_CODESIGN_IDENTITY"]
+  return explicit_identity unless explicit_identity.to_s.empty?
+
+  output, status = Open3.capture2e("security", "find-identity", "-v", "-p", "codesigning")
+  UI.user_error!("Unable to inspect signing identities in keychain.\n#{output}") unless status.success?
+
+  identities = output.scan(/"((?:Developer ID Application):[^"]+)"/).flatten.uniq
+  UI.user_error!("No Developer ID Application identity found in keychain. Create/import one in login keychain, or set MAC_CODESIGN_IDENTITY explicitly.") if identities.empty?
+
+  selected_identity = identities.first
+  UI.important("Multiple Developer ID Application identities found. Using '#{selected_identity}'. Set MAC_CODESIGN_IDENTITY to override.") if identities.length > 1
+  UI.message("Using macOS codesigning identity: #{selected_identity}")
+  selected_identity
+end
 
 def first_env(*keys)
   keys.each do |key|
@@ -67,6 +89,13 @@ def app_store_connect_api_key_from_env
   end
 
   app_store_connect_api_key(**params)
+end
+
+private_lane :load_app_store_connect_api_key do
+  api_key = app_store_connect_api_key_from_env
+  UI.user_error!("Missing App Store Connect API key. This repo expects APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID, and APP_STORE_CONNECT_API_KEY in the root .env. Fastlane-style APP_STORE_CONNECT_API_KEY_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID / APP_STORE_CONNECT_API_KEY_KEY_FILEPATH or APP_STORE_CONNECT_API_KEY_KEY_CONTENT also work.") if api_key.nil?
+
+  api_key
 end
 
 platform :ios do
@@ -141,12 +170,6 @@ platform :ios do
     )
   end
 
-  private_lane :load_app_store_connect_api_key do
-    api_key = app_store_connect_api_key_from_env
-    UI.user_error!("Missing App Store Connect API key. This repo expects APP_STORE_CONNECT_KEY_ID, APP_STORE_CONNECT_ISSUER_ID, and APP_STORE_CONNECT_API_KEY in the root .env. Fastlane-style APP_STORE_CONNECT_API_KEY_KEY_ID / APP_STORE_CONNECT_API_KEY_ISSUER_ID / APP_STORE_CONNECT_API_KEY_KEY_FILEPATH or APP_STORE_CONNECT_API_KEY_KEY_CONTENT also work.") if api_key.nil?
-
-    api_key
-  end
 end
 
 platform :mac do
@@ -161,6 +184,7 @@ platform :mac do
     app_path = options[:app] || mac_app_path
 
     UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
+    verify_mac_signing_for_notarization(app: app_path)
 
     notarize(
       package: app_path,
@@ -168,6 +192,8 @@ platform :mac do
       use_notarytool: true,
       print_log: true
     )
+
+    publish_notarized_app_to_root(app: app_path)
   end
 
   desc "Build a DMG from a notarized macOS app"
@@ -176,12 +202,13 @@ platform :mac do
 
     UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
 
-    sh("./scripts/build-dmg.sh #{Shellwords.escape(app_path)}")
+    sh("#{Shellwords.escape(DMG_SCRIPT_PATH)} #{Shellwords.escape(app_path)}")
   end
 
   desc "Build, notarize, and package the macOS app as miniti.dmg"
   lane :release do
     app_path = build_mac_release
+    verify_mac_signing_for_notarization(app: app_path)
 
     notarize(
       package: app_path,
@@ -190,10 +217,13 @@ platform :mac do
       print_log: true
     )
 
-    sh("./scripts/build-dmg.sh #{Shellwords.escape(app_path)}")
+    publish_notarized_app_to_root(app: app_path)
+    sh("#{Shellwords.escape(DMG_SCRIPT_PATH)} #{Shellwords.escape(app_path)}")
   end
 
   private_lane :build_mac_release do
+    codesign_identity = mac_codesign_identity
+
     build_mac_app(
       project: PROJECT_PATH,
       scheme: MAC_SCHEME,
@@ -202,6 +232,14 @@ platform :mac do
       derived_data_path: MAC_DERIVED_DATA_PATH,
       archive_path: MAC_ARCHIVE_PATH,
       export_method: "developer-id",
+      codesigning_identity: codesign_identity,
+      xcargs: "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=#{APPLE_TEAM_ID}",
+      export_options: {
+        method: "developer-id",
+        teamID: APPLE_TEAM_ID,
+        signingStyle: "manual",
+        signingCertificate: "Developer ID Application"
+      },
       skip_package_pkg: true,
       output_directory: MAC_OUTPUT_DIRECTORY,
       output_name: MAC_OUTPUT_NAME
@@ -209,6 +247,29 @@ platform :mac do
   end
 
   private_lane :mac_app_path do
-    File.expand_path("#{MAC_OUTPUT_DIRECTORY}/#{MAC_OUTPUT_NAME}.app")
+    File.join(MAC_OUTPUT_DIRECTORY, "#{MAC_OUTPUT_NAME}.app")
+  end
+
+  private_lane :verify_mac_signing_for_notarization do |options|
+    app_path = options[:app]
+    output, status = Open3.capture2e("codesign", "-dv", "--verbose=4", app_path)
+    UI.user_error!("Unable to inspect code signature for #{app_path}.\n#{output}") unless status.success?
+
+    unless output.include?("Authority=Developer ID Application:")
+      UI.user_error!("The app at #{app_path} is not signed with a valid Developer ID Application certificate. Run `fastlane mac build` after confirming your Developer ID certificate is available in your login keychain.")
+    end
+
+    unless output.match?(/^Timestamp=/)
+      UI.user_error!("The app at #{app_path} is signed without a secure timestamp. Rebuild with Developer ID signing and retry notarization.")
+    end
+  end
+
+  private_lane :publish_notarized_app_to_root do |options|
+    source_app = options[:app]
+    UI.user_error!("Couldn't find notarized app at #{source_app}.") unless File.exist?(source_app)
+
+    FileUtils.rm_rf(MAC_ROOT_APP_PATH)
+    FileUtils.cp_r(source_app, MAC_ROOT_APP_PATH)
+    UI.message("Notarized app copied to #{MAC_ROOT_APP_PATH}")
   end
 end
