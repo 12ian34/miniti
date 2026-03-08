@@ -814,6 +814,7 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 6. For an App Store upload:
    - `fastlane ios release version:1.12.4`
    - auto-increments build number unless `build:` is provided explicitly
+   - the lane excludes precheck IAP validation (`precheck_include_in_app_purchases: false`) because App Store Connect API key auth cannot run IAP precheck
    - uploads the binary to App Store Connect, but does not upload metadata/screenshots or submit for review automatically
 7. Confirm App Store Connect auto-renewable subscription exists: `com.miniti.mobile.pro.monthly` (USD `$4.99`), with localized display name/description
 8. Confirm app metadata includes privacy URL + terms URL and that subscription metadata is complete

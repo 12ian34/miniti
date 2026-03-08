@@ -129,6 +129,7 @@ platform :ios do
       ipa: ipa_path,
       skip_metadata: true,
       skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
       submit_for_review: false,
       automatic_release: false,
       force: true
