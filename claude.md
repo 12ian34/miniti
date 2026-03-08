@@ -29,7 +29,13 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-07 - v1.12.3 (current)
+### 2026-03-08 - v1.12.4 (current)
+
+- Fix a bug where live insights context from the previous meeting could leak into a new meeting
+- Improve training metric calculations for pace, filler rates, and question detection, especially in short sessions
+- Harden speaker diarization at turn boundaries to reduce false new-speaker creation during handoffs
+
+### 2026-03-07 - v1.12.3
 
 - Fix an iPhone bug where a recording could keep running on the Lock Screen, but the app reopened showing an older paused session
 - Fix a bug where resuming after that could create two Live Activities instead of one
@@ -291,7 +297,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, transport/audio recovery state, managed session-end durability queue, Live Activity lifecycle (`#if os(iOS)` guarded)
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings. Includes `managedSessionId: String?` to persist the backend session ID across app kills for orphaned-session usage reporting.
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels, auto-recovers system tap on silent-stall and callback-stall, and retries failed tap restarts with bounded backoff
-- **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization), and connection-health signals for reconnect orchestration
+- **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization), confidence-aware speaker-change gating/new-speaker promotion, and connection-health signals for reconnect orchestration
 - **Miniti/Services/InsightsService.swift** – OpenAI API for summaries, action items, MEDDPICC
 - **Miniti/Services/DebugLogger.swift** – In-memory ring-buffer logger (1000 entries) with API key redaction. Thread-safe `log()` callable from audio threads. Categories: audio, deepgram, app. Also mirrors log lines to Xcode/system console output for parity while debugging. Shared between macOS and iOS.
 - **Miniti/Views/DebugLogView.swift** – Terminal-style log viewer with category filters, pretty/raw modes, copy, and clear. Raw mode supports direct text selection for partial copy. Accessed via hidden 5-tap on version text in Settings.
@@ -425,9 +431,10 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 4. **Process Tap setup**: Creates a `CATapDescription` (global stereo, captures all processes), then an aggregate device with the tap as a sub-tap. The aggregate's main sub-device provides the clock — always the built-in output device (shares the same hardware oscillator as the system mixer, guaranteeing zero drift). The default output device is never used as the clock because external/Bluetooth devices can run at different sample rates (e.g. AirPods HFP at 24kHz vs tap at 48kHz), causing drift compensation to fail and the tap to deliver silent buffers. Falls back to default output only if no built-in device exists. IO proc callback runs on a custom DispatchQueue (not RT thread). Cleanup: stop IO proc → destroy aggregate device → destroy process tap.
 5. **Mixing**: When both sources active, system audio PCM16 goes into a pre-allocated Int16 ring buffer (8000 samples, ~500ms at 16kHz, NSLock-protected, zero allocations). Mic callback drains the ring buffer and mixes via vDSP (`vDSP_vadd` after float conversion). **Adaptive dual AGC**: each buffer's Int16 RMS is measured in real-time, and independent gain is computed to bring mic to ~3000 and system to ~2000 Int16 RMS (mic 1.5x louder for diarization). Gains are smoothed (fast attack 0.15, slow release 0.02) to avoid pumping. A noise gate (floor=30) prevents boosting silence. Max gain capped at 25x. This handles any hardware level (process tap, ScreenCaptureKit, Bluetooth, built-in, etc.) without manual tuning. Debug log `[AudioMix]` prints every 30s, only when system audio is active.
 6. **Source dominance tracking**: Each buffer's pre-AGC mic/sys RMS is logged with its stream timestamp. `dominantSource(from:to:)` returns `.mic` or `.system` for a time range. Deepgram words are tagged: mic-dominant → speaker `1000` ("You"), system-dominant → keep Deepgram's speaker ID (for multi-speaker remote diarization). Threshold: system must exceed mic × 1.5 to be tagged as system (avoids false positives from amplified mic noise). Source log bounded at 6000 entries (~10 min).
-7. `onAudioBuffer` callback → DeepgramService (nil during monitoring)
-8. Levels flow independently: AudioCaptureService → Combine → AppState → SwiftUI views (throttled to ~20Hz, waveforms at 16Hz)
-9. **Level display**: `SourceWaveform` uses `pow(level, 0.2)` power curve (not linear) so quiet mic signals (~0.003 RMS) show visible bar movement.
+7. **Diarization stabilization (both platforms)**: Final speaker segmentation now uses stricter switch confirmation (minimum run length + duration), applies `speaker_confidence` gating for uncertain boundaries, and uses a new-speaker promotion stage so brand-new speaker IDs only appear after sustained evidence. Interim updates are also gated so unconfirmed speaker guesses don't immediately pollute speaker lists.
+8. `onAudioBuffer` callback → DeepgramService (nil during monitoring)
+9. Levels flow independently: AudioCaptureService → Combine → AppState → SwiftUI views (throttled to ~20Hz, waveforms at 16Hz)
+10. **Level display**: `SourceWaveform` uses `pow(level, 0.2)` power curve (not linear) so quiet mic signals (~0.003 RMS) show visible bar movement.
 
 ### iOS audio flow (mic-only)
 1. `AVAudioSession` configured with `.playAndRecord` category, `.defaultToSpeaker` + `.allowBluetoothA2DP` + Bluetooth call-profile option (implemented with `.allowBluetooth` for toolchain compatibility)

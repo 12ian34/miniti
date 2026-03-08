@@ -488,11 +488,21 @@ final class AppState: ObservableObject {
         } else {
             // Interim result - show live typing
             interimText = update.text
-            currentSpeaker = update.speaker
-            interimSpeaker = update.speaker
+            let candidateSpeaker = update.speaker
+            let lastFinalSpeaker = liveSegments.last(where: \.isFinal)?.speaker
+            // Interim gating: avoid jumping to never-confirmed speakers too early.
+            let canUseCandidateSpeaker =
+                detectedSpeakers.isEmpty ||
+                detectedSpeakers.contains(candidateSpeaker) ||
+                candidateSpeaker == lastFinalSpeaker ||
+                candidateSpeaker == currentSpeaker
             
-            // Track detected speakers
-            detectedSpeakers.insert(update.speaker)
+            if canUseCandidateSpeaker {
+                currentSpeaker = candidateSpeaker
+                interimSpeaker = candidateSpeaker
+            } else {
+                interimSpeaker = currentSpeaker
+            }
             
             // Push to Live Activity (throttled)
             #if os(iOS)
@@ -811,6 +821,7 @@ final class AppState: ObservableObject {
             .joined(separator: "\n")
         
         guard !transcript.isEmpty else { return }
+        guard let meetingIDAtRequest = currentMeeting?.id else { return }
         
         let segmentCount = finalSegments.count
         let shouldUpdateTitle = segmentCount >= lastTitleUpdateCount + titleUpdateThreshold
@@ -831,6 +842,11 @@ final class AppState: ObservableObject {
             existingSummary: standardSummary,
             existingTitle: titleForRequest
         ) {
+            guard currentMeeting?.id == meetingIDAtRequest else {
+                DebugLogger.shared.log(.app, "Dropping stale standard insights response (meeting changed)")
+                isGeneratingInsights = false
+                return
+            }
             lastStandardSummaryContext = standard.summary
             applyInsights(standard, segmentCount: segmentCount, mode: .standard)
         }
@@ -856,14 +872,21 @@ final class AppState: ObservableObject {
                 await self.updateMeddpiccInBackground(
                     transcript: capturedTranscript,
                     segmentCount: capturedSegmentCount,
-                    existingTitle: capturedTitle
+                    existingTitle: capturedTitle,
+                    meetingID: meetingIDAtRequest
                 )
             }
         }
     }
     
-    private func updateMeddpiccInBackground(transcript: String, segmentCount: Int, existingTitle: String?) async {
+    private func updateMeddpiccInBackground(
+        transcript: String,
+        segmentCount: Int,
+        existingTitle: String?,
+        meetingID: UUID
+    ) async {
         guard !isGeneratingMeddpiccInsights else { return }
+        guard currentMeeting?.id == meetingID else { return }
         isGeneratingMeddpiccInsights = true
         defer { isGeneratingMeddpiccInsights = false }
         
@@ -875,6 +898,10 @@ final class AppState: ObservableObject {
             existingSummary: meddpiccSummary,
             existingTitle: existingTitle
         ) {
+            guard currentMeeting?.id == meetingID else {
+                DebugLogger.shared.log(.app, "Dropping stale MEDDPICC insights response (meeting changed)")
+                return
+            }
             lastMeddpiccSummaryContext = meddpicc.summary
             lastMEDDPICCRequestAt = Date()
             applyInsights(meddpicc, segmentCount: segmentCount, mode: .meddpicc)
@@ -1031,6 +1058,17 @@ final class AppState: ObservableObject {
         liveActionItems = []
         liveTopics = []
         liveDiscussionFlow = []
+        lastStandardSummaryContext = ""
+        lastMeddpiccSummaryContext = ""
+        trainingMetrics = nil
+        liveMetrics = nil
+        liveEconomicBuyer = nil
+        liveDecisionCriteria = nil
+        liveDecisionProcess = nil
+        livePaperProcess = nil
+        liveIdentifiedPain = nil
+        liveChampion = nil
+        liveCompetition = nil
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
@@ -1290,7 +1328,12 @@ final class AppState: ObservableObject {
     /// Recompute training metrics from current live segments
     func recomputeTrainingMetrics() {
         let segments = liveSegments.map {
-            TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
+            TrainingMetrics.Segment(
+                text: $0.text,
+                speaker: $0.speaker,
+                isFinal: $0.isFinal,
+                timestamp: $0.timestamp
+            )
         }
         trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
     }
