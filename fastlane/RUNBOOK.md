@@ -58,8 +58,9 @@ What it does not do:
 - no automatic release
 
 Afterward in App Store Connect:
+- run `fastlane ios assets` to upload metadata, review notes, and screenshots from repo
 - attach the uploaded build
-- complete review info/screenshots
+- verify review info/screenshots
 - submit manually
 
 ### `fastlane ios assets`
@@ -79,6 +80,7 @@ What it does not do:
 Release prep checklist for this lane:
 - update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `claude.md` changelog
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
+- ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)
 
 Examples:
 
@@ -190,6 +192,7 @@ fastlane ios beta version:1.12.4 changelog:"release notes here"
 ```sh
 fastlane ios build
 fastlane ios release version:1.12.4
+fastlane ios assets
 ```
 
 ### macOS direct distribution
