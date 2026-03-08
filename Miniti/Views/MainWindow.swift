@@ -1413,7 +1413,12 @@ struct SavedTrainingSection: View {
     
     private var metrics: TrainingMetrics {
         let segments = meeting.segments.map {
-            TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal)
+            TrainingMetrics.Segment(
+                text: $0.text,
+                speaker: $0.speaker,
+                isFinal: $0.isFinal,
+                timestamp: $0.timestamp
+            )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
         return TrainingMetrics.compute(from: segments, duration: duration)

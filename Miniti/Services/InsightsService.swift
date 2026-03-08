@@ -58,9 +58,10 @@ struct TrainingMetrics {
     let talkRatioYou: Double
     let durationMinutes: Double
     
-    private static let hardFillers: Set<String> = ["um", "uh", "uh huh", "hmm", "hm", "er", "ah"]
+    private static let hardFillers: Set<String> = ["um", "uh", "hmm", "hm", "er", "ah"]
     private static let softFillers: Set<String> = ["like", "basically", "literally", "actually", "honestly"]
     private static let phraseFillers: [(phrase: String, label: String)] = [
+        ("uh huh", "uh huh"),
         ("you know", "you know"),
         ("i mean", "I mean"),
         ("kind of", "kind of"),
@@ -71,11 +72,29 @@ struct TrainingMetrics {
         let text: String
         let speaker: Int
         let isFinal: Bool
+        let timestamp: TimeInterval
     }
     
     static func compute(from segments: [Segment], duration: TimeInterval) -> TrainingMetrics {
-        let finals = segments.filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let durationMinutes = max(duration / 60.0, 0.01)
+        let finals = segments
+            .enumerated()
+            .filter { _, segment in
+                segment.isFinal && !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .sorted { lhs, rhs in
+                if lhs.element.timestamp == rhs.element.timestamp {
+                    return lhs.offset < rhs.offset
+                }
+                return lhs.element.timestamp < rhs.element.timestamp
+            }
+            .map(\.element)
+        let reportedDurationSeconds = max(duration, 0)
+        let lastSpokenTimestamp = finals.last?.timestamp ?? 0
+        let effectiveDurationSeconds = lastSpokenTimestamp > 0
+            ? (reportedDurationSeconds > 0 ? min(reportedDurationSeconds, lastSpokenTimestamp) : lastSpokenTimestamp)
+            : reportedDurationSeconds
+        let durationMinutes = max(effectiveDurationSeconds / 60.0, 0.01)
+        let phraseFillersWithTokens = phraseFillers.map { (tokens: tokenize($0.phrase), label: $0.label) }
         
         let speakerIDs = Array(Set(finals.map(\.speaker))).sorted { a, b in
             if a == DeepgramService.micSpeakerID { return true }
@@ -95,37 +114,31 @@ struct TrainingMetrics {
             var wordCount = 0
             var fillerMap: [String: Int] = [:]
             var questionsAsked = 0
-            var totalWordsInTurns = 0
             
             for seg in speakerSegments {
-                let words = seg.text.split(separator: " ")
-                wordCount += words.count
+                let tokens = tokenize(seg.text)
+                wordCount += tokens.count
                 
-                if seg.text.trimmingCharacters(in: .whitespaces).hasSuffix("?") {
-                    questionsAsked += 1
-                }
-                
-                let lower = seg.text.lowercased()
+                questionsAsked += seg.text.filter { $0 == "?" }.count
                 
                 for filler in hardFillers {
-                    let count = countWordOccurrences(of: filler, in: lower)
+                    let count = countWordOccurrences(of: filler, in: tokens)
                     if count > 0 { fillerMap[filler, default: 0] += count }
                 }
                 
                 for filler in softFillers {
-                    let count = countWordOccurrences(of: filler, in: lower)
+                    let count = countWordOccurrences(of: filler, in: tokens)
                     if count > 0 { fillerMap[filler, default: 0] += count }
                 }
                 
-                for (phrase, label) in phraseFillers {
-                    let count = countPhraseOccurrences(of: phrase, in: lower)
+                for (phraseTokens, label) in phraseFillersWithTokens {
+                    let count = countPhraseOccurrences(of: phraseTokens, in: tokens)
                     if count > 0 { fillerMap[label, default: 0] += count }
                 }
             }
             
             totalWordsAll += wordCount
             if isMic { youWordCount = wordCount }
-            totalWordsInTurns = wordCount
             
             let totalFillers = fillerMap.values.reduce(0, +)
             let fillerEntries = fillerMap
@@ -145,7 +158,7 @@ struct TrainingMetrics {
                 wordsPerMinute: Double(wordCount) / durationMinutes,
                 longestMonologueWords: longestMonologue,
                 questionsAsked: questionsAsked,
-                avgWordsPerTurn: speakerSegments.isEmpty ? 0 : Double(totalWordsInTurns) / Double(speakerSegments.count)
+                avgWordsPerTurn: speakerSegments.isEmpty ? 0 : Double(wordCount) / Double(speakerSegments.count)
             ))
         }
         
@@ -158,17 +171,30 @@ struct TrainingMetrics {
         )
     }
     
-    private static func countWordOccurrences(of word: String, in text: String) -> Int {
-        let words = text.split(separator: " ").map { String($0).trimmingCharacters(in: .punctuationCharacters) }
-        return words.filter { $0 == word }.count
+    private static func tokenize(_ text: String) -> [String] {
+        let cleaned = text
+            .lowercased()
+            .replacingOccurrences(
+                of: "[^\\p{L}\\p{N}\\s']",
+                with: " ",
+                options: .regularExpression
+            )
+        return cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
     }
     
-    private static func countPhraseOccurrences(of phrase: String, in text: String) -> Int {
+    private static func countWordOccurrences(of word: String, in tokens: [String]) -> Int {
+        tokens.filter { $0 == word }.count
+    }
+    
+    private static func countPhraseOccurrences(of phraseTokens: [String], in tokens: [String]) -> Int {
+        guard !phraseTokens.isEmpty else { return 0 }
+        guard tokens.count >= phraseTokens.count else { return 0 }
+        
         var count = 0
-        var searchRange = text.startIndex..<text.endIndex
-        while let range = text.range(of: phrase, options: [], range: searchRange) {
-            count += 1
-            searchRange = range.upperBound..<text.endIndex
+        for idx in 0...(tokens.count - phraseTokens.count) {
+            if tokens[idx..<(idx + phraseTokens.count)].elementsEqual(phraseTokens) {
+                count += 1
+            }
         }
         return count
     }
@@ -178,7 +204,7 @@ struct TrainingMetrics {
         var current = 0
         for seg in segments {
             if seg.speaker == speaker {
-                current += seg.text.split(separator: " ").count
+                current += tokenize(seg.text).count
             } else {
                 longest = max(longest, current)
                 current = 0

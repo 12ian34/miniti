@@ -88,6 +88,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             let end: Double
             let confidence: Double
             let speaker: Int
+            let speakerConfidence: Double?
         }
     }
     
@@ -108,6 +109,35 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var totalDuration: Double = 0
         var firstSeen: Date = Date()
     }
+    
+    private struct PendingSpeakerEvidence {
+        var wordCount: Int = 0
+        var duration: Double = 0
+        var speakerConfidenceSum: Double = 0
+        var speakerConfidenceCount: Int = 0
+        
+        mutating func add(words: ArraySlice<TranscriptUpdate.Word>) {
+            guard !words.isEmpty else { return }
+            wordCount += words.count
+            if let first = words.first, let last = words.last {
+                duration += max(0, last.end - first.start)
+            }
+            for word in words {
+                if let conf = word.speakerConfidence {
+                    speakerConfidenceSum += conf
+                    speakerConfidenceCount += 1
+                }
+            }
+        }
+        
+        var averageSpeakerConfidence: Double? {
+            guard speakerConfidenceCount > 0 else { return nil }
+            return speakerConfidenceSum / Double(speakerConfidenceCount)
+        }
+    }
+    
+    private var confirmedSpeakerIDs: Set<Int> = []
+    private var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
     
     func configure(apiKey: String) {
         self.apiKey = apiKey
@@ -161,6 +191,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         DebugLogger.shared.log(.deepgram, "Connecting with model=\(model.rawValue)")
         connectionState = .connecting
         speakerHistory = [:]
+        confirmedSpeakerIDs = []
+        pendingSpeakerEvidence = [:]
         resetSessionCounters()
         isConnected = false
         _sendConnected = false
@@ -369,7 +401,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         start: word.start,
                         end: word.end,
                         confidence: word.confidence,
-                        speaker: speaker
+                        speaker: speaker,
+                        speakerConfidence: word.speakerConfidence
                     )
                 }
                 
@@ -393,6 +426,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 
                 // Segment by speaker - group consecutive words by the same speaker
                 let segments = segmentBySpeaker(words: words, isFinal: isFinal, confidence: alternative.confidence)
+                if isFinal {
+                    updateConfirmedSpeakers(from: segments)
+                }
                 self.speakerSegments = segments
                 
                 // Also provide the dominant speaker for backward compatibility
@@ -426,8 +462,15 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     private func segmentBySpeaker(words: [TranscriptUpdate.Word], isFinal: Bool, confidence: Double) -> [SpeakerSegment] {
         guard !words.isEmpty else { return [] }
         
-        // Minimum words needed to confirm a speaker change (reduces spurious splits)
-        let minWordsForSpeakerChange = 2
+        // Conservative switch confirmation to reduce boundary bleed.
+        let minWordsForSpeakerChange = 3
+        let minDurationForSpeakerChange = 0.65
+        let minAverageSpeakerConfidenceForSwitch = 0.50
+        
+        // New speaker IDs need stronger evidence before we start rendering them.
+        let minWordsForNewSpeakerPromotion = 5
+        let minDurationForNewSpeakerPromotion = 1.20
+        let minAverageSpeakerConfidenceForNewSpeaker = 0.60
         
         var segments: [SpeakerSegment] = []
         var currentSpeaker = words[0].speaker
@@ -440,17 +483,54 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             
             if word.speaker != currentSpeaker {
                 // Potential speaker change - look ahead to confirm
-                var newSpeakerWordCount = 0
                 var lookAhead = i
                 let newSpeaker = word.speaker
                 
                 while lookAhead < words.count && words[lookAhead].speaker == newSpeaker {
-                    newSpeakerWordCount += 1
                     lookAhead += 1
                 }
                 
-                // Only split if new speaker has enough words (confirmed change)
-                if newSpeakerWordCount >= minWordsForSpeakerChange {
+                let candidateWords = words[i..<lookAhead]
+                let candidateWordCount = candidateWords.count
+                let candidateDuration: Double
+                if let first = candidateWords.first, let last = candidateWords.last {
+                    candidateDuration = max(0, last.end - first.start)
+                } else {
+                    candidateDuration = 0
+                }
+                let candidateAverageSpeakerConfidence: Double? = {
+                    let confidences = candidateWords.compactMap(\.speakerConfidence)
+                    guard !confidences.isEmpty else { return nil }
+                    return confidences.reduce(0, +) / Double(confidences.count)
+                }()
+                
+                let passesGeneralSwitchChecks =
+                    candidateWordCount >= minWordsForSpeakerChange &&
+                    candidateDuration >= minDurationForSpeakerChange
+                let passesSwitchConfidenceCheck = (newSpeaker == DeepgramService.micSpeakerID) ||
+                    ((candidateAverageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForSwitch)
+                let isKnownSpeaker = confirmedSpeakerIDs.contains(newSpeaker) || newSpeaker == DeepgramService.micSpeakerID
+                
+                var allowSwitch = passesGeneralSwitchChecks && passesSwitchConfidenceCheck
+                if allowSwitch && !isKnownSpeaker {
+                    var evidence = pendingSpeakerEvidence[newSpeaker] ?? PendingSpeakerEvidence()
+                    evidence.add(words: candidateWords)
+                    pendingSpeakerEvidence[newSpeaker] = evidence
+                    
+                    let promotedByWords = evidence.wordCount >= minWordsForNewSpeakerPromotion
+                    let promotedByDuration = evidence.duration >= minDurationForNewSpeakerPromotion
+                    let promotedByConfidence = (evidence.averageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForNewSpeaker
+                    let isPromoted = promotedByWords && promotedByDuration && promotedByConfidence
+                    if isPromoted {
+                        confirmedSpeakerIDs.insert(newSpeaker)
+                        pendingSpeakerEvidence.removeValue(forKey: newSpeaker)
+                    } else {
+                        allowSwitch = false
+                    }
+                }
+                
+                // Only split when checks pass; otherwise absorb the run into current speaker.
+                if allowSwitch {
                     // Save current segment
                     if !currentWords.isEmpty {
                         let text = currentWords.map { $0.text }.joined(separator: " ")
@@ -468,12 +548,14 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     
                     // Start new segment with new speaker
                     currentSpeaker = newSpeaker
-                    currentWords = [word]
-                    startTime = word.start
+                    currentWords = Array(candidateWords)
+                    startTime = candidateWords.first?.start ?? word.start
                 } else {
-                    // Not enough words - keep with current speaker (spurious change)
-                    currentWords.append(word)
+                    currentWords.append(contentsOf: candidateWords)
                 }
+                
+                i = lookAhead
+                continue
             } else {
                 currentWords.append(word)
             }
@@ -496,6 +578,13 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
         
         return segments
+    }
+    
+    private func updateConfirmedSpeakers(from segments: [SpeakerSegment]) {
+        for segment in segments {
+            confirmedSpeakerIDs.insert(segment.speaker)
+            pendingSpeakerEvidence.removeValue(forKey: segment.speaker)
+        }
     }
     
     /// Find the speaker who spoke the most words in this segment
