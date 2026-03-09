@@ -815,7 +815,8 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
    - `fastlane ios release version:1.12.4`
    - auto-increments build number unless `build:` is provided explicitly
    - the lane excludes precheck IAP validation (`precheck_include_in_app_purchases: false`) because App Store Connect API key auth cannot run IAP precheck
-   - uploads the binary to App Store Connect, but does not upload metadata/screenshots or submit for review automatically
+   - uploads the binary to App Store Connect, uploads metadata from `fastlane/metadata`, uploads/replaces screenshots from `fastlane/screenshots`, and includes app review notes from `fastlane/metadata/app_review_notes.txt` when present
+   - does not submit for review automatically
 7. Confirm App Store Connect auto-renewable subscription exists: `com.miniti.mobile.pro.monthly` (USD `$4.99`), with localized display name/description
 8. Confirm app metadata includes privacy URL + terms URL and that subscription metadata is complete
 9. Wait for Apple to process the build (~5–15 min)
@@ -826,16 +827,12 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 14. Optional repo-managed App Store assets now have tracked placeholders so folders exist in git:
    - screenshots: `fastlane/screenshots/`
    - metadata: `fastlane/metadata/`
-15. Use `fastlane ios assets` to upload App Store metadata without uploading a new binary.
-16. "What's New in This Version" is sourced from locale-specific metadata files, e.g. `fastlane/metadata/en-US/release_notes.txt`.
-17. `fastlane ios assets` uploads screenshots by default; pass `screenshots:false` to skip screenshot upload for a metadata-only pass.
-18. When screenshot upload is enabled in `fastlane ios assets`, existing screenshots are replaced for the uploaded locales/device sets (`overwrite_screenshots: true`).
-19. Before every release, update `fastlane/metadata/en-US/release_notes.txt` from the latest `claude.md` changelog entry before running `fastlane ios assets`.
-20. Repo-managed listing metadata currently includes `fastlane/metadata/en-US/name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `fastlane/metadata/copyright.txt`.
-21. App Review notes for Fastlane uploads live in `fastlane/metadata/app_review_notes.txt` and are attached by `fastlane ios assets` when present.
-22. Keep `fastlane/metadata/copyright.txt` updated with the current year before running `fastlane ios assets` (ASC rejects missing/outdated copyright year values).
-23. If App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder as well (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`) so listing text updates consistently in that locale.
-24. `fastlane ios assets` accepts `version:`/`app_version:` to force metadata and "What's New" onto a specific App Store version (recommended for release day).
+15. "What's New in This Version" is sourced from locale-specific metadata files, e.g. `fastlane/metadata/en-US/release_notes.txt`.
+16. Before every release, update `fastlane/metadata/en-US/release_notes.txt` from the latest `claude.md` changelog entry before running `fastlane ios release`.
+17. Repo-managed listing metadata currently includes `fastlane/metadata/en-US/name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `fastlane/metadata/copyright.txt`.
+18. App Review notes for Fastlane uploads live in `fastlane/metadata/app_review_notes.txt` and are attached by `fastlane ios release` when present.
+19. Keep `fastlane/metadata/copyright.txt` updated with the current year before running `fastlane ios release` (ASC rejects missing/outdated copyright year values).
+20. If App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder as well (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`) so listing text updates consistently in that locale.
 
 #### After both platforms
 1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
