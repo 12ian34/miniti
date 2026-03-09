@@ -79,6 +79,7 @@ What it does not do:
 
 Release prep checklist for this lane:
 - update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `claude.md` changelog
+- if your App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder too (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`)
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
 - ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)
 
@@ -87,6 +88,7 @@ Examples:
 ```sh
 fastlane ios assets
 fastlane ios assets screenshots:false
+fastlane ios assets version:1.12.4
 ```
 
 ## macOS

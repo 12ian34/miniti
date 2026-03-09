@@ -1,0 +1,3 @@
+- Fixed an issue where live insights context from a previous meeting could appear in a new meeting.
+- Improved training metric calculations for pace, filler rates, and question detection, especially in short sessions.
+- Improved speaker diarization at turn boundaries to reduce false new-speaker creation during handoffs.
