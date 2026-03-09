@@ -37,15 +37,7 @@ Bump build/version if needed, build, and upload to TestFlight
 [bundle exec] fastlane ios release
 ```
 
-Bump build/version if needed, build, and upload to App Store Connect without auto-submitting
-
-### ios assets
-
-```sh
-[bundle exec] fastlane ios assets
-```
-
-Upload App Store metadata (including What's New) and screenshots without uploading a new binary; pass screenshots:false to skip screenshots
+Bump build/version if needed, build, and upload to App Store Connect with metadata/screenshots without auto-submitting
 
 ----
 

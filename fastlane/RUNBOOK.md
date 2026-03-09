@@ -50,30 +50,11 @@ What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
 - auto-increments `CURRENT_PROJECT_VERSION` unless `build:` is passed
 - uploads the binary to App Store Connect
-
-What it does not do:
-- no metadata upload
-- no screenshot upload
-- no App Review submission
-- no automatic release
-
-Afterward in App Store Connect:
-- run `fastlane ios assets` to upload metadata, review notes, and screenshots from repo
-- attach the uploaded build
-- verify review info/screenshots
-- submit manually
-
-### `fastlane ios assets`
-
-What it does:
-- uploads App Store metadata from `fastlane/metadata`
-- updates "What's New in This Version" from locale-specific `release_notes.txt` files (for example `fastlane/metadata/en-US/release_notes.txt`)
-- uploads screenshots by default (pass `screenshots:false` to skip)
-- replaces existing screenshots for uploaded locales/device sets (`overwrite_screenshots: true` when screenshots are enabled)
+- uploads metadata from `fastlane/metadata` (including "What's New")
+- uploads screenshots from `fastlane/screenshots` and replaces existing screenshots for uploaded locale/device sets
 - includes App Review notes from `fastlane/metadata/app_review_notes.txt` when present
 
 What it does not do:
-- no binary upload
 - no App Review submission
 - no automatic release
 
@@ -83,13 +64,10 @@ Release prep checklist for this lane:
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
 - ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)
 
-Examples:
-
-```sh
-fastlane ios assets
-fastlane ios assets screenshots:false
-fastlane ios assets version:1.12.4
-```
+Afterward in App Store Connect:
+- attach the uploaded build
+- verify review info/screenshots
+- submit manually
 
 ## macOS
 
@@ -194,7 +172,6 @@ fastlane ios beta version:1.12.4 changelog:"release notes here"
 ```sh
 fastlane ios build
 fastlane ios release version:1.12.4
-fastlane ios assets
 ```
 
 ### macOS direct distribution
@@ -214,5 +191,4 @@ fastlane mac release
 ## Roadmap
 
 - expand App Store metadata/screenshot localization beyond `en-US`
-- add a single-command lane that chains `ios release` + `ios assets` for fully scripted App Store Connect prep
 - optionally add structured review/submission config files (beyond notes-only) for more automation
