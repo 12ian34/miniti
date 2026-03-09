@@ -157,6 +157,7 @@ platform :ios do
     api_key = load_app_store_connect_api_key
     screenshots_option = options[:screenshots]
     include_screenshots = screenshots_option.nil? ? true : screenshots_option.to_s == "true"
+    target_version = options[:version] || options[:app_version]
     app_review_information = ios_app_review_information_from_metadata
 
     upload_options = {
@@ -172,6 +173,7 @@ platform :ios do
       automatic_release: false,
       force: true
     }
+    upload_options[:app_version] = target_version unless target_version.to_s.empty?
     upload_options[:app_review_information] = app_review_information unless app_review_information.nil?
 
     upload_to_app_store(**upload_options)

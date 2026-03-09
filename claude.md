@@ -834,6 +834,8 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 20. Repo-managed listing metadata currently includes `fastlane/metadata/en-US/name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `fastlane/metadata/copyright.txt`.
 21. App Review notes for Fastlane uploads live in `fastlane/metadata/app_review_notes.txt` and are attached by `fastlane ios assets` when present.
 22. Keep `fastlane/metadata/copyright.txt` updated with the current year before running `fastlane ios assets` (ASC rejects missing/outdated copyright year values).
+23. If App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder as well (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`) so listing text updates consistently in that locale.
+24. `fastlane ios assets` accepts `version:`/`app_version:` to force metadata and "What's New" onto a specific App Store version (recommended for release day).
 
 #### After both platforms
 1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
