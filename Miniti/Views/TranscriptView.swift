@@ -65,8 +65,8 @@ struct TranscriptView: View {
         }
     }
 
-    private func suppressAutoScrollLockBriefly() {
-        suppressAutoScrollLockUntil = Date().addingTimeInterval(0.25)
+    private func suppressAutoScrollLockBriefly(_ duration: TimeInterval = 0.25) {
+        suppressAutoScrollLockUntil = Date().addingTimeInterval(duration)
     }
 
     private func updateAutoScrollLock(bottomAnchorMaxY: CGFloat, viewportHeight: CGFloat) {
@@ -170,21 +170,21 @@ struct TranscriptView: View {
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
+                                    #if os(macOS)
+                                    .background(
+                                        TranscriptScrollWheelObserver(
+                                            onScrolledAwayFromBottom: {
+                                                if isAutoScrollEnabled,
+                                                   Date() >= suppressAutoScrollLockUntil {
+                                                    isAutoScrollEnabled = false
+                                                }
+                                            }
+                                        )
+                                    )
+                                    #endif
                                 }
                                 .coordinateSpace(name: "transcript-scroll")
                                 .scrollIndicators(.hidden)
-                                #if os(macOS)
-                                .background(
-                                    TranscriptScrollWheelObserver(
-                                        onScrolledAwayFromBottom: {
-                                            if isAutoScrollEnabled,
-                                               Date() >= suppressAutoScrollLockUntil {
-                                                isAutoScrollEnabled = false
-                                            }
-                                        }
-                                    )
-                                )
-                                #endif
                                 .simultaneousGesture(
                                     DragGesture(minimumDistance: 4)
                                         .onChanged { _ in
@@ -223,23 +223,21 @@ struct TranscriptView: View {
                                 }
                                 
                                 if !isAutoScrollEnabled {
-                                    Button {
-                                        isAutoScrollEnabled = true
-                                        previousBottomDistance = 0
-                                        suppressAutoScrollLockBriefly()
-                                        scrollToBottom(proxy: proxy)
-                                    } label: {
-                                        Text("resume auto-scroll")
-                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "E6EDF3"))
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 6)
-                                            .background(Color(hex: "1F6FEB").opacity(0.95))
-                                            .clipShape(Capsule())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .padding(.trailing, 16)
-                                    .padding(.bottom, 12)
+                                    Text("resume auto-scroll")
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "E6EDF3"))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color(hex: "1F6FEB").opacity(0.95))
+                                        .clipShape(Capsule())
+                                        .onTapGesture {
+                                            isAutoScrollEnabled = true
+                                            previousBottomDistance = 0
+                                            suppressAutoScrollLockBriefly(1.0)
+                                            scrollToBottom(proxy: proxy)
+                                        }
+                                        .padding(.trailing, 16)
+                                        .padding(.bottom, 12)
                                 }
                             }
                         }
@@ -320,18 +318,24 @@ private struct TranscriptScrollWheelObserver: NSViewRepresentable {
             guard let scrollView = enclosingScrollView else { return }
             didSetupObserver = true
             scrollView.contentView.postsBoundsChangedNotifications = true
+            let clipView = scrollView.contentView
             boundsObserver = NotificationCenter.default.addObserver(
                 forName: NSView.boundsDidChangeNotification,
-                object: scrollView.contentView,
+                object: clipView,
                 queue: .main
             ) { [weak self, weak scrollView] _ in
-                guard let self, let scrollView else { return }
-                let contentHeight = scrollView.documentView?.frame.height ?? 0
-                let viewportHeight = scrollView.contentView.bounds.height
-                let scrollY = scrollView.contentView.bounds.origin.y
-                let distanceFromBottom = contentHeight - viewportHeight - scrollY
-                if distanceFromBottom > 30 {
-                    self.onScrolledAwayFromBottom?()
+                let shouldNotify = MainActor.assumeIsolated { () -> Bool in
+                    guard let scrollView else { return false }
+                    let contentHeight = scrollView.documentView?.frame.height ?? 0
+                    let viewportHeight = scrollView.contentView.bounds.height
+                    let scrollY = scrollView.contentView.bounds.origin.y
+                    let distanceFromBottom = contentHeight - viewportHeight - scrollY
+                    return distanceFromBottom > 30
+                }
+                if shouldNotify {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onScrolledAwayFromBottom?()
+                    }
                 }
             }
         }
