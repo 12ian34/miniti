@@ -152,7 +152,7 @@ platform :ios do
       precheck_include_in_app_purchases: false,
       run_precheck_before_submit: false,
       submit_for_review: false,
-      automatic_release: false,
+      automatic_release: true,
       force: true
     }
     upload_options[:app_version] = target_version unless target_version.to_s.empty?
