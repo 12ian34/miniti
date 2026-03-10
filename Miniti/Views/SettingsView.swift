@@ -30,6 +30,11 @@ struct SettingsView: View {
                 .tabItem {
                     Label("Models", systemImage: "cpu")
                 }
+
+            TrainingInsightsSettingsView()
+                .tabItem {
+                    Label("Training", systemImage: "waveform.badge.mic")
+                }
             
             GeneralSettingsView()
                 .tabItem {
@@ -196,6 +201,143 @@ struct AccountSettingsView: View {
                 }
             )
         }
+    }
+}
+
+struct TrainingInsightsSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @State private var fillers: [String] = TrainingFillerPreferences.currentFillers()
+    @State private var newFiller = ""
+    @State private var editingIndex: Int?
+    @State private var editingText = ""
+    @State private var validationMessage: String?
+    
+    var body: some View {
+        Form {
+            Section("Filler Detection") {
+                Text("These words and phrases are tracked in training mode across live and saved meetings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                ForEach(Array(fillers.enumerated()), id: \.offset) { index, filler in
+                    HStack {
+                        Text(filler)
+                            .textSelection(.enabled)
+                        Spacer()
+                        
+                        Button {
+                            editingIndex = index
+                            editingText = filler
+                            validationMessage = nil
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        .buttonStyle(.borderless)
+                        
+                        Button(role: .destructive) {
+                            removeFiller(at: index)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                
+                HStack {
+                    TextField("Add phrase (example: i think)", text: $newFiller)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            addFiller()
+                        }
+                    
+                    Button("Add") {
+                        addFiller()
+                    }
+                    .disabled(newFiller.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                
+                if let validationMessage {
+                    Text(validationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Section("Actions") {
+                Button("Reset to defaults") {
+                    fillers = TrainingFillerPreferences.defaultFillers
+                    persistFillers()
+                    validationMessage = "Restored default filler list."
+                }
+                
+                HStack {
+                    Text("Tracked phrases")
+                    Spacer()
+                    Text("\(fillers.count)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            fillers = TrainingFillerPreferences.currentFillers()
+        }
+        .alert("Edit filler phrase", isPresented: Binding(
+            get: { editingIndex != nil },
+            set: { showing in
+                if !showing {
+                    editingIndex = nil
+                    editingText = ""
+                }
+            }
+        )) {
+            TextField("Phrase", text: $editingText)
+            Button("Cancel", role: .cancel) {
+                editingIndex = nil
+                editingText = ""
+            }
+            Button("Save") {
+                saveEditedFiller()
+            }
+        }
+    }
+    
+    private func addFiller() {
+        let trimmed = newFiller.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        fillers.append(trimmed)
+        newFiller = ""
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func removeFiller(at index: Int) {
+        guard fillers.indices.contains(index) else { return }
+        fillers.remove(at: index)
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func saveEditedFiller() {
+        guard let editingIndex, fillers.indices.contains(editingIndex) else { return }
+        let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            validationMessage = "Filler phrase cannot be empty."
+            return
+        }
+        fillers[editingIndex] = trimmed
+        self.editingIndex = nil
+        editingText = ""
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func persistFillers() {
+        let normalized = TrainingFillerPreferences.normalizedFillers(fillers)
+        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers : normalized
+        TrainingFillerPreferences.save(fillers)
+        appState.recomputeTrainingMetrics()
     }
 }
 
@@ -556,6 +698,35 @@ struct ModelsSettingsView: View {
                 }
                 
                 Text("Deepgram model used for real-time speech-to-text transcription.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Insights") {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("GPT-5 Mini")
+                            .font(.subheadline.weight(.semibold))
+                        Text("OpenAI")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Generates summaries, action items, topics, discussion flow, and MEDDPICC analysis from your transcript.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(Color.secondary.opacity(0.08))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
+                )
+
+                Text("Insight model is not configurable. All insights use GPT-5 Mini for consistent quality.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

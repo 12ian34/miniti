@@ -18,7 +18,15 @@ struct UsageBanner: View {
         return usage.minutesRemaining < 15
     }
     
+    private var usageProgress: Double {
+        if let usage {
+            return usage.usagePercentage
+        }
+        return appState.shouldShowManagedSubscriptionPlaceholder ? 0.35 : 0
+    }
+
     private var accentColor: Color {
+        if appState.shouldShowManagedSubscriptionPlaceholder { return Color(hex: "71717A") }
         if appState.isPro { return Color(hex: "A78BFA") }
         if isCritical { return Color(hex: "F85149") }
         if isLow { return Color(hex: "F59E0B") }
@@ -39,7 +47,7 @@ struct UsageBanner: View {
                         // Fill
                         RoundedRectangle(cornerRadius: 2)
                             .fill(accentColor.opacity(0.8))
-                            .frame(width: geo.size.width * (usage?.usagePercentage ?? 0))
+                            .frame(width: geo.size.width * usageProgress)
                     }
                 }
                 .frame(width: 40, height: 4)
@@ -54,6 +62,14 @@ struct UsageBanner: View {
                         Text("\(usage.formattedRemaining) left")
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundStyle(accentColor)
+                    }
+                } else if appState.shouldShowManagedSubscriptionPlaceholder {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.mini)
+                        Text("checking plan...")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "71717A"))
                     }
                 } else if appState.isLoadingUsage {
                     ProgressView()
@@ -91,6 +107,7 @@ struct ManagedStatusView: View {
     }
     
     private var accentColor: Color {
+        if appState.shouldShowManagedSubscriptionPlaceholder { return Color(hex: "71717A") }
         guard let usage else { return Color(hex: "3FB950") }
         if usage.isPro { return Color(hex: "A78BFA") }
         if usage.minutesRemaining < 15 { return Color(hex: "F85149") }
@@ -105,7 +122,7 @@ struct ManagedStatusView: View {
                     .fill(accentColor)
                     .frame(width: 5, height: 5)
                 
-                Text(appState.isPro ? "miniti pro" : "miniti free")
+                Text(appState.shouldShowManagedSubscriptionPlaceholder ? "checking plan..." : (appState.isPro ? "miniti pro" : "miniti free"))
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                 
@@ -151,10 +168,20 @@ struct ManagedStatusView: View {
                     }
                     .frame(width: 200)
                 }
+            } else if appState.shouldShowManagedSubscriptionPlaceholder {
+                RoundedRectangle(cornerRadius: 3)
+                    .fill(Color(hex: "1C1C1F"))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color(hex: "71717A").opacity(0.35))
+                            .frame(width: 70, alignment: .leading),
+                        alignment: .leading
+                    )
+                    .frame(width: 200, height: 6)
             }
             
             #if os(macOS)
-            if !appState.isPro {
+            if !appState.shouldShowManagedSubscriptionPlaceholder && !appState.isPro {
                 Button {
                     Task { await appState.openSubscribePage() }
                 } label: {

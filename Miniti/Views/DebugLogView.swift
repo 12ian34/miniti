@@ -12,6 +12,9 @@ struct DebugLogView: View {
     @State private var viewMode: ViewMode = .pretty
     @State private var localEscapeMonitor: Any?
     @State private var isAutoScrollEnabled = true
+    @State private var previousBottomDistance: CGFloat = 0
+    @State private var hasCapturedInitialBottomDistance = false
+    @State private var suppressAutoScrollLockUntil = Date.distantPast
 
     private var filtered: [DebugLogger.Entry] {
         guard let filter else { return logger.entries }
@@ -24,6 +27,41 @@ struct DebugLogView: View {
         return filtered.map { entry in
             "[\(fmt.string(from: entry.timestamp))] [\(entry.category.rawValue)] \(entry.message)"
         }.joined(separator: "\n")
+    }
+
+    private func scrollToBottom(_ id: String, proxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            proxy.scrollTo(id, anchor: .bottom)
+        }
+    }
+
+    private func suppressAutoScrollLockBriefly() {
+        suppressAutoScrollLockUntil = Date().addingTimeInterval(0.25)
+    }
+
+    private func resetAutoScrollTracking() {
+        previousBottomDistance = 0
+        hasCapturedInitialBottomDistance = false
+    }
+
+    private func updateAutoScrollLock(bottomAnchorMaxY: CGFloat, viewportHeight: CGFloat) {
+        let distanceFromBottom = max(0, bottomAnchorMaxY - viewportHeight)
+
+        guard hasCapturedInitialBottomDistance else {
+            previousBottomDistance = distanceFromBottom
+            hasCapturedInitialBottomDistance = true
+            return
+        }
+
+        let movedAwayFromBottom = distanceFromBottom - previousBottomDistance
+        if isAutoScrollEnabled,
+           Date() >= suppressAutoScrollLockUntil,
+           movedAwayFromBottom > 0.5,
+           distanceFromBottom > 24 {
+            isAutoScrollEnabled = false
+        }
+
+        previousBottomDistance = distanceFromBottom
     }
 
     var body: some View {
@@ -47,9 +85,11 @@ struct DebugLogView: View {
         }
         .onChange(of: filter) { _, _ in
             isAutoScrollEnabled = true
+            resetAutoScrollTracking()
         }
         .onChange(of: viewMode) { _, _ in
             isAutoScrollEnabled = true
+            resetAutoScrollTracking()
         }
 #if os(macOS) || os(tvOS)
         .onExitCommand {
@@ -115,53 +155,69 @@ struct DebugLogView: View {
 
     private var logList: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 1) {
-                        ForEach(filtered) { entry in
-                            LogEntryRow(entry: entry)
-                                .id(entry.id)
-                        }
-                        Color.clear
-                            .frame(height: 1)
-                            .id("pretty-bottom")
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { _ in
-                            if isAutoScrollEnabled {
-                                isAutoScrollEnabled = false
+            GeometryReader { scrollGeometry in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 1) {
+                            ForEach(filtered) { entry in
+                                LogEntryRow(entry: entry)
+                                    .id(entry.id)
                             }
+                            Color.clear
+                                .frame(height: 1)
+                                .id("pretty-bottom")
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: DebugLogBottomAnchorMaxYPreferenceKey.self,
+                                            value: geo.frame(in: .named("debuglog-scroll")).maxY
+                                        )
+                                    }
+                                )
                         }
-                )
-                .onChange(of: logger.entries.count) {
-                    guard isAutoScrollEnabled else { return }
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("pretty-bottom", anchor: .bottom)
                     }
-                }
-                
-                if !isAutoScrollEnabled {
-                    Button {
-                        isAutoScrollEnabled = true
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo("pretty-bottom", anchor: .bottom)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .coordinateSpace(name: "debuglog-scroll")
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { _ in
+                                if isAutoScrollEnabled {
+                                    isAutoScrollEnabled = false
+                                }
+                            }
+                    )
+                    .onPreferenceChange(DebugLogBottomAnchorMaxYPreferenceKey.self) { bottomAnchorMaxY in
+                        updateAutoScrollLock(
+                            bottomAnchorMaxY: bottomAnchorMaxY,
+                            viewportHeight: scrollGeometry.size.height
+                        )
+                    }
+                    .onChange(of: logger.entries.count) {
+                        guard isAutoScrollEnabled else { return }
+                        suppressAutoScrollLockBriefly()
+                        scrollToBottom("pretty-bottom", proxy: proxy)
+                    }
+                    
+                    if !isAutoScrollEnabled {
+                        Button {
+                            isAutoScrollEnabled = true
+                            resetAutoScrollTracking()
+                            suppressAutoScrollLockBriefly()
+                            scrollToBottom("pretty-bottom", proxy: proxy)
+                        } label: {
+                            Text("resume auto-scroll")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.blue.opacity(0.9))
+                                .clipShape(Capsule())
                         }
-                    } label: {
-                        Text("resume auto-scroll")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.blue.opacity(0.9))
-                            .clipShape(Capsule())
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 10)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 10)
                 }
             }
         }
@@ -169,54 +225,70 @@ struct DebugLogView: View {
 
     private var rawLogView: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                        Color.clear
-                            .frame(height: 1)
-                            .id("raw-bottom")
+            GeometryReader { scrollGeometry in
+                ZStack(alignment: .bottomTrailing) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                            Color.clear
+                                .frame(height: 1)
+                                .id("raw-bottom")
+                                .background(
+                                    GeometryReader { geo in
+                                        Color.clear.preference(
+                                            key: DebugLogBottomAnchorMaxYPreferenceKey.self,
+                                            value: geo.frame(in: .named("debuglog-scroll")).maxY
+                                        )
+                                    }
+                                )
+                        }
                     }
-                }
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 4)
-                        .onChanged { _ in
-                            if isAutoScrollEnabled {
-                                isAutoScrollEnabled = false
+                    .coordinateSpace(name: "debuglog-scroll")
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 4)
+                            .onChanged { _ in
+                                if isAutoScrollEnabled {
+                                    isAutoScrollEnabled = false
+                                }
                             }
-                        }
-                )
-                .onChange(of: logger.entries.count) {
-                    guard isAutoScrollEnabled else { return }
-                    withAnimation(.easeOut(duration: 0.15)) {
-                        proxy.scrollTo("raw-bottom", anchor: .bottom)
+                    )
+                    .onPreferenceChange(DebugLogBottomAnchorMaxYPreferenceKey.self) { bottomAnchorMaxY in
+                        updateAutoScrollLock(
+                            bottomAnchorMaxY: bottomAnchorMaxY,
+                            viewportHeight: scrollGeometry.size.height
+                        )
                     }
-                }
-                
-                if !isAutoScrollEnabled {
-                    Button {
-                        isAutoScrollEnabled = true
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            proxy.scrollTo("raw-bottom", anchor: .bottom)
-                        }
-                    } label: {
-                        Text("resume auto-scroll")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(Color.blue.opacity(0.9))
-                            .clipShape(Capsule())
+                    .onChange(of: logger.entries.count) {
+                        guard isAutoScrollEnabled else { return }
+                        suppressAutoScrollLockBriefly()
+                        scrollToBottom("raw-bottom", proxy: proxy)
                     }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, 12)
-                    .padding(.bottom, 10)
+                    
+                    if !isAutoScrollEnabled {
+                        Button {
+                            isAutoScrollEnabled = true
+                            resetAutoScrollTracking()
+                            suppressAutoScrollLockBriefly()
+                            scrollToBottom("raw-bottom", proxy: proxy)
+                        } label: {
+                            Text("resume auto-scroll")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(Color.blue.opacity(0.9))
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.trailing, 12)
+                        .padding(.bottom, 10)
+                    }
                 }
             }
         }
@@ -278,6 +350,14 @@ struct DebugLogView: View {
     private func installLocalEscapeMonitor() {}
     private func removeLocalEscapeMonitor() {}
     #endif
+}
+
+private struct DebugLogBottomAnchorMaxYPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
 }
 
 // MARK: - Log Entry Row

@@ -942,7 +942,7 @@ struct MeetingDetailView: View {
                     }
                 }
                 .frame(minWidth: appState.isLiveInsightsCollapsed ? 44 : 280,
-                       maxWidth: appState.isLiveInsightsCollapsed ? 44 : 380)
+                       maxWidth: appState.isLiveInsightsCollapsed ? 44 : 600)
             }
         }
         .background(Theme.bg)

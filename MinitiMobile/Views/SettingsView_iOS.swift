@@ -14,25 +14,16 @@ struct SettingsView_iOS: View {
     var body: some View {
         NavigationStack {
             Form {
-                // Account section
-                Section("Mode") {
-                    Picker("API Mode", selection: $appState.appModeRaw) {
-                        Text(appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
-                        Text("Bring Your Own Keys").tag(AppMode.byok.rawValue)
-                    }
-                    .onChange(of: appState.appModeRaw) { _, newValue in
-                        if newValue == AppMode.managed.rawValue {
-                            Task { await appState.refreshUsage() }
+                Section("Training Insights") {
+                    NavigationLink(destination: TrainingInsightsSettingsDetail_iOS()) {
+                        HStack {
+                            Text("Customize filler detection")
+                            Spacer()
+                            Text("\(TrainingFillerPreferences.currentFillers().count) tracked")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                     }
-                    
-                    Text(appState.appMode == .managed
-                         ? (appState.isPro
-                            ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
-                            : "500 free minutes per month via Miniti's backend.")
-                         : "Use your own Deepgram & OpenAI API keys. No limits.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
                 
                 if appState.appMode == .managed {
@@ -40,7 +31,10 @@ struct SettingsView_iOS: View {
                         HStack {
                             Text("Plan")
                             Spacer()
-                            if appState.isPro {
+                            if appState.shouldShowManagedSubscriptionPlaceholder {
+                                Text("Checking...")
+                                    .foregroundStyle(.secondary)
+                            } else if appState.isPro {
                                 Text("Pro — \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
                                     .fontWeight(.medium)
@@ -50,7 +44,13 @@ struct SettingsView_iOS: View {
                             }
                         }
                         
-                        if appState.isPro {
+                        if appState.shouldShowManagedSubscriptionPlaceholder {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Checking subscription status...")
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else if appState.isPro {
                             Button("Manage Subscription") {
                                 Task { await appState.openManageSubscriptionPage() }
                             }
@@ -80,7 +80,7 @@ struct SettingsView_iOS: View {
                             }
                         }
 
-                        if !appState.isPro {
+                        if !appState.shouldShowManagedSubscriptionPlaceholder && !appState.isPro {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Miniti Pro Monthly")
                                     .font(.caption)
@@ -174,7 +174,34 @@ struct SettingsView_iOS: View {
                         }
                     }
                 }
-                
+
+                Section("Mode") {
+                    Picker("API Mode", selection: $appState.appModeRaw) {
+                        Text(
+                            appState.shouldShowManagedSubscriptionPlaceholder
+                                ? "Miniti (checking plan...)"
+                                : (appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)")
+                        )
+                        .tag(AppMode.managed.rawValue)
+                        Text("Bring Your Own Keys").tag(AppMode.byok.rawValue)
+                    }
+                    .onChange(of: appState.appModeRaw) { _, newValue in
+                        if newValue == AppMode.managed.rawValue {
+                            Task { await appState.refreshUsage() }
+                        }
+                    }
+                    
+                    Text(appState.appMode == .managed
+                         ? (appState.shouldShowManagedSubscriptionPlaceholder
+                            ? "Checking subscription status..."
+                            : (appState.isPro
+                               ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
+                               : "500 free minutes per month via Miniti's backend."))
+                         : "Use your own Deepgram & OpenAI API keys. No limits.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 // API Keys (BYOK mode)
                 if appState.appMode == .byok {
                     Section("API Keys") {
@@ -212,6 +239,13 @@ struct SettingsView_iOS: View {
                     Picker("Transcription", selection: $appState.deepgramModel) {
                         Text("Nova-2").tag(DeepgramModel.nova2.rawValue)
                         Text("Nova-3").tag(DeepgramModel.nova3.rawValue)
+                    }
+
+                    HStack {
+                        Text("Insights")
+                        Spacer()
+                        Text("GPT-5 Mini")
+                            .foregroundStyle(.secondary)
                     }
                 }
                 
@@ -323,6 +357,144 @@ struct SettingsView_iOS: View {
     
     private func checkMicPermission() -> Bool {
         AVAudioApplication.shared.recordPermission == .granted
+    }
+}
+
+struct TrainingInsightsSettingsDetail_iOS: View {
+    @EnvironmentObject var appState: AppState
+    @State private var fillers: [String] = TrainingFillerPreferences.currentFillers()
+    @State private var newFiller = ""
+    @State private var editingIndex: Int?
+    @State private var editingText = ""
+    @State private var validationMessage: String?
+    
+    var body: some View {
+        Form {
+            Section {
+                Text("Track custom words or phrases in training mode across live and saved meetings.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Section("Tracked Fillers") {
+                ForEach(Array(fillers.enumerated()), id: \.offset) { index, filler in
+                    HStack {
+                        Text(filler)
+                            .lineLimit(2)
+                        Spacer()
+                        Button {
+                            editingIndex = index
+                            editingText = filler
+                            validationMessage = nil
+                        } label: {
+                            Image(systemName: "pencil")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Button(role: .destructive) {
+                            removeFiller(at: index)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                
+                HStack {
+                    TextField("Add phrase (example: i think)", text: $newFiller)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onSubmit {
+                            addFiller()
+                        }
+                    Button("Add") {
+                        addFiller()
+                    }
+                    .disabled(newFiller.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                
+                if let validationMessage {
+                    Text(validationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            
+            Section("Actions") {
+                Button("Reset to defaults") {
+                    fillers = TrainingFillerPreferences.defaultFillers
+                    persistFillers()
+                    validationMessage = "Restored default filler list."
+                }
+                HStack {
+                    Text("Tracked phrases")
+                    Spacer()
+                    Text("\(fillers.count)")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .navigationTitle("Training Insights")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            fillers = TrainingFillerPreferences.currentFillers()
+        }
+        .alert("Edit filler phrase", isPresented: Binding(
+            get: { editingIndex != nil },
+            set: { showing in
+                if !showing {
+                    editingIndex = nil
+                    editingText = ""
+                }
+            }
+        )) {
+            TextField("Phrase", text: $editingText)
+            Button("Cancel", role: .cancel) {
+                editingIndex = nil
+                editingText = ""
+            }
+            Button("Save") {
+                saveEditedFiller()
+            }
+        }
+    }
+    
+    private func addFiller() {
+        let trimmed = newFiller.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        fillers.append(trimmed)
+        newFiller = ""
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func removeFiller(at index: Int) {
+        guard fillers.indices.contains(index) else { return }
+        fillers.remove(at: index)
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func saveEditedFiller() {
+        guard let editingIndex, fillers.indices.contains(editingIndex) else { return }
+        let trimmed = editingText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            validationMessage = "Filler phrase cannot be empty."
+            return
+        }
+        fillers[editingIndex] = trimmed
+        self.editingIndex = nil
+        editingText = ""
+        persistFillers()
+        validationMessage = nil
+    }
+    
+    private func persistFillers() {
+        let normalized = TrainingFillerPreferences.normalizedFillers(fillers)
+        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers : normalized
+        TrainingFillerPreferences.save(fillers)
+        appState.recomputeTrainingMetrics()
     }
 }
 

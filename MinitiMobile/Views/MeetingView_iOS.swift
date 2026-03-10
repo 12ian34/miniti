@@ -180,8 +180,10 @@ struct MeetingView_iOS: View {
                 .padding(.horizontal, 12)
             }
             
-            SourceWaveform_iOS(
-                level: appState.isRecording ? appState.microphoneLevel : 0,
+            ObservedSourceWaveform_iOS(
+                audioLevels: appState.audioLevels,
+                source: .microphone,
+                zeroWhenNotRecording: appState.isRecording == false,
                 color: ColorPalette.Speaker.mic
             )
             .frame(height: 24)
@@ -479,7 +481,10 @@ struct ReadyStateView_iOS: View {
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.primary)
                 
-                FlashingTagline_iOS(text: "multi-dimensional meetings")
+                FlashingTagline_iOS(
+                    text: "multi-dimensional meetings",
+                    isIdle: !(isMicTesting && appState.isMonitoring)
+                )
             }
             
             // Mode status
@@ -503,8 +508,9 @@ struct ReadyStateView_iOS: View {
                                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                                     .foregroundStyle(ColorPalette.Text.muted)
                             }
-                            SourceWaveform_iOS(
-                                level: appState.microphoneLevel,
+                            ObservedSourceWaveform_iOS(
+                                audioLevels: appState.audioLevels,
+                                source: .microphone,
                                 color: ColorPalette.Speaker.mic
                             )
                             .frame(height: 20)
@@ -711,6 +717,7 @@ struct ReadyStateView_iOS: View {
 
 private struct FlashingTagline_iOS: View {
     let text: String
+    let isIdle: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     var body: some View {
@@ -718,7 +725,7 @@ private struct FlashingTagline_iOS: View {
             if reduceMotion {
                 baseText
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { context in
+                TimelineView(.animation(minimumInterval: isIdle ? (1.0 / 8.0) : (1.0 / 24.0), paused: false)) { context in
                     let motion = flashMotion(at: context.date.timeIntervalSinceReferenceDate)
                     ZStack {
                         baseText
@@ -967,6 +974,46 @@ struct UpdateAvailableBanner_iOS: View {
 }
 
 // MARK: - Waveform
+
+private enum AudioWaveformSource_iOS {
+    case microphone
+    case system
+}
+
+private struct ObservedSourceWaveform_iOS: View {
+    @ObservedObject var audioLevels: AudioLevelsState
+    let source: AudioWaveformSource_iOS
+    let zeroWhenNotRecording: Bool
+    let color: Color
+
+    init(
+        audioLevels: AudioLevelsState,
+        source: AudioWaveformSource_iOS,
+        zeroWhenNotRecording: Bool = false,
+        color: Color
+    ) {
+        self.audioLevels = audioLevels
+        self.source = source
+        self.zeroWhenNotRecording = zeroWhenNotRecording
+        self.color = color
+    }
+
+    private var level: Float {
+        if zeroWhenNotRecording {
+            return 0
+        }
+        switch source {
+        case .microphone:
+            return audioLevels.microphoneLevel
+        case .system:
+            return audioLevels.systemAudioLevel
+        }
+    }
+
+    var body: some View {
+        SourceWaveform_iOS(level: level, color: color)
+    }
+}
 
 struct SourceWaveform_iOS: View {
     let level: Float

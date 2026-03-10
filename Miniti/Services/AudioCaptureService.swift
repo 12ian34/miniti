@@ -155,11 +155,21 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
             micWeightedTotal = Double(nearestSample.micEnergy)
             sysWeightedTotal = Double(nearestSample.sysEnergy)
+            overlapSecondsTotal = nearestSample.endTime - nearestSample.startTime
         }
         
-        // Require system to be meaningfully louder (>1.5x) to tag as system,
-        // since mic noise gets amplified and may match system during pauses.
-        return sysWeightedTotal > micWeightedTotal * 1.5 ? .system : .mic
+        // Mic must show speech-level energy to be considered dominant.
+        // Keyboard typing / ambient noise (~50-300 RMS) should not count.
+        let avgMicEnergy = overlapSecondsTotal > 0
+            ? Float(micWeightedTotal / overlapSecondsTotal)
+            : 0
+        let micSpeechFloor: Float = 200
+        if avgMicEnergy < micSpeechFloor {
+            return .system
+        }
+        
+        // Mic must be clearly louder than system (>2x) to tag as "You".
+        return micWeightedTotal > sysWeightedTotal * 2.0 ? .mic : .system
     }
     
     /// Clears source log (call when starting a new recording).

@@ -13,7 +13,7 @@ AI MEETING INSIGHTS
 - Regenerate insights anytime from meeting history
 
 REAL-TIME SPEECH COACHING
-- Filler word tracking with per-word frequency breakdown
+- Filler word tracking with per-word frequency breakdown and custom tracking
 - Talk ratio between speakers
 - Pace (words per minute), longest monologue, and questions asked
 - Clarity score to help you improve meeting by meeting
@@ -35,4 +35,4 @@ If you choose Pro, payment is charged to your Apple ID account at confirmation o
 TERMS OF USE (EULA) 
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-v1.12.4
+v1.13.0

@@ -105,6 +105,11 @@ struct LiveInsightsContent: View {
                         TrainingEmptyState()
                     }
                 } else if appState.insightsMode == .meddpicc {
+                    if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
+                        Text("no meddpicc yet...")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
                     MEDDPICCContent()
                     
                     if appState.isGeneratingInsights {
@@ -118,6 +123,11 @@ struct LiveInsightsContent: View {
                         .padding(.top, 8)
                     }
                 } else {
+                    if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedStandardInsights {
+                        Text("no insights yet...")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
                     // Summary (always shown)
                     if !appState.liveSummary.isEmpty {
                         TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
@@ -183,6 +193,11 @@ private struct LiveInsightsContent_iOSPlain: View {
                         TrainingEmptyState()
                     }
                 } else if appState.insightsMode == .meddpicc {
+                    if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
+                        Text("no meddpicc yet...")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
                     LiveMEDDPICCContent_iOSPlain()
                     
                     if appState.isGeneratingInsights {
@@ -196,6 +211,11 @@ private struct LiveInsightsContent_iOSPlain: View {
                         .padding(.top, 8)
                     }
                 } else {
+                    if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedStandardInsights {
+                        Text("no insights yet...")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
                     if !appState.liveSummary.isEmpty {
                         InsightsPlainBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
                             Text(appState.liveSummary)

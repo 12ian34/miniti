@@ -50,7 +50,7 @@ struct MeetingView: View {
                             }
                         }
                         .frame(minWidth: appState.isLiveInsightsCollapsed ? 44 : 280,
-                               maxWidth: appState.isLiveInsightsCollapsed ? 44 : 350)
+                               maxWidth: appState.isLiveInsightsCollapsed ? 44 : 600)
                     }
                 }
             } else {
@@ -103,7 +103,10 @@ struct ReadyStateView: View {
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 
-                FlashingTagline(text: "multi-dimensional meetings")
+                FlashingTagline(
+                    text: "multi-dimensional meetings",
+                    isIdle: !appState.isMonitoring
+                )
             }
             
             // Mode-aware status section
@@ -254,6 +257,7 @@ struct ReadyStateView: View {
 
 private struct FlashingTagline: View {
     let text: String
+    let isIdle: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     
     var body: some View {
@@ -261,7 +265,7 @@ private struct FlashingTagline: View {
             if reduceMotion {
                 baseText
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 24.0, paused: false)) { context in
+                TimelineView(.animation(minimumInterval: isIdle ? (1.0 / 8.0) : (1.0 / 24.0), paused: false)) { context in
                     let motion = flashMotion(at: context.date.timeIntervalSinceReferenceDate)
                     ZStack {
                         baseText
@@ -1536,8 +1540,9 @@ struct TerminalHeader: View {
                                 Image(systemName: "mic.fill")
                                     .font(.system(size: 8, weight: .semibold))
                                     .foregroundStyle(Color(hex: "3FB950").opacity(0.7))
-                                SourceWaveform(
-                                    level: appState.microphoneLevel < 0.003 ? 0 : appState.microphoneLevel,
+                                ObservedSourceWaveform(
+                                    audioLevels: appState.audioLevels,
+                                    source: .microphone,
                                     color: Color(hex: "3FB950"),
                                     bandCount: 5,
                                     barWidth: 3,
@@ -1553,8 +1558,9 @@ struct TerminalHeader: View {
                                 Image(systemName: "speaker.wave.2.fill")
                                     .font(.system(size: 8, weight: .semibold))
                                     .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
-                                SourceWaveform(
-                                    level: appState.systemAudioLevel,
+                                ObservedSourceWaveform(
+                                    audioLevels: appState.audioLevels,
+                                    source: .system,
                                     color: Color(hex: "58A6FF"),
                                     bandCount: 5,
                                     barWidth: 3,
@@ -1723,6 +1729,39 @@ struct DeepgramModelPopover: View {
 
 // MARK: - Source Waveform (per-source mini waveform)
 
+private enum AudioWaveformSource {
+    case microphone
+    case system
+}
+
+private struct ObservedSourceWaveform: View {
+    @ObservedObject var audioLevels: AudioLevelsState
+    let source: AudioWaveformSource
+    let color: Color
+    let bandCount: Int
+    let barWidth: CGFloat
+    let maxHeight: CGFloat
+
+    private var resolvedLevel: Float {
+        switch source {
+        case .microphone:
+            return audioLevels.microphoneLevel < 0.003 ? 0 : audioLevels.microphoneLevel
+        case .system:
+            return audioLevels.systemAudioLevel
+        }
+    }
+
+    var body: some View {
+        SourceWaveform(
+            level: resolvedLevel,
+            color: color,
+            bandCount: bandCount,
+            barWidth: barWidth,
+            maxHeight: maxHeight
+        )
+    }
+}
+
 struct SourceWaveform: View {
     let level: Float
     let color: Color
@@ -1835,19 +1874,37 @@ struct AudioSourcePanel: View {
             .buttonStyle(.plain)
             .focusable(false)
             
-            // Waveforms — fixed height, fades in/out below pills
-            HStack(spacing: 16) {
-                if appState.captureMicrophone {
-                    SourceWaveform(level: appState.microphoneLevel < 0.003 ? 0 : appState.microphoneLevel, color: Color(hex: "3FB950"), bandCount: 8, barWidth: 3, maxHeight: 24)
-                        .frame(width: 36, height: 24)
-                }
-                if appState.captureSystemAudio {
-                    SourceWaveform(level: appState.systemAudioLevel, color: Color(hex: "58A6FF"), bandCount: 8, barWidth: 3, maxHeight: 24)
-                        .frame(width: 36, height: 24)
+            // Waveforms — only mount while active so internal timers do not run while hidden.
+            ZStack {
+                if isActive {
+                    HStack(spacing: 16) {
+                        if appState.captureMicrophone {
+                            ObservedSourceWaveform(
+                                audioLevels: appState.audioLevels,
+                                source: .microphone,
+                                color: Color(hex: "3FB950"),
+                                bandCount: 8,
+                                barWidth: 3,
+                                maxHeight: 24
+                            )
+                                .frame(width: 36, height: 24)
+                        }
+                        if appState.captureSystemAudio {
+                            ObservedSourceWaveform(
+                                audioLevels: appState.audioLevels,
+                                source: .system,
+                                color: Color(hex: "58A6FF"),
+                                bandCount: 8,
+                                barWidth: 3,
+                                maxHeight: 24
+                            )
+                                .frame(width: 36, height: 24)
+                        }
+                    }
+                    .transition(.opacity)
                 }
             }
             .frame(height: 28)
-            .opacity(isActive ? 1 : 0)
             .animation(.easeInOut(duration: 0.2), value: isActive)
         }
         .onChange(of: appState.captureMicrophone) { _, _ in

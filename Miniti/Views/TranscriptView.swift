@@ -3,22 +3,28 @@ import SwiftUI
 struct TranscriptView: View {
     @EnvironmentObject var appState: AppState
     @State private var isAutoScrollEnabled = true
-    
-    // Filter out empty segments
-    private var visibleSegments: [AppState.LiveSegment] {
-        appState.liveSegments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    }
-    
+    @State private var previousBottomDistance: CGFloat = 0
+    @State private var hasCapturedInitialBottomDistance = false
+    @State private var suppressAutoScrollLockUntil = Date.distantPast
+    @State private var cachedVisibleSegments: [AppState.LiveSegment] = []
+    @State private var cachedDisplaySegments: [AppState.LiveSegment] = []
+    @State private var cachedUniqueSpeakers: [Int] = []
+    @State private var interimText: String = ""
+    @State private var currentSpeaker: Int = 0
+    @State private var interimSpeaker: Int? = nil
+
     private var hasInterimText: Bool {
-        !appState.interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Merge streaming-finalized chunks so rows break on sentence boundaries
-    /// instead of arbitrary transport segmentation.
-    private var displaySegments: [AppState.LiveSegment] {
-        var merged: [AppState.LiveSegment] = []
+    private func rebuildSegmentCaches(
+        liveSegments: [AppState.LiveSegment],
+        detectedSpeakers: Set<Int>
+    ) {
+        let visible = liveSegments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
-        for segment in visibleSegments {
+        var merged: [AppState.LiveSegment] = []
+        for segment in visible {
             if var last = merged.last,
                last.speaker == segment.speaker,
                !endsSentence(last.text) {
@@ -30,21 +36,25 @@ struct TranscriptView: View {
             }
         }
 
-        return merged
-    }
-    
-    // Get unique speakers - combine from segments and detected speakers.
-    // "You" (micSpeakerID=1000) sorts first, then remote speakers by number.
-    private var uniqueSpeakers: [Int] {
-        var speakers = appState.detectedSpeakers
-        for segment in visibleSegments {
+        var speakers = detectedSpeakers
+        for segment in visible {
             speakers.insert(segment.speaker)
         }
-        return speakers.sorted { a, b in
+
+        cachedVisibleSegments = visible
+        cachedDisplaySegments = merged
+        cachedUniqueSpeakers = speakers.sorted { a, b in
             if a == DeepgramService.micSpeakerID { return true }
             if b == DeepgramService.micSpeakerID { return false }
             return a < b
         }
+    }
+
+    private func syncRuntimeSnapshot() {
+        let runtime = appState.transcriptRuntime
+        interimText = runtime.interimText
+        currentSpeaker = runtime.currentSpeaker
+        interimSpeaker = runtime.interimSpeaker
     }
     
     private func scrollToBottom(proxy: ScrollViewProxy) {
@@ -53,6 +63,30 @@ struct TranscriptView: View {
                 proxy.scrollTo("bottom", anchor: .bottom)
             }
         }
+    }
+
+    private func suppressAutoScrollLockBriefly() {
+        suppressAutoScrollLockUntil = Date().addingTimeInterval(0.25)
+    }
+
+    private func updateAutoScrollLock(bottomAnchorMaxY: CGFloat, viewportHeight: CGFloat) {
+        let distanceFromBottom = max(0, bottomAnchorMaxY - viewportHeight)
+
+        guard hasCapturedInitialBottomDistance else {
+            previousBottomDistance = distanceFromBottom
+            hasCapturedInitialBottomDistance = true
+            return
+        }
+
+        let movedAwayFromBottom = distanceFromBottom - previousBottomDistance
+        if isAutoScrollEnabled,
+           Date() >= suppressAutoScrollLockUntil,
+           movedAwayFromBottom > 0.5,
+           distanceFromBottom > 24 {
+            isAutoScrollEnabled = false
+        }
+
+        previousBottomDistance = distanceFromBottom
     }
     
     // Check if this segment starts a new speaker turn
@@ -87,98 +121,233 @@ struct TranscriptView: View {
     
     var body: some View {
         Group {
-            if visibleSegments.isEmpty && !hasInterimText && !appState.isRecording {
+            if cachedVisibleSegments.isEmpty && !hasInterimText && !appState.isRecording {
                 EmptyTranscriptView()
             } else {
                 VStack(spacing: 0) {
                     // Speaker legend (show when recording or has segments)
-                    if appState.isRecording || !visibleSegments.isEmpty {
-                        SpeakerLegend(speakers: uniqueSpeakers, isRecording: appState.isRecording)
+                    if appState.isRecording || !cachedVisibleSegments.isEmpty {
+                        SpeakerLegend(speakers: cachedUniqueSpeakers, isRecording: appState.isRecording)
                     }
                     
                     ScrollViewReader { proxy in
-                        ZStack(alignment: .bottomTrailing) {
-                            ScrollView {
-                                LazyVStack(alignment: .leading, spacing: 6) {
-                                    ForEach(Array(displaySegments.enumerated()), id: \.element.id) { index, segment in
-                                        TerminalSegmentRow(
-                                            segment: segment,
-                                            isNewTurn: isNewSpeakerTurn(at: index, in: displaySegments),
-                                            isFirst: index == 0
-                                        )
-                                        .id(segment.id)
-                                    }
-                                    
-                                    // Interim (live typing) text
-                                    if hasInterimText {
-                                        TerminalInterimRow(
-                                            text: appState.interimText,
-                                            speaker: appState.interimSpeaker ?? appState.currentSpeaker,
-                                            isNewTurn: displaySegments.last?.speaker != (appState.interimSpeaker ?? appState.currentSpeaker)
-                                        )
-                                        .id("interim")
-                                    }
-                                    
-                                    // Bottom anchor for scrolling
-                                    Color.clear
-                                        .frame(height: 20)
-                                        .id("bottom")
-                                }
-                                .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
-                            }
-                            .scrollIndicators(.hidden)
-                            .simultaneousGesture(
-                                DragGesture(minimumDistance: 4)
-                                    .onChanged { _ in
-                                        if isAutoScrollEnabled {
-                                            isAutoScrollEnabled = false
+                        GeometryReader { scrollGeometry in
+                            ZStack(alignment: .bottomTrailing) {
+                                ScrollView {
+                                    LazyVStack(alignment: .leading, spacing: 6) {
+                                        ForEach(Array(cachedDisplaySegments.enumerated()), id: \.element.id) { index, segment in
+                                            TerminalSegmentRow(
+                                                segment: segment,
+                                                isNewTurn: isNewSpeakerTurn(at: index, in: cachedDisplaySegments),
+                                                isFirst: index == 0
+                                            )
+                                            .id(segment.id)
                                         }
+                                        
+                                        // Interim (live typing) text
+                                        if hasInterimText {
+                                            let interimSpeakerValue = interimSpeaker ?? currentSpeaker
+                                            TerminalInterimRow(
+                                                text: interimText,
+                                                speaker: interimSpeakerValue,
+                                                isNewTurn: cachedDisplaySegments.last?.speaker != interimSpeakerValue
+                                            )
+                                            .id("interim")
+                                        }
+                                        
+                                        // Bottom anchor for scrolling
+                                        Color.clear
+                                            .frame(height: 20)
+                                            .id("bottom")
+                                            .background(
+                                                GeometryReader { geo in
+                                                    Color.clear.preference(
+                                                        key: TranscriptBottomAnchorMaxYPreferenceKey.self,
+                                                        value: geo.frame(in: .named("transcript-scroll")).maxY
+                                                    )
+                                                }
+                                            )
                                     }
-                            )
-                            .onChange(of: visibleSegments.count) { _, newCount in
-                                if newCount == 0 {
-                                    isAutoScrollEnabled = true
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
                                 }
-                                guard isAutoScrollEnabled else { return }
-                                scrollToBottom(proxy: proxy)
-                            }
-                            .onChange(of: appState.interimText) { _, _ in
-                                guard isAutoScrollEnabled else { return }
-                                scrollToBottom(proxy: proxy)
-                            }
-                            .onChange(of: appState.isRecording) { _, isRecording in
-                                if isRecording {
-                                    isAutoScrollEnabled = true
+                                .coordinateSpace(name: "transcript-scroll")
+                                .scrollIndicators(.hidden)
+                                #if os(macOS)
+                                .background(
+                                    TranscriptScrollWheelObserver(
+                                        onScrolledAwayFromBottom: {
+                                            if isAutoScrollEnabled,
+                                               Date() >= suppressAutoScrollLockUntil {
+                                                isAutoScrollEnabled = false
+                                            }
+                                        }
+                                    )
+                                )
+                                #endif
+                                .simultaneousGesture(
+                                    DragGesture(minimumDistance: 4)
+                                        .onChanged { _ in
+                                            if isAutoScrollEnabled {
+                                                isAutoScrollEnabled = false
+                                            }
+                                        }
+                                )
+                                .onPreferenceChange(TranscriptBottomAnchorMaxYPreferenceKey.self) { bottomAnchorMaxY in
+                                    updateAutoScrollLock(
+                                        bottomAnchorMaxY: bottomAnchorMaxY,
+                                        viewportHeight: scrollGeometry.size.height
+                                    )
+                                }
+                                .onChange(of: cachedVisibleSegments.count) { _, newCount in
+                                    if newCount == 0 {
+                                        isAutoScrollEnabled = true
+                                        previousBottomDistance = 0
+                                    }
+                                    guard isAutoScrollEnabled else { return }
+                                    suppressAutoScrollLockBriefly()
                                     scrollToBottom(proxy: proxy)
                                 }
-                            }
-                            
-                            if !isAutoScrollEnabled {
-                                Button {
-                                    isAutoScrollEnabled = true
+                                .onChange(of: interimText) { _, _ in
+                                    guard isAutoScrollEnabled else { return }
+                                    suppressAutoScrollLockBriefly()
                                     scrollToBottom(proxy: proxy)
-                                } label: {
-                                    Text("resume auto-scroll")
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "E6EDF3"))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(Color(hex: "1F6FEB").opacity(0.95))
-                                        .clipShape(Capsule())
                                 }
-                                .buttonStyle(.plain)
-                                .padding(.trailing, 16)
-                                .padding(.bottom, 12)
+                                .onChange(of: appState.isRecording) { _, isRecording in
+                                    if isRecording {
+                                        isAutoScrollEnabled = true
+                                        previousBottomDistance = 0
+                                        suppressAutoScrollLockBriefly()
+                                        scrollToBottom(proxy: proxy)
+                                    }
+                                }
+                                
+                                if !isAutoScrollEnabled {
+                                    Button {
+                                        isAutoScrollEnabled = true
+                                        previousBottomDistance = 0
+                                        suppressAutoScrollLockBriefly()
+                                        scrollToBottom(proxy: proxy)
+                                    } label: {
+                                        Text("resume auto-scroll")
+                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(Color(hex: "E6EDF3"))
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(Color(hex: "1F6FEB").opacity(0.95))
+                                            .clipShape(Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.trailing, 16)
+                                    .padding(.bottom, 12)
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        .onAppear {
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: appState.detectedSpeakers
+            )
+            syncRuntimeSnapshot()
+        }
+        .onChange(of: appState.liveSegments) { _, newSegments in
+            rebuildSegmentCaches(
+                liveSegments: newSegments,
+                detectedSpeakers: appState.detectedSpeakers
+            )
+        }
+        .onChange(of: appState.detectedSpeakers) { _, newSpeakers in
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: newSpeakers
+            )
+        }
+        .onReceive(appState.transcriptRuntime.$interimText) { value in
+            interimText = value
+        }
+        .onReceive(appState.transcriptRuntime.$currentSpeaker) { value in
+            currentSpeaker = value
+        }
+        .onReceive(appState.transcriptRuntime.$interimSpeaker) { value in
+            interimSpeaker = value
+        }
         .background(Color(hex: "09090B")) // GitHub dark background
     }
 }
+
+private struct TranscriptBottomAnchorMaxYPreferenceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+// MARK: - macOS Scroll Wheel Observer
+
+#if os(macOS)
+private struct TranscriptScrollWheelObserver: NSViewRepresentable {
+    var onScrolledAwayFromBottom: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ScrollWheelPassthroughView()
+        view.onScrolledAwayFromBottom = onScrolledAwayFromBottom
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? ScrollWheelPassthroughView)?.onScrolledAwayFromBottom = onScrolledAwayFromBottom
+    }
+
+    private class ScrollWheelPassthroughView: NSView {
+        var onScrolledAwayFromBottom: (() -> Void)?
+        private var boundsObserver: NSObjectProtocol?
+        private var didSetupObserver = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !didSetupObserver, window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.setupBoundsObserver()
+            }
+        }
+
+        private func setupBoundsObserver() {
+            guard let scrollView = enclosingScrollView else { return }
+            didSetupObserver = true
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            boundsObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self, weak scrollView] _ in
+                guard let self, let scrollView else { return }
+                let contentHeight = scrollView.documentView?.frame.height ?? 0
+                let viewportHeight = scrollView.contentView.bounds.height
+                let scrollY = scrollView.contentView.bounds.origin.y
+                let distanceFromBottom = contentHeight - viewportHeight - scrollY
+                if distanceFromBottom > 30 {
+                    self.onScrolledAwayFromBottom?()
+                }
+            }
+        }
+
+        override func removeFromSuperview() {
+            if let obs = boundsObserver {
+                NotificationCenter.default.removeObserver(obs)
+                boundsObserver = nil
+            }
+            super.removeFromSuperview()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+}
+#endif
 
 // MARK: - Speaker Legend
 

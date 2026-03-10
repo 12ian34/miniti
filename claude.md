@@ -29,7 +29,27 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-08 - v1.12.4 (current)
+### 2026-03-09 - v1.13.0 (unreleased)
+
+- new: Customizable training filler words (add/edit/remove/reset in Settings, applies to live and past meetings).
+- improvement: Live insights more reliable - failed updates catch up; backend has higher timeouts and retries; client sends recent context + deltas instead of full transcript; 30s refresh; Update button refreshes both modes; placeholders while loading.
+- improvement: Hot audio/interim published from dedicated runtime objects instead of `AppState`, reducing transcript/insights invalidation.
+- improvement: Auto-save uses queued incremental segment sync with off-main diff planning, reducing 30s save spikes.
+- note: Performance follow-ups in Roadmap (transcript windowing, throttling, cadence, profiling).
+- known caveat: Save queue async; background/discard hardening is follow-up.
+- improvement: Speaker diarization less eager at turn boundaries (stricter thresholds).
+- improvement: macOS home test-waveform mounts only while audio test active.
+- improvement: Home tagline animation lower refresh cadence when idle (macOS + iOS).
+- fix: Pro status shows `checking plan...` while loading instead of briefly `upgrade to pro` for existing Pro users (macOS + iOS).
+- fix: Transcript and debug log auto-scroll lock now respond to trackpad/wheel scroll (not just drag), scoped to the transcript pane only.
+- fix: Stale final-insights no longer overwrite live insights after pause/resume.
+- fix: Autosave no longer re-inserts already-tracked meetings.
+- fix: Training filler edit alerts clear draft on cancel (macOS + iOS).
+- fix: Keyboard typing no longer causes false "You" speaker tags during system-audio-only playback (mic energy floor + raised dominance threshold).
+- improvement: Insights pane can be dragged wider (max 600px in live and history views).
+- improvement: Settings Models tab now shows the insight model (GPT-5 Mini) as read-only info on macOS and iOS.
+
+### 2026-03-08 - v1.12.4 (released)
 
 - Fix a bug where live insights context from the previous meeting could leak into a new meeting
 - Improve training metric calculations for pace, filler rates, and question detection, especially in short sessions
@@ -294,7 +314,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 ## Architecture
 
 - **Miniti/MinitiApp.swift** – App entry point, onboarding gate, menu bar, global keyboard shortcuts, and custom URL callback handling (Attio OAuth return)
-- **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, transport/audio recovery state, managed session-end durability queue, Live Activity lifecycle (`#if os(iOS)` guarded)
+- **Miniti/Models/AppState.swift** – Central `@MainActor` state: recording, transcript, insights, audio monitoring, app mode, usage tracking, transport/audio recovery state, managed session-end durability queue, save queue, Live Activity lifecycle (`#if os(iOS)` guarded). High-frequency recording signals are split into `AudioLevelsState` and `TranscriptRuntimeState` to avoid broad `AppState` invalidation.
 - **Miniti/Models/Meeting.swift** – SwiftData model for persisted meetings. Includes `managedSessionId: String?` to persist the backend session ID across app kills for orphaned-session usage reporting.
 - **Miniti/Services/AudioCaptureService.swift** – Mic (AVAudioEngine) + system audio (Core Audio Process Tap) capture, publishes separate levels, auto-recovers system tap on silent-stall and callback-stall, and retries failed tap restarts with bounded backoff
 - **Miniti/Services/DeepgramService.swift** – WebSocket streaming transcription (Nova-2/Nova-3), source-based speaker override via `sourceLookup` callback (macOS only; iOS uses Deepgram's native diarization), confidence-aware speaker-change gating/new-speaker promotion, and connection-health signals for reconnect orchestration
@@ -351,12 +371,14 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 ## Key patterns
 
 - **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, route/device-change events, 10-second audio heartbeats, silent-buffer warnings, Deepgram WebSocket/audio/transcript heartbeats, managed-mode API request/response failures (including HTTP status + endpoint/body snippet), and app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style viewer with category filters, pretty/raw view modes, copy, and clear. Raw mode enables partial text selection. Log lines are also mirrored to Xcode/system console via `print` in `DebugLogger.log`.
-- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, expandable release notes ("view notes" / "hide notes"), and a download link (macOS: Proton Drive, iOS: TestFlight). The endpoint is lightweight (no device ID, no Redis) — just hardcoded JSON that gets updated each release.
+- **Expected CoreAudio noise during Bluetooth route handoff (macOS)**: When the default input/output device changes mid-capture (for example AirPods connect while taking/ending a phone call), CoreAudio/HAL may emit transient teardown/rebuild errors such as `!dev`, `!obj`, `who?`, `no object with given ID`, and `throwing -10877`. Treat this as expected if logs show successful restart (`Engine config changed`, `Mic restart complete`, `system audio process tap created`) and capture continues. Treat as a bug only when capture fails to recover.
+- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, expandable release notes ("view notes" / "hide notes"), and a download link (macOS: backend-supplied URL from `/api/version`, iOS: TestFlight). The endpoint is lightweight (no device ID, no Redis reads) and is updated each release.
 - **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
 - **StoreKit state in AppState (iOS)**: `AppStoreSubscriptionService` lives in `AppState.swift` under `#if os(iOS)`. It loads `com.miniti.mobile.pro.monthly`, handles purchase, restore (`AppStore.sync()`), listens to `Transaction.updates`, and publishes `hasActiveSubscription`.
 - **Managed Pro fast-path on iOS**: `AppState.isPro` and `isLimitReached` consider local StoreKit entitlement (`hasActiveAppStoreSubscription`) in addition to backend usage response. Display helpers (`displayMinutesLimit`, `displayMinutesRemaining`, `displayUsagePercentage`) keep iOS UI consistent at 5,000 min/month when StoreKit entitlement is active.
 - **Attio CRM send (macOS history only)**: user-initiated from saved meeting detail (`send to attio`). OAuth is backend-mediated (Attio redirects to `miniti-api`, backend stores token in KV keyed by device ID, backend redirects back to app custom URL scheme `miniti-attio://`). macOS registers `miniti-attio` in `Info.plist`; `MinitiApp.onOpenURL` forwards the callback to the sheet via `NotificationCenter`. Frontend calls additive backend routes (`/api/attio/connect/start`, `/status`, `/search`, `/send`) and fails gracefully if backend is not deployed yet (shows a clear message instead of breaking older deployments). App payload omits full transcript by default; backend also ignores transcript if older clients still send it.
-- **Decoupled live insights**: `updateLiveInsights()` runs standard insights inline (applies immediately, clears `isGeneratingInsights`), then fires MEDDPICC as a separate background task via `updateMeddpiccInBackground()` gated by `isGeneratingMeddpiccInsights`. The two never block each other. Standard triggers on segment thresholds (3 first, 5 subsequent); MEDDPICC piggybacks on the same trigger but applies its own higher segment threshold + 30-second minimum interval. `fetchLiveInsights(mode:...)` is the shared per-mode helper. `switchInsightsMode()` only updates the mode and recomputes training metrics — no re-analysis or API calls on tab switch. Managed-mode MEDDPICC requests retry once on transient timeout/network failures (e.g. 504 / gateway timeout).
+- **Decoupled live insights**: `updateLiveInsights()` runs standard insights inline (applies immediately, clears `isGeneratingInsights`), then fires MEDDPICC as a separate background task via `updateMeddpiccInBackground()` gated by `isGeneratingMeddpiccInsights`. The two never block each other. `fetchLiveInsights(mode:...)` is the shared per-mode helper. `switchInsightsMode()` only updates the mode and recomputes training metrics — no re-analysis or API calls on tab switch. Managed-mode MEDDPICC requests retry once on transient timeout/network failures (e.g. 504 / gateway timeout).
+- **Client insights reliability (v1.13.0)**: Managed live insights use a no-loss protocol. Backend returns `meta.degraded` when a response is fallback/timeout; client decodes `ManagedInsightsMeta` and only advances ack cursor when `!degraded`. Per-mode `request_seq` counters reject stale/out-of-order responses. Scheduling: warmup fires first request at 4 segments (standard) or 6 (MEDDPICC); steady-state uses fixed 30s cadence per mode via `insightsCadenceTask`, with MEDDPICC staggered 15s after standard. Silence gate: skip tick if no new segments since last request. Incremental cutover: success-count based (2 non-degraded responses) instead of transcript length; delta > 35k chars triggers full request for recovery. Recent transcript window: 10k chars. Update button fires both modes immediately and resets cadence anchors. Warmup placeholders: "no insights yet..." and "no meddpicc yet..." until first success. State: `standardSuccessCount`, `meddpiccSuccessCount`, `standardCadenceAnchor`, `meddpiccCadenceAnchor`, `standardLastFiredSegmentCount`, `meddpiccLastFiredSegmentCount`.
 - **Live transcript display merge**: streaming-finalized chunks from the same speaker are merged in the UI until a sentence terminator is reached. This keeps the live transcript readable without changing stored transcript data.
 - **Markdown transcript speaker labels**: Transcript markdown export uses each segment's computed `speakerLabel` (for example `You`) instead of always rendering generic numbered labels.
 
@@ -396,11 +418,12 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`
 - BYOK keys persist in `@AppStorage` regardless of active mode — switching never clears user-entered keys (only Secrets defaults are stripped in managed mode)
-- **Segment persistence**: `saveCurrentMeetingIfNeeded()` syncs `liveSegments` → `meeting.segments` by comparing counts; if they differ, old persisted segments are deleted and rebuilt from current live data. This handles resumed sessions correctly (stop → cont → stop saves all segments, not just the first batch).
+- **Segment persistence**: `saveCurrentMeetingIfNeeded()` snapshots current live state, enqueues a save payload, computes a segment diff plan off-main, then applies an incremental sync (`delete missing IDs`, `upsert changed/new IDs`) to `meeting.segments`. Segment IDs now persist from `LiveSegment.id`, so resumed sessions update incrementally instead of full rebuilds.
+- **Save queue caveat**: The new save queue is async by design (to avoid UI stalls). This improves responsiveness, but durability on abrupt background/termination is now timing-dependent and discard races still need stricter cancellation checkpoints. Follow-ups are tracked in Roadmap.
 - **Sidebar focusability**: All sidebar buttons use `.focusable(false)` since navigation is keyboard-shortcut-driven (⌘N, J/K, etc.) — no tab focus rings needed.
 - **macOS focus rings / tab focus**: Prefer `.focusable(false)` for button-only controls and utility panels (including Attio send sheet controls) unless keyboard tab navigation is explicitly required. This app is shortcut-driven; avoid default tab-focus highlight rings by default.
 - **Recording timer**: Uses date-based computation (`recordingStartDate`) instead of incrementing a counter. `Timer.scheduledTimer` fires every 1s and computes `Date().timeIntervalSince(recordingStartDate)`. This ensures accurate duration even when the app is backgrounded on iOS (timer may not fire reliably, but duration is correct when it does). Paused time is excluded by re-anchoring `recordingStartDate` from the accumulated active duration on resume; `recordingStartDate` is cleared on stop and `goHome()`.
-- **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. This syncs `liveSegments`, insights, notes, and MEDDPICC to SwiftData continuously. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
+- **Periodic auto-save**: A 30-second `periodicSaveTimer` runs during recording, calling `saveCurrentMeetingIfNeeded()`. Saves are serialized through an internal queue (`activeMeetingSaveTask` + latest queued payload) so repeated triggers coalesce safely. `saveCurrentMeetingIfNeeded()` does NOT set `endTime` — only `stopRecording()` and `goHome()` set it. Meetings with `endTime == nil` are identified as interrupted/resumable on next launch.
 - **Resume interrupted meetings**: On launch (when `modelContext` is set), `resumeInterruptedMeeting()` queries SwiftData for meetings with `endTime == nil`. If found, it restores the full session: `currentMeeting`, `liveSegments` (reconstructed from `TranscriptSegment`s), all insights, notes, MEDDPICC fields, `detectedSpeakers`, `recordingDuration` (from last segment timestamp), and title tracking. Title parsing accepts both the current ` - ` separator and legacy em-dash titles for backward compatibility. The UI automatically shows the stopped-session view (because `currentMeeting != nil`), where the user can resume recording or go home (which finalizes `endTime` and saves). Works on both iOS and macOS. In managed mode, if the interrupted meeting has a `managedSessionId`, the orphaned session's usage is reported to the backend (duration computed from saved segments) and the session ID is cleared to prevent double-reporting.
 - **Live Activity (iOS only)**: `Activity.request()` called in `startRecording()`, `activity.update()` on stop (paused state), title changes, and transcript updates, `activity.end(.immediate)` on `goHome()`. Transcript updates are throttled to max 1 per 3 seconds (`liveActivityUpdateInterval`) to stay within ActivityKit's update budget. The widget uses `Text(timerInterval: startTime...Date.distantFuture, countsDown: false)` for an auto-updating timer when recording; when stopped, `elapsedSeconds` is set and the timer switches to a static `Text(formatDuration(_:))` so it freezes. All visual elements (dot, status, title, timer) switch to `pausedGray` when stopped, and transcript is replaced with "tap to return to miniti". `currentTranscriptLine` returns interim text if available, otherwise the last finalized segment. All ActivityKit code guarded with `#if os(iOS)` in `AppState.swift`. Note: compact Dynamic Island width is system-controlled and cannot be reduced by apps.
 - **iOS background recording & kill recovery**: iOS can terminate backgrounded apps at any time (memory pressure, battery, etc.); there is no way to prevent this. Mitigations: (1) `UIBackgroundModes: [audio]` keeps the app running longer while recording. (2) Periodic auto-save (every 30s) continuously persists transcript to SwiftData. (3) `saveCurrentMeetingIfNeeded()` is also called when the app enters background (`scenePhase == .background`). (4) On launch, `cleanupOrphanedLiveActivities()` ends stale Live Activities, then `resumeInterruptedMeeting()` restores the session from SwiftData so the user lands directly in the stopped-session view with their transcript.
@@ -409,6 +432,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Discard meeting**: `discardCurrentMeeting()` deletes the current meeting from SwiftData, ends Live Activity (iOS), and clears the session without saving. Used from the "discard" button (with confirmation alert) when a recording is stopped.
 - **Generate insights for history**: `generateInsightsForMeeting(_ meeting: Meeting)` generates standard + MEDDPICC insights for a saved meeting and writes directly to the `Meeting` model. Used from history detail generate/update controls.
 - **Insight apply safety**: `applyInsights(_:segmentCount:mode:)` uses an explicit `mode` parameter to route fields — standard updates only touch `liveSummary`/`liveActionItems`/`liveTopics`/`liveDiscussionFlow`; MEDDPICC updates only touch the eight MEDDPICC fields. Each field is only overwritten if the new value is non-empty (empty arrays and nil/blank strings are skipped), so partial or fallback backend responses don't wipe previously populated data. `stopRecording()` always calls `generateFinalInsightsAndSave()` (which generates both standard + MEDDPICC) regardless of whether insights already exist.
+- **Pause/resume stale-final guard**: `generateFinalInsightsAndSave()` now snapshots meeting ID + final segment count and only applies final-standard/final-MEDDPICC responses if the meeting is still stopped and unchanged. If recording resumed (or segments advanced) while a final request was in flight, the stale response is ignored so older/shorter snapshots cannot overwrite live insights.
 - **Training mode**: Third `InsightsMode` (`.training`) that shows locally-computed speech analytics — no LLM calls needed for the Training UI. `TrainingMetrics.compute(from:duration:)` runs a pass over transcript segments to extract filler word counts (hard fillers like "um"/"uh" + soft fillers like "like"/"basically"), talk ratio, speaking pace (wpm), longest monologue, questions asked, and clarity (avg words/turn). Metrics are recomputed on every new segment batch when training mode is active, and on mode switch. During recording in training mode, automatic live insight refresh still computes standard insights in the background so they are ready when switching back. Manual generate/update actions are hidden (or no-op guarded) in Training mode to avoid hidden AI calls. For saved meetings, training metrics are computed on the fly from `meeting.segments` in the history views (no extra model fields needed).
 - **Training metric help UI (cross-platform)**: All major training metrics (fillers, talk ratio, pace, longest monologue, questions, clarity) expose the same plain-English guidance/ranges in live + historical views. macOS uses native popovers; iOS uses a custom centered floating popup card with dim backdrop and tap-outside-to-dismiss to avoid `.popover`/sheet full-screen presentation quirks.
 - **Training clarity helper copy**: The inline clarity helper is intentionally standardized across macOS/iOS live + historical views as `lower = clearer = better` for fast scanning.
@@ -600,7 +624,7 @@ Three parallel modes:
 - **Managed Free**: 500 min/month, Deepgram via temp API keys (backend issues short-lived scoped keys), OpenAI proxied through backend, hard-blocked at limit
 - **Managed Pro**: 5,000 min/month for $5/month (or £5/month GBP). Subscription rail is platform-specific: Polar.sh on macOS and StoreKit on iOS. Same backend routing as free, just higher limit.
 - Mode toggle is a local routing switch only; user-entered BYOK keys persist in `@AppStorage` across mode switches (Secrets defaults are stripped in managed mode). Pro is a tier within managed mode, not a separate AppMode.
-- Usage tracking is server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter. Free users reset on the 1st of each month UTC. Polar-backed Pro resets align to Polar billing cycle (`current_period_end`). iOS StoreKit currently has a local entitlement fast-path in-app for immediate Pro UX while full Apple server verification/webhook sync is being aligned in backend.
+- Usage tracking is server-side (Vercel KV, keyed by Keychain-stored device UUID); switching modes never resets the counter. Free users reset on the 1st of each month UTC. Polar-backed Pro resets align to Polar billing cycle (`current_period_end`). Apple-backed Pro resets align to Apple subscription periods via `/api/apple/verify` + `/api/webhooks/apple`. iOS also keeps a local StoreKit entitlement fast-path in-app for immediate Pro UX.
 - Device ID stored in macOS Keychain (`DeviceIdentifier.swift`) — persists across reinstalls, tamper-resistant
 - Backend API keys (Deepgram/OpenAI) stored as Vercel encrypted env vars, never exposed to client
 - At limit: free users can upgrade to Pro, switch to BYOK, or wait for monthly reset
@@ -618,88 +642,34 @@ Three parallel modes:
 - **Env vars**: `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`
 - **Redis per-device additions**: `polarCustomerId`, `polarSubscriptionId`, `subscriptionStatus` (active/canceled/null), `currentPeriodStart` (ISO 8601, from Polar webhook). `polar_sub:{subId}:devices` SET tracks all devices linked to a subscription for bulk downgrade on cancel.
 
-#### Apple backend implementation plan (required next, in `miniti-api`)
+#### Apple backend implementation (current, in `miniti-api`)
 
-Status right now: iOS purchase UI exists in-app, but backend entitlement is still Polar-centric. Without Apple backend verification, paid iOS users can still hit backend free-tier limits.
+Apple server-side entitlement is now implemented and live for managed mode:
 
-Implementation target:
-- Keep separate rails: macOS Pro = Polar, iOS Pro = Apple.
-- Do not implement Apple→macOS restore/linking.
-- Optional and recommended: share iOS Pro entitlement across iOS devices using Apple `originalTransactionId`.
-
-Data model changes (`lib/usage.ts` `DeviceData` + Redis):
-- Add `subscriptionSource: "polar" | "apple" | null`.
-- Add `appleOriginalTransactionId: string | null`.
-- Add `appleSubscriptionStatus: "active" | "grace" | "billing_retry" | "expired" | "revoked" | null`.
-- Add `applePeriodStart: string | null` and `applePeriodEnd: string | null`.
-- Add `appleEnvironment: "Sandbox" | "Production" | null`.
-- Add set `apple_sub:{originalTransactionId}:devices`.
-- Add hash `apple_sub_state:{originalTransactionId}` for canonical Apple subscription state.
-- Add idempotency key `apple_event:{notificationUUID}` for webhook dedupe.
-
-New Apple verification utilities (`lib/apple.ts`):
-- Verify signed transaction JWS (StoreKit 2 purchase/restore payload).
-- Verify App Store Server Notifications v2 signed payload.
-- Validate `bundleId` and `productId` (`com.miniti.mobile.pro.monthly`).
-- Extract `originalTransactionId`, period start/end, status, environment.
-- Provide helpers for linking/unlinking Apple subscriptions to device records.
-
-New endpoint: `POST /api/apple/verify`:
-- Auth: existing `X-API-Key` + `X-Device-ID`.
-- Input: signed transaction payload from iOS.
-- Verify JWS, enforce allowed product ID, enforce bundle ID.
-- Link device to Apple subscription, set tier to Pro for iOS rail, align `resetDate` to Apple period end, reset minutes on new period start.
-- Return usage payload shape compatible with app (`tier`, `minutes_limit`, `subscription_status`, `resets_at`).
-
-New endpoint: `POST /api/webhooks/apple`:
-- Verify App Store Server Notification v2 signature.
-- Enforce idempotency via `notificationUUID`.
-- Handle at least: subscribed/renewed, grace/retry, expired/revoked/refund.
-- Update all linked iOS devices for the `originalTransactionId`.
-- Recompute effective tier/source after each event.
-
-Usage gating/reset updates:
-- `POST /api/session` and `GET /api/usage` must use effective entitlement state, not just Polar fields.
-- Free resets stay monthly UTC.
-- Polar Pro resets stay billing-cycle aligned (existing behavior).
-- Apple Pro resets must align to Apple subscription period boundaries.
-
-Rate limiting:
-- Add dedicated buckets for `apple_verify` and `webhooks/apple`.
-
-Env vars to add:
-- `APPLE_BUNDLE_ID` (`com.miniti.mobile`)
-- `APPLE_IAP_PRODUCT_ID` (`com.miniti.mobile.pro.monthly`)
-- For App Store Server API access if needed: `APPLE_ISSUER_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY`
-
-Admin/reporting expectations:
-- App Store does not provide subscriber emails for IAP users.
-- Keep Polar email enrichment for Polar customers only.
-- For Apple subscribers, rely on internal device IDs + Apple transaction identifiers + App Store Connect aggregate reports.
-
-Test matrix before release:
-- New iOS purchase upgrades backend entitlement immediately.
-- Renewal advances reset date and resets minutes on new period.
-- Grace/retry states behave as intended.
-- Expiry/revoke/refund downgrades entitlement.
-- Restore purchases works on same/new iOS device.
-- Polar flows still work unchanged.
-- Apple iOS purchase does not unlock macOS Polar Pro.
+- **Separate rails remain intentional**: macOS Pro is Polar; iOS Pro is Apple IAP. Apple purchase does not unlock macOS Polar Pro.
+- **Data model is merged entitlement-aware**: `subscriptionSource`, Apple transaction/status/period fields, `apple_sub:{originalTransactionId}:devices` linkage set, canonical `apple_sub_state:{originalTransactionId}` hash, and `apple_event:{notificationUUID}` webhook idempotency keys.
+- **`POST /api/apple/verify` is active**: authenticated with `X-API-Key` + `X-Device-ID`, accepts StoreKit signed transaction JWS, verifies signature/cert chain, enforces configured bundle/product IDs, links device to Apple entitlement, then returns updated usage/tier payload.
+- **`POST /api/webhooks/apple` is active**: verifies App Store Server Notifications v2 JWS, dedupes by `notificationUUID`, and propagates entitlement updates across all linked iOS devices for that `originalTransactionId`.
+- **Status handling is explicit**: active/grace/billing-retry keep Pro entitlement; expired/revoked downgrade; renewal-preference changes are tracked separately.
+- **Usage gating now uses effective entitlement state** for `GET /api/usage` and `POST /api/session`, so Apple-managed Pro limits and reset windows are applied server-side.
+- **Rate limits are in place**: `apple_verify` and `webhook_apple` buckets are enforced.
+- **Required Apple env vars**: `APPLE_BUNDLE_ID`, `APPLE_IAP_PRODUCT_ID`; optional pinning with `APPLE_ROOT_CA_PEM`.
+- **Admin/reporting**: Apple subscriber emails are not available; admin surfaces Apple transaction/state diagnostics without customer email enrichment.
 
 #### Backend API (`miniti-api`)
 - Repo: `12ian34/miniti-api` (private), deployed at `https://miniti-api.vercel.app`
-- Stack: Next.js 14 (App Router, edge runtime), TypeScript, Vercel, Upstash Redis via `@vercel/kv`
-- All routes require `X-API-Key` (shared app key) + `X-Device-ID` (UUID) headers; optional `X-App-Version` header (e.g. "1.5.0") and `X-Platform` header (`"macos"` / `"ios"`) tracked per device in Redis
+- Stack: Next.js 14 (App Router), TypeScript, Vercel, Upstash Redis via `@vercel/kv` (Node.js runtime on endpoints that need Node crypto/TLS cert APIs)
+- Most app routes require `X-API-Key` + `X-Device-ID` (UUID). Exceptions: `GET /api/version` does not require `X-Device-ID`; Apple webhook does not use app auth headers.
 - Device disable/enable via admin dashboard — disabled devices get 403 `device_disabled` on all endpoints; app shows "account disabled" message and blocks recording
 - API key is XOR-obfuscated in `MinitiAPIService.swift` (not plain text in source/binary)
 - **Security note**: the client `X-API-Key` is not a true secret (anything shipped in the app can be extracted). XOR obfuscation only reduces casual string scanning. Treat this as a client identifier / coarse gate, not strong authentication.
 - **Safer direction**: keep quota enforcement and abuse protection server-side (`X-Device-ID`, rate limits, caps, anomaly detection), issue short-lived server tokens for sensitive flows (session creation / insights), and optionally add platform attestation later (e.g. App Attest / DeviceCheck on iOS) to raise abuse cost.
-- Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars, `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`
+- Env vars (Vercel, encrypted): `OPENAI_API_KEY`, `DEEPGRAM_API_KEY`, `DEEPGRAM_PROJECT_ID`, `API_SECRET_KEY`, KV connection vars, `POLAR_ACCESS_TOKEN`, `POLAR_WEBHOOK_SECRET`, `POLAR_PRODUCT_ID`, `POLAR_ORGANIZATION_ID`, `APPLE_BUNDLE_ID`, `APPLE_IAP_PRODUCT_ID`, optional `APPLE_ROOT_CA_PEM`, optional `DOWNLOAD_LATEST_SECRET`
 - Optional Attio env vars for CRM export (backend repo): `ATTIO_CLIENT_ID`, `ATTIO_CLIENT_SECRET`, `ATTIO_OAUTH_REDIRECT_URI`, `ATTIO_OAUTH_SCOPES`
 - Deepgram key needs **Member** role (can create temp keys), **never expire**
 
 **Endpoints:**
-- `GET /api/version` — returns `{ latest_version, download_url, release_notes }`. No device ID required, just `X-API-Key`. Hardcoded JSON — update when publishing a new release.
+- `GET /api/version` — returns `{ latest_version, download_url, release_notes }`. No device ID required, just `X-API-Key`. Version/notes are release constants; macOS `download_url` is generated as a short-lived signed `download-latest-dmg` link when `DOWNLOAD_LATEST_SECRET` is configured, otherwise falls back to the configured desktop URL.
 - `GET /api/usage` — check device minutes used/remaining; returns `tier`, `subscription_status`, tier-aware `minutes_limit` (30 req/min)
 - `POST /api/session` — start session, returns temp Deepgram key (4hr TTL, `usage:write` scope); returns 402 if limit reached; limit is tier-aware (5 req/min)
 - `POST /api/session/end` — report duration, increment usage counter; server caps at wall-clock elapsed (10 req/min)
@@ -708,6 +678,8 @@ Test matrix before release:
 - `POST /api/webhooks/polar` — Polar webhook receiver; HMAC signature verification (no X-API-Key); handles subscription lifecycle
 - `POST /api/restore` — activate Polar license key on device; verifies active subscription; links device to subscription (5 req/min, macOS/web restore path)
 - `GET /api/portal` — create Polar customer portal session; returns `{ portal_url }`; requires device to have `polarCustomerId` (5 req/min)
+- `POST /api/apple/verify` — verify StoreKit signed transaction JWS, link Apple entitlement to device, return updated managed usage/tier payload (10 req/min)
+- `POST /api/webhooks/apple` — App Store Server Notifications v2 receiver with signature verification + idempotency for Apple entitlement lifecycle updates (IP rate-limited)
 - `POST /api/attio/connect/start`, `GET /api/attio/status`, `POST /api/attio/search`, `POST /api/attio/send` — additive Attio CRM export routes (backend stores OAuth token; older app versions unaffected)
 
 **Session flow:** launch → `GET /api/version` (update check) + `GET /usage` (managed only) → `POST /session` (get temp key) → connect directly to Deepgram WebSocket with temp key → periodic `POST /insights` → stop → `POST /session/end` → final `POST /insights`
@@ -749,6 +721,15 @@ Optional third `AppMode.local` — fully offline, no API keys or backend. Runs t
 ## Roadmap
 
 - [ ] **Local mode MVP** — whisper.cpp transcription + Ollama LLM insights, mic/system diarization only, new `AppMode.local`
+- [ ] **Move Deepgram parse + speaker segmentation off the main queue** — current WebSocket delegate/parse path is main-queue-bound; shift JSON decode + segmentation to a background queue and publish only final UI state back on main.
+- [ ] **Reduce audio callback allocation churn + meter publish frequency** — reuse temporary buffers in hot DSP paths and lower UI level-update cadence where possible to reduce callback CPU overhead.
+- [ ] **Retune live-insights cadence for power efficiency** — increase segment/time thresholds for periodic live insight requests to cut long-session network/JSON processing cost.
+- [ ] **Live transcript windowing while recording** — render only the most recent N transcript rows during active sessions (with optional “load older”) to cap layout/diff cost as sessions grow.
+- [ ] **Throttle interim transcript + auto-scroll cadence** — reduce scroll churn by batching interim updates/scroll-to-bottom events instead of reacting to every fragment.
+- [ ] **Adaptive waveform cadence** — lower waveform refresh rate (especially when idle/quiet) to cut sustained UI timer overhead.
+- [ ] **Eliminate repeated hot-path full-array scans** — replace repeated `filter/count/last(where:)` passes in recording loops with incremental counters/cursors.
+- [ ] **Profile instrumentation pass** — add signposts around transcript-cache rebuilds and save-plan/apply phases, then validate with Instruments on 60+ minute sessions.
+- [ ] **Harden async save durability + discard semantics** — add explicit flush checkpoints for background/stop paths and cancellation guards so in-flight saves cannot resurrect discarded meetings.
 - [ ] **Suggested follow-up questions** — new insight type: after generating summary/action items, LLM proposes 3-5 contextual follow-up questions the user could ask in the meeting (e.g. "You mentioned timeline — have you confirmed the go-live date with engineering?"). Useful for sales calls, interviews, and discovery meetings.
 - [ ] **Proper multi-speaker mic diarization** — when multiple people are speaking on the same physical mic (in-room meetings), distinguish between them. Current energy-based approach can't do this. Requires speaker embedding model (ECAPA-TDNN via CoreML or sherpa-onnx) to extract voice fingerprints per audio segment, then cluster into speaker identities. Would benefit both local and cloud modes. sherpa-onnx is the leading candidate (C API, no Python, proven diarization pipeline).
 - [ ] **Docs MCP for technical sales** — integrate an MCP (Model Context Protocol) server that indexes product documentation, API specs, and knowledge base articles. During a live sales call, the LLM can query this context to suggest accurate technical answers in real-time — effectively an AI sales engineer copilot. The user would configure a docs source (folder, URL, or Notion/Confluence), which gets indexed and made available as MCP resources. Insights prompts would be augmented with relevant doc snippets retrieved via semantic search. This turns Miniti from a passive recorder into an active meeting assistant for technical sales teams.
@@ -789,7 +770,7 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 7. One-command path if the above is already trusted:
    - `fastlane mac release`
    - runs build, notarize, and DMG packaging in sequence
-8. replace proton drive dmg
+8. Publish/replace the desktop DMG artifact used by `miniti.app` download flow (currently Netlify Blobs key `downloads/miniti.dmg` served via `/.netlify/functions/download-latest-dmg`).
 9. Xcode fallback if Fastlane is blocked for any reason: **Product → Archive → Distribute App → Developer ID → Upload** (notarizes), then export the notarized `miniti.app` and run `./scripts/build-dmg.sh miniti.app`
 
 #### iOS
@@ -808,11 +789,11 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
    - `fastlane ios build`
    - this builds `MinitiMobile` with scheme `MinitiMobile`, configuration `Release`, automatic signing via `-allowProvisioningUpdates`, derived data in `DerivedDataLocal/`, and outputs `build/ios/MinitiMobile.ipa`
 5. For a TestFlight build:
-   - `fastlane ios beta version:1.12.4 changelog:"release notes here"`
+   - `fastlane ios beta version:1.13.0 changelog:"release notes here"`
    - auto-increments build number unless `build:` is provided explicitly
    - uploads to TestFlight, but does not add testers/groups or submit external review automatically
 6. For an App Store upload:
-   - `fastlane ios release version:1.12.4`
+   - `fastlane ios release version:1.13.0`
    - auto-increments build number unless `build:` is provided explicitly
    - the lane excludes precheck IAP validation (`precheck_include_in_app_purchases: false`) because App Store Connect API key auth cannot run IAP precheck
    - uploads the binary to App Store Connect, uploads metadata from `fastlane/metadata`, uploads/replaces screenshots from `fastlane/screenshots`, and includes app review notes from `fastlane/metadata/app_review_notes.txt` when present
@@ -829,13 +810,15 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
    - metadata: `fastlane/metadata/`
 15. "What's New in This Version" is sourced from locale-specific metadata files, e.g. `fastlane/metadata/en-US/release_notes.txt`.
 16. Before every release, update `fastlane/metadata/en-US/release_notes.txt` from the latest `claude.md` changelog entry before running `fastlane ios release`.
-17. Repo-managed listing metadata currently includes `fastlane/metadata/en-US/name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `fastlane/metadata/copyright.txt`.
-18. App Review notes for Fastlane uploads live in `fastlane/metadata/app_review_notes.txt` and are attached by `fastlane ios release` when present.
-19. Keep `fastlane/metadata/copyright.txt` updated with the current year before running `fastlane ios release` (ASC rejects missing/outdated copyright year values).
-20. If App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder as well (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`) so listing text updates consistently in that locale.
+17. Keep versioned Fastlane docs/examples aligned with the release version: update `fastlane/RUNBOOK.md` example commands (`fastlane ios beta version:X.Y.Z`, `fastlane ios release version:X.Y.Z`) when the app version changes.
+18. If the listing description includes a literal version footer (for example `v1.13.0`), bump it in `fastlane/metadata/en-US/description.txt` and mirrored locale descriptions (currently `fastlane/metadata/en-GB/description.txt`).
+19. Repo-managed listing metadata currently includes `fastlane/metadata/en-US/name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `fastlane/metadata/copyright.txt`.
+20. App Review notes for Fastlane uploads live in `fastlane/metadata/app_review_notes.txt` and are attached by `fastlane ios release` when present.
+21. Keep `fastlane/metadata/copyright.txt` updated with the current year before running `fastlane ios release` (ASC rejects missing/outdated copyright year values).
+22. If App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder as well (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`) so listing text updates consistently in that locale.
 
 #### After both platforms
-1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version`, `download_url` (new Proton Drive link if changed), and `release_notes`. Without this, users on older versions won't see the update notification.
+1. **Update backend version endpoint**: in `miniti-api`, edit `app/api/version/route.ts` — set `latest_version` + `release_notes` (and iOS App Store URL if changed). macOS `download_url` is signed at request time when `DOWNLOAD_LATEST_SECRET` is set, so no per-release DMG URL paste is needed there.
 
 ### `scripts/build-dmg.sh`
 - Tracked in git (not gitignored) — safe because `scripts/` is not referenced in `project.pbxproj`, so Xcode Cloud ignores it entirely

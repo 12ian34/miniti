@@ -282,6 +282,71 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
 
+    struct IncrementalInsightsRollingState: Sendable {
+        let summary: String?
+        let discussionFlow: [String]
+        let actionItems: [String]
+        let topics: [String]
+        let suggestedTitle: String?
+        let meddpicc: [String: String]?
+
+        var dictionary: [String: Any] {
+            var result: [String: Any] = [
+                "summary": summary ?? "",
+                "discussion_flow": discussionFlow,
+                "action_items": actionItems,
+                "topics": topics,
+                "suggested_title": suggestedTitle ?? NSNull()
+            ]
+            if let meddpicc {
+                let meddpiccKeys = [
+                    "metrics",
+                    "economic_buyer",
+                    "decision_criteria",
+                    "decision_process",
+                    "paper_process",
+                    "identified_pain",
+                    "champion",
+                    "competition"
+                ]
+                var meddpiccResult: [String: Any] = [:]
+                for key in meddpiccKeys {
+                    meddpiccResult[key] = meddpicc[key] ?? NSNull()
+                }
+                result["meddpicc"] = meddpiccResult
+            }
+            return result
+        }
+    }
+
+    struct IncrementalInsightsPayload: Sendable {
+        let strategy: String
+        let fullSegmentCount: Int
+        let ackedSegmentCount: Int
+        let deltaSegmentCount: Int
+        let recentSegmentCount: Int
+        let transcriptDelta: String
+        let recentTranscript: String
+        let rollingState: IncrementalInsightsRollingState
+
+        var dictionary: [String: Any] {
+            var result: [String: Any] = [
+                "strategy": strategy,
+                "full_segment_count": fullSegmentCount,
+                "acked_segment_count": ackedSegmentCount,
+                "delta_segment_count": deltaSegmentCount,
+                "recent_segment_count": recentSegmentCount,
+                "transcript_delta": transcriptDelta,
+                "recent_transcript": recentTranscript
+            ]
+            let rollingStateDictionary = rollingState.dictionary
+            if !rollingStateDictionary.isEmpty {
+                result["rolling_state"] = rollingStateDictionary
+            }
+            return result
+        }
+    }
+
     struct ClientEventPayload: Codable {
         enum EventCategory: String, Codable {
             case app
@@ -663,7 +728,9 @@ final class MinitiAPIService: @unchecked Sendable {
         existingSummary: String?,
         existingTitle: String?,
         mode: String,
-        model: String
+        model: String,
+        incrementalPayload: IncrementalInsightsPayload? = nil,
+        requestSeq: Int? = nil
     ) async throws -> ManagedInsightsResponse {
         let startedAt = CFAbsoluteTimeGetCurrent()
         var body: [String: Any] = [
@@ -673,6 +740,11 @@ final class MinitiAPIService: @unchecked Sendable {
         ]
         if let existingSummary { body["existing_summary"] = existingSummary }
         if let existingTitle { body["existing_title"] = existingTitle }
+        if let requestSeq { body["request_seq"] = requestSeq }
+        if let incrementalPayload {
+            body["incremental"] = true
+            body["incremental_payload"] = incrementalPayload.dictionary
+        }
         
         let request = makeRequest(
             path: "/insights",
@@ -682,7 +754,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         DebugLogger.shared.log(
             .app,
-            "API insights request: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil)"
+            "API insights request: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil), incremental=\(incrementalPayload != nil)"
         )
         
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -1062,6 +1134,26 @@ struct AttioMeetingPayload: Sendable {
 
 // MARK: - Managed Insights Response
 
+/// Meta from backend insights response. When degraded is true, client must NOT advance ack cursor.
+struct ManagedInsightsMeta: Codable {
+    let degraded: Bool
+    let fallbackReason: String?
+    let requestSeq: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case degraded
+        case fallbackReason = "fallback_reason"
+        case requestSeq = "request_seq"
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        degraded = try container.decodeIfPresent(Bool.self, forKey: .degraded) ?? false
+        fallbackReason = try container.decodeIfPresent(String.self, forKey: .fallbackReason)
+        requestSeq = try container.decodeIfPresent(Int.self, forKey: .requestSeq)
+    }
+}
+
 /// Mirrors the InsightsService.LiveInsights structure but is Codable for backend responses.
 struct ManagedInsightsResponse: Codable {
     let summary: String
@@ -1077,7 +1169,8 @@ struct ManagedInsightsResponse: Codable {
     let identifiedPain: String?
     let champion: String?
     let competition: String?
-    
+    let meta: ManagedInsightsMeta?
+
     enum CodingKeys: String, CodingKey {
         case summary
         case actionItems = "action_items"
@@ -1092,8 +1185,9 @@ struct ManagedInsightsResponse: Codable {
         case identifiedPain = "identified_pain"
         case champion
         case competition
+        case meta
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
@@ -1109,6 +1203,7 @@ struct ManagedInsightsResponse: Codable {
         identifiedPain = try container.decodeIfPresent(String.self, forKey: .identifiedPain)
         champion = try container.decodeIfPresent(String.self, forKey: .champion)
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
+        meta = try container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)
     }
     
     /// Convert to InsightsService.LiveInsights for use in AppState.

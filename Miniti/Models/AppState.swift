@@ -7,6 +7,32 @@ import ActivityKit
 import StoreKit
 #endif
 
+@MainActor
+final class AudioLevelsState: ObservableObject {
+    @Published var combinedLevel: Float = 0
+    @Published var microphoneLevel: Float = 0
+    @Published var systemAudioLevel: Float = 0
+
+    func reset() {
+        combinedLevel = 0
+        microphoneLevel = 0
+        systemAudioLevel = 0
+    }
+}
+
+@MainActor
+final class TranscriptRuntimeState: ObservableObject {
+    @Published var interimText: String = ""
+    @Published var currentSpeaker: Int = 0
+    @Published var interimSpeaker: Int? = nil
+
+    func clear() {
+        interimText = ""
+        currentSpeaker = 0
+        interimSpeaker = nil
+    }
+}
+
 // MARK: - App Mode
 
 /// Two parallel modes that coexist without conflict.
@@ -60,6 +86,55 @@ final class AppState: ObservableObject {
             self.meetingId = meetingId
         }
     }
+
+    private struct ManagedInsightsRequestPlan {
+        let transcriptForRequest: String
+        let incrementalPayload: MinitiAPIService.IncrementalInsightsPayload?
+        let usesIncrementalPayload: Bool
+    }
+
+    private struct LiveInsightsFetchResult {
+        let insights: InsightsService.LiveInsights
+        let usedIncrementalPayload: Bool
+        let meta: ManagedInsightsMeta?
+    }
+
+    private struct LiveSegmentSaveSnapshot: Sendable {
+        let id: UUID
+        let text: String
+        let speaker: Int
+        let timestamp: TimeInterval
+    }
+
+    private struct PersistedSegmentSnapshot: Sendable {
+        let id: UUID
+        let text: String
+        let speaker: Int
+        let timestamp: TimeInterval
+    }
+
+    private struct SegmentSyncPlan: Sendable {
+        let deleteIDs: [UUID]
+        let upserts: [LiveSegmentSaveSnapshot]
+    }
+
+    private struct MeetingSavePayload {
+        let meeting: Meeting
+        let finalSegments: [LiveSegmentSaveSnapshot]
+        let summary: String
+        let actionItems: [String]
+        let topics: [String]
+        let discussionFlow: [String]
+        let notes: String
+        let meddpiccMetrics: String?
+        let meddpiccEconomicBuyer: String?
+        let meddpiccDecisionCriteria: String?
+        let meddpiccDecisionProcess: String?
+        let meddpiccPaperProcess: String?
+        let meddpiccIdentifiedPain: String?
+        let meddpiccChampion: String?
+        let meddpiccCompetition: String?
+    }
     
     // MARK: - Recording State
     @Published var isRecording = false
@@ -72,12 +147,11 @@ final class AppState: ObservableObject {
     // MARK: - Session Management
     var modelContext: ModelContext?
     @Published var hasUnsavedSession = false
+    let audioLevels = AudioLevelsState()
+    let transcriptRuntime = TranscriptRuntimeState()
     
     // MARK: - Live Transcript
     @Published var liveSegments: [LiveSegment] = []
-    @Published var interimText: String = ""
-    @Published var currentSpeaker: Int = 0
-    @Published var interimSpeaker: Int? = nil
     @Published var detectedSpeakers: Set<Int> = []  // Track unique speakers
     
     // MARK: - UI State
@@ -85,11 +159,38 @@ final class AppState: ObservableObject {
     @Published var selectedTab: Tab = .transcript
     @Published var isGeneratingInsights = false
     @Published var isLiveInsightsCollapsed = false
-    @Published var audioLevel: Float = 0  // Combined audio level for visualization
-    @Published var microphoneLevel: Float = 0  // Mic-only level
-    @Published var systemAudioLevel: Float = 0  // System audio-only level
     @Published var isMonitoring = false  // Audio monitoring active (home screen)
     @Published var audioRecoveryState: AudioRecoveryState = .healthy
+
+    var interimText: String {
+        get { transcriptRuntime.interimText }
+        set { transcriptRuntime.interimText = newValue }
+    }
+
+    var currentSpeaker: Int {
+        get { transcriptRuntime.currentSpeaker }
+        set { transcriptRuntime.currentSpeaker = newValue }
+    }
+
+    var interimSpeaker: Int? {
+        get { transcriptRuntime.interimSpeaker }
+        set { transcriptRuntime.interimSpeaker = newValue }
+    }
+
+    var audioLevel: Float {
+        get { audioLevels.combinedLevel }
+        set { audioLevels.combinedLevel = newValue }
+    }
+
+    var microphoneLevel: Float {
+        get { audioLevels.microphoneLevel }
+        set { audioLevels.microphoneLevel = newValue }
+    }
+
+    var systemAudioLevel: Float {
+        get { audioLevels.systemAudioLevel }
+        set { audioLevels.systemAudioLevel = newValue }
+    }
     
     // MARK: - Insights Mode
     @Published var insightsMode: InsightsMode = .standard
@@ -115,14 +216,14 @@ final class AppState: ObservableObject {
     
     private var lastInsightSegmentCount = 0
     private let firstInsightThreshold = 3 // First insight after 3 sentences
-    private let insightUpdateThreshold = 5 // Subsequent updates every 5 sentences
+    private let insightUpdateThreshold = 8 // Subsequent updates every 8 sentences
     
     // MARK: - MEDDPICC Tracking
     private var lastMEDDPICCSegmentCount = 0 // Track when we last analyzed with MEDDPICC
     private var lastMEDDPICCRequestAt: Date? = nil
     private let firstMEDDPICCInsightThreshold = 6
-    private let meddpiccInsightUpdateThreshold = 8
-    private let meddpiccMinUpdateInterval: TimeInterval = 30
+    private let meddpiccInsightUpdateThreshold = 12
+    private let meddpiccMinUpdateInterval: TimeInterval = 60
     
     // MARK: - Title Updates
     private var lastTitleUpdateCount = 0
@@ -131,6 +232,22 @@ final class AppState: ObservableObject {
     private var meetingTimestamp: String = "" // Store the ISO timestamp prefix
     private var lastStandardSummaryContext: String = ""
     private var lastMeddpiccSummaryContext: String = ""
+    private let managedIncrementalRecentWindowChars = 10_000
+    private var managedStandardAckedSegmentCount = 0
+    private var managedMeddpiccAckedSegmentCount = 0
+    private var standardRequestSeq = 0
+    private var meddpiccRequestSeq = 0
+    private var lastAppliedStandardSeq = -1
+    private var lastAppliedMeddpiccSeq = -1
+    private var standardSuccessCount = 0
+    private var meddpiccSuccessCount = 0
+    private var standardCadenceAnchor: Date?
+    private var meddpiccCadenceAnchor: Date?
+    private var standardLastFiredSegmentCount = 0
+    private var meddpiccLastFiredSegmentCount = 0
+    private var insightsCadenceTask: Task<Void, Never>?
+    private let insightsCadenceInterval: TimeInterval = 30
+    private let meddpiccCadenceStagger: TimeInterval = 15
     
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
@@ -193,6 +310,22 @@ final class AppState: ObservableObject {
         #else
         return backendPro
         #endif
+    }
+
+    /// True after first non-degraded standard insights response (for warmup placeholder).
+    var hasReceivedStandardInsights: Bool { standardSuccessCount > 0 }
+    /// True after first non-degraded MEDDPICC insights response (for warmup placeholder).
+    var hasReceivedMeddpiccInsights: Bool { meddpiccSuccessCount > 0 }
+
+    /// Whether managed subscription state is still being resolved.
+    var shouldShowManagedSubscriptionPlaceholder: Bool {
+        guard appMode == .managed, usageInfo == nil, isLoadingUsage else { return false }
+        #if os(iOS)
+        if hasActiveAppStoreSubscription {
+            return false
+        }
+        #endif
+        return true
     }
     
     /// Managed mode minutes limit displayed in UI.
@@ -297,6 +430,8 @@ final class AppState: ObservableObject {
     private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
     private var accumulatedRecordedDuration: TimeInterval = 0
+    private var activeMeetingSaveTask: Task<Void, Never>?
+    private var queuedMeetingSavePayload: MeetingSavePayload?
     private var cancellables = Set<AnyCancellable>()
     
     #if os(iOS)
@@ -361,6 +496,7 @@ final class AppState: ObservableObject {
         
         // Load usage info for managed mode
         if appMode == .managed {
+            isLoadingUsage = true
             Task {
                 await refreshUsage()
                 await flushPendingSessionEndReports(trigger: "launch")
@@ -789,24 +925,68 @@ final class AppState: ObservableObject {
             recomputeTrainingMetrics()
         }
         
-        // Check if we should update live insights
-        let finalCount = liveSegments.filter { 
-            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
+        // Warmup: fire first request when we have 4 segments (standard) or 6 (MEDDPICC).
+        // Steady-state: cadence task handles 30s intervals.
+        let finalCount = liveSegments.filter {
+            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }.count
-        
-        let threshold = lastInsightSegmentCount == 0 ? firstInsightThreshold : insightUpdateThreshold
-        
-        if finalCount >= lastInsightSegmentCount + threshold {
+        let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
+        let meddpiccWarmup = meddpiccSuccessCount < 2 && finalCount >= 6
+        let shouldTrigger = (standardWarmup || meddpiccWarmup) && finalCount > lastInsightSegmentCount
+        if shouldTrigger {
             lastInsightSegmentCount = finalCount
-            Task {
-                await updateLiveInsights()
-            }
+            Task { await updateLiveInsights() }
         }
     }
     
     private var isGeneratingMeddpiccInsights = false
     
-    private func updateLiveInsights() async {
+    private func startInsightsCadenceTask() {
+        insightsCadenceTask?.cancel()
+        insightsCadenceTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, isRecording {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled, isRecording else { break }
+                let finalCount = liveSegments.filter {
+                    $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }.count
+                let now = Date()
+                if standardSuccessCount >= 2,
+                   let anchor = standardCadenceAnchor,
+                   now.timeIntervalSince(anchor) >= insightsCadenceInterval,
+                   finalCount > standardLastFiredSegmentCount {
+                    await updateLiveInsights(standardOnly: true)
+                }
+                if meddpiccSuccessCount >= 2 {
+                    let anchor = meddpiccCadenceAnchor ?? standardCadenceAnchor?.addingTimeInterval(meddpiccCadenceStagger) ?? recordingStartDate ?? now
+                    let interval: TimeInterval = meddpiccCadenceAnchor == nil ? meddpiccCadenceStagger : insightsCadenceInterval
+                    if now.timeIntervalSince(anchor) >= interval,
+                       finalCount > meddpiccLastFiredSegmentCount {
+                        let finalSegments = liveSegments
+                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                            .sorted { $0.timestamp < $1.timestamp }
+                        let transcript = transcriptText(from: finalSegments)
+                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
+                        await updateMeddpiccInBackground(
+                            transcript: transcript,
+                            finalSegments: finalSegments,
+                            segmentCount: finalCount,
+                            existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                            meetingID: meetingID
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    private func resetCadenceAnchors() {
+        standardCadenceAnchor = Date()
+        meddpiccCadenceAnchor = Date()
+    }
+
+    private func updateLiveInsights(standardOnly: Bool = false) async {
         guard !isGeneratingInsights else {
             DebugLogger.shared.log(.app, "Live insights skipped: request already in flight")
             return
@@ -814,11 +994,9 @@ final class AppState: ObservableObject {
         
         let finalSegments = liveSegments
             .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        
-        let transcript = finalSegments
             .sorted { $0.timestamp < $1.timestamp }
-            .map { "[\($0.speakerLabel)] \($0.text)" }
-            .joined(separator: "\n")
+        
+        let transcript = transcriptText(from: finalSegments)
         
         guard !transcript.isEmpty else { return }
         guard let meetingIDAtRequest = currentMeeting?.id else { return }
@@ -836,9 +1014,10 @@ final class AppState: ObservableObject {
         // Standard insights — inline, applies immediately
         isGeneratingInsights = true
         let standardSummary = lastStandardSummaryContext.isEmpty ? nil : lastStandardSummaryContext
-        if let standard = await fetchLiveInsights(
+        if let standardResult = await fetchLiveInsights(
             mode: .standard,
             transcript: transcript,
+            finalSegments: finalSegments,
             existingSummary: standardSummary,
             existingTitle: titleForRequest
         ) {
@@ -847,12 +1026,29 @@ final class AppState: ObservableObject {
                 isGeneratingInsights = false
                 return
             }
-            lastStandardSummaryContext = standard.summary
-            applyInsights(standard, segmentCount: segmentCount, mode: .standard)
+            let isDegraded = standardResult.meta?.degraded ?? false
+            if !isDegraded {
+                if let seq = standardResult.meta?.requestSeq {
+                    lastAppliedStandardSeq = seq
+                }
+                standardCadenceAnchor = Date()
+                standardLastFiredSegmentCount = segmentCount
+                lastStandardSummaryContext = standardResult.insights.summary
+                applyInsights(standardResult.insights, segmentCount: segmentCount, mode: .standard)
+                markManagedInsightsSuccess(
+                    mode: .standard,
+                    segmentCount: segmentCount,
+                    usedIncrementalPayload: standardResult.usedIncrementalPayload
+                )
+                standardSuccessCount += 1
+            } else {
+                DebugLogger.shared.log(.app, "Standard insights degraded — not advancing cursor")
+            }
         }
         isGeneratingInsights = false
         
-        // MEDDPICC — independent background task, never blocks standard
+        // MEDDPICC — independent background task, never blocks standard (skip when standardOnly)
+        guard !standardOnly else { return }
         let shouldRunMeddpicc: Bool = {
             guard !isGeneratingMeddpiccInsights else { return false }
             let meetsSegmentThreshold = segmentCount >= lastMEDDPICCSegmentCount + (
@@ -868,9 +1064,11 @@ final class AppState: ObservableObject {
             let capturedTranscript = transcript
             let capturedSegmentCount = segmentCount
             let capturedTitle = titleForRequest
+            let capturedFinalSegments = finalSegments
             Task {
                 await self.updateMeddpiccInBackground(
                     transcript: capturedTranscript,
+                    finalSegments: capturedFinalSegments,
                     segmentCount: capturedSegmentCount,
                     existingTitle: capturedTitle,
                     meetingID: meetingIDAtRequest
@@ -881,6 +1079,7 @@ final class AppState: ObservableObject {
     
     private func updateMeddpiccInBackground(
         transcript: String,
+        finalSegments: [LiveSegment],
         segmentCount: Int,
         existingTitle: String?,
         meetingID: UUID
@@ -892,9 +1091,10 @@ final class AppState: ObservableObject {
         
         let meddpiccSummary = lastMeddpiccSummaryContext.isEmpty ? nil : lastMeddpiccSummaryContext
         
-        if let meddpicc = await fetchLiveInsights(
+        if let meddpiccResult = await fetchLiveInsights(
             mode: .meddpicc,
             transcript: transcript,
+            finalSegments: finalSegments,
             existingSummary: meddpiccSummary,
             existingTitle: existingTitle
         ) {
@@ -902,62 +1102,122 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Dropping stale MEDDPICC insights response (meeting changed)")
                 return
             }
-            lastMeddpiccSummaryContext = meddpicc.summary
-            lastMEDDPICCRequestAt = Date()
-            applyInsights(meddpicc, segmentCount: segmentCount, mode: .meddpicc)
-            lastMEDDPICCSegmentCount = segmentCount
-            let meddpiccFieldCount = [
-                liveMetrics, liveEconomicBuyer, liveDecisionCriteria, liveDecisionProcess,
-                livePaperProcess, liveIdentifiedPain, liveChampion, liveCompetition
-            ]
-            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0.lowercased() != "null" }
-            .count
-            DebugLogger.shared.log(.app, "Live MEDDPICC applied: fields=\(meddpiccFieldCount), segmentCount=\(segmentCount)")
+            let isDegraded = meddpiccResult.meta?.degraded ?? false
+            if !isDegraded {
+                if let seq = meddpiccResult.meta?.requestSeq {
+                    lastAppliedMeddpiccSeq = seq
+                }
+                meddpiccCadenceAnchor = Date()
+                meddpiccLastFiredSegmentCount = segmentCount
+                lastMeddpiccSummaryContext = meddpiccResult.insights.summary
+                lastMEDDPICCRequestAt = Date()
+                applyInsights(meddpiccResult.insights, segmentCount: segmentCount, mode: .meddpicc)
+                lastMEDDPICCSegmentCount = segmentCount
+                markManagedInsightsSuccess(
+                    mode: .meddpicc,
+                    segmentCount: segmentCount,
+                    usedIncrementalPayload: meddpiccResult.usedIncrementalPayload
+                )
+                meddpiccSuccessCount += 1
+                let meddpiccFieldCount = [
+                    liveMetrics, liveEconomicBuyer, liveDecisionCriteria, liveDecisionProcess,
+                    livePaperProcess, liveIdentifiedPain, liveChampion, liveCompetition
+                ]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && $0.lowercased() != "null" }
+                .count
+                DebugLogger.shared.log(.app, "Live MEDDPICC applied: fields=\(meddpiccFieldCount), segmentCount=\(segmentCount)")
+            } else {
+                DebugLogger.shared.log(.app, "MEDDPICC insights degraded — not advancing cursor")
+            }
         }
     }
     
     private func fetchLiveInsights(
         mode: InsightsMode,
         transcript: String,
+        finalSegments: [LiveSegment],
         existingSummary: String?,
         existingTitle: String?
-    ) async -> InsightsService.LiveInsights? {
+    ) async -> LiveInsightsFetchResult? {
         let model = OpenAIModel.gpt5Mini
-        DebugLogger.shared.log(
-            .app,
-            "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count)"
-        )
         
         do {
             let insights: InsightsService.LiveInsights
+            var usedIncrementalPayload = false
             
             if appMode == .managed, let minitiAPIService {
+                let requestPlan = makeManagedInsightsRequestPlan(
+                    mode: mode,
+                    finalSegments: finalSegments,
+                    fullTranscript: transcript
+                )
+                usedIncrementalPayload = requestPlan.usesIncrementalPayload
+                let seq: Int
+                let lastApplied: Int
+                switch mode {
+                case .standard:
+                    standardRequestSeq += 1
+                    seq = standardRequestSeq
+                    lastApplied = lastAppliedStandardSeq
+                case .meddpicc:
+                    meddpiccRequestSeq += 1
+                    seq = meddpiccRequestSeq
+                    lastApplied = lastAppliedMeddpiccSeq
+                case .training:
+                    seq = 0
+                    lastApplied = -1
+                }
+                DebugLogger.shared.log(
+                    .app,
+                    "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), fullTranscriptChars=\(transcript.count), requestTranscriptChars=\(requestPlan.transcriptForRequest.count), incremental=\(usedIncrementalPayload), requestSeq=\(seq)"
+                )
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response: ManagedInsightsResponse
                 if mode == .meddpicc {
                     response = try await generateManagedInsightsWithRetry(
-                        deviceId: deviceId, transcript: transcript,
+                        deviceId: deviceId, transcript: requestPlan.transcriptForRequest,
                         existingSummary: existingSummary, existingTitle: existingTitle,
-                        mode: mode.rawValue, model: model.rawValue
+                        mode: mode.rawValue, model: model.rawValue,
+                        incrementalPayload: requestPlan.incrementalPayload,
+                        requestSeq: seq
                     )
                 } else {
                     response = try await minitiAPIService.generateInsights(
-                        deviceId: deviceId, transcript: transcript,
+                        deviceId: deviceId, transcript: requestPlan.transcriptForRequest,
                         existingSummary: existingSummary, existingTitle: existingTitle,
-                        mode: mode.rawValue, model: model.rawValue
+                        mode: mode.rawValue, model: model.rawValue,
+                        incrementalPayload: requestPlan.incrementalPayload,
+                        requestSeq: seq
                     )
                 }
+                if let responseSeq = response.meta?.requestSeq, responseSeq < lastApplied {
+                    DebugLogger.shared.log(.app, "Dropping stale insights response: mode=\(mode.rawValue), responseSeq=\(responseSeq) < lastApplied=\(lastApplied)")
+                    return nil
+                }
                 insights = response.toLiveInsights()
+                return LiveInsightsFetchResult(
+                    insights: insights,
+                    usedIncrementalPayload: usedIncrementalPayload,
+                    meta: response.meta
+                )
             } else {
+                DebugLogger.shared.log(
+                    .app,
+                    "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count)"
+                )
                 guard let insightsService, !openaiApiKey.isEmpty else { return nil }
                 insights = try await insightsService.generateLiveInsights(
                     transcript: transcript, existingSummary: existingSummary,
                     existingTitle: existingTitle, mode: mode,
                     model: model, apiKey: openaiApiKey
                 )
+                return LiveInsightsFetchResult(
+                    insights: insights,
+                    usedIncrementalPayload: usedIncrementalPayload,
+                    meta: nil
+                )
             }
-            return insights
         } catch {
             DebugLogger.shared.log(.app, "Live insights FAILED (\(mode.rawValue)): \(error.localizedDescription)")
             enqueueDiagnosticEvent(
@@ -968,6 +1228,206 @@ final class AppState: ObservableObject {
             )
             return nil
         }
+    }
+
+    private let managedDeltaFullRequestChars = 35_000
+
+    private func makeManagedInsightsRequestPlan(
+        mode: InsightsMode,
+        finalSegments: [LiveSegment],
+        fullTranscript: String
+    ) -> ManagedInsightsRequestPlan {
+        let successCount = mode == .standard ? standardSuccessCount : meddpiccSuccessCount
+        if successCount < 2 {
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        let ackedSegmentCount: Int = {
+            switch mode {
+            case .standard: return min(managedStandardAckedSegmentCount, finalSegments.count)
+            case .meddpicc: return min(managedMeddpiccAckedSegmentCount, finalSegments.count)
+            case .training: return 0
+            }
+        }()
+        let deltaSegments = Array(finalSegments.dropFirst(ackedSegmentCount))
+        let deltaTranscript = transcriptText(from: deltaSegments)
+        if deltaTranscript.count > managedDeltaFullRequestChars {
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        let hasRollingContext: Bool = {
+            switch mode {
+            case .standard:
+                return !lastStandardSummaryContext.isEmpty || !liveSummary.isEmpty
+            case .meddpicc:
+                let hasMeddpiccFields = [
+                    liveMetrics, liveEconomicBuyer, liveDecisionCriteria, liveDecisionProcess,
+                    livePaperProcess, liveIdentifiedPain, liveChampion, liveCompetition
+                ]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .contains { !$0.isEmpty && $0.lowercased() != "null" }
+                return !lastMeddpiccSummaryContext.isEmpty || hasMeddpiccFields
+            case .training:
+                return false
+            }
+        }()
+
+        guard hasRollingContext else {
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        guard !deltaTranscript.isEmpty else {
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        let recentSegments = tailTranscriptSegments(
+            from: finalSegments,
+            maxChars: managedIncrementalRecentWindowChars
+        )
+        let recentTranscript = transcriptText(from: recentSegments)
+        let transcriptForRequest = recentTranscript.isEmpty ? fullTranscript : recentTranscript
+
+        let rollingState: MinitiAPIService.IncrementalInsightsRollingState
+        switch mode {
+        case .standard:
+            rollingState = MinitiAPIService.IncrementalInsightsRollingState(
+                summary: liveSummary.isEmpty ? nil : liveSummary,
+                discussionFlow: liveDiscussionFlow,
+                actionItems: liveActionItems,
+                topics: liveTopics,
+                suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                meddpicc: nil
+            )
+        case .meddpicc:
+            var meddpicc: [String: String] = [:]
+            func put(_ key: String, _ value: String?) {
+                guard let value else { return }
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { return }
+                guard trimmed.lowercased() != "null" else { return }
+                meddpicc[key] = trimmed
+            }
+            put("metrics", liveMetrics)
+            put("economic_buyer", liveEconomicBuyer)
+            put("decision_criteria", liveDecisionCriteria)
+            put("decision_process", liveDecisionProcess)
+            put("paper_process", livePaperProcess)
+            put("identified_pain", liveIdentifiedPain)
+            put("champion", liveChampion)
+            put("competition", liveCompetition)
+
+            rollingState = MinitiAPIService.IncrementalInsightsRollingState(
+                summary: nil,
+                discussionFlow: [],
+                actionItems: [],
+                topics: [],
+                suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                meddpicc: meddpicc
+            )
+        case .training:
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        let payload = MinitiAPIService.IncrementalInsightsPayload(
+            strategy: "delta_recent_window_v1",
+            fullSegmentCount: finalSegments.count,
+            ackedSegmentCount: ackedSegmentCount,
+            deltaSegmentCount: deltaSegments.count,
+            recentSegmentCount: recentSegments.count,
+            transcriptDelta: deltaTranscript,
+            recentTranscript: recentTranscript,
+            rollingState: rollingState
+        )
+
+        return ManagedInsightsRequestPlan(
+            transcriptForRequest: transcriptForRequest,
+            incrementalPayload: payload,
+            usesIncrementalPayload: true
+        )
+    }
+
+    private func transcriptText(from segments: [LiveSegment]) -> String {
+        segments
+            .map { "[\($0.speakerLabel)] \($0.text)" }
+            .joined(separator: "\n")
+    }
+
+    private func tailTranscriptSegments(
+        from segments: [LiveSegment],
+        maxChars: Int
+    ) -> [LiveSegment] {
+        guard maxChars > 0 else { return [] }
+        var selected: [LiveSegment] = []
+        var totalChars = 0
+
+        for segment in segments.reversed() {
+            let line = "[\(segment.speakerLabel)] \(segment.text)"
+            let lineCost = line.count + (selected.isEmpty ? 0 : 1)
+            if !selected.isEmpty && totalChars + lineCost > maxChars {
+                break
+            }
+            selected.append(segment)
+            totalChars += lineCost
+        }
+
+        return selected.reversed()
+    }
+
+    private func markManagedInsightsSuccess(
+        mode: InsightsMode,
+        segmentCount: Int,
+        usedIncrementalPayload: Bool
+    ) {
+        guard appMode == .managed else { return }
+
+        switch mode {
+        case .standard:
+            managedStandardAckedSegmentCount = max(managedStandardAckedSegmentCount, segmentCount)
+        case .meddpicc:
+            managedMeddpiccAckedSegmentCount = max(managedMeddpiccAckedSegmentCount, segmentCount)
+        case .training:
+            return
+        }
+
+        if usedIncrementalPayload {
+            DebugLogger.shared.log(.app, "Live insights incremental cursor advanced: mode=\(mode.rawValue), ackedSegments=\(segmentCount)")
+        }
+    }
+
+    private func resetManagedIncrementalTracking() {
+        managedStandardAckedSegmentCount = 0
+        managedMeddpiccAckedSegmentCount = 0
+        standardRequestSeq = 0
+        meddpiccRequestSeq = 0
+        lastAppliedStandardSeq = -1
+        lastAppliedMeddpiccSeq = -1
+        standardSuccessCount = 0
+        meddpiccSuccessCount = 0
+    }
+
+    private func restoreManagedIncrementalTracking(finalCount: Int) {
+        managedStandardAckedSegmentCount = finalCount
+        managedMeddpiccAckedSegmentCount = finalCount
     }
     
     /// Apply insights from either BYOK or managed mode to the live state.
@@ -1044,6 +1504,7 @@ final class AppState: ObservableObject {
         lastTitleUpdateCount = 0
         liveSegments = []
         interimText = ""
+        currentSpeaker = 0
         interimSpeaker = nil
         detectedSpeakers = []
         recordingDuration = 0
@@ -1072,6 +1533,7 @@ final class AppState: ObservableObject {
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
+        resetManagedIncrementalTracking()
         
         if appMode == .managed {
             // Managed mode: request temp key first, then start recording
@@ -1128,6 +1590,10 @@ final class AppState: ObservableObject {
         #if os(iOS)
         endLiveActivity()
         #endif
+
+        activeMeetingSaveTask?.cancel()
+        activeMeetingSaveTask = nil
+        queuedMeetingSavePayload = nil
         
         if let meeting = currentMeeting, let modelContext {
             modelContext.delete(meeting)
@@ -1292,6 +1758,7 @@ final class AppState: ObservableObject {
         lastMEDDPICCSegmentCount = finalCount
         lastMEDDPICCRequestAt = Date()
         lastTitleUpdateCount = finalCount
+        restoreManagedIncrementalTracking(finalCount: finalCount)
         
         hasUnsavedSession = true
         
@@ -1343,75 +1810,178 @@ final class AppState: ObservableObject {
     /// Does NOT set endTime — callers (stopRecording, goHome) set it explicitly so that
     /// meetings with endTime == nil can be identified as interrupted and resumed on next launch.
     func saveCurrentMeetingIfNeeded() {
-        guard let meeting = currentMeeting,
-              let modelContext = modelContext else {
-            print("[Save] No meeting or context to save")
-            return
-        }
-        
-        // Only save if there's actual content
-        let finalSegments = liveSegments.filter { 
-            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
-        }
-        
-        guard !finalSegments.isEmpty else {
-            print("[Save] No content to save")
-            return
-        }
-        
-        print("[Save] Saving meeting: \(meeting.title) with \(finalSegments.count) segments")
-        
-        // Sync all live segments to meeting (handles resumed sessions adding new segments)
-        if finalSegments.count != meeting.segments.count {
-            // Clear stale persisted segments
-            for existingSeg in meeting.segments {
-                modelContext.delete(existingSeg)
-            }
-            meeting.segments.removeAll()
-            
-            for segment in finalSegments {
-                let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !text.isEmpty else { continue }
-                
-                let persistentSegment = TranscriptSegment(
-                    text: text,
-                    speaker: segment.speaker,
-                    timestamp: segment.timestamp,
-                    isFinal: true
+        guard let payload = makeMeetingSavePayload() else { return }
+        enqueueMeetingSave(payload)
+    }
+
+    private func makeMeetingSavePayload() -> MeetingSavePayload? {
+        guard let meeting = currentMeeting else { return nil }
+
+        let finalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+            .map {
+                LiveSegmentSaveSnapshot(
+                    id: $0.id,
+                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
+                    speaker: $0.speaker,
+                    timestamp: $0.timestamp
                 )
-                meeting.segments.append(persistentSegment)
             }
+            .filter { !$0.text.isEmpty }
+
+        guard !finalSegments.isEmpty else { return nil }
+
+        return MeetingSavePayload(
+            meeting: meeting,
+            finalSegments: finalSegments,
+            summary: liveSummary,
+            actionItems: liveActionItems,
+            topics: liveTopics,
+            discussionFlow: liveDiscussionFlow,
+            notes: liveNotes,
+            meddpiccMetrics: liveMetrics,
+            meddpiccEconomicBuyer: liveEconomicBuyer,
+            meddpiccDecisionCriteria: liveDecisionCriteria,
+            meddpiccDecisionProcess: liveDecisionProcess,
+            meddpiccPaperProcess: livePaperProcess,
+            meddpiccIdentifiedPain: liveIdentifiedPain,
+            meddpiccChampion: liveChampion,
+            meddpiccCompetition: liveCompetition
+        )
+    }
+
+    private func enqueueMeetingSave(_ payload: MeetingSavePayload) {
+        if activeMeetingSaveTask != nil {
+            queuedMeetingSavePayload = payload
+            return
         }
-        
-        // Save live insights to meeting
-        if !liveSummary.isEmpty {
-            meeting.summaryText = liveSummary
-            meeting.actionItems = liveActionItems
-            meeting.topics = liveTopics
-            meeting.discussionFlow = liveDiscussionFlow
+
+        activeMeetingSaveTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            var nextPayload: MeetingSavePayload? = payload
+            while let payloadToPersist = nextPayload {
+                await self.persistMeetingSavePayload(payloadToPersist)
+                if let queued = self.queuedMeetingSavePayload {
+                    self.queuedMeetingSavePayload = nil
+                    nextPayload = queued
+                } else {
+                    nextPayload = nil
+                }
+            }
+            self.activeMeetingSaveTask = nil
         }
-        
-        // Save notes
-        meeting.notes = liveNotes
-        
-        // Save MEDDPICC fields
-        meeting.meddpiccMetrics = liveMetrics
-        meeting.meddpiccEconomicBuyer = liveEconomicBuyer
-        meeting.meddpiccDecisionCriteria = liveDecisionCriteria
-        meeting.meddpiccDecisionProcess = liveDecisionProcess
-        meeting.meddpiccPaperProcess = livePaperProcess
-        meeting.meddpiccIdentifiedPain = liveIdentifiedPain
-        meeting.meddpiccChampion = liveChampion
-        meeting.meddpiccCompetition = liveCompetition
-        
-        // Insert into context (SwiftData handles if already inserted)
-        modelContext.insert(meeting)
-        
+    }
+
+    private func persistMeetingSavePayload(_ payload: MeetingSavePayload) async {
+        guard let modelContext else {
+            DebugLogger.shared.log(.app, "Save skipped: no model context")
+            return
+        }
+
+        let existingSnapshots = payload.meeting.segments.map {
+            PersistedSegmentSnapshot(
+                id: $0.id,
+                text: $0.text,
+                speaker: $0.speaker,
+                timestamp: $0.timestamp
+            )
+        }
+        let finalSegmentSnapshots = payload.finalSegments
+
+        let syncPlan = await Task.detached(priority: .utility) {
+            Self.buildSegmentSyncPlan(
+                finalSegments: finalSegmentSnapshots,
+                existingSegments: existingSnapshots
+            )
+        }.value
+
+        applySegmentSyncPlan(syncPlan, to: payload.meeting, modelContext: modelContext)
+
+        if !payload.summary.isEmpty {
+            payload.meeting.summaryText = payload.summary
+            payload.meeting.actionItems = payload.actionItems
+            payload.meeting.topics = payload.topics
+            payload.meeting.discussionFlow = payload.discussionFlow
+        }
+
+        payload.meeting.notes = payload.notes
+        payload.meeting.meddpiccMetrics = payload.meddpiccMetrics
+        payload.meeting.meddpiccEconomicBuyer = payload.meddpiccEconomicBuyer
+        payload.meeting.meddpiccDecisionCriteria = payload.meddpiccDecisionCriteria
+        payload.meeting.meddpiccDecisionProcess = payload.meddpiccDecisionProcess
+        payload.meeting.meddpiccPaperProcess = payload.meddpiccPaperProcess
+        payload.meeting.meddpiccIdentifiedPain = payload.meddpiccIdentifiedPain
+        payload.meeting.meddpiccChampion = payload.meddpiccChampion
+        payload.meeting.meddpiccCompetition = payload.meddpiccCompetition
+
+        if payload.meeting.modelContext == nil {
+            modelContext.insert(payload.meeting)
+        }
+
         do {
             try modelContext.save()
             hasUnsavedSession = false
         } catch {
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
+        }
+    }
+
+    nonisolated private static func buildSegmentSyncPlan(
+        finalSegments: [LiveSegmentSaveSnapshot],
+        existingSegments: [PersistedSegmentSnapshot]
+    ) -> SegmentSyncPlan {
+        let desiredIDs = Set(finalSegments.map(\.id))
+        let deleteIDs = existingSegments
+            .map(\.id)
+            .filter { !desiredIDs.contains($0) }
+
+        let existingByID = existingSegments.reduce(into: [UUID: PersistedSegmentSnapshot]()) { partial, segment in
+            partial[segment.id] = segment
+        }
+        let upserts = finalSegments.filter { segment in
+            guard let existing = existingByID[segment.id] else { return true }
+            return existing.text != segment.text ||
+                existing.speaker != segment.speaker ||
+                abs(existing.timestamp - segment.timestamp) > 0.001
+        }
+
+        return SegmentSyncPlan(deleteIDs: deleteIDs, upserts: upserts)
+    }
+
+    private func applySegmentSyncPlan(
+        _ plan: SegmentSyncPlan,
+        to meeting: Meeting,
+        modelContext: ModelContext
+    ) {
+        if !plan.deleteIDs.isEmpty {
+            let deleteSet = Set(plan.deleteIDs)
+            for segment in meeting.segments where deleteSet.contains(segment.id) {
+                modelContext.delete(segment)
+            }
+            meeting.segments.removeAll { deleteSet.contains($0.id) }
+        }
+
+        var existingByID = meeting.segments.reduce(into: [UUID: TranscriptSegment]()) { partial, segment in
+            partial[segment.id] = segment
+        }
+        for upsert in plan.upserts {
+            if let existing = existingByID[upsert.id] {
+                existing.text = upsert.text
+                existing.speaker = upsert.speaker
+                existing.timestamp = upsert.timestamp
+                existing.isFinal = true
+            } else {
+                let newSegment = TranscriptSegment(
+                    id: upsert.id,
+                    text: upsert.text,
+                    speaker: upsert.speaker,
+                    timestamp: upsert.timestamp,
+                    isFinal: true
+                )
+                meeting.segments.append(newSegment)
+                existingByID[upsert.id] = newSegment
+            }
         }
     }
     
@@ -1559,6 +2129,9 @@ final class AppState: ObservableObject {
             }
         }
         
+        // Insights cadence: 30s per mode (steady-state only, after warmup)
+        startInsightsCadenceTask()
+        
         // Start Live Activity
         #if os(iOS)
         startLiveActivity()
@@ -1643,6 +2216,8 @@ final class AppState: ObservableObject {
         recordingStartDate = nil
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
+        insightsCadenceTask?.cancel()
+        insightsCadenceTask = nil
         stopTranscriptHealthMonitoring()
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
@@ -1701,6 +2276,8 @@ final class AppState: ObservableObject {
     private func clearCurrentSession() {
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
+        insightsCadenceTask?.cancel()
+        insightsCadenceTask = nil
         stopTranscriptHealthMonitoring()
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
@@ -1714,6 +2291,7 @@ final class AppState: ObservableObject {
         isResumingRecording = false
         liveSegments = []
         interimText = ""
+        currentSpeaker = 0
         interimSpeaker = nil
         detectedSpeakers = []
         recordingDuration = 0
@@ -1735,6 +2313,7 @@ final class AppState: ObservableObject {
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
+        resetManagedIncrementalTracking()
         
         // Reset training metrics
         trainingMetrics = nil
@@ -1781,21 +2360,38 @@ final class AppState: ObservableObject {
             saveCurrentMeetingIfNeeded()
             return
         }
-        
-        // Build transcript
-        let transcript = liveSegments
+
+        guard let meetingIDAtRequest = currentMeeting?.id else {
+            return
+        }
+
+        let requestFinalSegments = liveSegments
             .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .sorted { $0.timestamp < $1.timestamp }
-            .map { "[\($0.speakerLabel)] \($0.text)" }
-            .joined(separator: "\n")
-        
+        let requestFinalSegmentCount = requestFinalSegments.count
+        let transcript = transcriptText(from: requestFinalSegments)
+
         guard !transcript.isEmpty else {
             saveCurrentMeetingIfNeeded()
             return
         }
+
+        func isFinalInsightsRequestStillCurrent() -> Bool {
+            guard let meeting = currentMeeting, meeting.id == meetingIDAtRequest else {
+                return false
+            }
+            guard !isRecording, meeting.endTime != nil else {
+                return false
+            }
+            let currentFinalSegmentCount = liveSegments
+                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .count
+            return currentFinalSegmentCount == requestFinalSegmentCount
+        }
         
         DebugLogger.shared.log(.app, "Generating final insights before save")
         isGeneratingInsights = true
+        defer { isGeneratingInsights = false }
         
         let model = OpenAIModel.gpt5Mini
         
@@ -1819,6 +2415,15 @@ final class AppState: ObservableObject {
                 )
             }
             
+            guard isFinalInsightsRequestStillCurrent() else {
+                DebugLogger.shared.log(
+                    .app,
+                    "Dropping stale final standard insights response (meeting changed/resumed/segments advanced)"
+                )
+                saveCurrentMeetingIfNeeded()
+                return
+            }
+
             liveSummary = insights.summary
             liveActionItems = insights.actionItems
             liveTopics = insights.topics
@@ -1841,6 +2446,15 @@ final class AppState: ObservableObject {
         
         // Also generate MEDDPICC insights
         do {
+            guard isFinalInsightsRequestStillCurrent() else {
+                DebugLogger.shared.log(
+                    .app,
+                    "Skipping final meddpicc insights request (meeting changed/resumed/segments advanced)"
+                )
+                saveCurrentMeetingIfNeeded()
+                return
+            }
+
             DebugLogger.shared.log(.app, "Generating final meddpicc insights")
             let meddpiccInsights: InsightsService.LiveInsights
             
@@ -1860,6 +2474,15 @@ final class AppState: ObservableObject {
                 )
             }
             
+            guard isFinalInsightsRequestStillCurrent() else {
+                DebugLogger.shared.log(
+                    .app,
+                    "Dropping stale final meddpicc insights response (meeting changed/resumed/segments advanced)"
+                )
+                saveCurrentMeetingIfNeeded()
+                return
+            }
+
             liveMetrics = meddpiccInsights.metrics
             liveEconomicBuyer = meddpiccInsights.economicBuyer
             liveDecisionCriteria = meddpiccInsights.decisionCriteria
@@ -1874,7 +2497,6 @@ final class AppState: ObservableObject {
             enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
         }
         
-        isGeneratingInsights = false
         saveCurrentMeetingIfNeeded()
     }
     
@@ -1885,6 +2507,42 @@ final class AppState: ObservableObject {
             recomputeTrainingMetrics()
             return
         }
+
+        if isRecording, appMode == .managed {
+            resetCadenceAnchors()
+            await updateLiveInsights(standardOnly: true)
+            let finalSegments = liveSegments
+                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.timestamp < $1.timestamp }
+            let transcript = transcriptText(from: finalSegments)
+            if !transcript.isEmpty, let meetingID = currentMeeting?.id {
+                await updateMeddpiccInBackground(
+                    transcript: transcript,
+                    finalSegments: finalSegments,
+                    segmentCount: finalSegments.count,
+                    existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                    meetingID: meetingID
+                )
+            }
+            return
+        }
+
+        let liveFinalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        let liveTranscript = transcriptText(from: liveFinalSegments)
+        let persistedTranscript = meeting.fullTranscript
+        let transcriptForRequest = liveTranscript.count > persistedTranscript.count ? liveTranscript : persistedTranscript
+        guard !transcriptForRequest.isEmpty else { return }
+        let usingLiveTranscript = liveTranscript.count > persistedTranscript.count
+        let existingSummaryContext: String? = {
+            if usingLiveTranscript {
+                let live = liveSummary.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !live.isEmpty { return live }
+            }
+            let persisted = meeting.summaryText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return persisted.isEmpty ? nil : persisted
+        }()
         
         // Mode-aware capability check
         let canGenerate: Bool
@@ -1908,8 +2566,8 @@ final class AppState: ObservableObject {
                     let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                     let response = try await generateManagedInsightsWithRetry(
                         deviceId: deviceId,
-                        transcript: meeting.fullTranscript,
-                        existingSummary: meeting.summaryText,
+                        transcript: transcriptForRequest,
+                        existingSummary: existingSummaryContext,
                         existingTitle: nil,
                         mode: InsightsMode.meddpicc.rawValue,
                         model: model.rawValue
@@ -1917,8 +2575,8 @@ final class AppState: ObservableObject {
                     meddpiccInsights = response.toLiveInsights()
                 } else {
                     meddpiccInsights = try await insightsService!.generateLiveInsights(
-                        transcript: meeting.fullTranscript,
-                        existingSummary: meeting.summaryText,
+                        transcript: transcriptForRequest,
+                        existingSummary: existingSummaryContext,
                         existingTitle: nil,
                         mode: .meddpicc,
                         model: model,
@@ -1934,10 +2592,19 @@ final class AppState: ObservableObject {
                 meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
                 meeting.meddpiccChampion = meddpiccInsights.champion
                 meeting.meddpiccCompetition = meddpiccInsights.competition
+                liveMetrics = meddpiccInsights.metrics
+                liveEconomicBuyer = meddpiccInsights.economicBuyer
+                liveDecisionCriteria = meddpiccInsights.decisionCriteria
+                liveDecisionProcess = meddpiccInsights.decisionProcess
+                livePaperProcess = meddpiccInsights.paperProcess
+                liveIdentifiedPain = meddpiccInsights.identifiedPain
+                liveChampion = meddpiccInsights.champion
+                liveCompetition = meddpiccInsights.competition
+                lastMeddpiccSummaryContext = meddpiccInsights.summary
             } else if appMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
-                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    deviceId: deviceId, transcript: transcriptForRequest,
                     existingSummary: nil, existingTitle: nil,
                     mode: InsightsMode.standard.rawValue, model: model.rawValue
                 )
@@ -1946,9 +2613,14 @@ final class AppState: ObservableObject {
                 meeting.actionItems = insights.actionItems
                 meeting.topics = insights.topics
                 meeting.discussionFlow = insights.discussionFlow
+                liveSummary = insights.summary
+                liveActionItems = insights.actionItems
+                liveTopics = insights.topics
+                liveDiscussionFlow = insights.discussionFlow
+                lastStandardSummaryContext = insights.summary
             } else {
                 let insights = try await insightsService!.generateInsights(
-                    transcript: meeting.fullTranscript,
+                    transcript: transcriptForRequest,
                     model: model,
                     apiKey: openaiApiKey
                 )
@@ -1956,6 +2628,9 @@ final class AppState: ObservableObject {
                 meeting.actionItems = insights.actionItems
                 meeting.keyDecisions = insights.decisions
                 meeting.topics = insights.topics
+                liveSummary = insights.summary
+                liveActionItems = insights.actionItems
+                liveTopics = insights.topics
             }
             
             try? modelContext?.save()
@@ -1984,6 +2659,8 @@ final class AppState: ObservableObject {
         existingTitle: String?,
         mode: String,
         model: String,
+        incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil,
+        requestSeq: Int? = nil,
         maxAttempts: Int = 2
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
@@ -2003,7 +2680,9 @@ final class AppState: ObservableObject {
                     existingSummary: existingSummary,
                     existingTitle: existingTitle,
                     mode: mode,
-                    model: model
+                    model: model,
+                    incrementalPayload: incrementalPayload,
+                    requestSeq: requestSeq
                 )
             } catch {
                 let shouldRetry = attempt < maxAttempts && Self.isTransientInsightsError(error)
