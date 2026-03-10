@@ -1,3 +1,11 @@
-- Fixed an issue where live insights context from a previous meeting could appear in a new meeting.
-- Improved training metric calculations for pace, filler rates, and question detection, especially in short sessions.
-- Improved speaker diarization at turn boundaries to reduce false new-speaker creation during handoffs.
+- Customizable training filler words — add, edit, remove, or reset filler words in Settings.
+- Live insights are more reliable, especially in long sessions. Failed updates catch up on the next refresh instead of giving short or repetitive summaries.
+- Improved long-session recording performance with less UI lag during heavy transcripts.
+- Faster auto-save during long meetings.
+- Speaker diarization is less eager at turn boundaries, reducing false speaker flips.
+- Keyboard typing no longer causes false "You" speaker tags during system-audio-only playback.
+- "Resume auto-scroll" now appears when scrolling up with trackpad or mouse wheel in the transcript.
+- Insights pane can be dragged wider in both live and history views.
+- Settings now shows the insight model (GPT-5 Mini) as read-only info.
+- Pro status no longer flickers on startup — shows "checking plan..." while loading.
+- Stale final-insights no longer overwrite live data after pause/resume.
