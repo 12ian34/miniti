@@ -55,8 +55,9 @@ What it does:
 - includes App Review notes from `fastlane/metadata/app_review_notes.txt` when present
 
 What it does not do:
-- no App Review submission
-- no automatic release
+- no App Review submission (attach build and submit manually in App Store Connect)
+
+Note: `automatic_release` is enabled — once Apple approves the build, it goes live immediately without manual release.
 
 Release prep checklist for this lane:
 - update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `claude.md` changelog
