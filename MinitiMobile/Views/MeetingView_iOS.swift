@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import UIKit
 
 struct MeetingView_iOS: View {
@@ -7,6 +8,7 @@ struct MeetingView_iOS: View {
     @State private var activeSection: MeetingSection = .transcript
     @State private var showDiscardConfirmation = false
     @State private var isResumingRecording = false
+    @State private var showSavedOverlay = false
     
     enum MeetingSection: String, CaseIterable {
         case transcript = "transcript"
@@ -76,6 +78,24 @@ struct MeetingView_iOS: View {
             controlBar
         }
         .background(ColorPalette.Background.primary)
+        .overlay {
+            if showSavedOverlay {
+                Text("saved")
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.green)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(ColorPalette.Background.secondary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(ColorPalette.Accent.green.opacity(0.3), lineWidth: 1)
+                            )
+                    )
+                    .transition(.opacity.combined(with: .scale(scale: 0.9)))
+            }
+        }
         .alert("Discard recording?", isPresented: $showDiscardConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Discard", role: .destructive) {
@@ -85,6 +105,7 @@ struct MeetingView_iOS: View {
             Text("This can't be undone.")
         }
         .onAppear {
+            showSavedOverlay = false
             meetingTitle = appState.currentMeeting?.title ?? ""
         }
         .onChange(of: appState.currentMeeting?.title) { _, newTitle in
@@ -124,10 +145,15 @@ struct MeetingView_iOS: View {
                     Circle()
                         .fill(isStopped ? ColorPalette.Text.disabled : Color(hex: "F85149"))
                         .frame(width: 8, height: 8)
-                    
+
                     Text(appState.formattedDuration)
                         .font(.system(size: 14, weight: .medium, design: .monospaced))
                         .foregroundStyle(isStopped ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+
+                    if appState.isRecording {
+                        CompactWaveform_iOS(level: appState.audioLevels.microphoneLevel, color: ColorPalette.Speaker.mic)
+                            .frame(width: 24, height: 18)
+                    }
                 }
                 
                 Spacer()
@@ -142,10 +168,8 @@ struct MeetingView_iOS: View {
                             .padding(6)
                     }
                     
-                    Button {
-                        copyToClipboard(appState.fullMeetingAsMarkdown())
-                    } label: {
-                        Image(systemName: "doc.on.doc")
+                    ShareLink(item: appState.fullMeetingAsMarkdown()) {
+                        Image(systemName: "square.and.arrow.up")
                             .font(.system(size: 14))
                             .foregroundStyle(ColorPalette.Text.muted)
                             .padding(6)
@@ -180,15 +204,6 @@ struct MeetingView_iOS: View {
                 .padding(.horizontal, 12)
             }
             
-            ObservedSourceWaveform_iOS(
-                audioLevels: appState.audioLevels,
-                source: .microphone,
-                zeroWhenNotRecording: appState.isRecording == false,
-                color: ColorPalette.Speaker.mic
-            )
-            .frame(height: 24)
-            .opacity(appState.isRecording ? 1 : 0)
-            .padding(.horizontal)
         }
         .padding(.vertical, 12)
         .background(ColorPalette.Background.secondary)
@@ -217,7 +232,12 @@ struct MeetingView_iOS: View {
                 Spacer()
                 
                 terminalButton(icon: "checkmark", label: "save", color: Color(hex: "58A6FF"), bgColor: Color(hex: "58A6FF").opacity(0.12), borderColor: Color(hex: "58A6FF").opacity(0.3)) {
-                    appState.goHome()
+                    withAnimation(.easeIn(duration: 0.2)) {
+                        showSavedOverlay = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                        appState.goHome()
+                    }
                 }
             }
             .opacity(isStopped ? 1 : 0)
@@ -348,7 +368,7 @@ struct MeetingView_iOS: View {
     // MARK: - Live Insights Content
     
     private var liveInsightsContent: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
                 insightsModePicker
                 
@@ -380,7 +400,17 @@ struct MeetingView_iOS: View {
                         .buttonStyle(.plain)
                         .disabled(!canUpdateInsights || appState.isGeneratingInsights)
                         .opacity((!canUpdateInsights || appState.isGeneratingInsights) ? 0.5 : 1)
-                        
+
+                        if appState.isGeneratingInsights {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .scaleEffect(0.6)
+                                Text("updating...")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "8B949E"))
+                            }
+                        }
+
                         Spacer()
                     }
                     .padding(.horizontal)
@@ -440,9 +470,6 @@ struct MeetingView_iOS: View {
     
     // MARK: - Actions
     
-    private func copyToClipboard(_ text: String) {
-        UIPasteboard.general.string = text
-    }
 }
 
 // MARK: - Ready State (Home Screen)
@@ -450,6 +477,7 @@ struct MeetingView_iOS: View {
 struct ReadyStateView_iOS: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
+    @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var isMicTesting = false
     @State private var isPurchasingPro = false
     @State private var isRestoringPro = false
@@ -555,6 +583,9 @@ struct ReadyStateView_iOS: View {
                 UpdateAvailableBanner_iOS(versionInfo: update)
             }
             
+            // Training stats overview
+            TrainingStatsOverview(meetings: meetings)
+
             // Start button or blocked state
             if appState.isDeviceDisabled {
                 VStack(spacing: 8) {
@@ -908,6 +939,10 @@ struct UpdateAvailableBanner_iOS: View {
     @Environment(\.openURL) private var openURL
     @State private var isShowingFullNotes = false
     
+    private var updateURL: URL? {
+        URL(string: versionInfo.downloadUrl)
+    }
+    
     private var releaseNotes: String? {
         guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
               !notes.isEmpty else { return nil }
@@ -948,11 +983,11 @@ struct UpdateAvailableBanner_iOS: View {
             }
             
             Button {
-                if let url = URL(string: "itms-beta://") {
+                if let url = updateURL {
                     openURL(url)
                 }
             } label: {
-                Text("update via TestFlight")
+                Text("update")
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.8))
             }
@@ -1018,17 +1053,72 @@ private struct ObservedSourceWaveform_iOS: View {
 struct SourceWaveform_iOS: View {
     let level: Float
     let color: Color
-    
+
     var body: some View {
         GeometryReader { geo in
             let normalized = CGFloat(pow(level, 0.2))
             let barWidth = max(normalized * geo.size.width, 2)
-            
+
             RoundedRectangle(cornerRadius: 2)
                 .fill(color.opacity(0.6))
                 .frame(width: barWidth, height: geo.size.height)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .animation(.linear(duration: 0.05), value: level)
+        }
+    }
+}
+
+struct CompactWaveform_iOS: View {
+    let level: Float
+    let color: Color
+    let bandCount: Int
+    let barWidth: CGFloat
+    let maxHeight: CGFloat
+
+    init(level: Float, color: Color, bandCount: Int = 5, barWidth: CGFloat = 3, maxHeight: CGFloat = 18) {
+        self.level = level
+        self.color = color
+        self.bandCount = bandCount
+        self.barWidth = barWidth
+        self.maxHeight = maxHeight
+    }
+
+    @State private var bands: [CGFloat] = []
+    @State private var previousLevel: CGFloat = 0
+
+    let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(0..<bandCount, id: \.self) { index in
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color.opacity(0.5 + (index < bands.count ? bands[index] : 0.05) * 0.5))
+                    .frame(width: barWidth, height: max(2, maxHeight * (index < bands.count ? bands[index] : 0.05)))
+            }
+        }
+        .onAppear {
+            bands = Array(repeating: 0.05, count: bandCount)
+        }
+        .onReceive(timer) { _ in
+            guard bands.count == bandCount else { return }
+            withAnimation(.linear(duration: 0.04)) {
+                let rawLevel = CGFloat(max(level, 0))
+                let gated = rawLevel < 0.001 ? 0.0 : rawLevel
+                let amplified = gated > 0 ? min(1.0, pow(gated, 0.2)) : 0.0
+                let delta = amplified - previousLevel
+                previousLevel = amplified
+
+                for i in 0..<bandCount {
+                    let position = CGFloat(i) / CGFloat(bandCount - 1)
+                    let bassWeight = 1.0 - position * 0.35
+                    let transientWeight = position * 4.0
+                    let jitter = amplified > 0.1 ? CGFloat.random(in: 0...0.08) : 0
+                    let target = amplified * bassWeight + abs(delta) * transientWeight + jitter
+                    let factor: CGFloat = target > bands[i] ? 0.6 : 0.15
+                    bands[i] = bands[i] + (target - bands[i]) * factor
+                    bands[i] = min(1.0, max(0.03, bands[i]))
+                }
+            }
         }
     }
 }

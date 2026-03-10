@@ -2231,9 +2231,8 @@ final class AppState: ObservableObject {
         #endif
         
         audioCaptureService?.stopCapture()
-        deepgramService?.disconnect()
         Task { await flushClientEvents(trigger: "stop recording") }
-        
+
         // Report usage to backend in managed mode
         if appMode == .managed, let sessionId = currentSessionId {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
@@ -2253,22 +2252,27 @@ final class AppState: ObservableObject {
             tempDeepgramKey = nil
             managedSessionStartRecordedDuration = nil
         }
-        
-        // Finalize meeting (keep as current session so user can resume/save/discard)
+
+        // Gracefully close Deepgram (wait for final transcripts) then generate insights
         if let meeting = currentMeeting {
             meeting.endTime = Date()
-            
-            let hasContent = !liveSegments.filter { 
-                $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
+
+            let hasContent = !liveSegments.filter {
+                $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }.isEmpty
-            
+
             if hasContent {
+                isGeneratingInsights = true
                 Task {
+                    await deepgramService?.gracefulDisconnect()
                     await generateFinalInsightsAndSave()
                 }
             } else {
+                deepgramService?.disconnect()
                 saveCurrentMeetingIfNeeded()
             }
+        } else {
+            deepgramService?.disconnect()
         }
     }
     

@@ -1,11 +1,16 @@
-- Customizable training filler words — add, edit, remove, or reset filler words in Settings.
-- Live insights are more reliable, especially in long sessions. Failed updates catch up on the next refresh instead of giving short or repetitive summaries.
-- Improved long-session recording performance with less UI lag during heavy transcripts.
-- Faster auto-save during long meetings.
-- Speaker diarization is less eager at turn boundaries, reducing false speaker flips.
-- Keyboard typing no longer causes false "You" speaker tags during system-audio-only playback.
-- "Resume auto-scroll" now appears when scrolling up with trackpad or mouse wheel in the transcript.
-- Insights pane can be dragged wider in both live and history views.
-- Settings now shows the insight model (GPT-5 Mini) as read-only info.
-- Pro status no longer flickers on startup — shows "checking plan..." while loading.
-- Stale final-insights no longer overwrite live data after pause/resume.
+- Training stats overview on the home screen — see your fillers, pace, and clarity averaged across your last 5 meetings vs your most recent, with trend arrows.
+- Copy button replaced with native share sheet.
+- Recording waveform is now a compact multi-bar visualizer inline with the timer.
+- Saving a meeting shows a brief "saved" confirmation.
+- "Rate on App Store" link added in Settings.
+- Training stats table has cleaner alignment with a single header row and consistent number/unit formatting.
+- Settings section reordered: Training Insights first, then Subscription/Usage, then Mode.
+- Last sentence before stopping is no longer lost.
+- Short recordings in managed mode no longer briefly flash "no openai api key".
+- Saved meeting transcripts now use monospace font with per-sentence lines, speaker headers, and timestamps.
+- Insights panel no longer scrolls horizontally.
+- Update banner now opens the correct App Store URL.
+- "Updating..." indicator now appears next to the update button, not at the bottom.
+- Insights button in history now consistently says "update".
+- Topics now show hashtag prefix instead of square brackets.
+- Section headings no longer use underscores.

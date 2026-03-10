@@ -328,6 +328,15 @@ struct SettingsView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    Link(destination: URL(string: "itms-apps://apps.apple.com/app/id6759067308")!) {
+                        HStack {
+                            Text("Rate on App Store")
+                            Spacer()
+                            Image(systemName: "star")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
             .navigationTitle("Settings")
