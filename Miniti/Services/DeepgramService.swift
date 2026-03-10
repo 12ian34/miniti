@@ -463,14 +463,14 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         guard !words.isEmpty else { return [] }
         
         // Conservative switch confirmation to reduce boundary bleed.
-        let minWordsForSpeakerChange = 3
-        let minDurationForSpeakerChange = 0.65
-        let minAverageSpeakerConfidenceForSwitch = 0.50
+        let minWordsForSpeakerChange = 4
+        let minDurationForSpeakerChange = 0.85
+        let minAverageSpeakerConfidenceForSwitch = 0.58
         
         // New speaker IDs need stronger evidence before we start rendering them.
-        let minWordsForNewSpeakerPromotion = 5
-        let minDurationForNewSpeakerPromotion = 1.20
-        let minAverageSpeakerConfidenceForNewSpeaker = 0.60
+        let minWordsForNewSpeakerPromotion = 6
+        let minDurationForNewSpeakerPromotion = 1.50
+        let minAverageSpeakerConfidenceForNewSpeaker = 0.65
         
         var segments: [SpeakerSegment] = []
         var currentSpeaker = words[0].speaker

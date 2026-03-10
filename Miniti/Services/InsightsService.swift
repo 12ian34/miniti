@@ -58,16 +58,6 @@ struct TrainingMetrics {
     let talkRatioYou: Double
     let durationMinutes: Double
     
-    private static let hardFillers: Set<String> = ["um", "uh", "hmm", "hm", "er", "ah"]
-    private static let softFillers: Set<String> = ["like", "basically", "literally", "actually", "honestly"]
-    private static let phraseFillers: [(phrase: String, label: String)] = [
-        ("uh huh", "uh huh"),
-        ("you know", "you know"),
-        ("i mean", "I mean"),
-        ("kind of", "kind of"),
-        ("sort of", "sort of"),
-    ]
-    
     struct Segment {
         let text: String
         let speaker: Int
@@ -94,7 +84,11 @@ struct TrainingMetrics {
             ? (reportedDurationSeconds > 0 ? min(reportedDurationSeconds, lastSpokenTimestamp) : lastSpokenTimestamp)
             : reportedDurationSeconds
         let durationMinutes = max(effectiveDurationSeconds / 60.0, 0.01)
-        let phraseFillersWithTokens = phraseFillers.map { (tokens: tokenize($0.phrase), label: $0.label) }
+        let configuredFillersWithTokens: [(tokens: [String], label: String)] = TrainingFillerPreferences.currentFillers()
+            .map { phrase in
+                (tokens: tokenize(phrase), label: phrase)
+            }
+            .filter { !$0.tokens.isEmpty }
         
         let speakerIDs = Array(Set(finals.map(\.speaker))).sorted { a, b in
             if a == DeepgramService.micSpeakerID { return true }
@@ -121,17 +115,7 @@ struct TrainingMetrics {
                 
                 questionsAsked += seg.text.filter { $0 == "?" }.count
                 
-                for filler in hardFillers {
-                    let count = countWordOccurrences(of: filler, in: tokens)
-                    if count > 0 { fillerMap[filler, default: 0] += count }
-                }
-                
-                for filler in softFillers {
-                    let count = countWordOccurrences(of: filler, in: tokens)
-                    if count > 0 { fillerMap[filler, default: 0] += count }
-                }
-                
-                for (phraseTokens, label) in phraseFillersWithTokens {
+                for (phraseTokens, label) in configuredFillersWithTokens {
                     let count = countPhraseOccurrences(of: phraseTokens, in: tokens)
                     if count > 0 { fillerMap[label, default: 0] += count }
                 }
@@ -182,10 +166,6 @@ struct TrainingMetrics {
         return cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
     }
     
-    private static func countWordOccurrences(of word: String, in tokens: [String]) -> Int {
-        tokens.filter { $0 == word }.count
-    }
-    
     private static func countPhraseOccurrences(of phraseTokens: [String], in tokens: [String]) -> Int {
         guard !phraseTokens.isEmpty else { return 0 }
         guard tokens.count >= phraseTokens.count else { return 0 }
@@ -211,6 +191,73 @@ struct TrainingMetrics {
             }
         }
         return max(longest, current)
+    }
+}
+
+enum TrainingFillerPreferences {
+    private static let storageKey = "trainingCustomFillers.v1"
+    static let defaultFillers: [String] = [
+        "um",
+        "uh",
+        "hmm",
+        "hm",
+        "er",
+        "ah",
+        "like",
+        "basically",
+        "literally",
+        "actually",
+        "honestly",
+        "uh huh",
+        "you know",
+        "i mean",
+        "kind of",
+        "sort of"
+    ]
+    
+    static func currentFillers(defaults: UserDefaults = .standard) -> [String] {
+        guard
+            let data = defaults.data(forKey: storageKey),
+            let decoded = try? JSONDecoder().decode([String].self, from: data)
+        else {
+            return defaultFillers
+        }
+        
+        let normalized = normalizedFillers(decoded)
+        return normalized.isEmpty ? defaultFillers : normalized
+    }
+    
+    static func save(_ fillers: [String], defaults: UserDefaults = .standard) {
+        let normalized = normalizedFillers(fillers)
+        if normalized == defaultFillers {
+            defaults.removeObject(forKey: storageKey)
+            return
+        }
+        
+        guard let data = try? JSONEncoder().encode(normalized) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+    
+    static func reset(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey)
+    }
+    
+    static func normalizedFillers(_ fillers: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+        
+        for filler in fillers {
+            let compacted = filler
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            guard !compacted.isEmpty else { continue }
+            guard !seen.contains(compacted) else { continue }
+            seen.insert(compacted)
+            normalized.append(compacted)
+        }
+        
+        return normalized
     }
 }
 
