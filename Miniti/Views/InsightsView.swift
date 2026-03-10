@@ -140,7 +140,7 @@ struct LiveInsightsContent: View {
                     
                     // Action Items
                     if !appState.liveActionItems.isEmpty {
-                        TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
+                        TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
                                     TerminalListItem(index: index, text: item, style: .checkbox)
@@ -182,9 +182,9 @@ struct LiveInsightsContent: View {
 #if os(iOS)
 private struct LiveInsightsContent_iOSPlain: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
                 if appState.insightsMode == .training {
                     if let metrics = appState.trainingMetrics {
@@ -199,17 +199,6 @@ private struct LiveInsightsContent_iOSPlain: View {
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                     LiveMEDDPICCContent_iOSPlain()
-                    
-                    if appState.isGeneratingInsights {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                            Text("updating...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "8B949E"))
-                        }
-                        .padding(.top, 8)
-                    }
                 } else {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedStandardInsights {
                         Text("no insights yet...")
@@ -236,7 +225,7 @@ private struct LiveInsightsContent_iOSPlain: View {
                     }
 
                     if !appState.liveActionItems.isEmpty {
-                        InsightsPlainBlock_iOS(title: "action_items", color: Color(hex: "3FB950")) {
+                        InsightsPlainBlock_iOS(title: "action items", color: Color(hex: "3FB950")) {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
                                     TerminalListItem(index: index, text: item, style: .checkbox)
@@ -253,17 +242,6 @@ private struct LiveInsightsContent_iOSPlain: View {
                                 }
                             }
                         }
-                    }
-                    
-                    if appState.isGeneratingInsights {
-                        HStack(spacing: 8) {
-                            ProgressView()
-                                .scaleEffect(0.6)
-                            Text("updating...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "8B949E"))
-                        }
-                        .padding(.top, 8)
                     }
                 }
             }
@@ -899,9 +877,9 @@ struct SavedTrainingContent: View {
 
 struct TerminalInsightsContent: View {
     let meeting: Meeting
-    
+
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
                 if let summary = meeting.summaryText {
                     TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
@@ -923,7 +901,7 @@ struct TerminalInsightsContent: View {
                 }
                 
                 if !meeting.actionItems.isEmpty {
-                    TerminalSection(title: "action_items", color: Color(hex: "3FB950")) {
+                    TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Array(meeting.actionItems.enumerated()), id: \.offset) { index, item in
                                 TerminalListItem(index: index, text: item, style: .checkbox)
@@ -1221,6 +1199,214 @@ extension TerminalSectionInfo {
     )
 }
 
+// MARK: - Training Stats Overview (Home Screen)
+
+struct TrainingStatsOverview: View {
+    let meetings: [Meeting]
+
+    private struct MeetingStats {
+        let pace: Double
+        let fillersPerMinute: Double
+        let clarity: Double
+    }
+
+    private var recentStats: [MeetingStats] {
+        let sorted = meetings
+            .filter { $0.endTime != nil && !$0.segments.isEmpty }
+            .sorted { $0.startTime > $1.startTime }
+
+        var result: [MeetingStats] = []
+        for meeting in sorted {
+            guard result.count < 5 else { break }
+            guard let duration = meeting.duration, duration > 30 else { continue }
+
+            let segments = meeting.segments
+                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: true, timestamp: $0.timestamp) }
+
+            guard !segments.isEmpty else { continue }
+
+            let metrics = TrainingMetrics.compute(from: segments, duration: duration)
+            let speaker = metrics.speakers.first(where: { $0.isLocalMic })
+                ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount })
+            guard let speaker else { continue }
+
+            result.append(MeetingStats(
+                pace: speaker.wordsPerMinute,
+                fillersPerMinute: speaker.fillersPerMinute,
+                clarity: speaker.avgWordsPerTurn
+            ))
+        }
+        return result
+    }
+
+    var body: some View {
+        let stats = recentStats
+        if !stats.isEmpty {
+            let last = stats[0]
+            let avgPace = stats.map(\.pace).reduce(0, +) / Double(stats.count)
+            let avgFillers = stats.map(\.fillersPerMinute).reduce(0, +) / Double(stats.count)
+            let avgClarity = stats.map(\.clarity).reduce(0, +) / Double(stats.count)
+
+            VStack(spacing: 2) {
+                TrainingStatHeader(meetingCount: stats.count)
+
+                VStack(spacing: 0) {
+                    TrainingStatRow(
+                        label: "fillers",
+                        avgValue: String(format: "%.1f", avgFillers),
+                        lastValue: String(format: "%.1f", last.fillersPerMinute),
+                        unit: "/min",
+                        trend: trend(last: last.fillersPerMinute, avg: avgFillers),
+                        color: Color(hex: "F59E0B"),
+                        info: .fillers
+                    )
+                    TrainingStatRow(
+                        label: "pace",
+                        avgValue: "\(Int(avgPace))",
+                        lastValue: "\(Int(last.pace))",
+                        unit: "wpm",
+                        trend: trend(last: last.pace, avg: avgPace),
+                        color: Color(hex: "58A6FF"),
+                        info: .pace
+                    )
+                    TrainingStatRow(
+                        label: "clarity",
+                        avgValue: "\(Int(avgClarity))",
+                        lastValue: "\(Int(last.clarity))",
+                        unit: "w/turn",
+                        trend: trend(last: last.clarity, avg: avgClarity),
+                        color: Color(hex: "A371F7"),
+                        info: .clarity
+                    )
+                }
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(hex: "0F0F11"))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
+                        )
+                )
+            }
+            .frame(maxWidth: 360)
+        }
+    }
+
+    enum Trend {
+        case up, down, same
+    }
+
+    fileprivate func trend(last: Double, avg: Double) -> Trend {
+        guard avg > 0 else { return .same }
+        let ratio = last / avg
+        if ratio > 1.10 { return .up }
+        if ratio < 0.90 { return .down }
+        return .same
+    }
+}
+
+private struct TrainingStatHeader: View {
+    let meetingCount: Int
+
+    var body: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: 100, height: 1)
+
+            Spacer(minLength: 4)
+
+            Text("avg \(meetingCount)")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "52525B"))
+                .frame(width: TrainingStatRow.colWidth)
+
+            Spacer(minLength: 8)
+
+            Text("last")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "52525B"))
+                .frame(width: TrainingStatRow.colWidth)
+
+            Color.clear
+                .frame(width: 28, height: 1)
+        }
+        .padding(.horizontal, 12)
+    }
+}
+
+private struct TrainingStatRow: View {
+    let label: String
+    let avgValue: String
+    let lastValue: String
+    let unit: String
+    let trend: TrainingStatsOverview.Trend
+    let color: Color
+    let info: TerminalSectionInfo
+
+    private var trendIcon: String {
+        switch trend {
+        case .up: return "arrow.up.right"
+        case .down: return "arrow.down.right"
+        case .same: return "arrow.right"
+        }
+    }
+
+    fileprivate static let numWidth: CGFloat = 36
+    fileprivate static let unitWidth: CGFloat = 42
+    fileprivate static let colWidth: CGFloat = numWidth + 4 + unitWidth
+
+    var body: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(color)
+                    .frame(width: 3, height: 12)
+                    .cornerRadius(1)
+                Text(label)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(color)
+                TerminalSectionInfoButton(info: info, accent: color)
+            }
+            .frame(width: 100, alignment: .leading)
+
+            Spacer(minLength: 4)
+
+            HStack(spacing: 4) {
+                Text(avgValue)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "A1A1AA"))
+                    .frame(width: Self.numWidth, alignment: .trailing)
+                Text(unit)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "52525B"))
+                    .frame(width: Self.unitWidth, alignment: .leading)
+            }
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 4) {
+                Text(lastValue)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .frame(width: Self.numWidth, alignment: .trailing)
+                Text(unit)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "52525B"))
+                    .frame(width: Self.unitWidth, alignment: .leading)
+            }
+
+            Image(systemName: trendIcon)
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color(hex: "71717A"))
+                .frame(width: 28)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+    }
+}
+
 struct TerminalListItem: View {
     let index: Int
     let text: String
@@ -1271,7 +1457,7 @@ struct TerminalTag: View {
     let text: String
     
     var body: some View {
-        Text("[\(text.lowercased().replacingOccurrences(of: "_", with: " "))]")
+        Text("#\(text.lowercased().replacingOccurrences(of: "_", with: " "))")
             .font(.system(size: 11, weight: .medium, design: .monospaced))
             .foregroundStyle(Color(hex: "A371F7"))
             .padding(.horizontal, 8)
@@ -1293,7 +1479,7 @@ struct TerminalGeneratingView: View {
                 .rotationEffect(.degrees(Double(dots.count) * 90))
                 .animation(.linear(duration: 0.4), value: dots)
             
-            Text("generating_insights\(dots)")
+            Text("generating insights\(dots)")
                 .font(.system(size: 13, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "8B949E"))
         }
@@ -1321,7 +1507,7 @@ struct TerminalNoInsightsView: View {
                 .font(.system(size: 40, weight: .ultraLight, design: .monospaced))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             
-            Text("no_insights")
+            Text("no insights")
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "8B949E"))
             
@@ -1352,14 +1538,14 @@ struct TerminalNoInsightsView: View {
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .disabled(appState.openaiApiKey.isEmpty)
+                .disabled(appState.appMode == .byok && appState.openaiApiKey.isEmpty)
                 .padding(.top, 8)
-                
-                if appState.openaiApiKey.isEmpty {
+
+                if appState.appMode == .byok && appState.openaiApiKey.isEmpty {
                     HStack(spacing: 6) {
                         Text("⚠")
                             .foregroundStyle(Color(hex: "D29922"))
-                        Text("openai_api_key not set")
+                        Text("openai api key not set")
                             .foregroundStyle(Color(hex: "D29922"))
                     }
                     .font(.system(size: 11, weight: .medium, design: .monospaced))

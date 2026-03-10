@@ -78,7 +78,7 @@ struct MainWindow: View {
                         .id(meeting.id)
                 } else {
                     // Show current session or ready state
-                    MeetingView()
+                    MeetingView(meetings: meetings)
                 }
             }
             
@@ -1021,7 +1021,7 @@ struct MeetingDetailView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text((meeting.hasInsights || meeting.hasMEDDPICC) ? "update" : "generate")
+                            Text("update")
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                                 Text("meddpicc")

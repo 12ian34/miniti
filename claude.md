@@ -29,7 +29,28 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-09 - v1.13.0 (unreleased)
+### 2026-03-10 - v1.14.0 (unreleased)
+
+- new: Training stats overview on the home screen (macOS + iOS) — shows fillers/min, pace, and clarity averaged across your last 5 meetings vs last meeting, with trend arrows and info buttons.
+- new: iOS copy button replaced with native share sheet.
+- improvement: iOS recording waveform is now a compact multi-bar visualizer inline with the timer, matching desktop.
+- improvement: iOS saving a meeting shows a brief "saved" confirmation.
+- improvement: iOS Settings includes a "Rate on App Store" link.
+- improvement: iOS "saved" toast shown on saving a meeting.
+- improvement: Training stats table uses a single header row ("avg N" / "last") above all metrics, with right-aligned numbers, left-aligned units, neutral gray trend arrows, and clarity rounded to whole number.
+- improvement: iOS Settings section order: Training Insights first, then Subscription/Usage, then Mode.
+- improvement: macOS home screen shortcuts and settings buttons now show labels with keyboard shortcut hints (⌘/ and ⌘,).
+- fix: Last sentence before stopping is no longer lost.
+- fix: Stopping a short recording in managed mode no longer briefly flashes "no openai api key".
+- fix: iOS saved meeting transcripts now use monospace font with per-sentence lines, speaker headers, and timestamps (matching desktop).
+- fix: iOS insights panel no longer scrolls horizontally.
+- fix: iOS update banner now opens the correct App Store URL from the backend.
+- fix: Topics now show hashtag prefix instead of square brackets on both platforms.
+- fix: Section headings no longer use underscores ("action items" not "action_items").
+- fix: "Updating..." indicator on iOS now appears next to the update button, not at the bottom.
+- fix: Insights button in history always says "update" instead of switching between "generate" and "update".
+
+### 2026-03-09 - v1.13.0
 
 - new: Customizable training filler words (add/edit/remove/reset in Settings, applies to live and past meetings).
 - improvement: Live insights more reliable - failed updates catch up; backend has higher timeouts and retries; client sends recent context + deltas instead of full transcript; 30s refresh; Update button refreshes both modes; placeholders while loading.
@@ -372,7 +393,7 @@ Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Isl
 
 - **Debug logging**: `DebugLogger.shared` is an in-memory ring-buffer (1000 entries) with thread-safe `log(_ category:_ message:)`. Categories: `.audio`, `.deepgram`, `.app`. API keys are automatically redacted via patterns set by `AppState.updateLogRedaction()`. Key instrumentation points: audio device info + format on capture start, route/device-change events, 10-second audio heartbeats, silent-buffer warnings, Deepgram WebSocket/audio/transcript heartbeats, managed-mode API request/response failures (including HTTP status + endpoint/body snippet), and app state transitions (start/stop recording). On macOS, `AudioObjectAddPropertyListenerBlock` monitors default input/output device changes (critical for diagnosing Bluetooth headphone issues). `DebugLogView` is accessible by tapping the version text 5 times in Settings — terminal-style viewer with category filters, pretty/raw view modes, copy, and clear. Raw mode enables partial text selection. Log lines are also mirrored to Xcode/system console via `print` in `DebugLogger.log`.
 - **Expected CoreAudio noise during Bluetooth route handoff (macOS)**: When the default input/output device changes mid-capture (for example AirPods connect while taking/ending a phone call), CoreAudio/HAL may emit transient teardown/rebuild errors such as `!dev`, `!obj`, `who?`, `no object with given ID`, and `throwing -10877`. Treat this as expected if logs show successful restart (`Engine config changed`, `Mic restart complete`, `system audio process tap created`) and capture continues. Treat as a bug only when capture fails to recover.
-- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, expandable release notes ("view notes" / "hide notes"), and a download link (macOS: backend-supplied URL from `/api/version`, iOS: TestFlight). The endpoint is lightweight (no device ID, no Redis reads) and is updated each release.
+- **Version check on launch**: `AppState.checkForUpdates()` calls `GET /api/version` once at startup (all modes). Compares semver — if remote is newer, sets `availableUpdate: VersionInfo?`. A blue `UpdateAvailableBanner` appears on the home screen (macOS, iOS) with version, expandable release notes ("view notes" / "hide notes"), and a download link (macOS: backend-supplied URL from `/api/version`; iOS: opens backend `download_url` directly). The endpoint is lightweight (no device ID, no Redis reads) and is updated each release.
 - **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
 - **StoreKit state in AppState (iOS)**: `AppStoreSubscriptionService` lives in `AppState.swift` under `#if os(iOS)`. It loads `com.miniti.mobile.pro.monthly`, handles purchase, restore (`AppStore.sync()`), listens to `Transaction.updates`, and publishes `hasActiveSubscription`.
 - **Managed Pro fast-path on iOS**: `AppState.isPro` and `isLimitReached` consider local StoreKit entitlement (`hasActiveAppStoreSubscription`) in addition to backend usage response. Display helpers (`displayMinutesLimit`, `displayMinutesRemaining`, `displayUsagePercentage`) keep iOS UI consistent at 5,000 min/month when StoreKit entitlement is active.

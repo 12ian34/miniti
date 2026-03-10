@@ -3,6 +3,7 @@ import SwiftUI
 struct MeetingView: View {
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
+    var meetings: [Meeting] = []
     
     var body: some View {
         Group {
@@ -55,7 +56,7 @@ struct MeetingView: View {
                 }
             } else {
                 // Ready state - no active session (or starting)
-                ReadyStateView()
+                ReadyStateView(meetings: meetings)
             }
         }
         .background(Color(hex: "09090B"))
@@ -85,9 +86,11 @@ struct MeetingView: View {
 
 struct ReadyStateView: View {
     @EnvironmentObject var appState: AppState
+    @EnvironmentObject var keyboardService: KeyboardShortcutsService
     @Environment(\.openSettings) private var openSettings
     @State private var editingDeepgram = false
     @State private var editingOpenAI = false
+    var meetings: [Meeting] = []
     
     var body: some View {
         VStack(spacing: 24) {
@@ -134,7 +137,10 @@ struct ReadyStateView: View {
             
             // Audio sources (opt-in test)
             AudioSourcePanel()
-            
+
+            // Training stats overview
+            TrainingStatsOverview(meetings: meetings)
+
             // Update available banner
             if let update = appState.availableUpdate {
                 UpdateAvailableBanner(versionInfo: update)
@@ -225,20 +231,26 @@ struct ReadyStateView: View {
                 .focusable(false)
             }
             
-            // Keyboard shortcut hint
-            ShortcutHint(keys: "⌘/", label: "shortcuts")
-            
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .topTrailing) {
-            Button {
-                openSettings()
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 13, weight: .medium))
+            HStack(spacing: 8) {
+                Button {
+                    keyboardService.showingHelp.toggle()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "keyboard")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("shortcuts")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        Text("⌘/")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "3F3F46"))
+                    }
                     .foregroundStyle(Color(hex: "52525B"))
-                    .frame(width: 28, height: 28)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
                             .fill(Color(hex: "0F0F11"))
@@ -247,9 +259,37 @@ struct ReadyStateView: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color(hex: "27272A"), lineWidth: 1)
                     )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+
+                Button {
+                    openSettings()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 11, weight: .medium))
+                        Text("settings")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        Text("⌘,")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Color(hex: "3F3F46"))
+                    }
+                    .foregroundStyle(Color(hex: "52525B"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(hex: "0F0F11"))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(hex: "27272A"), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
             }
-            .buttonStyle(.plain)
-            .focusable(false)
             .padding(12)
         }
     }
@@ -452,29 +492,6 @@ struct APIStatusPill: View {
 }
 
 // MARK: - Home Screen Components
-
-struct ShortcutHint: View {
-    let keys: String
-    let label: String
-    
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(keys)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color(hex: "D4D4D8"))
-                .padding(.horizontal, 6)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: 3)
-                        .fill(Color(hex: "1C1C1F"))
-                )
-            
-            Text(label)
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
-                .foregroundStyle(Color(hex: "71717A"))
-        }
-    }
-}
 
 struct HomeModelSelector: View {
     @EnvironmentObject var appState: AppState

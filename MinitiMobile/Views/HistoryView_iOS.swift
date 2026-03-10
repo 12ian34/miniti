@@ -213,59 +213,69 @@ struct MeetingDetail_iOS: View {
         .padding(.vertical, 8)
     }
     
-    // MARK: - Transcript (collapsed same-speaker segments)
-    
+    // MARK: - Transcript (per-segment with speaker turn headers)
+
     private var transcriptContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 if meeting.segments.isEmpty {
                     Text("No transcript available")
                         .font(.system(size: 13, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding()
                 } else {
-                    ForEach(collapsedSegments) { group in
-                        let isMic = group.speaker == DeepgramService.micSpeakerID
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(isMic ? "You" : group.speakerLabel)
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(isMic ? ColorPalette.Speaker.mic : speakerColor(group.speaker))
-                            
-                            Text(group.text)
-                                .font(.system(size: 14))
-                                .foregroundStyle(ColorPalette.Text.primary)
+                    let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
+                    ForEach(Array(sortedSegments.enumerated()), id: \.element.id) { index, segment in
+                        let isNewTurn = index == 0 || sortedSegments[index].speaker != sortedSegments[index - 1].speaker
+                        let isMic = segment.speaker == DeepgramService.micSpeakerID
+                        let color = isMic ? ColorPalette.Speaker.mic : speakerColor(segment.speaker)
+
+                        VStack(alignment: .leading, spacing: 0) {
+                            if isNewTurn {
+                                HStack(spacing: 6) {
+                                    Rectangle()
+                                        .fill(color)
+                                        .frame(width: 3, height: 12)
+                                        .cornerRadius(1.5)
+
+                                    Text(segment.speakerLabel)
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(color)
+
+                                    Text("·")
+                                        .foregroundStyle(ColorPalette.Text.disabled)
+
+                                    Text(segment.formattedTimestamp)
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(ColorPalette.Text.dim)
+                                }
+                                .padding(.top, 12)
+                                .padding(.bottom, 4)
+                            }
+
+                            HStack(alignment: .top, spacing: 0) {
+                                Rectangle()
+                                    .fill(color.opacity(0.3))
+                                    .frame(width: 2)
+
+                                Text(segment.text)
+                                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.primary)
+                                    .padding(.leading, 12)
+                                    .padding(.vertical, 4)
+                            }
                         }
-                        .padding(.horizontal)
                     }
                 }
             }
-            .padding(.vertical)
+            .padding(16)
         }
-    }
-    
-    private var collapsedSegments: [CollapsedSegment] {
-        let sorted = meeting.segments.sorted { $0.timestamp < $1.timestamp }
-        var result: [CollapsedSegment] = []
-        
-        for segment in sorted {
-            if let last = result.last, last.speaker == segment.speaker {
-                result[result.count - 1].text += " " + segment.text
-            } else {
-                result.append(CollapsedSegment(
-                    id: segment.id,
-                    speaker: segment.speaker,
-                    speakerLabel: segment.speakerLabel,
-                    text: segment.text
-                ))
-            }
-        }
-        return result
     }
     
     // MARK: - Insights
     
     private var insightsContent: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
                 historicalInsightsModePicker
                 
@@ -427,7 +437,7 @@ struct MeetingDetail_iOS: View {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
-                    Text((meeting.hasInsights || meeting.hasMEDDPICC) ? "update" : "generate")
+                    Text("update")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                         Text("meddpicc")
@@ -551,12 +561,6 @@ struct MeetingDetail_iOS: View {
 
 // MARK: - Collapsed Segment
 
-struct CollapsedSegment: Identifiable {
-    let id: UUID
-    let speaker: Int
-    let speakerLabel: String
-    var text: String
-}
 
 // MARK: - Saved MEDDPICC Content (reads from Meeting model)
 

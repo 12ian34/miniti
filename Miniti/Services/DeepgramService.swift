@@ -240,6 +240,31 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         receiveMessages()
     }
     
+    /// Gracefully disconnect: stop sending audio, send CloseStream, wait for final transcripts, then tear down.
+    func gracefulDisconnect() async {
+        _sendConnected = false
+        let finalCountBefore = finalTranscriptCount
+
+        // Send Deepgram CloseStream message to signal end of audio stream
+        if let task = webSocketTask {
+            let closeStreamJSON = "{\"type\": \"CloseStream\"}"
+            try? await task.send(.string(closeStreamJSON))
+            DebugLogger.shared.log(.deepgram, "Sent CloseStream, waiting for final transcripts (finalCount=\(finalCountBefore))")
+        }
+
+        // Wait briefly for any remaining final transcripts to arrive
+        let deadline = Date().addingTimeInterval(0.8)
+        while Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+            if finalTranscriptCount > finalCountBefore {
+                DebugLogger.shared.log(.deepgram, "Received final transcript after CloseStream (finalCount=\(finalTranscriptCount))")
+                break
+            }
+        }
+
+        disconnect()
+    }
+
     func disconnect() {
         let mbSent = Double(audioBytesSent) / (1024.0 * 1024.0)
         DebugLogger.shared.log(
