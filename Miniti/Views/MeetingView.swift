@@ -112,12 +112,8 @@ struct ReadyStateView: View {
                 )
             }
             
-            // Mode-aware status section
-            if appState.appMode == .managed {
-                // Managed mode: show usage instead of API pills
-                ManagedStatusView()
-            } else {
-                // BYOK mode: API key pills
+            // BYOK mode: API key pills
+            if appState.appMode == .byok {
                 HStack(spacing: 12) {
                     APIStatusPill(
                         label: "deepgram",
@@ -125,7 +121,7 @@ struct ReadyStateView: View {
                         isEditing: $editingDeepgram,
                         placeholder: "dg_..."
                     )
-                    
+
                     APIStatusPill(
                         label: "openai",
                         key: $appState.openaiApiKey,
@@ -134,23 +130,17 @@ struct ReadyStateView: View {
                     )
                 }
             }
-            
-            // Audio sources (opt-in test)
-            AudioSourcePanel()
-
-            // Training stats overview
-            TrainingStatsOverview(meetings: meetings)
 
             // Update available banner
             if let update = appState.availableUpdate {
                 UpdateAvailableBanner(versionInfo: update)
             }
-            
+
             // Limit reached warning (managed mode)
             if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
-            
+
             // Start button or blocked state
             if appState.isDeviceDisabled {
                 VStack(spacing: 8) {
@@ -230,67 +220,94 @@ struct ReadyStateView: View {
                 .disabled(!appState.canStartRecording || appState.isStartingMeeting)
                 .focusable(false)
             }
-            
+
+            // Training stats overview
+            TrainingStatsOverview(meetings: meetings)
+
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
-                Button {
-                    keyboardService.showingHelp.toggle()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "keyboard")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("shortcuts")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        Text("⌘/")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "3F3F46"))
-                    }
-                    .foregroundStyle(Color(hex: "52525B"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(hex: "0F0F11"))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(hex: "27272A"), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
+        .overlay(alignment: .top) {
+            VStack(spacing: 0) {
+                ZStack(alignment: .top) {
+                    // Left + right buttons — fixed size so they never compress or wrap
+                    HStack(alignment: .top, spacing: 0) {
+                        AudioSourcePanel()
+                            .fixedSize()
+                        Spacer()
+                        HStack(spacing: 8) {
+                            Button {
+                                keyboardService.showingHelp.toggle()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "keyboard")
+                                        .font(.system(size: 11, weight: .medium))
+                                    Text("shortcuts")
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .lineLimit(1)
+                                    Text("⌘/")
+                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "3F3F46"))
+                                }
+                                .foregroundStyle(Color(hex: "52525B"))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color(hex: "0F0F11"))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color(hex: "27272A"), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .fixedSize()
 
-                Button {
-                    openSettings()
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 11, weight: .medium))
-                        Text("settings")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        Text("⌘,")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "3F3F46"))
+                            Button {
+                                openSettings()
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "gearshape")
+                                        .font(.system(size: 11, weight: .medium))
+                                    Text("settings")
+                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .lineLimit(1)
+                                    Text("⌘,")
+                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "3F3F46"))
+                                }
+                                .foregroundStyle(Color(hex: "52525B"))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .fill(Color(hex: "0F0F11"))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(Color(hex: "27272A"), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .fixedSize()
+                        }
                     }
-                    .foregroundStyle(Color(hex: "52525B"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(hex: "0F0F11"))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(hex: "27272A"), lineWidth: 1)
-                    )
+
+                    // Status centered independently — never affects button layout
+                    if appState.appMode == .managed {
+                        ManagedStatusInline()
+                    }
                 }
-                .buttonStyle(.plain)
-                .focusable(false)
+                .padding(12)
+                .animation(.easeInOut(duration: 0.2), value: appState.isMonitoring)
+
+                Rectangle()
+                    .fill(Color(hex: "1C1C1F"))
+                    .frame(maxWidth: .infinity, maxHeight: 1)
             }
-            .padding(12)
         }
     }
 }
@@ -1844,22 +1861,49 @@ struct AudioSourcePanel: View {
     private var isActive: Bool { isTesting && appState.isMonitoring }
     
     var body: some View {
-        VStack(spacing: 10) {
-            // Source pills — always visible
-            HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 8) {
+            // Mic pill + waveform below it
+            VStack(alignment: .center, spacing: 4) {
                 AudioSourcePill(
                     label: "mic",
                     isEnabled: $appState.captureMicrophone,
                     color: Color(hex: "3FB950")
                 )
-                
+                if isActive && appState.captureMicrophone {
+                    ObservedSourceWaveform(
+                        audioLevels: appState.audioLevels,
+                        source: .microphone,
+                        color: Color(hex: "3FB950"),
+                        bandCount: 8,
+                        barWidth: 3,
+                        maxHeight: 20
+                    )
+                    .frame(width: 32, height: 20)
+                    .transition(.opacity)
+                }
+            }
+
+            // System pill + waveform below it
+            VStack(alignment: .center, spacing: 4) {
                 AudioSourcePill(
                     label: "system",
                     isEnabled: $appState.captureSystemAudio,
                     color: Color(hex: "58A6FF")
                 )
+                if isActive && appState.captureSystemAudio {
+                    ObservedSourceWaveform(
+                        audioLevels: appState.audioLevels,
+                        source: .system,
+                        color: Color(hex: "58A6FF"),
+                        bandCount: 8,
+                        barWidth: 3,
+                        maxHeight: 20
+                    )
+                    .frame(width: 32, height: 20)
+                    .transition(.opacity)
+                }
             }
-            
+
             // Test button
             Button {
                 if isTesting {
@@ -1873,12 +1917,12 @@ struct AudioSourcePanel: View {
                 HStack(spacing: 6) {
                     Image(systemName: "waveform")
                         .font(.system(size: 11))
-                    Text(isTesting ? "stop test" : "test audio")
+                    Text(isTesting ? "stop" : "test")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
                 }
                 .foregroundStyle(isTesting ? Color(hex: "3FB950") : Color(hex: "71717A"))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
                 .background(
                     Capsule()
                         .fill(isTesting ? Color(hex: "3FB950").opacity(0.12) : Color(hex: "0F0F11"))
@@ -1890,40 +1934,8 @@ struct AudioSourcePanel: View {
             }
             .buttonStyle(.plain)
             .focusable(false)
-            
-            // Waveforms — only mount while active so internal timers do not run while hidden.
-            ZStack {
-                if isActive {
-                    HStack(spacing: 16) {
-                        if appState.captureMicrophone {
-                            ObservedSourceWaveform(
-                                audioLevels: appState.audioLevels,
-                                source: .microphone,
-                                color: Color(hex: "3FB950"),
-                                bandCount: 8,
-                                barWidth: 3,
-                                maxHeight: 24
-                            )
-                                .frame(width: 36, height: 24)
-                        }
-                        if appState.captureSystemAudio {
-                            ObservedSourceWaveform(
-                                audioLevels: appState.audioLevels,
-                                source: .system,
-                                color: Color(hex: "58A6FF"),
-                                bandCount: 8,
-                                barWidth: 3,
-                                maxHeight: 24
-                            )
-                                .frame(width: 36, height: 24)
-                        }
-                    }
-                    .transition(.opacity)
-                }
-            }
-            .frame(height: 28)
-            .animation(.easeInOut(duration: 0.2), value: isActive)
         }
+        .animation(.easeInOut(duration: 0.2), value: isActive)
         .onChange(of: appState.captureMicrophone) { _, _ in
             if isTesting { appState.restartAudioMonitoring() }
         }
@@ -1934,6 +1946,38 @@ struct AudioSourcePanel: View {
             if isTesting {
                 isTesting = false
                 appState.stopAudioMonitoring()
+            }
+        }
+    }
+}
+
+// MARK: - Managed Status Inline (home screen top bar)
+
+private struct ManagedStatusInline: View {
+    @EnvironmentObject var appState: AppState
+
+    private var accent: Color {
+        if appState.shouldShowManagedSubscriptionPlaceholder { return Color(hex: "71717A") }
+        guard let usage = appState.usageInfo else { return Color(hex: "3FB950") }
+        if appState.isPro { return Color(hex: "A78BFA") }
+        if usage.minutesRemaining < 15 { return Color(hex: "F85149") }
+        if usage.minutesRemaining < 60 { return Color(hex: "F59E0B") }
+        return Color(hex: "3FB950")
+    }
+
+    var body: some View {
+        if appState.shouldShowManagedSubscriptionPlaceholder {
+            Text("checking plan...")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "52525B"))
+        } else if let usage = appState.usageInfo {
+            HStack(spacing: 6) {
+                Text(appState.isPro ? "miniti pro" : "miniti free")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "52525B"))
+                Text("\(Int(usage.minutesUsed.rounded()))/\(Int(usage.minutesLimit)) min")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(accent)
             }
         }
     }
@@ -1958,10 +2002,12 @@ struct AudioSourcePill: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(isEnabled ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
-                
+                    .lineLimit(1)
+
                 Text(isEnabled ? "on" : "off")
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(isEnabled ? color.opacity(0.8) : Color(hex: "71717A").opacity(0.6))
+                    .lineLimit(1)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 6)

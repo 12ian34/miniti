@@ -31,6 +31,47 @@ struct MeetingView_iOS: View {
     private var isResumePending: Bool {
         isStopped && isResumingRecording
     }
+
+    private var shareContent: String {
+        switch activeSection {
+        case .transcript:
+            return appState.transcriptAsMarkdown()
+        case .insights:
+            var md = "# \(appState.currentMeeting?.title ?? "Meeting") — Insights\n\n"
+            if !appState.liveSummary.isEmpty { md += "## Summary\n\n\(appState.liveSummary)\n\n" }
+            if !appState.liveDiscussionFlow.isEmpty {
+                md += "## Discussion Flow\n\n"
+                for (i, item) in appState.liveDiscussionFlow.enumerated() { md += "\(i+1). \(item)\n" }
+                md += "\n"
+            }
+            if !appState.liveActionItems.isEmpty {
+                md += "## Action Items\n\n"
+                for item in appState.liveActionItems { md += "- [ ] \(item)\n" }
+                md += "\n"
+            }
+            if !appState.liveTopics.isEmpty {
+                md += "## Topics\n\n"
+                for topic in appState.liveTopics { md += "- \(topic)\n" }
+                md += "\n"
+            }
+            let meddpiccFields: [(String, String?)] = [
+                ("Metrics", appState.liveMetrics), ("Economic Buyer", appState.liveEconomicBuyer),
+                ("Decision Criteria", appState.liveDecisionCriteria), ("Decision Process", appState.liveDecisionProcess),
+                ("Paper Process", appState.livePaperProcess), ("Identified Pain", appState.liveIdentifiedPain),
+                ("Champion", appState.liveChampion), ("Competition", appState.liveCompetition)
+            ]
+            if meddpiccFields.contains(where: { $0.1 != nil && !($0.1?.isEmpty ?? true) }) {
+                md += "## MEDDPICC\n\n"
+                for (label, value) in meddpiccFields {
+                    if let value, !value.isEmpty { md += "**\(label):** \(value)\n\n" }
+                }
+            }
+            if !appState.liveNotes.isEmpty { md += "## Notes\n\n\(appState.liveNotes)\n" }
+            return md.trimmingCharacters(in: .whitespacesAndNewlines)
+        case .notes:
+            return appState.liveNotes.isEmpty ? "(no notes)" : appState.liveNotes
+        }
+    }
     
     private var recoveryAccent: Color {
         switch appState.audioRecoveryState {
@@ -60,9 +101,26 @@ struct MeetingView_iOS: View {
     
     private var activeSessionView: some View {
         VStack(spacing: 0) {
-            recordingHeader
+            if appState.audioRecoveryState != .healthy {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(recoveryAccent)
+                        .frame(width: 6, height: 6)
+                    Text(appState.audioRecoveryState.label)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(recoveryAccent)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 4).fill(recoveryAccent.opacity(0.12)))
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(recoveryAccent.opacity(0.24), lineWidth: 1))
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+            }
+
             sectionPicker
-            
+
             Group {
                 switch activeSection {
                 case .transcript:
@@ -74,10 +132,37 @@ struct MeetingView_iOS: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            
+
             controlBar
         }
         .background(ColorPalette.Background.primary)
+        .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(ColorPalette.Background.secondary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(isStopped ? ColorPalette.Text.disabled : Color(hex: "F85149"))
+                        .frame(width: 8, height: 8)
+                    Text(appState.formattedDuration)
+                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isStopped ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+                    if appState.isRecording {
+                        CompactWaveform_iOS(level: appState.audioLevels.microphoneLevel, color: ColorPalette.Speaker.mic)
+                            .frame(width: 24, height: 18)
+                    }
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                ShareLink(item: shareContent) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            }
+        }
         .overlay {
             if showSavedOverlay {
                 Text("saved")
@@ -114,99 +199,14 @@ struct MeetingView_iOS: View {
             }
         }
         .onChange(of: appState.isRecording) { _, isRecording in
-            if isRecording {
-                isResumingRecording = false
-            }
+            if isRecording { isResumingRecording = false }
         }
         .onChange(of: appState.managedSessionError) { _, error in
-            if error != nil {
-                isResumingRecording = false
-            }
+            if error != nil { isResumingRecording = false }
         }
         .onChange(of: appState.currentMeeting == nil) { _, noMeeting in
-            if noMeeting {
-                isResumingRecording = false
-            }
+            if noMeeting { isResumingRecording = false }
         }
-    }
-    
-    // MARK: - Recording Header
-    
-    private var recordingHeader: some View {
-        let isStopped = !appState.isRecording
-        
-        return VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Color.clear.frame(width: 60, height: 1)
-                
-                Spacer()
-                
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(isStopped ? ColorPalette.Text.disabled : Color(hex: "F85149"))
-                        .frame(width: 8, height: 8)
-
-                    Text(appState.formattedDuration)
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(isStopped ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
-
-                    if appState.isRecording {
-                        CompactWaveform_iOS(level: appState.audioLevels.microphoneLevel, color: ColorPalette.Speaker.mic)
-                            .frame(width: 24, height: 18)
-                    }
-                }
-                
-                Spacer()
-                
-                HStack(spacing: 4) {
-                    Button {
-                        appState.goHome()
-                    } label: {
-                        Image(systemName: "house")
-                            .font(.system(size: 14))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                            .padding(6)
-                    }
-                    
-                    ShareLink(item: appState.fullMeetingAsMarkdown()) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                            .padding(6)
-                    }
-                }
-                .frame(width: 60, alignment: .trailing)
-                .opacity(isStopped ? 1 : 0)
-                .allowsHitTesting(isStopped)
-            }
-            .padding(.horizontal, 12)
-            
-            if appState.audioRecoveryState != .healthy {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(recoveryAccent)
-                        .frame(width: 6, height: 6)
-                    Text(appState.audioRecoveryState.label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundStyle(recoveryAccent)
-                    Spacer(minLength: 0)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(recoveryAccent.opacity(0.12))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(recoveryAccent.opacity(0.24), lineWidth: 1)
-                )
-                .padding(.horizontal, 12)
-            }
-            
-        }
-        .padding(.vertical, 12)
-        .background(ColorPalette.Background.secondary)
     }
     
     // MARK: - Control Bar (bottom)
@@ -311,15 +311,16 @@ struct MeetingView_iOS: View {
     
     private func terminalButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.system(size: 11, weight: .semibold))
                 Text(label)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
             }
             .foregroundStyle(color)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
+            .frame(width: 128)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(bgColor)
@@ -480,256 +481,176 @@ struct ReadyStateView_iOS: View {
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var isMicTesting = false
     @State private var isPurchasingPro = false
-    @State private var isRestoringPro = false
     @State private var subscriptionMessage: String?
     
     var body: some View {
-        VStack(spacing: 24) {
-            // Settings gear (top right)
-            HStack {
-                Spacer()
-                NavigationLink(destination: SettingsView_iOS()) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 18))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(8)
-                }
-            }
-            .padding(.horizontal)
-            
-            Spacer()
-            
-            // Logo
-            VStack(spacing: 12) {
-                Text("⬢")
-                    .font(.system(size: 48, weight: .bold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.green)
-                
-                Text("miniti")
-                    .font(.system(size: 28, weight: .bold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                
-                FlashingTagline_iOS(
-                    text: "multi-dimensional meetings",
-                    isIdle: !(isMicTesting && appState.isMonitoring)
+        VStack(spacing: 0) {
+            if isMicTesting && appState.isMonitoring {
+                ObservedSourceWaveform_iOS(
+                    audioLevels: appState.audioLevels,
+                    source: .microphone,
+                    color: ColorPalette.Speaker.mic
                 )
-            }
-            
-            // Mode status
-            if appState.appMode == .managed {
-                ManagedStatusPill()
-            } else {
-                BYOKStatusPills()
-            }
-            
-            // Test mic button with waveform overlay above it
-            VStack(spacing: 6) {
-                // Waveform sits in a fixed-height slot that's always reserved
-                ZStack {
-                    if isMicTesting && appState.isMonitoring {
-                        VStack(spacing: 4) {
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(ColorPalette.Speaker.mic)
-                                    .frame(width: 6, height: 6)
-                                Text("mic")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(ColorPalette.Text.muted)
-                            }
-                            ObservedSourceWaveform_iOS(
-                                audioLevels: appState.audioLevels,
-                                source: .microphone,
-                                color: ColorPalette.Speaker.mic
-                            )
-                            .frame(height: 20)
-                        }
-                        .transition(.opacity)
-                    }
-                }
-                .frame(height: 36)
+                .frame(height: 16)
                 .padding(.horizontal, 40)
-                
-                Button {
-                    if isMicTesting {
-                        isMicTesting = false
-                        appState.stopAudioMonitoring()
-                    } else {
-                        isMicTesting = true
-                        appState.startAudioMonitoring()
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: isMicTesting ? "mic.fill" : "mic")
-                            .font(.system(size: 12))
-                        Text(isMicTesting ? "stop test" : "test mic")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    }
-                    .foregroundStyle(isMicTesting ? ColorPalette.Speaker.mic : ColorPalette.Text.muted)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule()
-                            .fill(isMicTesting ? ColorPalette.Speaker.mic.opacity(0.12) : ColorPalette.Background.secondary)
-                            .overlay(
-                                Capsule()
-                                    .strokeBorder(isMicTesting ? ColorPalette.Speaker.mic.opacity(0.3) : ColorPalette.Border.subtle, lineWidth: 1)
-                            )
+                .padding(.top, 4)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.2), value: isMicTesting && appState.isMonitoring)
+            }
+
+            // Two spacers push the main block lower (2/3 of free space above)
+            Spacer()
+            Spacer()
+
+            // Logo + tagline + start button grouped together
+            VStack(spacing: 28) {
+                VStack(spacing: 12) {
+                    Text("⬢")
+                        .font(.system(size: 48, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Accent.green)
+
+                    Text("miniti")
+                        .font(.system(size: 28, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+
+                    FlashingTagline_iOS(
+                        text: "multi-dimensional meetings",
+                        isIdle: !(isMicTesting && appState.isMonitoring)
                     )
                 }
-            }
-            
-            // Update available banner
-            if let update = appState.availableUpdate {
-                UpdateAvailableBanner_iOS(versionInfo: update)
-            }
-            
-            // Training stats overview
-            TrainingStatsOverview(meetings: meetings)
 
-            // Start button or blocked state
-            if appState.isDeviceDisabled {
-                VStack(spacing: 8) {
-                    Text("account disabled")
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Status.limitReached)
-                    
-                    Text("contact support for help")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.muted)
+                if appState.appMode == .byok {
+                    BYOKStatusPills()
                 }
-            } else if appState.isLimitReached {
-                VStack(spacing: 10) {
-                    Text("Monthly limit reached")
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Status.limitReached)
-                    
-                    Button {
-                        guard !isPurchasingPro else { return }
-                        isPurchasingPro = true
-                        subscriptionMessage = nil
-                        Task {
-                            let success = await appState.purchaseProSubscription()
-                            isPurchasingPro = false
-                            if success {
-                                subscriptionMessage = "Pro subscription is now active."
-                            } else {
-                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+
+                // Update available banner
+                if let update = appState.availableUpdate {
+                    UpdateAvailableBanner_iOS(versionInfo: update)
+                }
+
+                // Start button or blocked state
+                if appState.isDeviceDisabled {
+                    VStack(spacing: 8) {
+                        Text("account disabled")
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Status.limitReached)
+
+                        Text("contact support for help")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
+                } else if appState.isLimitReached {
+                    VStack(spacing: 10) {
+                        Text("Monthly limit reached")
+                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Status.limitReached)
+
+                        Button {
+                            guard !isPurchasingPro else { return }
+                            isPurchasingPro = true
+                            subscriptionMessage = nil
+                            Task {
+                                let success = await appState.purchaseProSubscription()
+                                isPurchasingPro = false
+                                if success {
+                                    subscriptionMessage = "Pro subscription is now active."
+                                } else {
+                                    subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                                }
                             }
+                        } label: {
+                            HStack(spacing: 8) {
+                                if isPurchasingPro {
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(0.8)
+                                    Text("purchasing...")
+                                } else {
+                                    Text("Upgrade to Pro — $4.99/month")
+                                }
+                            }
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Capsule().fill(ColorPalette.Accent.purple))
                         }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if isPurchasingPro {
-                                ProgressView()
-                                    .tint(.white)
-                                    .scaleEffect(0.8)
-                                Text("purchasing...")
-                            } else {
-                                Text("Upgrade to Pro — $4.99/month")
+                        .disabled(isPurchasingPro)
+
+                        VStack(spacing: 4) {
+                            Text("Miniti Pro Monthly · $4.99/month · auto-renewable")
+                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(ColorPalette.Text.muted)
+                                .multilineTextAlignment(.center)
+
+                            HStack(spacing: 8) {
+                                Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
+                                Text("•").foregroundStyle(ColorPalette.Text.disabled)
+                                Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
                             }
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        }
+
+                        if let subscriptionMessage {
+                            Text(subscriptionMessage)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(ColorPalette.Text.muted)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 20)
+                        }
+
+                        Button("Switch to BYOK") {
+                            appState.appMode = .byok
                         }
                         .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .background(
-                            Capsule()
-                                .fill(ColorPalette.Accent.purple)
-                        )
+                        .foregroundStyle(ColorPalette.Accent.blue)
                     }
-                    .disabled(isPurchasingPro)
-                    
-                    VStack(spacing: 4) {
-                        Text("Miniti Pro Monthly · $4.99/month · auto-renewable")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                            .multilineTextAlignment(.center)
-
-                        HStack(spacing: 8) {
-                            Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
-                            Text("•")
-                                .foregroundStyle(ColorPalette.Text.disabled)
-                            Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
-                        }
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    }
-                    
+                } else {
                     Button {
-                        guard !isRestoringPro else { return }
-                        isRestoringPro = true
-                        subscriptionMessage = nil
-                        Task {
-                            let restored = await appState.restoreAppStorePurchases()
-                            isRestoringPro = false
-                            if restored {
-                                subscriptionMessage = "Purchases restored."
-                            } else {
-                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "No active App Store subscription found."
-                            }
+                        if !appState.isStartingMeeting {
+                            appState.startNewMeeting()
                         }
                     } label: {
-                        if isRestoringPro {
-                            Text("restoring...")
-                        } else {
-                            Text("Restore Purchases")
+                        HStack(spacing: 8) {
+                            if appState.isStartingMeeting {
+                                ProgressView()
+                                    .tint(.black)
+                                    .scaleEffect(0.8)
+                                Text("starting...")
+                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                                    .lineLimit(1)
+                            } else {
+                                Image(systemName: "record.circle")
+                                    .font(.system(size: 18))
+                                Text("start")
+                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                            }
                         }
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 14)
+                        .background(
+                            Capsule()
+                                .fill(appState.isStartingMeeting
+                                      ? ColorPalette.Text.muted
+                                      : appState.canStartRecording
+                                          ? ColorPalette.Accent.green
+                                          : ColorPalette.Text.disabled)
+                        )
                     }
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                    .disabled(isRestoringPro)
-                    
-                    if let subscriptionMessage {
-                        Text(subscriptionMessage)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 20)
-                    }
-                    
-                    Button("Switch to BYOK") {
-                        appState.appMode = .byok
-                    }
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .disabled(!appState.canStartRecording || appState.isStartingMeeting)
                 }
-            } else {
-                Button {
-                    if !appState.isStartingMeeting {
-                        appState.startNewMeeting()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        if appState.isStartingMeeting {
-                            ProgressView()
-                                .tint(.white)
-                                .scaleEffect(0.8)
-                            Text("starting...")
-                                .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                                .lineLimit(1)
-                        } else {
-                            Image(systemName: "record.circle")
-                                .font(.system(size: 18))
-                            Text("start")
-                                .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        }
-                    }
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 14)
-                    .background(
-                        Capsule()
-                            .fill(appState.isStartingMeeting
-                                  ? ColorPalette.Text.muted
-                                  : appState.canStartRecording
-                                      ? ColorPalette.Accent.green
-                                      : ColorPalette.Text.disabled)
-                    )
-                }
-                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
             }
-            
+
+            // Single spacer below main block — training pins near bottom
             Spacer()
+
+            // Training stats near bottom
+            TrainingStatsOverview(meetings: meetings)
+                .padding(.bottom, 24)
         }
-        .padding()
+        .padding(.horizontal)
+        .padding(.vertical, 8)
         .onDisappear {
             if isMicTesting {
                 isMicTesting = false
@@ -741,6 +662,41 @@ struct ReadyStateView_iOS: View {
                 appState.startAudioMonitoring()
             } else if newPhase == .background, appState.isMonitoring {
                 appState.stopAudioMonitoring()
+            }
+        }
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    if isMicTesting {
+                        isMicTesting = false
+                        appState.stopAudioMonitoring()
+                    } else {
+                        isMicTesting = true
+                        appState.startAudioMonitoring()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: isMicTesting ? "mic.fill" : "mic")
+                            .font(.system(size: 12))
+                        Text(isMicTesting ? "stop" : "test")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(isMicTesting ? ColorPalette.Speaker.mic : ColorPalette.Text.muted)
+                }
+            }
+            ToolbarItem(placement: .principal) {
+                if appState.appMode == .managed {
+                    ManagedStatusInline_iOS()
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                NavigationLink(destination: SettingsView_iOS()) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
             }
         }
     }
@@ -884,6 +840,36 @@ struct ManagedStatusPill: View {
                     }
                 }
                 .frame(width: 180, height: 6)
+            }
+        }
+    }
+}
+
+private struct ManagedStatusInline_iOS: View {
+    @EnvironmentObject var appState: AppState
+
+    private var accent: Color {
+        if appState.shouldShowManagedSubscriptionPlaceholder { return Color(hex: "71717A") }
+        guard let usage = appState.usageInfo else { return Color(hex: "3FB950") }
+        if appState.isPro { return Color(hex: "A78BFA") }
+        if usage.minutesRemaining < 15 { return Color(hex: "F85149") }
+        if usage.minutesRemaining < 60 { return Color(hex: "F59E0B") }
+        return Color(hex: "3FB950")
+    }
+
+    var body: some View {
+        if appState.shouldShowManagedSubscriptionPlaceholder {
+            Text("checking plan...")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "52525B"))
+        } else if let usage = appState.usageInfo {
+            HStack(spacing: 6) {
+                Text(appState.isPro ? "miniti pro" : "miniti free")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "52525B"))
+                Text("\(Int(usage.minutesUsed.rounded()))/\(Int(appState.displayMinutesLimit)) min")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(accent)
             }
         }
     }

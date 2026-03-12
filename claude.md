@@ -29,7 +29,17 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-10 - v1.14.0 (unreleased)
+### 2026-03-11 - v1.15.0
+
+- new: home screen redesign
+- improvement: training stats include questions asked
+- improvement: training stats detail improvements
+- improvement: filler words info popup links to Settings
+- improvement: added deepgram keyterms for "Miniti", "Lightdash", and "Ahuja"
+- improvement: iOS share button is context-aware: sharing from transcript shares the transcript only; sharing from insights shares insights, MEDDPICC, and notes.
+- improvement: iOS native toolbar items
+
+### 2026-03-10 - v1.14.0 (released)
 
 - new: Training stats overview on the home screen (macOS + iOS) — shows fillers/min, pace, and clarity averaged across your last 5 meetings vs last meeting, with trend arrows and info buttons.
 - new: iOS copy button replaced with native share sheet.
@@ -517,11 +527,11 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 ### iOS
 - **Terms acceptance** (first launch or existing users who haven't accepted): Same as macOS (shared `TermsAcceptanceView`)
 - **Onboarding** (first launch, after terms): Same as macOS (shared `OnboardingView`)
-- **Home** (`ReadyStateView_iOS`): Logo with animated "multi-dimensional meetings" tagline, mode status pill, "test mic" button (opt-in waveform), gear icon for settings, start button. Mic-only (no system audio toggle)
+- **Home** (`ReadyStateView_iOS`): Native toolbar: test mic (leading), usage status (principal), settings gear (trailing). Mic waveform appears inline below nav bar when testing. Logo with animated "multi-dimensional meetings" tagline, start button. Mic-only (no system audio toggle)
 - **Home (limit reached)**: In managed mode when free cap is reached — shows in-app "Upgrade to Pro — $4.99/month", "Restore Purchases", and BYOK fallback
 - **Starting**: Spinner with "starting..." text while waiting for managed mode key or audio setup
-- **Recording**: Header with red dot + timer (center) + waveform, custom lowercase section picker (transcript/insights/notes), stop button at bottom center
-- **Stopped session**: Same layout, no jumps — header shows gray dot + frozen timer, home + copy icons fade in (top right), waveform fades out. Bottom bar: discard (left), start/resume (center, same position as stop), save (right)
+- **Recording**: Native toolbar: home (leading), red dot + timer + waveform (principal), share (trailing). Custom lowercase section picker (transcript/insights/notes), stop button at bottom center.
+- **Stopped session**: Same layout — toolbar: home (leading), gray dot + frozen timer (principal), share (trailing). Bottom bar: discard (left), start/resume (center, same position as stop), save (right)
 - **History tab**: `NavigationStack` list with swipe-to-delete, drill-down detail with custom tab bar (transcript/insights/notes, lowercase). Transcript collapses consecutive same-speaker segments. Insights contains standard / MEDDPICC / training modes plus generate/update for saved meetings. Training metrics are computed from saved segments. Notes are editable.
 - **Settings**: Accessible via gear icon on home screen (no dedicated tab). Managed mode includes in-app Pro purchase, restore purchases, and Apple subscription management link.
 - **Tab bar**: Record / History — two-tab navigation

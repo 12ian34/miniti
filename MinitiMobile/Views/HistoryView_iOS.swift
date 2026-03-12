@@ -113,22 +113,84 @@ struct MeetingRow_iOS: View {
 struct MeetingDetail_iOS: View {
     @Bindable var meeting: Meeting
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
     @State private var activeSection: DetailSection = .transcript
-    
+
     enum DetailSection: String, CaseIterable {
         case transcript = "transcript"
         case insights = "insights"
         case notes = "notes"
     }
-    
+
+    private var shareContent: String {
+        switch activeSection {
+        case .transcript:
+            return transcriptMarkdown()
+        case .insights:
+            return insightsMarkdown()
+        case .notes:
+            return meeting.notes.isEmpty ? "(no notes)" : meeting.notes
+        }
+    }
+
+    private func transcriptMarkdown() -> String {
+        guard !meeting.segments.isEmpty else { return "(no transcript)" }
+        var md = "# \(meeting.title) — Transcript\n\n"
+        md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
+        var currentSpeaker: Int? = nil
+        for segment in meeting.segments.sorted(by: { $0.timestamp < $1.timestamp }) {
+            if segment.speaker != currentSpeaker {
+                currentSpeaker = segment.speaker
+                md += "\n**\(segment.speakerLabel):**\n"
+            }
+            md += "\(segment.text) "
+        }
+        return md.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func insightsMarkdown() -> String {
+        var md = "# \(meeting.title) — Insights\n\n"
+        md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
+        if let summary = meeting.summaryText, !summary.isEmpty { md += "## Summary\n\n\(summary)\n\n" }
+        if !meeting.discussionFlow.isEmpty {
+            md += "## Discussion Flow\n\n"
+            for (i, item) in meeting.discussionFlow.enumerated() { md += "\(i+1). \(item)\n" }
+            md += "\n"
+        }
+        if !meeting.actionItems.isEmpty {
+            md += "## Action Items\n\n"
+            for item in meeting.actionItems { md += "- [ ] \(item)\n" }
+            md += "\n"
+        }
+        if !meeting.topics.isEmpty {
+            md += "## Topics\n\n"
+            for topic in meeting.topics { md += "- \(topic)\n" }
+            md += "\n"
+        }
+        let meddpiccFields: [(String, String?)] = [
+            ("Metrics", meeting.meddpiccMetrics), ("Economic Buyer", meeting.meddpiccEconomicBuyer),
+            ("Decision Criteria", meeting.meddpiccDecisionCriteria), ("Decision Process", meeting.meddpiccDecisionProcess),
+            ("Paper Process", meeting.meddpiccPaperProcess), ("Identified Pain", meeting.meddpiccIdentifiedPain),
+            ("Champion", meeting.meddpiccChampion), ("Competition", meeting.meddpiccCompetition)
+        ]
+        if meddpiccFields.contains(where: { $0.1 != nil && !($0.1?.isEmpty ?? true) }) {
+            md += "## MEDDPICC\n\n"
+            for (label, value) in meddpiccFields {
+                if let value, !value.isEmpty { md += "**\(label):** \(value)\n\n" }
+            }
+        }
+        if !meeting.notes.isEmpty { md += "## Notes\n\n\(meeting.notes)\n" }
+        return md.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             titleEditor
-            
+
             // Custom section picker (matching recording screen style)
             sectionPicker
-            
+
             // Content
             Group {
                 switch activeSection {
@@ -143,15 +205,25 @@ struct MeetingDetail_iOS: View {
         }
         .navigationTitle(meeting.title)
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .onDisappear {
             saveTitle()
         }
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    UIPasteboard.general.string = meetingAsMarkdown()
+                    dismiss()
                 } label: {
-                    Image(systemName: "doc.on.doc")
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                ShareLink(item: shareContent) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.muted)
                 }
             }
         }
@@ -499,38 +571,6 @@ struct MeetingDetail_iOS: View {
         let remoteColors = ColorPalette.Speaker.remote
         let index = speaker % remoteColors.count
         return remoteColors[index]
-    }
-    
-    private func meetingAsMarkdown() -> String {
-        var md = "# \(meeting.title)\n\n"
-        md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
-        
-        if !meeting.segments.isEmpty {
-            md += "## Transcript\n\n"
-            var currentSpeaker: Int? = nil
-            for segment in meeting.segments.sorted(by: { $0.timestamp < $1.timestamp }) {
-                if segment.speaker != currentSpeaker {
-                    currentSpeaker = segment.speaker
-                    md += "\n**\(segment.speakerLabel):**\n"
-                }
-                md += "\(segment.text) "
-            }
-            md += "\n\n"
-        }
-        
-        if let summary = meeting.summaryText, !summary.isEmpty {
-            md += "## Summary\n\n\(summary)\n\n"
-        }
-        
-        if !meeting.actionItems.isEmpty {
-            md += "## Action Items\n\n"
-            for item in meeting.actionItems {
-                md += "- [ ] \(item)\n"
-            }
-            md += "\n"
-        }
-        
-        return md
     }
     
     private func saveTitle() {

@@ -97,10 +97,6 @@ struct UsageBanner: View {
 /// Larger usage display for the home screen in managed mode.
 struct ManagedStatusView: View {
     @EnvironmentObject var appState: AppState
-    @State private var showRestoreSheet = false
-    @State private var licenseKeyInput = ""
-    @State private var isRestoring = false
-    @State private var restoreError: String?
     
     private var usage: MinitiAPIService.UsageInfo? {
         appState.usageInfo
@@ -208,46 +204,7 @@ struct ManagedStatusView: View {
             }
             #endif
             
-            #if os(macOS)
-            Button {
-                showRestoreSheet = true
-            } label: {
-                Text("restore subscription")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "52525B"))
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            #endif
         }
-        #if os(macOS)
-        .sheet(isPresented: $showRestoreSheet) {
-            RestoreLicenseKeySheet(
-                licenseKeyInput: $licenseKeyInput,
-                isRestoring: $isRestoring,
-                restoreError: $restoreError,
-                onRestore: {
-                    isRestoring = true
-                    restoreError = nil
-                    Task {
-                        let success = await appState.restoreSubscription(licenseKey: licenseKeyInput)
-                        isRestoring = false
-                        if success {
-                            showRestoreSheet = false
-                            licenseKeyInput = ""
-                        } else {
-                            restoreError = "Invalid or expired license key"
-                        }
-                    }
-                },
-                onCancel: {
-                    showRestoreSheet = false
-                    licenseKeyInput = ""
-                    restoreError = nil
-                }
-            )
-        }
-        #endif
     }
 }
 

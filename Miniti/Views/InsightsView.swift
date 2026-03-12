@@ -998,14 +998,18 @@ struct TerminalSectionInfo {
     let title: String
     let summary: String
     let guidance: [String]
+    var settingsNote: String? = nil
 }
 
 struct TerminalSectionInfoButton: View {
     let info: TerminalSectionInfo
     let accent: Color
-    
+
     @State private var showInfo = false
-    
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
+
     var body: some View {
         Button {
             showInfo.toggle()
@@ -1057,6 +1061,24 @@ struct TerminalSectionInfoButton: View {
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
+                }
+                if let note = info.settingsNote {
+                    Divider()
+                        .background(Color(hex: "30363D"))
+                    Button {
+                        showInfo = false
+                        openSettings()
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 9))
+                            Text(note)
+                                .font(.system(size: 10, weight: .medium, design: .rounded))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .foregroundStyle(accent.opacity(0.85))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             .padding(14)
@@ -1112,6 +1134,18 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
                     }
                 }
             }
+            if let note = info.settingsNote {
+                Divider()
+                    .background(Color(hex: "30363D"))
+                HStack(spacing: 5) {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 10))
+                    Text(note)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(accent.opacity(0.85))
+            }
         }
         .padding(16)
         .frame(maxWidth: 340, alignment: .leading)
@@ -1140,7 +1174,8 @@ extension TerminalSectionInfo {
             "3-6/min is common in casual conversation or when thinking live.",
             "6+/min can make delivery feel less confident or less crisp.",
             "Context matters: brainstorming and interviews usually spike filler usage."
-        ]
+        ],
+        settingsNote: "You can add or edit your own filler words in Settings → Training."
     )
     
     static let talkRatio = TerminalSectionInfo(
@@ -1208,6 +1243,7 @@ struct TrainingStatsOverview: View {
         let pace: Double
         let fillersPerMinute: Double
         let clarity: Double
+        let questionsAsked: Int
     }
 
     private var recentStats: [MeetingStats] {
@@ -1235,7 +1271,8 @@ struct TrainingStatsOverview: View {
             result.append(MeetingStats(
                 pace: speaker.wordsPerMinute,
                 fillersPerMinute: speaker.fillersPerMinute,
-                clarity: speaker.avgWordsPerTurn
+                clarity: speaker.avgWordsPerTurn,
+                questionsAsked: speaker.questionsAsked
             ))
         }
         return result
@@ -1248,6 +1285,7 @@ struct TrainingStatsOverview: View {
             let avgPace = stats.map(\.pace).reduce(0, +) / Double(stats.count)
             let avgFillers = stats.map(\.fillersPerMinute).reduce(0, +) / Double(stats.count)
             let avgClarity = stats.map(\.clarity).reduce(0, +) / Double(stats.count)
+            let avgQuestions = stats.map(\.questionsAsked).reduce(0, +) / stats.count
 
             VStack(spacing: 2) {
                 TrainingStatHeader(meetingCount: stats.count)
@@ -1257,7 +1295,7 @@ struct TrainingStatsOverview: View {
                         label: "fillers",
                         avgValue: String(format: "%.1f", avgFillers),
                         lastValue: String(format: "%.1f", last.fillersPerMinute),
-                        unit: "/min",
+                        unit: "f/min",
                         trend: trend(last: last.fillersPerMinute, avg: avgFillers),
                         color: Color(hex: "F59E0B"),
                         info: .fillers
@@ -1266,7 +1304,7 @@ struct TrainingStatsOverview: View {
                         label: "pace",
                         avgValue: "\(Int(avgPace))",
                         lastValue: "\(Int(last.pace))",
-                        unit: "wpm",
+                        unit: "w/min",
                         trend: trend(last: last.pace, avg: avgPace),
                         color: Color(hex: "58A6FF"),
                         info: .pace
@@ -1279,6 +1317,15 @@ struct TrainingStatsOverview: View {
                         trend: trend(last: last.clarity, avg: avgClarity),
                         color: Color(hex: "A371F7"),
                         info: .clarity
+                    )
+                    TrainingStatRow(
+                        label: "questions",
+                        avgValue: "\(avgQuestions)",
+                        lastValue: "\(last.questionsAsked)",
+                        unit: "qs",
+                        trend: trend(last: Double(last.questionsAsked), avg: Double(avgQuestions)),
+                        color: Color(hex: "3FB950"),
+                        info: .questionsAsked
                     )
                 }
                 .background(
@@ -1317,14 +1364,14 @@ private struct TrainingStatHeader: View {
 
             Spacer(minLength: 4)
 
-            Text("avg \(meetingCount)")
+            Text("last \(meetingCount)")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
-            Text("last")
+            Text("last 1")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
