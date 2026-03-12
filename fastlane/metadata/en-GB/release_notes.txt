@@ -1,12 +1,7 @@
-- Training stats now include questions asked, alongside fillers, pace, and clarity.
-- iOS home screen redesigned: test mic button top-left with waveform below it, usage status centred at top — no more progress bar.
-- Share button is now context-aware: sharing from the transcript tab shares the transcript; sharing from insights shares all insights, MEDDPICC, and notes.
-- History view share and back buttons now match the app's visual style.
-- Recording screen home and share buttons are now native iOS toolbar items, visible during recording and when stopped.
-- Home screen top bar is now fully native toolbar items: test mic, usage status, and settings gear all render consistently with the rest of the app.
-- Filler words info popup now links to Settings so you can add or edit your own filler words.
-- Training stats column headers renamed to "last 5" and "last 1". Fillers unit is now f/min, pace is w/min.
-- Deepgram Nova-3 now uses keyterms for "Miniti", "Lightdash", and "Ahuja" to improve transcription accuracy.
-- macOS home screen has a unified top bar with a full-width separator line beneath it.
-- macOS "restore subscription" button removed from home screen — it's available in Settings.
-- iOS start button icon and text are now black on the green button.
+- new: home screen redesign
+- improvement: training stats include questions asked
+- improvement: training stats detail improvements
+- improvement: filler words info popup links to Settings
+- improvement: added deepgram keyterms for "Miniti", "Lightdash", and "Ahuja"
+- improvement: iOS share button is context-aware: sharing from transcript shares the transcript only; sharing from insights shares insights, MEDDPICC, and notes.
+- improvement: iOS native toolbar items

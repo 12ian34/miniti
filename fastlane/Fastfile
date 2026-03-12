@@ -134,6 +134,23 @@ platform :ios do
     )
   end
 
+  desc "Upload metadata and/or screenshots without a new binary. Pass skip_metadata:true or skip_screenshots:true to limit scope."
+  lane :metadata do |options|
+    api_key = load_app_store_connect_api_key
+
+    upload_to_app_store(
+      api_key: api_key,
+      skip_binary_upload: true,
+      metadata_path: File.join(REPO_ROOT, "fastlane", "metadata"),
+      skip_metadata: options[:skip_metadata] == true,
+      skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      run_precheck_before_submit: false,
+      submit_for_review: false,
+      force: true
+    )
+  end
+
   desc "Bump build/version if needed, build, and upload to App Store Connect with metadata/screenshots without auto-submitting"
   lane :release do |options|
     prepare_ios_release(options)
@@ -147,8 +164,7 @@ platform :ios do
       ipa: ipa_path,
       metadata_path: File.join(REPO_ROOT, "fastlane", "metadata"),
       skip_metadata: false,
-      skip_screenshots: false,
-      overwrite_screenshots: true,
+      skip_screenshots: true,
       precheck_include_in_app_purchases: false,
       run_precheck_before_submit: false,
       submit_for_review: false,

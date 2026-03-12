@@ -31,6 +31,14 @@ Build the current iOS release archive locally
 
 Bump build/version if needed, build, and upload to TestFlight
 
+### ios metadata
+
+```sh
+[bundle exec] fastlane ios metadata
+```
+
+Upload metadata and/or screenshots without a new binary. Pass skip_metadata:true or skip_screenshots:true to limit scope.
+
 ### ios release
 
 ```sh

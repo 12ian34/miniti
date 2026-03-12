@@ -32,7 +32,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.14.0 changelog:"..."`
+### `fastlane ios beta version:1.15.0 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -44,15 +44,15 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.14.0`
+### `fastlane ios release version:1.15.0`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
 - auto-increments `CURRENT_PROJECT_VERSION` unless `build:` is passed
 - uploads the binary to App Store Connect
 - uploads metadata from `fastlane/metadata` (including "What's New")
-- uploads screenshots from `fastlane/screenshots` and replaces existing screenshots for uploaded locale/device sets
 - includes App Review notes from `fastlane/metadata/app_review_notes.txt` when present
+- screenshots are skipped (manage manually in App Store Connect)
 
 What it does not do:
 - no App Review submission (attach build and submit manually in App Store Connect)
@@ -159,20 +159,30 @@ What it does:
 - staples the app
 - creates `miniti.dmg`
 
+### `fastlane ios metadata`
+
+What it does:
+- uploads metadata from `fastlane/metadata` to App Store Connect
+- no binary upload, no build, no version bump, no screenshots
+
+```sh
+fastlane ios metadata
+```
+
 ## Recommended flows
 
 ### iOS TestFlight
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.14.0 changelog:"release notes here"
+fastlane ios beta version:1.15.0 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.14.0
+fastlane ios release version:1.15.0
 ```
 
 ### macOS direct distribution

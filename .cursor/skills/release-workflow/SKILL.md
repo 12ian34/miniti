@@ -58,7 +58,7 @@ fastlane ios release version:X.Y.Z
 ```
 
 - Auto-increments build number (override with `build:N`)
-- Uploads binary + metadata from `fastlane/metadata/` + screenshots from `fastlane/screenshots/`
+- Uploads binary + metadata from `fastlane/metadata/` (screenshots skipped — manage in App Store Connect)
 - Includes `fastlane/metadata/app_review_notes.txt` when present
 - Does not submit for review automatically
 
