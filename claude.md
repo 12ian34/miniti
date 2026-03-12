@@ -29,7 +29,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-11 - v1.15.0
+### 2026-03-11 - v1.15.0 (released)
 
 - new: home screen redesign
 - improvement: training stats include questions asked
@@ -39,7 +39,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - improvement: iOS share button is context-aware: sharing from transcript shares the transcript only; sharing from insights shares insights, MEDDPICC, and notes.
 - improvement: iOS native toolbar items
 
-### 2026-03-10 - v1.14.0 (released)
+### 2026-03-10 - v1.14.0
 
 - new: Training stats overview on the home screen (macOS + iOS) — shows fillers/min, pace, and clarity averaged across your last 5 meetings vs last meeting, with trend arrows and info buttons.
 - new: iOS copy button replaced with native share sheet.
