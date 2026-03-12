@@ -218,7 +218,11 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-        ]
+        ] + (model == .nova3 ? [
+            URLQueryItem(name: "keyterm", value: "Miniti"),
+            URLQueryItem(name: "keyterm", value: "Lightdash"),
+            URLQueryItem(name: "keyterm", value: "Ahuja"),
+        ] : [])
         
         print("[Deepgram] Using model: \(model.displayName)")
         

@@ -1,16 +1,12 @@
-- Training stats overview on the home screen — see your fillers, pace, and clarity averaged across your last 5 meetings vs your most recent, with trend arrows.
-- Copy button replaced with native share sheet.
-- Recording waveform is now a compact multi-bar visualizer inline with the timer.
-- Saving a meeting shows a brief "saved" confirmation.
-- "Rate on App Store" link added in Settings.
-- Training stats table has cleaner alignment with a single header row and consistent number/unit formatting.
-- Settings section reordered: Training Insights first, then Subscription/Usage, then Mode.
-- Last sentence before stopping is no longer lost.
-- Short recordings in managed mode no longer briefly flash "no openai api key".
-- Saved meeting transcripts now use monospace font with per-sentence lines, speaker headers, and timestamps.
-- Insights panel no longer scrolls horizontally.
-- Update banner now opens the correct App Store URL.
-- "Updating..." indicator now appears next to the update button, not at the bottom.
-- Insights button in history now consistently says "update".
-- Topics now show hashtag prefix instead of square brackets.
-- Section headings no longer use underscores.
+- Training stats now include questions asked, alongside fillers, pace, and clarity.
+- iOS home screen redesigned: test mic button top-left with waveform below it, usage status centred at top — no more progress bar.
+- Share button is now context-aware: sharing from the transcript tab shares the transcript; sharing from insights shares all insights, MEDDPICC, and notes.
+- History view share and back buttons now match the app's visual style.
+- Recording screen home and share buttons are now native iOS toolbar items, visible during recording and when stopped.
+- Home screen top bar is now fully native toolbar items: test mic, usage status, and settings gear all render consistently with the rest of the app.
+- Filler words info popup now links to Settings so you can add or edit your own filler words.
+- Training stats column headers renamed to "last 5" and "last 1". Fillers unit is now f/min, pace is w/min.
+- Deepgram Nova-3 now uses keyterms for "Miniti", "Lightdash", and "Ahuja" to improve transcription accuracy.
+- macOS home screen has a unified top bar with a full-width separator line beneath it.
+- macOS "restore subscription" button removed from home screen — it's available in Settings.
+- iOS start button icon and text are now black on the green button.
