@@ -1285,7 +1285,7 @@ struct TrainingStatsOverview: View {
             let avgPace = stats.map(\.pace).reduce(0, +) / Double(stats.count)
             let avgFillers = stats.map(\.fillersPerMinute).reduce(0, +) / Double(stats.count)
             let avgClarity = stats.map(\.clarity).reduce(0, +) / Double(stats.count)
-            let avgQuestions = stats.map(\.questionsAsked).reduce(0, +) / stats.count
+            let avgQuestions = Double(stats.map(\.questionsAsked).reduce(0, +)) / Double(stats.count)
 
             VStack(spacing: 2) {
                 TrainingStatHeader(meetingCount: stats.count)
