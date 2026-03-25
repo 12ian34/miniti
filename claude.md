@@ -29,7 +29,12 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
-### 2026-03-11 - v1.15.0 (released)
+### 2026-03-25 - v1.16.0
+
+- new: auto export as markdown to local folder (macOS), optional CLAUDE.md index for AI agents. includes notes, insights, MEDDPICC, training metrics, and full transcript. works with obsidian, claude code, etc.
+- new: fast full text meeting search across titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow.
+
+### 2026-03-11 - v1.15.0
 
 - new: home screen redesign
 - improvement: training stats include questions asked
@@ -444,7 +449,8 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Audio engine/device-change recovery**: Both macOS and iOS listen for `AVAudioEngineConfigurationChange`. On macOS, route changes trigger a guarded full mic restart and dynamic converter rebuild based on callback format (tap installed with nil format), with coalescing/rate-limit checks to avoid restart storms. Default output changes schedule a debounced system-tap restart and reset recovery timers so the app does not immediately re-restart. On iOS, route changes are actively inspected for input-identity changes and trigger a debounced proactive mic restart (not just logging), improving Bluetooth route/profile reliability. Observer lifecycles are cleaned up in `stopMicrophoneCapture()`.
 - **Deepgram reconnect + transcript starvation watchdog**: While recording, Deepgram connection errors/disconnects trigger bounded reconnect attempts (1s/2s/5s). A transcript-health watchdog also triggers one reconnect cycle if speech-like audio levels continue but no transcript arrives for an extended window, and recording continues during transport recovery.
 - **Managed session-end durability queue**: If managed `session/end` reporting fails, the app persists pending reports locally and retries on launch, foreground, and after managed-session success paths. `managedSessionId` is only cleared after successful acknowledgment or durable queue persistence.
-- `@AppStorage` persists API keys, Deepgram model selection, audio source toggles, app mode, onboarding state, and terms acceptance state (`acceptedTermsVersion` + legacy `hasAcceptedTerms`). OpenAI model is hardcoded to `gpt-5-mini` (no user selection).
+- `@AppStorage` persists API keys, Deepgram model selection, audio source toggles, app mode, onboarding state, terms acceptance state (`acceptedTermsVersion` + legacy `hasAcceptedTerms`), and markdown export settings (`autoExportMarkdown`, `markdownExportFolderPath`, `generateClaudeMd` — macOS only). OpenAI model is hardcoded to `gpt-5-mini` (no user selection).
+- **Markdown auto-export (macOS only)**: When `autoExportMarkdown` is enabled, finalized meetings are written as `.md` files to a local folder (default `~/Documents/miniti/`). Trigger points: `goHome()` (reads live AppState data synchronously before `clearCurrentSession()` to avoid async save queue timing issues), `generateInsightsForMeeting()` (re-exports after insight updates from history), and a manual "export" button in `MeetingDetailView`. Filenames are dev-friendly with no spaces: `yyyy-MM-dd-HHmm-sanitized-title.md`. Section order: notes → insights (including MEDDPICC) → training metrics → transcript (high-value content first). Optional `CLAUDE.md` index file lists all exported meetings for AI agent discovery. All export code is guarded with `#if os(macOS)`.
 - **Terms acceptance versioning**: `AppState.hasAcceptedTerms` is computed from `acceptedTermsVersion >= currentTermsVersion` (currently `1`). App init migrates old boolean-only users by promoting `hasAcceptedTerms == true` to version `1`. To force re-acceptance after a legal update, bump `currentTermsVersion`.
 - Secrets.swift (gitignored) provides default API keys; Secrets.example.swift is the template. **Only seeded in BYOK mode** — managed users never get Secrets keys written to `@AppStorage`. On switch to managed, any keys matching Secrets defaults are cleared.
 - Mode-aware service routing: `startRecording()`, `updateLiveInsights()`, `generateFinalInsightsAndSave()`, `generateInsights()` all branch on `appMode`

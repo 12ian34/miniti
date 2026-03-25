@@ -212,38 +212,33 @@ struct MeetingView_iOS: View {
     // MARK: - Control Bar (bottom)
     
     private var controlBar: some View {
-        return ZStack {
-            // Stop button (always laid out, visible when recording)
-            stopButton
-                .opacity(appState.isRecording ? 1 : 0)
-                .allowsHitTesting(appState.isRecording)
-            
-            // Resume button (always laid out, visible when stopped)
-            resumeButton
-                .opacity(isStopped ? 1 : 0)
-                .allowsHitTesting(isStopped)
-            
-            // Discard + save (always laid out, visible when stopped)
-            HStack {
-                terminalButton(icon: "trash", label: "discard", color: Color(hex: "F85149"), bgColor: Color(hex: "F85149").opacity(0.12), borderColor: Color(hex: "F85149").opacity(0.3)) {
-                    showDiscardConfirmation = true
-                }
-                
-                Spacer()
-                
-                terminalButton(icon: "checkmark", label: "save", color: Color(hex: "58A6FF"), bgColor: Color(hex: "58A6FF").opacity(0.12), borderColor: Color(hex: "58A6FF").opacity(0.3)) {
-                    withAnimation(.easeIn(duration: 0.2)) {
-                        showSavedOverlay = true
+        Group {
+            if isStopped {
+                // Stopped: discard | resume | save — equal width, no overlap
+                HStack(spacing: 8) {
+                    flexButton(icon: "trash", label: "discard", color: Color(hex: "F85149"), bgColor: Color(hex: "F85149").opacity(0.12), borderColor: Color(hex: "F85149").opacity(0.3)) {
+                        showDiscardConfirmation = true
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
-                        appState.goHome()
+
+                    flexResumeButton
+
+                    flexButton(icon: "checkmark", label: "save", color: Color(hex: "58A6FF"), bgColor: Color(hex: "58A6FF").opacity(0.12), borderColor: Color(hex: "58A6FF").opacity(0.3)) {
+                        withAnimation(.easeIn(duration: 0.2)) {
+                            showSavedOverlay = true
+                        }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                            appState.goHome()
+                        }
                     }
                 }
+            } else {
+                // Recording: centered stop button
+                stopButton
             }
-            .opacity(isStopped ? 1 : 0)
-            .allowsHitTesting(isStopped)
         }
         .padding(.horizontal, 16)
+        .frame(maxWidth: 500)
+        .frame(maxWidth: .infinity)
         .padding(.vertical, 10)
         .background(ColorPalette.Background.secondary)
     }
@@ -273,7 +268,7 @@ struct MeetingView_iOS: View {
         }
     }
     
-    private var resumeButton: some View {
+    private var flexResumeButton: some View {
         Button {
             guard !isResumePending else { return }
             isResumingRecording = true
@@ -294,9 +289,8 @@ struct MeetingView_iOS: View {
                     .lineLimit(1)
             }
             .foregroundStyle(Color(hex: "3FB950"))
-            .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .frame(width: isResumePending ? 144 : 128)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color(hex: "3FB950").opacity(0.15))
@@ -308,8 +302,8 @@ struct MeetingView_iOS: View {
         }
         .disabled(isResumePending)
     }
-    
-    private func terminalButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
+
+    private func flexButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -318,9 +312,8 @@ struct MeetingView_iOS: View {
                     .font(.system(size: 12, weight: .semibold, design: .monospaced))
             }
             .foregroundStyle(color)
-            .padding(.horizontal, 14)
             .padding(.vertical, 8)
-            .frame(width: 128)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
                     .fill(bgColor)
@@ -362,10 +355,11 @@ struct MeetingView_iOS: View {
                         .stroke(Color(hex: "27272A"), lineWidth: 1)
                 )
         )
+        .frame(maxWidth: 500)
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
-    
+
     // MARK: - Live Insights Content
     
     private var liveInsightsContent: some View {
@@ -454,9 +448,10 @@ struct MeetingView_iOS: View {
                         .stroke(Color(hex: "27272A"), lineWidth: 1)
                 )
         )
+        .frame(maxWidth: 500)
         .padding(.horizontal)
     }
-    
+
     // MARK: - Notes Editor
     
     private var notesEditor: some View {

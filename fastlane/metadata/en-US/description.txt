@@ -20,8 +20,9 @@ REAL-TIME SPEECH COACHING
 
 BUILT FOR REPEAT USE
 - Full meeting history with transcripts, insights, and coaching metrics
-- Search and review past meetings quickly
+- Search meetings by title, transcript, notes, insights, or any content
 - Edit titles and copy transcripts/insights as markdown
+- Auto-export meetings as markdown files for Obsidian, Claude Code, and other tools (macOS)
 - Stop and resume sessions without losing context
 
 PRICING
@@ -35,4 +36,4 @@ If you choose Pro, payment is charged to your Apple ID account at confirmation o
 TERMS OF USE (EULA) 
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-v1.15.0
+v1.16.0

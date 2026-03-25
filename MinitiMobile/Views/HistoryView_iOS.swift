@@ -6,14 +6,33 @@ struct HistoryView_iOS: View {
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var searchText = ""
     
+    private var searchResults: [MeetingSearchResult] {
+        MeetingSearchResult.search(query: searchText, in: Array(meetings))
+    }
+
     var filteredMeetings: [Meeting] {
         if searchText.isEmpty {
-            return meetings
+            return Array(meetings)
         }
-        return meetings.filter { meeting in
-            meeting.title.localizedCaseInsensitiveContains(searchText) ||
-            meeting.fullTranscript.localizedCaseInsensitiveContains(searchText)
+        return searchResults.map(\.meeting)
+    }
+
+    private var searchSnippets: [UUID: String] {
+        var dict: [UUID: String] = [:]
+        for result in searchResults {
+            if let snippet = result.snippet {
+                dict[result.meeting.id] = snippet
+            }
         }
+        return dict
+    }
+
+    private var searchMatchCounts: [UUID: Int] {
+        var dict: [UUID: Int] = [:]
+        for result in searchResults {
+            dict[result.meeting.id] = result.matchCount
+        }
+        return dict
     }
     
     var body: some View {
@@ -39,7 +58,7 @@ struct HistoryView_iOS: View {
             Text("◌")
                 .font(.system(size: 48, weight: .ultraLight, design: .monospaced))
                 .foregroundStyle(ColorPalette.Text.disabled)
-            Text("No sessions yet")
+            Text(searchText.isEmpty ? "No sessions yet" : "No results")
                 .font(.system(size: 14, weight: .medium, design: .monospaced))
                 .foregroundStyle(ColorPalette.Text.muted)
         }
@@ -55,7 +74,12 @@ struct HistoryView_iOS: View {
                 NavigationLink {
                     MeetingDetail_iOS(meeting: meeting)
                 } label: {
-                    MeetingRow_iOS(meeting: meeting)
+                    MeetingRow_iOS(
+                        meeting: meeting,
+                        searchQuery: searchText.isEmpty ? nil : searchText,
+                        matchSnippet: searchSnippets[meeting.id],
+                        matchCount: searchMatchCounts[meeting.id]
+                    )
                 }
             }
             .onDelete(perform: deleteMeetings)
@@ -76,31 +100,67 @@ struct HistoryView_iOS: View {
 
 struct MeetingRow_iOS: View {
     let meeting: Meeting
-    
+    var searchQuery: String? = nil
+    var matchSnippet: String? = nil
+    var matchCount: Int? = nil
+
+    private var highlightColor: Color { ColorPalette.Accent.amber }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(meeting.title)
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
-                .foregroundStyle(ColorPalette.Text.primary)
+            if let query = searchQuery, !query.isEmpty {
+                highlightedText(
+                    meeting.title,
+                    query: query,
+                    baseColor: ColorPalette.Text.primary,
+                    highlightColor: highlightColor,
+                    font: .system(size: 14, weight: .medium, design: .monospaced)
+                )
                 .lineLimit(1)
-            
+            } else {
+                Text(meeting.title)
+                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .lineLimit(1)
+            }
+
+            // Match snippet
+            if let snippet = matchSnippet, let query = searchQuery, !query.isEmpty {
+                highlightedText(
+                    snippet,
+                    query: query,
+                    baseColor: ColorPalette.Text.dim,
+                    highlightColor: highlightColor,
+                    font: .system(size: 11, design: .monospaced)
+                )
+                .lineLimit(2)
+            }
+
             HStack(spacing: 8) {
                 Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.muted)
-                
+
                 Text("·")
                     .foregroundStyle(ColorPalette.Text.disabled)
                 Text(meeting.formattedDuration)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.muted)
-                
+
                 if !meeting.segments.isEmpty {
                     Text("·")
                         .foregroundStyle(ColorPalette.Text.disabled)
                     Text("\(meeting.segments.count) segments")
                         .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.muted)
+                }
+
+                if let count = matchCount, count > 0 {
+                    Text("·")
+                        .foregroundStyle(ColorPalette.Text.disabled)
+                    Text("\(count) match\(count == 1 ? "" : "es")")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(highlightColor)
                 }
             }
         }
