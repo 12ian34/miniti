@@ -99,6 +99,7 @@ struct MinitiApp: App {
             SettingsView()
                 .environmentObject(appState)
         }
+        .modelContainer(sharedModelContainer)
         
         // Menu Bar
         MenuBarExtra(isInserted: $showInMenuBar) {

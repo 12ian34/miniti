@@ -35,10 +35,46 @@ struct MainWindow: View {
     @State private var selectedMeetingID: UUID?
     @State private var sidebarCollapsed = false
     @State private var didInitialize = false
+    @State private var searchText = ""
+    @State private var isSearchActive = false
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
         return meetings.first(where: { $0.id == selectedMeetingID })
+    }
+
+    private var historicalMeetings: [Meeting] {
+        meetings.filter { $0.id != appState.currentMeeting?.id }
+    }
+
+    private var searchResults: [MeetingSearchResult] {
+        guard isSearchActive, !searchText.isEmpty else { return [] }
+        return MeetingSearchResult.search(query: searchText, in: historicalMeetings)
+    }
+
+    private var displayedMeetings: [Meeting] {
+        if isSearchActive && !searchText.isEmpty {
+            return searchResults.map(\.meeting)
+        }
+        return historicalMeetings
+    }
+
+    private var searchSnippets: [UUID: String] {
+        var dict: [UUID: String] = [:]
+        for result in searchResults {
+            if let snippet = result.snippet {
+                dict[result.meeting.id] = snippet
+            }
+        }
+        return dict
+    }
+
+    private var searchMatchCounts: [UUID: Int] {
+        var dict: [UUID: Int] = [:]
+        for result in searchResults {
+            dict[result.meeting.id] = result.matchCount
+        }
+        return dict
     }
     
     var body: some View {
@@ -47,8 +83,13 @@ struct MainWindow: View {
                 // Sidebar
                 TerminalSidebar(
                     meetings: meetings,
+                    displayedMeetings: displayedMeetings,
                     selectedMeetingID: $selectedMeetingID,
                     isCollapsed: $sidebarCollapsed,
+                    isSearchActive: $isSearchActive,
+                    searchText: $searchText,
+                    searchSnippets: searchSnippets,
+                    searchMatchCounts: searchMatchCounts,
                     onDeleteMeeting: { meeting in
                         deleteMeeting(meeting)
                     }
@@ -144,6 +185,20 @@ struct MainWindow: View {
             }
         }
 
+        keyboardService.onFocusSearch = { [self] in
+            if sidebarCollapsed {
+                withAnimation(.easeInOut(duration: 0.16)) { sidebarCollapsed = false }
+            }
+            isSearchActive = true
+        }
+
+        keyboardService.onDismissSearch = { [self] in
+            guard isSearchActive else { return false }
+            isSearchActive = false
+            searchText = ""
+            return true
+        }
+
         keyboardService.onToggleInsightsCollapse = { [self] in
             withAnimation(.easeInOut(duration: 0.16)) {
                 appState.isLiveInsightsCollapsed.toggle()
@@ -176,22 +231,20 @@ struct MainWindow: View {
     }
     
     private func navigateHistory(direction: Int) {
-        let historicalMeetings = meetings.filter { $0.id != appState.currentMeeting?.id }
-        guard !historicalMeetings.isEmpty else { return }
-        
+        let navMeetings = displayedMeetings
+        guard !navMeetings.isEmpty else { return }
+
         if let selectedMeetingID,
-           let currentIndex = historicalMeetings.firstIndex(where: { $0.id == selectedMeetingID }) {
-            // Move from current selection
+           let currentIndex = navMeetings.firstIndex(where: { $0.id == selectedMeetingID }) {
             let newIndex = currentIndex + direction
-            if newIndex >= 0 && newIndex < historicalMeetings.count {
-                self.selectedMeetingID = historicalMeetings[newIndex].id
+            if newIndex >= 0 && newIndex < navMeetings.count {
+                self.selectedMeetingID = navMeetings[newIndex].id
             }
         } else {
-            // No selection - select first or last based on direction
             if direction > 0 {
-                selectedMeetingID = historicalMeetings.first?.id
+                selectedMeetingID = navMeetings.first?.id
             } else {
-                selectedMeetingID = historicalMeetings.last?.id
+                selectedMeetingID = navMeetings.last?.id
             }
         }
     }
@@ -228,13 +281,18 @@ struct MainWindow: View {
 struct TerminalSidebar: View {
     @EnvironmentObject var appState: AppState
     let meetings: [Meeting]
+    let displayedMeetings: [Meeting]
     @Binding var selectedMeetingID: UUID?
     @Binding var isCollapsed: Bool
+    @Binding var isSearchActive: Bool
+    @Binding var searchText: String
+    let searchSnippets: [UUID: String]
+    let searchMatchCounts: [UUID: Int]
     let onDeleteMeeting: (Meeting) -> Void
     @State private var historyCollapsed = false
     @State private var collapsedStatusPulse = false
-    
-    // Filter out the current meeting from history
+    @FocusState private var searchFieldFocused: Bool
+
     private var historicalMeetings: [Meeting] {
         meetings.filter { $0.id != appState.currentMeeting?.id }
     }
@@ -406,7 +464,7 @@ struct TerminalSidebar: View {
                 VStack(alignment: .leading, spacing: 8) {
                     GradientDivider()
                         .padding(.vertical, 12)
-                    
+
                     HStack {
                         Button {
                             withAnimation(.easeInOut(duration: 0.16)) {
@@ -426,12 +484,22 @@ struct TerminalSidebar: View {
                         }
                         .buttonStyle(.plain)
                         .focusable(false)
-                        
+
                         Spacer()
-                        
+
                         if !historyCollapsed {
-                            // Navigation hints
                             HStack(spacing: 4) {
+                                // Search hint
+                                Text("/")
+                                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim.opacity(0.6))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 3)
+                                            .fill(Theme.bgTertiary)
+                                    )
+
                                 HStack(spacing: 2) {
                                     Text("↑")
                                         .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -445,7 +513,7 @@ struct TerminalSidebar: View {
                                     RoundedRectangle(cornerRadius: 3)
                                         .fill(Theme.bgTertiary)
                                 )
-                                
+
                                 HStack(spacing: 2) {
                                     Text("↓")
                                         .font(.system(size: 8, weight: .medium, design: .monospaced))
@@ -463,26 +531,91 @@ struct TerminalSidebar: View {
                         }
                     }
                     .padding(.horizontal, 16)
-                    
+
+                    // Search field
                     if !historyCollapsed {
-                        ScrollView(showsIndicators: false) {
-                            LazyVStack(alignment: .leading, spacing: 4) {
-                                ForEach(historicalMeetings) { meeting in
-                                    SidebarHistoryItem(
-                                        meeting: meeting,
-                                        isSelected: selectedMeetingID == meeting.id,
-                                        action: {
-                                            selectedMeetingID = meeting.id
-                                        },
-                                        onDelete: {
-                                            onDeleteMeeting(meeting)
-                                        }
-                                    )
+                        HStack(spacing: 6) {
+                            Text("/")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(searchFieldFocused ? Theme.accent : Theme.textDim)
+
+                            TextField("search meetings", text: $searchText)
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.text)
+                                .textFieldStyle(.plain)
+                                .focused($searchFieldFocused)
+
+                            if !searchText.isEmpty {
+                                Text("\(displayedMeetings.count)")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
+
+                                Button {
+                                    searchText = ""
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(Theme.textDim)
                                 }
+                                .buttonStyle(.plain)
+                                .focusable(false)
                             }
-                            .padding(.horizontal, 10)
                         }
-                        .scrollIndicators(.hidden)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Theme.bg)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(searchFieldFocused ? Theme.accent.opacity(0.5) : Theme.border.opacity(0.5), lineWidth: 1)
+                                )
+                        )
+                        .padding(.horizontal, 10)
+                        .onChange(of: isSearchActive) { _, active in
+                            if active {
+                                searchFieldFocused = true
+                            } else {
+                                searchFieldFocused = false
+                            }
+                        }
+                        .onChange(of: searchFieldFocused) { _, focused in
+                            if focused { isSearchActive = true }
+                        }
+                    }
+
+                    if !historyCollapsed {
+                        if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
+                            VStack(spacing: 6) {
+                                Text("no results")
+                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.top, 20)
+                        } else {
+                            ScrollView(showsIndicators: false) {
+                                LazyVStack(alignment: .leading, spacing: 4) {
+                                    ForEach(displayedMeetings) { meeting in
+                                        SidebarHistoryItem(
+                                            meeting: meeting,
+                                            isSelected: selectedMeetingID == meeting.id,
+                                            searchQuery: isSearchActive ? searchText : nil,
+                                            matchSnippet: searchSnippets[meeting.id],
+                                            matchCount: searchMatchCounts[meeting.id],
+                                            action: {
+                                                selectedMeetingID = meeting.id
+                                            },
+                                            onDelete: {
+                                                onDeleteMeeting(meeting)
+                                            }
+                                        )
+                                    }
+                                }
+                                .padding(.horizontal, 10)
+                            }
+                            .scrollIndicators(.hidden)
+                        }
                     }
                 }
             }
@@ -585,9 +718,12 @@ struct GradientDivider: View {
 struct SidebarHistoryItem: View {
     let meeting: Meeting
     let isSelected: Bool
+    var searchQuery: String? = nil
+    var matchSnippet: String? = nil
+    var matchCount: Int? = nil
     let action: () -> Void
     let onDelete: () -> Void
-    
+
     @State private var isHovering = false
     @State private var showDeleteConfirm = false
     
@@ -618,15 +754,44 @@ struct SidebarHistoryItem: View {
         return meeting.title
     }
     
+    private var titleText: String {
+        displayTitle.isEmpty ? timestamp : displayTitle
+    }
+
+    private var highlightColor: Color { ColorPalette.Accent.amber }
+
     var body: some View {
         HStack(spacing: 0) {
             Button(action: action) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(displayTitle.isEmpty ? timestamp : displayTitle)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced))
-                        .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
+                    if let query = searchQuery, !query.isEmpty {
+                        highlightedText(
+                            titleText,
+                            query: query,
+                            baseColor: isSelected ? Theme.text : Theme.textMuted,
+                            highlightColor: highlightColor,
+                            font: .system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced)
+                        )
                         .lineLimit(1)
-                    
+                    } else {
+                        Text(titleText)
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced))
+                            .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
+                            .lineLimit(1)
+                    }
+
+                    // Match snippet
+                    if let snippet = matchSnippet, let query = searchQuery, !query.isEmpty {
+                        highlightedText(
+                            snippet,
+                            query: query,
+                            baseColor: Theme.textDim,
+                            highlightColor: highlightColor,
+                            font: .system(size: 9, weight: .medium, design: .monospaced)
+                        )
+                        .lineLimit(2)
+                    }
+
                     HStack(spacing: 6) {
                         Text(formatDate(meeting.startTime))
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -636,6 +801,14 @@ struct SidebarHistoryItem: View {
                         Text(meeting.formattedDuration)
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
+
+                        if let count = matchCount, count > 0 {
+                            Text("•")
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                            Text("\(count) match\(count == 1 ? "" : "es")")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(highlightColor)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -798,6 +971,7 @@ struct MeetingDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @State private var showingAttioSheet = false
+    @State private var showExportedConfirmation = false
     
     private let speakerColors: [Color] = [
         ColorPalette.Accent.blue,
@@ -839,6 +1013,49 @@ struct MeetingDetailView: View {
                     }
                     .font(.system(size: 11, weight: .regular, design: .monospaced))
                     .foregroundStyle(Theme.textDim)
+
+                    Button {
+                        let markdown = meeting.fullMeetingAsMarkdown()
+                        let filename = AppState.exportFilename(for: meeting)
+                        let panel = NSSavePanel()
+                        panel.nameFieldStringValue = filename
+                        panel.allowedContentTypes = [.plainText]
+                        panel.canCreateDirectories = true
+                        // Pre-fill with the configured export folder if set
+                        let exportPath = appState.markdownExportFolderPath
+                        if !exportPath.isEmpty {
+                            panel.directoryURL = URL(fileURLWithPath: exportPath)
+                        }
+                        if panel.runModal() == .OK, let url = panel.url {
+                            do {
+                                try markdown.write(to: url, atomically: true, encoding: .utf8)
+                                showExportedConfirmation = true
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    showExportedConfirmation = false
+                                }
+                            } catch {
+                                DebugLogger.shared.log(.app, "Manual export FAILED: \(error.localizedDescription)")
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.down.doc")
+                                .font(.system(size: 11))
+                            Text(showExportedConfirmation ? "exported" : "export")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundStyle(showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.08))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.22), lineWidth: 1)
+                        )
+                        .cornerRadius(6)
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
 
                     if attioExportEnabled {
                         Button {

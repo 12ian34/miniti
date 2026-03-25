@@ -21,6 +21,8 @@ final class KeyboardShortcutsService: ObservableObject {
     var onToggleInsightsCollapse: (() -> Void)?
     var onNavigateUp: (() -> Void)?
     var onNavigateDown: (() -> Void)?
+    var onFocusSearch: (() -> Void)?
+    var onDismissSearch: (() -> Bool)?
     
     @Published var showingHelp = false
     
@@ -58,6 +60,9 @@ final class KeyboardShortcutsService: ObservableObject {
             }
             if showingHelp {
                 showingHelp = false
+                return nil
+            }
+            if let dismiss = onDismissSearch, dismiss() {
                 return nil
             }
             onGoHome?()
@@ -124,6 +129,12 @@ final class KeyboardShortcutsService: ObservableObject {
             return nil
         }
         
+        // / - Focus search (unmodified)
+        if modifiers.isEmpty && !isTypingInTextInput && event.keyCode == kVK_ANSI_Slash {
+            onFocusSearch?()
+            return nil
+        }
+
         // Arrow Up or K - Navigate up in history
         if modifiers.isEmpty &&
             !isTypingInTextInput &&
@@ -258,6 +269,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "⌘H", description: "Go home", category: "Navigation"),
     KeyboardShortcut(keys: "⌘[", description: "Toggle sidebar", category: "Navigation"),
     KeyboardShortcut(keys: "⌘]", description: "Toggle insights", category: "Navigation"),
+    KeyboardShortcut(keys: "/", description: "Search meetings", category: "Navigation"),
     KeyboardShortcut(keys: "Esc", description: "Go home / Close", category: "Navigation"),
     
     // Insights

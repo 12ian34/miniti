@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 import ServiceManagement
 import AppKit
 import AVFoundation
@@ -773,11 +774,18 @@ private struct SettingsModelSummaryCard: View {
 }
 
 struct GeneralSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
-    
+    @AppStorage("autoExportMarkdown") private var autoExportMarkdown: Bool = false
+    @AppStorage("markdownExportFolderPath") private var markdownExportFolderPath: String = ""
+    @AppStorage("generateClaudeMd") private var generateClaudeMd: Bool = false
+    @State private var isExportingAll = false
+    @State private var exportAllCount: Int?
+
     var body: some View {
         Form {
             Section("Startup") {
@@ -786,7 +794,7 @@ struct GeneralSettingsView: View {
                         setLaunchAtLogin(newValue)
                     }
             }
-            
+
             Section("Appearance") {
                 Toggle("Show in Menu Bar", isOn: $showInMenuBar)
                 Text(showInMenuBar
@@ -794,6 +802,52 @@ struct GeneralSettingsView: View {
                      : "Turn this back on to restore the Miniti menu bar icon.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Export") {
+                HStack {
+                    Text(resolvedExportPath)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer()
+                    Button("Choose Folder") {
+                        chooseExportFolder()
+                    }
+                }
+
+                Toggle("Auto-export meetings as markdown", isOn: $autoExportMarkdown)
+                Text("Automatically saves each meeting as a markdown file. Works with Obsidian, Claude Code, and other tools.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if autoExportMarkdown {
+                    Toggle("Generate CLAUDE.md index", isOn: $generateClaudeMd)
+                    Text("Maintains a CLAUDE.md file listing all exported meetings for AI agents.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Button {
+                        exportAllMeetings()
+                    } label: {
+                        if isExportingAll {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("exporting...")
+                            }
+                        } else if let count = exportAllCount {
+                            Text("exported \(count) meeting\(count == 1 ? "" : "s")")
+                                .foregroundStyle(ColorPalette.Accent.green)
+                        } else {
+                            Text("Export All Meetings")
+                        }
+                    }
+                    .disabled(isExportingAll)
+                }
             }
 
             Section("Integrations") {
@@ -815,7 +869,48 @@ struct GeneralSettingsView: View {
         .formStyle(.grouped)
         .padding()
     }
+
+    private var resolvedExportPath: String {
+        markdownExportFolderPath.isEmpty
+            ? NSString("~/Documents/miniti").expandingTildeInPath
+            : markdownExportFolderPath
+    }
+
+    private func chooseExportFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Select"
+        panel.message = "Choose a folder for exported meeting markdown files"
+        if panel.runModal() == .OK, let url = panel.url {
+            appState.saveExportFolderBookmark(for: url)
+        }
+    }
     
+    private func exportAllMeetings() {
+        isExportingAll = true
+        exportAllCount = nil
+        let descriptor = FetchDescriptor<Meeting>()
+        guard let meetings = try? modelContext.fetch(descriptor) else {
+            DebugLogger.shared.log(.app, "Export all: failed to fetch meetings from modelContext")
+            isExportingAll = false
+            return
+        }
+        let finalized = meetings.filter { $0.endTime != nil && !$0.segments.isEmpty }
+        DebugLogger.shared.log(.app, "Export all: \(meetings.count) total, \(finalized.count) finalized")
+        for meeting in finalized {
+            let markdown = meeting.fullMeetingAsMarkdown()
+            appState.exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+        }
+        isExportingAll = false
+        exportAllCount = finalized.count
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
+            exportAllCount = nil
+        }
+    }
+
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             if enabled {

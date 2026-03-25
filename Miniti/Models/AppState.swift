@@ -276,6 +276,14 @@ final class AppState: ObservableObject {
         set { appModeRaw = newValue.rawValue }
     }
     
+    // MARK: - Markdown Auto-Export (macOS only)
+    #if os(macOS)
+    @AppStorage("autoExportMarkdown") var autoExportMarkdown: Bool = false
+    @AppStorage("markdownExportFolderPath") var markdownExportFolderPath: String = ""
+    @AppStorage("markdownExportBookmark") var markdownExportBookmarkData: Data = Data()
+    @AppStorage("generateClaudeMd") var generateClaudeMd: Bool = false
+    #endif
+
     // MARK: - Update Check
     @Published var availableUpdate: MinitiAPIService.VersionInfo?
     
@@ -1568,7 +1576,22 @@ final class AppState: ObservableObject {
         
         // Save current meeting if there's content
         saveCurrentMeetingIfNeeded()
-        
+
+        // Auto-export markdown (reads live in-memory state before clearCurrentSession)
+        #if os(macOS)
+        if autoExportMarkdown, let meeting = currentMeeting {
+            // Ensure training metrics are computed for the export
+            if trainingMetrics == nil {
+                let segments = liveSegments.map {
+                    TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
+                }
+                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
+            }
+            let markdown = fullMeetingAsMarkdown()
+            exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+        }
+        #endif
+
         // Clear session and return to home
         clearCurrentSession()
         
@@ -1683,9 +1706,18 @@ final class AppState: ObservableObject {
         }
         
         try? modelContext?.save()
+
+        // Re-export markdown with updated insights
+        #if os(macOS)
+        if autoExportMarkdown {
+            let markdown = meeting.fullMeetingAsMarkdown()
+            exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+        }
+        #endif
+
         isGeneratingInsights = false
     }
-    
+
     /// Restore an interrupted meeting (endTime == nil) from SwiftData on launch.
     /// Sets currentMeeting and rebuilds in-memory state so the UI shows the stopped-session view.
     func resumeInterruptedMeeting() {
@@ -3180,8 +3212,9 @@ final class AppState: ObservableObject {
             elapsedSeconds: isRecording ? nil : Int(recordingDuration)
         )
         lastLiveActivityUpdate = Date()
+        nonisolated(unsafe) let sendableActivity = activity
         Task {
-            await activity.update(.init(state: state, staleDate: nil))
+            await sendableActivity.update(.init(state: state, staleDate: nil))
         }
     }
     
@@ -3365,45 +3398,235 @@ final class AppState: ObservableObject {
             md += "\n"
         }
         
-        // MEDDPICC if available
-        if insightsMode == .meddpicc {
-            let meddpiccFields: [(String, String?)] = [
-                ("Metrics", liveMetrics),
-                ("Economic Buyer", liveEconomicBuyer),
-                ("Decision Criteria", liveDecisionCriteria),
-                ("Decision Process", liveDecisionProcess),
-                ("Paper Process", livePaperProcess),
-                ("Identified Pain", liveIdentifiedPain),
-                ("Champion", liveChampion),
-                ("Competition", liveCompetition)
-            ]
-            
-            let hasAnyMeddpicc = meddpiccFields.contains { $0.1 != nil && !($0.1?.isEmpty ?? true) }
-            if hasAnyMeddpicc {
-                md += "### MEDDPICC\n\n"
-                for (label, value) in meddpiccFields {
-                    if let value = value, !value.isEmpty {
-                        md += "**\(label):** \(value)\n\n"
-                    }
+        // MEDDPICC if available (always include in markdown export, not gated by mode)
+        let meddpiccFields: [(String, String?)] = [
+            ("Metrics", liveMetrics),
+            ("Economic Buyer", liveEconomicBuyer),
+            ("Decision Criteria", liveDecisionCriteria),
+            ("Decision Process", liveDecisionProcess),
+            ("Paper Process", livePaperProcess),
+            ("Identified Pain", liveIdentifiedPain),
+            ("Champion", liveChampion),
+            ("Competition", liveCompetition)
+        ]
+
+        let hasAnyMeddpicc = meddpiccFields.contains { $0.1 != nil && !($0.1?.isEmpty ?? true) }
+        if hasAnyMeddpicc {
+            md += "### MEDDPICC\n\n"
+            for (label, value) in meddpiccFields {
+                if let value = value, !value.isEmpty {
+                    md += "**\(label):** \(value)\n\n"
                 }
             }
         }
-        
+
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    
+
+    func trainingMetricsAsMarkdown() -> String {
+        guard let metrics = trainingMetrics, !metrics.speakers.isEmpty else { return "" }
+
+        var md = "## Training\n\n"
+        md += "**Duration:** \(String(format: "%.1f", metrics.durationMinutes)) min"
+        if let you = metrics.speakers.first(where: { $0.isLocalMic }) {
+            let totalWords = metrics.speakers.reduce(0) { $0 + $1.wordCount }
+            let ratio = totalWords > 0 ? Int(Double(you.wordCount) / Double(totalWords) * 100) : 0
+            md += " | **Talk Ratio (You):** \(ratio)%"
+        }
+        md += "\n\n"
+
+        for speaker in metrics.speakers {
+            md += "### \(speaker.speakerLabel)\n"
+            md += "- Pace: \(Int(speaker.wordsPerMinute)) wpm\n"
+            md += "- Fillers: \(String(format: "%.1f", speaker.fillersPerMinute))/min"
+            if !speaker.fillers.isEmpty {
+                let top = speaker.fillers.prefix(5).map { "\($0.word): \($0.count)" }.joined(separator: ", ")
+                md += " (\(top))"
+            }
+            md += "\n"
+            md += "- Longest monologue: \(speaker.longestMonologueWords) words\n"
+            md += "- Questions asked: \(speaker.questionsAsked)\n"
+            md += "- Clarity: \(Int(speaker.avgWordsPerTurn)) words/turn\n\n"
+        }
+
+        return md.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     func fullMeetingAsMarkdown() -> String {
+        let startDate = currentMeeting?.startTime ?? Date()
         var md = "# \(currentMeeting?.title ?? "Meeting")\n\n"
-        md += "_\(Date().formatted(date: .long, time: .shortened))_\n\n"
+        md += "_\(startDate.formatted(date: .long, time: .shortened))_\n\n"
         md += "---\n\n"
-        md += transcriptAsMarkdown()
-        md += "\n\n---\n\n"
         if !liveNotes.isEmpty {
             md += "## Notes\n\n\(liveNotes)\n\n---\n\n"
         }
         md += insightsAsMarkdown()
+        let training = trainingMetricsAsMarkdown()
+        if !training.isEmpty {
+            md += "\n\n---\n\n"
+            md += training
+        }
+        md += "\n\n---\n\n"
+        md += transcriptAsMarkdown()
         return md
     }
+
+    // MARK: - Markdown File Export (macOS)
+
+    #if os(macOS)
+    private var resolvedExportFolderPath: String {
+        if markdownExportFolderPath.isEmpty {
+            return NSString("~/Documents/miniti").expandingTildeInPath
+        }
+        return markdownExportFolderPath
+    }
+
+    /// Save a security-scoped bookmark for the export folder so sandboxed writes work across sessions.
+    func saveExportFolderBookmark(for url: URL) {
+        do {
+            let bookmark = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
+            markdownExportBookmarkData = bookmark
+            markdownExportFolderPath = url.path
+            DebugLogger.shared.log(.app, "Export folder bookmark saved: \(url.path)")
+        } catch {
+            DebugLogger.shared.log(.app, "Export folder bookmark FAILED: \(error.localizedDescription)")
+            markdownExportFolderPath = url.path
+        }
+    }
+
+    /// Resolve the bookmark and start accessing the security-scoped resource. Caller must call `stopAccessingSecurityScopedResource()` on the returned URL when done.
+    private func resolveExportFolderURL() -> URL? {
+        if !markdownExportBookmarkData.isEmpty {
+            var isStale = false
+            if let url = try? URL(resolvingBookmarkData: markdownExportBookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                if isStale {
+                    // Re-save bookmark
+                    if let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                        markdownExportBookmarkData = fresh
+                    }
+                }
+                if url.startAccessingSecurityScopedResource() {
+                    return url
+                }
+            }
+        }
+        // Fallback: default ~/Documents/miniti (inside user home, no bookmark needed)
+        let fallback = URL(fileURLWithPath: NSString("~/Documents/miniti").expandingTildeInPath)
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: fallback.path) {
+            try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+        }
+        return fallback
+    }
+
+    static func sanitizeFilename(from title: String) -> String {
+        let lowered = title.lowercased()
+        // Replace any non-alphanumeric character (except dash) with a dash
+        let sanitized = lowered.unicodeScalars.map { char -> String in
+            if CharacterSet.alphanumerics.contains(char) || char == "-" {
+                return String(char)
+            }
+            return "-"
+        }.joined()
+        // Collapse consecutive dashes and strip leading/trailing dashes
+        let collapsed = sanitized.replacingOccurrences(of: "-{2,}", with: "-", options: .regularExpression)
+        return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    static func exportFilename(for meeting: Meeting) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        let datePrefix = formatter.string(from: meeting.startTime)
+
+        // Strip timestamp prefix from title if present (e.g. "20260310-003102 - My Meeting" → "My Meeting")
+        var title = meeting.title
+        for separator in [" - ", " — "] {
+            if let range = title.range(of: separator) {
+                let prefix = String(title[..<range.lowerBound])
+                if prefix.allSatisfy({ $0.isNumber || $0 == "-" }) {
+                    title = String(title[range.upperBound...])
+                    break
+                }
+            }
+        }
+
+        let titleSlug = sanitizeFilename(from: title)
+        return titleSlug.isEmpty ? "\(datePrefix).md" : "\(datePrefix)-\(titleSlug).md"
+    }
+
+    func exportMeetingAsMarkdownFile(markdown: String, meeting: Meeting) {
+        guard let folderURL = resolveExportFolderURL() else {
+            DebugLogger.shared.log(.app, "Markdown export FAILED — could not resolve export folder")
+            return
+        }
+        defer { folderURL.stopAccessingSecurityScopedResource() }
+
+        let fm = FileManager.default
+
+        // Create directory if needed
+        var isDir: ObjCBool = false
+        if !fm.fileExists(atPath: folderURL.path, isDirectory: &isDir) || !isDir.boolValue {
+            do {
+                try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
+                DebugLogger.shared.log(.app, "Markdown export: created folder \(folderURL.path)")
+            } catch {
+                DebugLogger.shared.log(.app, "Markdown export FAILED — could not create folder '\(folderURL.path)': \(error.localizedDescription)")
+                return
+            }
+        }
+
+        let filename = Self.exportFilename(for: meeting)
+        let fileURL = folderURL.appendingPathComponent(filename)
+
+        do {
+            try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+            DebugLogger.shared.log(.app, "Markdown exported: \(filename)")
+        } catch {
+            DebugLogger.shared.log(.app, "Markdown export FAILED '\(filename)' to '\(folderURL.path)': \(error.localizedDescription)")
+            return
+        }
+
+        if generateClaudeMd {
+            updateClaudeMdIndex()
+        }
+    }
+
+    func updateClaudeMdIndex() {
+        guard let folderURL = resolveExportFolderURL() else { return }
+        defer { folderURL.stopAccessingSecurityScopedResource() }
+
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: folderURL.path) else { return }
+
+        let mdFiles = files
+            .filter { $0.hasSuffix(".md") && $0 != "CLAUDE.md" }
+            .sorted()
+
+        var index = "# Miniti Meeting Notes\n\n"
+        index += "This folder contains auto-exported meeting notes from [Miniti](https://miniti.app).\n\n"
+        index += "Each file contains notes, AI-generated insights (summary, discussion flow, action items, topics, MEDDPICC analysis), "
+        index += "training metrics (filler words, pace, talk ratio, clarity), and the full transcript.\n\n"
+        index += "## Meetings\n\n"
+
+        for file in mdFiles {
+            // Parse date from filename: yyyy-MM-dd-HHmm-title.md
+            let name = String(file.dropLast(3)) // strip .md
+            let parts = name.split(separator: "-", maxSplits: 4)
+            if parts.count >= 4 {
+                let year = parts[0], month = parts[1], day = parts[2]
+                let dateStr = "\(year)-\(month)-\(day)"
+                let titlePart = parts.count > 4 ? String(parts[4]).replacingOccurrences(of: "-", with: " ") : name
+                index += "- [\(file)](\(file)) — \(dateStr) — \(titlePart)\n"
+            } else {
+                index += "- [\(file)](\(file))\n"
+            }
+        }
+
+        let claudeMdURL = folderURL.appendingPathComponent("CLAUDE.md")
+        try? index.write(to: claudeMdURL, atomically: true, encoding: .utf8)
+        DebugLogger.shared.log(.app, "CLAUDE.md index updated: \(mdFiles.count) meetings")
+    }
+    #endif
 }
 
 #if os(iOS)
