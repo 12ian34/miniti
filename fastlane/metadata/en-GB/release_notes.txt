@@ -1,3 +1,2 @@
-- new: Markdown auto-export (macOS) — meetings can be automatically saved as .md files to a local folder, with per-meeting manual export, bulk "Export All" from Settings, optional CLAUDE.md index for AI agents, and dev-friendly filenames. Includes notes, insights, MEDDPICC, training metrics, and full transcript. Works with Obsidian, Claude Code, and similar tools.
 - new: Meeting search (macOS + iOS) — fast full-text search across titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow. Results ranked by relevance with highlighted matches and context snippets.
 - fix: iPad layout now fills the full screen width.
