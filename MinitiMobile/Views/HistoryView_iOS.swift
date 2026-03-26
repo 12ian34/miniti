@@ -44,6 +44,8 @@ struct HistoryView_iOS: View {
                     meetingsList
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(ColorPalette.Background.primary)
             .navigationTitle("History")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search meetings...")

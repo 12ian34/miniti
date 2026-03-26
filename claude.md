@@ -33,6 +33,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 - new: auto export as markdown to local folder (macOS), optional CLAUDE.md index for AI agents. includes notes, insights, MEDDPICC, training metrics, and full transcript. works with obsidian, claude code, etc.
 - new: fast full text meeting search across titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow.
+- fix: iPad layout now fills the full screen width.
 
 ### 2026-03-11 - v1.15.0
 

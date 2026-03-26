@@ -93,6 +93,7 @@ struct MeetingView_iOS: View {
                     ReadyStateView_iOS()
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(ColorPalette.Background.primary)
         }
     }
