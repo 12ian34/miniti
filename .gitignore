@@ -37,3 +37,5 @@ fastlane/*.p8
 fastlane/*.mobileprovision
 
 shn.md
+
+.cursor/hooks/

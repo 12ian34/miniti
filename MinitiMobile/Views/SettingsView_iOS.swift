@@ -262,6 +262,43 @@ struct SettingsView_iOS: View {
                     }
                 }
 
+                Section("Recording") {
+                    Picker("Auto-stop after silence", selection: $appState.autoStopMinutes) {
+                        Text("Off").tag(0)
+                        Text("3 minutes").tag(3)
+                        Text("5 minutes").tag(5)
+                        Text("10 minutes").tag(10)
+                        Text("15 minutes").tag(15)
+                    }
+                    Text("Automatically stop recording when no speech is detected for the selected duration.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Webhooks") {
+                    TextField("Webhook URL", text: $appState.webhookURL)
+                        .keyboardType(.URL)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if !appState.webhookURL.isEmpty {
+                        if let url = URL(string: appState.webhookURL),
+                           let scheme = url.scheme?.lowercased(),
+                           (scheme == "http" || scheme == "https"),
+                           url.host != nil {
+                            Label("valid URL", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(ColorPalette.Accent.green)
+                        } else {
+                            Label("invalid URL — must start with https://", systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(ColorPalette.Status.error)
+                        }
+                    }
+                    Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                     Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")

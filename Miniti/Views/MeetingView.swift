@@ -82,6 +82,76 @@ struct MeetingView: View {
     }
 }
 
+// MARK: - Home Action Button
+
+struct HomeActionButton: View {
+    let icon: String
+    let label: String
+    let shortcut: String
+    let accentColor: Color
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(isHovered ? accentColor : ColorPalette.Text.dim)
+
+                Text(label)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(isHovered ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
+                    .lineLimit(1)
+
+                Text(shortcut)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(isHovered ? accentColor.opacity(0.8) : ColorPalette.Text.disabled)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isHovered ? accentColor.opacity(0.1) : ColorPalette.Background.card.opacity(0.5))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isHovered ? accentColor.opacity(0.25) : ColorPalette.Border.primary, lineWidth: 0.5)
+                    )
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(
+                        isHovered
+                            ? accentColor.opacity(0.06)
+                            : ColorPalette.Background.card
+                    )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(
+                        isHovered ? accentColor.opacity(0.3) : ColorPalette.Border.light,
+                        lineWidth: isHovered ? 1 : 0.5
+                    )
+            )
+            .shadow(
+                color: isHovered ? accentColor.opacity(0.15) : .clear,
+                radius: 8, x: 0, y: 2
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .fixedSize()
+        .onHover { hovering in
+            withAnimation(.easeOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+    }
+}
+
 // MARK: - Ready State View
 
 struct ReadyStateView: View {
@@ -230,73 +300,29 @@ struct ReadyStateView: View {
         .overlay(alignment: .top) {
             VStack(spacing: 0) {
                 ZStack(alignment: .top) {
-                    // Left + right buttons — fixed size so they never compress or wrap
                     HStack(alignment: .top, spacing: 0) {
                         AudioSourcePanel()
                             .fixedSize()
                         Spacer()
                         HStack(spacing: 8) {
-                            Button {
-                                keyboardService.showingHelp.toggle()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "keyboard")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Text("shortcuts")
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .lineLimit(1)
-                                    Text("⌘/")
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "3F3F46"))
-                                }
-                                .foregroundStyle(Color(hex: "52525B"))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color(hex: "0F0F11"))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .focusable(false)
-                            .fixedSize()
+                            HomeActionButton(
+                                icon: "keyboard",
+                                label: "shortcuts",
+                                shortcut: "⌘/",
+                                accentColor: ColorPalette.Accent.amber,
+                                action: { keyboardService.showingHelp.toggle() }
+                            )
 
-                            Button {
-                                openSettings()
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "gearshape")
-                                        .font(.system(size: 11, weight: .medium))
-                                    Text("settings")
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .lineLimit(1)
-                                    Text("⌘,")
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(Color(hex: "3F3F46"))
-                                }
-                                .foregroundStyle(Color(hex: "52525B"))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Color(hex: "0F0F11"))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .focusable(false)
-                            .fixedSize()
+                            HomeActionButton(
+                                icon: "gearshape",
+                                label: "settings",
+                                shortcut: "⌘,",
+                                accentColor: ColorPalette.Accent.blueGitHub,
+                                action: { openSettings() }
+                            )
                         }
                     }
 
-                    // Status centered independently — never affects button layout
                     if appState.appMode == .managed {
                         ManagedStatusInline()
                     }
@@ -1554,6 +1580,26 @@ struct TerminalHeader: View {
             .allowsHitTesting(false)
             .accessibilityHidden(appState.audioRecoveryState == .healthy)
             
+            if appState.wasAutoStopped && isStopped {
+                HStack(spacing: 6) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("auto-stopped — no speech detected")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(ColorPalette.Accent.amber)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(ColorPalette.Accent.amber.opacity(0.1))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.Accent.amber.opacity(0.2), lineWidth: 1)
+                )
+            }
+
             HStack(spacing: 12) {
                 if appState.isRecording {
                     HStack(spacing: 10) {
@@ -1955,6 +2001,8 @@ struct AudioSourcePanel: View {
 
 private struct ManagedStatusInline: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+    @State private var isHovered = false
 
     private var accent: Color {
         if appState.shouldShowManagedSubscriptionPlaceholder { return Color(hex: "71717A") }
@@ -1970,14 +2018,60 @@ private struct ManagedStatusInline: View {
             Text("checking plan...")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
         } else if let usage = appState.usageInfo {
-            HStack(spacing: 6) {
-                Text(appState.isPro ? "miniti pro" : "miniti free")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "52525B"))
-                Text("\(Int(usage.minutesUsed.rounded()))/\(Int(usage.minutesLimit)) min")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(accent)
+            Button {
+                appState.selectedSettingsTab = "account"
+                openSettings()
+            } label: {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(accent)
+                        .frame(width: 5, height: 5)
+                    Text(appState.isPro ? "miniti pro" : "miniti free")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(isHovered ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
+                        .lineLimit(1)
+                    Text("\(Int(usage.minutesUsed.rounded()))/\(Int(usage.minutesLimit))")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(isHovered ? accent : accent.opacity(0.8))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(isHovered ? accent.opacity(0.1) : ColorPalette.Background.card.opacity(0.5))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(isHovered ? accent.opacity(0.25) : ColorPalette.Border.primary, lineWidth: 0.5)
+                        )
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(isHovered ? accent.opacity(0.06) : ColorPalette.Background.card)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 7)
+                        .stroke(
+                            isHovered ? accent.opacity(0.3) : ColorPalette.Border.light,
+                            lineWidth: isHovered ? 1 : 0.5
+                        )
+                )
+                .shadow(
+                    color: isHovered ? accent.opacity(0.15) : .clear,
+                    radius: 8, x: 0, y: 2
+                )
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .fixedSize()
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    isHovered = hovering
+                }
             }
         }
     }

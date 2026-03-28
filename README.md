@@ -150,6 +150,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Copy to Markdown**: One-click copy for transcript, notes, and insights
 - **Formatted Output**: Clean markdown with speaker labels, action item checkboxes, and structured sections
 - **Attio CRM Send (Saved Meetings)**: Send a saved meeting summary to Attio (people or companies) with optional task creation from action items
+- **Outbound Webhooks**: POST meeting data as JSON to any URL when a meeting is saved or insights are updated — works with Zapier, Make, n8n, and custom endpoints. Configure in Settings.
 
 ### Menu Bar
 - **Always Accessible**: Hexagon icon in menu bar with quick access to controls
@@ -164,6 +165,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Resizable Panels**: Drag handle for transcript/notes split, HSplitView for content/insights
 - **Collapsible Panes**: Collapse the sidebar (`⌘[`) or insights pane (`⌘]`) to focus on transcript/notes
 - **Session Management**: Stop a recording to review, then resume, save, or discard
+- **Auto-stop Recording**: Automatically stops recording when no speech is detected for a configurable duration (off, 3, 5, 10, or 15 minutes)
 - **Stopped Session Shortcuts**: Save (`⌘S`) or discard (`⌘⌫`) directly from the stopped session view
 - **Historical Insights Tabs**: Saved meetings on macOS include standard / MEDDPICC / training views with `⌘1` / `⌘2` / `⌘3`
 
@@ -414,10 +416,14 @@ It does **not** send:
 - **Background Recording**: Keeps recording when you switch apps or lock your phone
 - **Live Activity**: Dynamic Island shows recording dot and elapsed timer; Lock Screen shows recording status, meeting title, and live transcript line
 - **Live Transcript**: Same real-time transcription as macOS, powered by Deepgram
+- **Auto-stop Recording**: Automatically stops recording when no speech is detected for a configurable duration
 
 ### AI Insights
 - **Live Insights**: Summaries, action items, topics, and discussion flow — same engine as macOS
 - **MEDDPICC Mode**: Full sales qualification analysis on mobile
+
+### Integrations
+- **Outbound Webhooks**: POST meeting data as JSON to Zapier, Make, n8n, or any endpoint when a meeting is saved or insights update
 
 ### Meeting History
 - **Browse Past Meetings**: Searchable list with swipe-to-delete

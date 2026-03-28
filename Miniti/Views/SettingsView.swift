@@ -7,45 +7,56 @@ import AVFoundation
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
     var body: some View {
-        TabView {
-            AccountSettingsView()
+        TabView(selection: $appState.selectedSettingsTab) {
+            GeneralSettingsView()
                 .tabItem {
-                    Label("Account", systemImage: "person.crop.circle")
+                    Label("General", systemImage: "gear")
                 }
-            
-            // API Keys tab only shown in BYOK mode — managed users
-            // should never see or need the app's backend keys.
-            if appState.appMode == .byok {
-                APISettingsView()
-                    .tabItem {
-                        Label("API Keys", systemImage: "key")
-                    }
-            }
-            
-            AudioSettingsView()
-                .tabItem {
-                    Label("Audio", systemImage: "waveform")
-                }
-            
-            ModelsSettingsView()
-                .tabItem {
-                    Label("Models", systemImage: "cpu")
-                }
+                .tag("general")
 
             TrainingInsightsSettingsView()
                 .tabItem {
                     Label("Training", systemImage: "waveform.badge.mic")
                 }
-            
-            GeneralSettingsView()
+                .tag("training")
+
+            AccountSettingsView()
                 .tabItem {
-                    Label("General", systemImage: "gear")
+                    Label("Account", systemImage: "person.crop.circle")
                 }
+                .tag("account")
+
+            if appState.appMode == .byok {
+                APISettingsView()
+                    .tabItem {
+                        Label("API Keys", systemImage: "key")
+                    }
+                    .tag("apikeys")
+            }
+
+            ModelsSettingsView()
+                .tabItem {
+                    Label("Models", systemImage: "cpu")
+                }
+                .tag("models")
+
+            AudioSettingsView()
+                .tabItem {
+                    Label("Audio", systemImage: "waveform")
+                }
+                .tag("audio")
+
+            IntegrationsSettingsView()
+                .tabItem {
+                    Label("Integrations", systemImage: "arrow.triangle.branch")
+                }
+                .tag("integrations")
 
             AboutSettingsView()
                 .tabItem {
                     Label("About", systemImage: "info.circle")
                 }
+                .tag("about")
         }
         .frame(width: 500, height: 400)
         
@@ -775,16 +786,9 @@ private struct SettingsModelSummaryCard: View {
 
 struct GeneralSettingsView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.modelContext) private var modelContext
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
-    @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
-    @AppStorage("autoExportMarkdown") private var autoExportMarkdown: Bool = false
-    @AppStorage("markdownExportFolderPath") private var markdownExportFolderPath: String = ""
-    @AppStorage("generateClaudeMd") private var generateClaudeMd: Bool = false
-    @State private var isExportingAll = false
-    @State private var exportAllCount: Int?
 
     var body: some View {
         Form {
@@ -804,7 +808,56 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Export") {
+            Section("Recording") {
+                Picker("Auto-stop after silence", selection: $appState.autoStopMinutes) {
+                    Text("Off").tag(0)
+                    Text("3 minutes").tag(3)
+                    Text("5 minutes").tag(5)
+                    Text("10 minutes").tag(10)
+                    Text("15 minutes").tag(15)
+                }
+                Text("Automatically stop recording when no speech is detected for the selected duration.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Diagnostics") {
+                Toggle("Share Diagnostics", isOn: $shareDiagnostics)
+                Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "Launch at login update FAILED: \(error.localizedDescription)")
+        }
+    }
+}
+
+struct IntegrationsSettingsView: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
+    @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
+    @AppStorage("autoExportMarkdown") private var autoExportMarkdown: Bool = false
+    @AppStorage("markdownExportFolderPath") private var markdownExportFolderPath: String = ""
+    @AppStorage("generateClaudeMd") private var generateClaudeMd: Bool = false
+    @State private var isExportingAll = false
+    @State private var exportAllCount: Int?
+
+    var body: some View {
+        Form {
+            Section("Markdown Export") {
                 HStack {
                     Text(resolvedExportPath)
                         .font(.system(size: 11, design: .monospaced))
@@ -850,18 +903,33 @@ struct GeneralSettingsView: View {
                 }
             }
 
-            Section("Integrations") {
-                Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
-                Text(attioExportEnabled
-                     ? "\"Send to Attio\" is available in saved meeting history."
-                     : "\"Send to Attio\" is hidden until you enable it here.")
+            Section("Webhooks") {
+                TextField("Webhook URL", text: $appState.webhookURL)
+                    .textFieldStyle(.roundedBorder)
+                if !appState.webhookURL.isEmpty {
+                    if let url = URL(string: appState.webhookURL),
+                       let scheme = url.scheme?.lowercased(),
+                       (scheme == "http" || scheme == "https"),
+                       url.host != nil {
+                        Label("valid URL", systemImage: "checkmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(ColorPalette.Accent.green)
+                    } else {
+                        Label("invalid URL — must start with https://", systemImage: "exclamationmark.triangle.fill")
+                            .font(.caption)
+                            .foregroundStyle(ColorPalette.Status.error)
+                    }
+                }
+                Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Diagnostics") {
-                Toggle("Share Diagnostics", isOn: $shareDiagnostics)
-                Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+            Section("Attio CRM") {
+                Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
+                Text(attioExportEnabled
+                     ? "\"Send to Attio\" is available in saved meeting history."
+                     : "\"Send to Attio\" is hidden until you enable it here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -888,7 +956,7 @@ struct GeneralSettingsView: View {
             appState.saveExportFolderBookmark(for: url)
         }
     }
-    
+
     private func exportAllMeetings() {
         isExportingAll = true
         exportAllCount = nil
@@ -908,18 +976,6 @@ struct GeneralSettingsView: View {
         exportAllCount = finalized.count
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             exportAllCount = nil
-        }
-    }
-
-    private func setLaunchAtLogin(_ enabled: Bool) {
-        do {
-            if enabled {
-                try SMAppService.mainApp.register()
-            } else {
-                try SMAppService.mainApp.unregister()
-            }
-        } catch {
-            DebugLogger.shared.log(.app, "Launch at login update FAILED: \(error.localizedDescription)")
         }
     }
 }

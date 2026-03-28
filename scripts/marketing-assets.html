@@ -1,0 +1,1131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Miniti Marketing Assets</title>
+<style>
+  @font-face {
+    font-family: 'SF Mono';
+    src: local('SF Mono Regular'), local('SFMono-Regular');
+    font-weight: 400;
+  }
+  @font-face {
+    font-family: 'SF Mono';
+    src: local('SF Mono Medium'), local('SFMono-Medium');
+    font-weight: 500;
+  }
+  @font-face {
+    font-family: 'SF Mono';
+    src: local('SF Mono Semibold'), local('SFMono-Semibold');
+    font-weight: 600;
+  }
+  @font-face {
+    font-family: 'SF Mono';
+    src: local('SF Mono Bold'), local('SFMono-Bold');
+    font-weight: 700;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'SF Mono', 'SFMono-Regular', 'Menlo', monospace;
+    background: #09090B;
+    color: #E6EDF3;
+    padding: 40px;
+  }
+
+  .section-label {
+    font-size: 24px;
+    font-weight: 700;
+    color: #3FB950;
+    margin-bottom: 24px;
+    margin-top: 60px;
+  }
+  .section-label:first-child { margin-top: 0; }
+
+  .asset-row {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    margin-bottom: 16px;
+  }
+
+  .asset-label {
+    font-size: 9px;
+    font-weight: 500;
+    color: #484F58;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ===== HOME ACTION BUTTONS ===== */
+  .home-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    background: #0F0F11;
+    border: 0.5px solid rgba(39,39,42,0.6);
+    cursor: pointer;
+    transition: all 0.15s ease-out;
+  }
+  .home-btn .icon {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .home-btn .label {
+    font-size: 10px;
+    font-weight: 500;
+    color: #71717A;
+  }
+  .home-btn .shortcut {
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.03);
+    border: 0.5px solid rgba(255,255,255,0.06);
+  }
+
+  .home-btn.blue .icon { color: rgba(88,166,255,0.6); }
+  .home-btn.blue .shortcut { color: #52525B; }
+  .home-btn.blue.hover {
+    background: rgba(88,166,255,0.06);
+    border-color: rgba(88,166,255,0.3);
+    border-width: 1px;
+    box-shadow: 0 2px 8px rgba(88,166,255,0.15);
+  }
+  .home-btn.blue.hover .icon { color: #58A6FF; }
+  .home-btn.blue.hover .label { color: #D4D4D8; }
+  .home-btn.blue.hover .shortcut { color: rgba(88,166,255,0.7); background: rgba(88,166,255,0.1); border-color: rgba(88,166,255,0.2); }
+
+  .home-btn.amber .icon { color: rgba(245,158,11,0.6); }
+  .home-btn.amber .shortcut { color: #52525B; }
+  .home-btn.amber.hover {
+    background: rgba(245,158,11,0.06);
+    border-color: rgba(245,158,11,0.3);
+    border-width: 1px;
+    box-shadow: 0 2px 8px rgba(245,158,11,0.15);
+  }
+  .home-btn.amber.hover .icon { color: #F59E0B; }
+  .home-btn.amber.hover .label { color: #D4D4D8; }
+  .home-btn.amber.hover .shortcut { color: rgba(245,158,11,0.7); background: rgba(245,158,11,0.1); border-color: rgba(245,158,11,0.2); }
+
+  /* ===== START BUTTON ===== */
+  .start-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 28px;
+    border-radius: 8px;
+    background: #3FB950;
+    color: #09090B;
+    border: none;
+  }
+  .start-btn .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #09090B;
+  }
+  .start-btn .text { font-size: 13px; font-weight: 600; }
+  .start-btn .sc { font-size: 10px; font-weight: 500; opacity: 0.5; }
+
+  /* ===== CONTROL BUTTONS ===== */
+  .ctrl-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid;
+  }
+  .ctrl-btn.stop { background: rgba(248,81,73,0.15); border-color: rgba(248,81,73,0.3); color: #F85149; }
+  .ctrl-btn.stop .sq { width:8px;height:8px;background:#F85149;border-radius:2px; }
+  .ctrl-btn.resume { background: rgba(63,185,80,0.15); border-color: rgba(63,185,80,0.3); color: #3FB950; }
+  .ctrl-btn.save {
+    gap: 6px; padding: 8px 14px; border-radius: 6px;
+    background: rgba(63,185,80,0.1); border: 0.5px solid rgba(63,185,80,0.25); color: #3FB950;
+    font-size: 11px;
+  }
+  .ctrl-btn.save .sc { font-size: 9px; font-weight: 500; opacity: 0.5; }
+  .ctrl-btn.discard {
+    gap: 6px; padding: 8px 14px; border-radius: 6px;
+    background: rgba(248,81,73,0.08); border: 0.5px solid rgba(248,81,73,0.2); color: #F85149;
+    font-size: 11px;
+  }
+  .ctrl-btn.discard .sc { font-size: 9px; font-weight: 500; opacity: 0.5; }
+
+  /* ===== COPY BUTTON ===== */
+  .copy-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #1C1C1F;
+    font-size: 9px;
+    font-weight: 500;
+    color: #52525B;
+    border: none;
+  }
+
+  /* ===== API PILLS ===== */
+  .api-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 100px;
+    background: #0F0F11;
+  }
+  .api-pill .dot { width:6px;height:6px;border-radius:50%; }
+  .api-pill.on .dot { background: #3FB950; }
+  .api-pill.on { border: 1px solid rgba(63,185,80,0.3); }
+  .api-pill.on .name { font-size:10px;font-weight:500;color:#D4D4D8; }
+  .api-pill.on .status { font-size:9px;color:rgba(63,185,80,0.8); }
+  .api-pill.off .dot { background: #71717A; }
+  .api-pill.off { border: 1px solid rgba(63,63,70,0.5); }
+  .api-pill.off .name { font-size:10px;font-weight:500;color:#71717A; }
+  .api-pill.off .status { font-size:9px;color:rgba(113,113,122,0.6); }
+
+  /* ===== INSIGHT MODE TABS ===== */
+  .mode-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 8px;
+    background: #09090B;
+  }
+  .mode-tab {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 7px 8px;
+    border-radius: 6px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #8B949E;
+  }
+  .mode-tab.active {
+    background: rgba(63,185,80,0.15);
+    font-weight: 600;
+    color: #E6EDF3;
+  }
+  .mode-tab .sc { font-size: 8px; opacity: 0.5; }
+  .mode-tab.active .sc { opacity: 0.4; }
+
+  /* ===== TRANSCRIPT WINDOW ===== */
+  .transcript-window {
+    width: 540px;
+    background: #09090B;
+    border: 1px solid #1C1C1F;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .speaker-legend {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 8px 16px;
+    background: #0F0F11;
+    border-bottom: 1px solid #1C1C1F;
+  }
+  .speaker-legend .rec-dot {
+    display: flex; align-items: center; gap: 4px;
+  }
+  .speaker-legend .rec-dot .dot { width:6px;height:6px;border-radius:50%;background:#F85149; }
+  .speaker-legend .rec-dot span { font-size:10px;font-weight:600;color:#F85149; }
+  .speaker-legend .label { font-size:10px;font-weight:500;color:#484F58; }
+  .speaker-item { display:flex;align-items:center;gap:4px; }
+  .speaker-item .dot { width:6px;height:6px;border-radius:50%; }
+  .speaker-item span { font-size:10px;font-weight:600; }
+  .speaker-item.you .dot { background:#3FB950; }
+  .speaker-item.you span { color:#3FB950; }
+  .speaker-item.s1 .dot { background:#58A6FF; }
+  .speaker-item.s1 span { color:#58A6FF; }
+  .speaker-item.s2 .dot { background:#A371F7; }
+  .speaker-item.s2 span { color:#A371F7; }
+  .speaker-count { font-size:9px;color:#484F58;margin-left:auto; }
+
+  .transcript-content {
+    padding: 12px 16px;
+  }
+  .turn-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 12px;
+    margin-bottom: 4px;
+  }
+  .turn-header:first-child { margin-top: 0; }
+  .turn-header .bar { width:3px;height:12px;border-radius:1.5px; }
+  .turn-header .name { font-size:10px;font-weight:600; }
+  .turn-header .sep { color:#1C1C1F; }
+  .turn-header .ts { font-size:10px;font-weight:500;color:#484F58; }
+
+  .turn-header.you .bar { background:#3FB950; }
+  .turn-header.you .name { color:#3FB950; }
+  .turn-header.s1 .bar { background:#58A6FF; }
+  .turn-header.s1 .name { color:#58A6FF; }
+
+  .msg-line {
+    display: flex;
+    align-items: stretch;
+  }
+  .msg-line .border { width:2px;flex-shrink:0; }
+  .msg-line.you .border { background:rgba(63,185,80,0.3); }
+  .msg-line.s1 .border { background:rgba(88,166,255,0.3); }
+  .msg-line .text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: #E6EDF3;
+    padding: 4px 0 4px 12px;
+  }
+
+  .interim-line {
+    display: flex;
+    align-items: stretch;
+  }
+  .interim-line .border { width:2px;flex-shrink:0;background:rgba(63,185,80,0.2); }
+  .interim-line .text {
+    font-size: 13px;
+    line-height: 1.6;
+    color: rgba(230,237,243,0.5);
+    padding: 4px 0 4px 12px;
+    font-style: italic;
+  }
+  .interim-line .cursor {
+    display: inline-block;
+    width: 2px;
+    height: 14px;
+    background: #3FB950;
+    margin-left: 2px;
+    vertical-align: middle;
+    animation: blink 1s step-end infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ===== TERMINAL SECTION (insights) ===== */
+  .terminal-section {
+    padding: 16px;
+    background: #0F0F11;
+    border: 1px solid #1C1C1F;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .terminal-section .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .terminal-section .header .hash { font-size:12px;font-weight:700; }
+  .terminal-section .header .title { font-size:12px;font-weight:700; }
+  .terminal-section .body { padding-left: 20px; }
+  .terminal-section .body p {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #E6EDF3;
+  }
+  .terminal-section .body .list-item {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 8px;
+  }
+  .terminal-section .body .list-item .prefix {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.6;
+    flex-shrink: 0;
+  }
+  .terminal-section .body .list-item .text {
+    font-size: 13px;
+    line-height: 1.7;
+    color: #E6EDF3;
+  }
+
+  .topic-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding-left: 20px;
+  }
+  .topic-tag {
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: rgba(163,113,247,0.1);
+    border: 0.5px solid rgba(163,113,247,0.2);
+    font-size: 11px;
+    font-weight: 500;
+    color: #A371F7;
+  }
+
+  /* ===== MEDDPICC BULLETS ===== */
+  .meddpicc-bullet {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 4px;
+    padding-left: 20px;
+  }
+  .meddpicc-bullet .dot { font-size:13px;opacity:0.5;color:#E6EDF3;flex-shrink:0; }
+  .meddpicc-bullet .text { font-size:13px;line-height:1.5;color:#E6EDF3; }
+
+  /* ===== TRAINING SECTIONS ===== */
+  .training-section {
+    padding: 16px;
+    background: #0F0F11;
+    border: 1px solid #1C1C1F;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .training-section .header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .training-section .header .title { font-size:12px;font-weight:700; }
+
+  .filler-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+  .filler-row .word { font-size:11px;font-weight:500;color:#D4D4D8; }
+  .filler-row .count { font-size:11px;font-weight:600;color:#F59E0B; }
+
+  .metric-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .metric-row .speaker { font-size:11px;font-weight:500;width:48px; }
+  .metric-row .speaker.you { color:#3FB950; }
+  .metric-row .speaker.other { color:#8B949E; }
+  .metric-row .value { font-size:12px;font-weight:600;color:#E6EDF3; }
+  .metric-row .trail { font-size:10px;color:#484F58;margin-left:auto; }
+
+  .talk-ratio-bar {
+    display: flex;
+    height: 16px;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .talk-ratio-bar .you-bar { background:#3FB950; }
+  .talk-ratio-bar .other-bar { background:rgba(88,166,255,0.5); }
+
+  .talk-ratio-labels {
+    display: flex;
+    justify-content: space-between;
+  }
+  .talk-ratio-labels .lbl {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 500;
+    color: #D4D4D8;
+  }
+  .talk-ratio-labels .lbl .dot { width:6px;height:6px;border-radius:50%; }
+
+  .helper-text { font-size:9px;color:#3F3F46;margin-top:4px; }
+  .sub-label { font-size:10px;color:#71717A;margin-bottom:10px; }
+
+  /* ===== ATTIO SHEET ===== */
+  .attio-sheet {
+    width: 480px;
+    background: #09090B;
+    border: 1px solid #1C1C1F;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .attio-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px;
+    background: #0F0F11;
+    border-bottom: 1px solid #1C1C1F;
+  }
+  .attio-logo {
+    width: 18px; height: 18px;
+    background: rgba(251,146,60,0.18);
+    border-radius: 3px;
+    position: relative;
+  }
+  .attio-logo .d1 {
+    width:6px;height:6px;border-radius:50%;background:#F97316;
+    position:absolute;left:3px;top:4px;
+  }
+  .attio-logo .d2 {
+    width:4px;height:4px;border-radius:50%;background:#FDBA74;
+    position:absolute;right:3px;bottom:3px;
+  }
+  .attio-header .title { font-size:13px;font-weight:700;color:#E6EDF3;flex-grow:1; }
+  .attio-header .close { font-size:11px;font-weight:500;color:#8B949E; }
+
+  .attio-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+
+  .attio-card {
+    padding: 12px;
+    background: #0F0F11;
+    border: 1px solid #1C1C1F;
+    border-radius: 8px;
+  }
+  .attio-card .card-title {
+    font-size: 10px;
+    font-weight: 600;
+    color: #8B949E;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+  .attio-card .conn-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .attio-card .conn-row .dot { width:8px;height:8px;border-radius:50%;background:#3FB950; }
+  .attio-card .conn-row .text { font-size:12px;font-weight:500;color:#E6EDF3;flex-grow:1; }
+  .attio-card .conn-row .btn {
+    font-size:11px;font-weight:600;color:#F97316;
+    padding:6px 12px;border-radius:6px;background:rgba(249,115,22,0.08);
+  }
+
+  .scope-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .scope-tab {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #8B949E;
+  }
+  .scope-tab.active { background:#18181B; font-weight:600; color:#E6EDF3; }
+
+  .search-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .search-input {
+    flex-grow: 1;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #09090B;
+    border: 1px solid #1C1C1F;
+    font-size: 12px;
+    color: #E6EDF3;
+    font-family: 'SF Mono', monospace;
+  }
+  .search-btn {
+    font-size:11px;font-weight:600;color:#58A6FF;
+    padding:8px 12px;border-radius:6px;background:rgba(88,166,255,0.08);
+  }
+
+  .selected-record {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .selected-record .pin { font-size:10px;color:#8B949E; }
+  .selected-record .name { font-size:10px;font-weight:500;color:#E6EDF3; }
+  .selected-record .type { font-size:10px;color:#8B949E; }
+
+  .search-result {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #09090B;
+    border: 1px solid #1C1C1F;
+    margin-bottom: 6px;
+  }
+  .search-result .dot { width:8px;height:8px;border-radius:50%; }
+  .search-result .info { flex-grow:1; }
+  .search-result .info .name { font-size:12px;font-weight:500;color:#E6EDF3; }
+  .search-result .info .detail { font-size:10px;color:#8B949E; }
+  .search-result.selected { background:#18181B; }
+  .search-result .check { color:#3FB950;font-size:14px; }
+
+  .payload-section { margin-top: 10px; }
+  .payload-title { font-size:10px;font-weight:600;color:#8B949E;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:10px; }
+  .payload-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 11px;
+    color: #8B949E;
+  }
+  .payload-item .check { color:#3FB950; }
+  .payload-item .label { color:#D4D4D8; }
+
+  .send-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    border-radius: 6px;
+    background: rgba(249,115,22,0.15);
+    border: 1px solid rgba(249,115,22,0.3);
+    font-size: 12px;
+    font-weight: 600;
+    color: #F97316;
+    margin-top: 12px;
+  }
+
+  /* ===== EXPORT SETTINGS ===== */
+  .export-settings {
+    width: 460px;
+    padding: 20px 24px;
+    background: #111113;
+    border: 1px solid #1C1C1F;
+    border-radius: 10px;
+  }
+  .export-settings .title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #E6EDF3;
+    margin-bottom: 16px;
+  }
+  .path-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  .path-row .path { font-size:11px;color:#A1A1AA;flex-grow:1; }
+  .path-row .btn {
+    font-size:11px;font-weight:500;color:#E6EDF3;
+    padding:6px 10px;border-radius:6px;background:#18181B;
+    border:0.5px solid #27272A;
+  }
+
+  .toggle-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+  }
+  .toggle-row .top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .toggle-switch {
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .toggle-switch.on { background: #3FB950; }
+  .toggle-switch.off { background: #3F3F46; }
+  .toggle-switch .knob {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    position: absolute;
+    top: 2px;
+  }
+  .toggle-switch.on .knob { right: 2px; }
+  .toggle-switch.off .knob { left: 2px; }
+  .toggle-row .label { font-size:13px;color:#E6EDF3; }
+  .toggle-row .desc { font-size:11px;color:#A1A1AA;padding-left:44px; }
+
+  .export-all-btn {
+    font-size:12px;font-weight:500;color:#E6EDF3;
+    padding:8px 14px;border-radius:6px;background:#18181B;
+    border:0.5px solid #27272A;display:inline-block;
+  }
+
+  /* ===== COMPONENT CONTAINER ===== */
+  .component-group {
+    width: 540px;
+  }
+  .component-group.wide { width: 540px; }
+</style>
+</head>
+<body>
+
+<!-- ==================== BUTTONS ==================== -->
+<div class="section-label">// buttons</div>
+
+<div class="asset-label">home action buttons — default</div>
+<div class="asset-row">
+  <div class="home-btn blue">
+    <span class="icon">⌨</span>
+    <span class="label">shortcuts</span>
+    <span class="shortcut">⌘/</span>
+  </div>
+  <div class="home-btn amber">
+    <span class="icon">⚙</span>
+    <span class="label">settings</span>
+    <span class="shortcut">⌘,</span>
+  </div>
+</div>
+
+<div class="asset-label">home action buttons — hover</div>
+<div class="asset-row">
+  <div class="home-btn blue hover">
+    <span class="icon">⌨</span>
+    <span class="label">shortcuts</span>
+    <span class="shortcut">⌘/</span>
+  </div>
+  <div class="home-btn amber hover">
+    <span class="icon">⚙</span>
+    <span class="label">settings</span>
+    <span class="shortcut">⌘,</span>
+  </div>
+</div>
+
+<div class="asset-label">start button</div>
+<div class="asset-row">
+  <div class="start-btn">
+    <div class="dot"></div>
+    <span class="text">relax and take notes</span>
+    <span class="sc">⌘⇧R</span>
+  </div>
+</div>
+
+<div class="asset-label">recording controls — stop / resume / save / discard</div>
+<div class="asset-row">
+  <div class="ctrl-btn stop"><div class="sq"></div>stop</div>
+  <div class="ctrl-btn resume">▶ cont</div>
+  <div class="ctrl-btn save">save <span class="sc">⌘S</span></div>
+  <div class="ctrl-btn discard">discard <span class="sc">⌘⌫</span></div>
+</div>
+
+<div class="asset-label">utility buttons</div>
+<div class="asset-row">
+  <div class="copy-btn">copy</div>
+</div>
+
+<div class="asset-label">api status pills</div>
+<div class="asset-row">
+  <div class="api-pill on"><div class="dot"></div><span class="name">deepgram</span><span class="status">connected</span></div>
+  <div class="api-pill on"><div class="dot"></div><span class="name">openai</span><span class="status">connected</span></div>
+</div>
+<div class="asset-row">
+  <div class="api-pill off"><div class="dot"></div><span class="name">deepgram</span><span class="status">click to add</span></div>
+  <div class="api-pill off"><div class="dot"></div><span class="name">openai</span><span class="status">click to add</span></div>
+</div>
+
+<div class="asset-label">insight mode tabs</div>
+<div class="asset-row">
+  <div class="mode-tabs">
+    <div class="mode-tab active">standard <span class="sc">⌘1</span></div>
+    <div class="mode-tab">meddpicc <span class="sc">⌘2</span></div>
+    <div class="mode-tab">training <span class="sc">⌘3</span></div>
+  </div>
+</div>
+
+
+<!-- ==================== TRANSCRIPT ==================== -->
+<div class="section-label">// transcript & diarization</div>
+
+<div class="transcript-window">
+  <div class="speaker-legend">
+    <div class="rec-dot"><div class="dot"></div><span>live</span></div>
+    <span class="label">speakers:</span>
+    <div class="speaker-item you"><div class="dot"></div><span>You</span></div>
+    <div class="speaker-item s1"><div class="dot"></div><span>S1</span></div>
+    <span class="speaker-count">(you + 1 remote)</span>
+  </div>
+  <div class="transcript-content">
+    <div class="turn-header you">
+      <div class="bar"></div>
+      <span class="name">You</span>
+      <span class="sep">•</span>
+      <span class="ts">0:12</span>
+    </div>
+    <div class="msg-line you">
+      <div class="border"></div>
+      <div class="text">So the main thing we need to figure out is the timeline for the Q2 launch. I think we can ship the core features by mid-April if we scope it right.</div>
+    </div>
+
+    <div class="turn-header s1" style="margin-top:12px">
+      <div class="bar"></div>
+      <span class="name">Speaker 1</span>
+      <span class="sep">•</span>
+      <span class="ts">0:31</span>
+    </div>
+    <div class="msg-line s1">
+      <div class="border"></div>
+      <div class="text">Yeah, I agree. The biggest risk is the API integration with Stripe. We haven't started that yet and there are some unknowns around webhook handling.</div>
+    </div>
+
+    <div class="turn-header you" style="margin-top:12px">
+      <div class="bar"></div>
+      <span class="name">You</span>
+      <span class="sep">•</span>
+      <span class="ts">0:48</span>
+    </div>
+    <div class="msg-line you">
+      <div class="border"></div>
+      <div class="text">Right. Let's put that at the top of the backlog. Can you estimate it by end of day? I want to make sure we have buffer.</div>
+    </div>
+
+    <div class="turn-header s1" style="margin-top:12px">
+      <div class="bar"></div>
+      <span class="name">Speaker 1</span>
+      <span class="sep">•</span>
+      <span class="ts">1:02</span>
+    </div>
+    <div class="msg-line s1">
+      <div class="border"></div>
+      <div class="text">Sure, I'll write up a quick spike doc and share it in the channel. Probably two to three days for the integration plus testing.</div>
+    </div>
+
+    <div class="turn-header you" style="margin-top:12px">
+      <div class="bar"></div>
+      <span class="name">You</span>
+      <span class="sep">•</span>
+      <span class="ts">1:18</span>
+    </div>
+    <div class="interim-line">
+      <div class="border"></div>
+      <div class="text">Perfect, and we should also think about<span class="cursor"></span></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ==================== INSIGHTS SUMMARY ==================== -->
+<div class="section-label">// insights summary</div>
+
+<div class="component-group">
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#58A6FF">##</span>
+      <span class="title" style="color:#58A6FF">summary</span>
+    </div>
+    <div class="body">
+      <p>The team discussed the Q2 product launch timeline, focusing on Stripe API integration as the primary risk. They agreed to prioritize the integration work, with an estimated 2-3 day timeline for completion including testing. The launch target of mid-April was confirmed as achievable with proper scoping.</p>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#F59E0B">##</span>
+      <span class="title" style="color:#F59E0B">discussion</span>
+    </div>
+    <div class="body">
+      <div class="list-item"><span class="prefix" style="color:#F59E0B">→</span><span class="text">Reviewed Q2 launch scope and timeline</span></div>
+      <div class="list-item"><span class="prefix" style="color:#F59E0B">→</span><span class="text">Identified Stripe API integration as primary blocker</span></div>
+      <div class="list-item"><span class="prefix" style="color:#F59E0B">→</span><span class="text">Discussed webhook handling unknowns</span></div>
+      <div class="list-item"><span class="prefix" style="color:#F59E0B">→</span><span class="text">Agreed on 2-3 day estimate for integration spike</span></div>
+      <div class="list-item"><span class="prefix" style="color:#F59E0B">→</span><span class="text">Confirmed mid-April ship target with buffer</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#3FB950">##</span>
+      <span class="title" style="color:#3FB950">action items</span>
+    </div>
+    <div class="body">
+      <div class="list-item"><span class="prefix" style="color:#3FB950">[ ]</span><span class="text">Write Stripe integration spike doc and share in channel by EOD</span></div>
+      <div class="list-item"><span class="prefix" style="color:#3FB950">[ ]</span><span class="text">Estimate webhook handling complexity for Q2 launch</span></div>
+      <div class="list-item"><span class="prefix" style="color:#3FB950">[ ]</span><span class="text">Review and prioritize remaining Q2 backlog items</span></div>
+      <div class="list-item"><span class="prefix" style="color:#3FB950">[ ]</span><span class="text">Schedule follow-up sync for next Monday</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#A371F7">##</span>
+      <span class="title" style="color:#A371F7">topics</span>
+    </div>
+    <div class="topic-tags">
+      <span class="topic-tag">#q2-launch</span>
+      <span class="topic-tag">#stripe-integration</span>
+      <span class="topic-tag">#api-timeline</span>
+      <span class="topic-tag">#webhook-handling</span>
+      <span class="topic-tag">#backlog-prioritization</span>
+    </div>
+  </div>
+</div>
+
+
+<!-- ==================== MEDDPICC ==================== -->
+<div class="section-label">// meddpicc view</div>
+
+<div class="component-group">
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#3B82F6">##</span>
+      <span class="title" style="color:#3B82F6">metrics</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">ARR target: $2.4M by Q3</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Current pipeline: $1.8M</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Average deal size: $48K</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Sales cycle: 45 days average</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#8B5CF6">##</span>
+      <span class="title" style="color:#8B5CF6">economic buyer</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">VP of Engineering Sarah Chen</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Budget authority confirmed for deals up to $100K</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Reports directly to CTO</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#EC4899">##</span>
+      <span class="title" style="color:#EC4899">decision criteria</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Must integrate with existing Salesforce instance</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">SOC2 compliance required</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Sub-200ms API response time</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">99.9% uptime SLA</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#F59E0B">##</span>
+      <span class="title" style="color:#F59E0B">decision process</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Technical evaluation (2 weeks)</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Security review by InfoSec team</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Procurement approval</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Legal contract review</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Final sign-off by VP Engineering</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#F97316">##</span>
+      <span class="title" style="color:#F97316">paper process</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Standard MSA template acceptable</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">NDA already signed</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Procurement requires 3 vendor quotes</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Net-30 payment terms preferred</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#EF4444">##</span>
+      <span class="title" style="color:#EF4444">identified pain</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Current tool crashes during peak load</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Team losing 4 hours/week to manual data entry</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">No real-time collaboration features</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Customer complaints about slow response times</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#22C55E">##</span>
+      <span class="title" style="color:#22C55E">champion</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Marcus Kim, Senior Engineer</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Actively evangelizing internally</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Shared ROI analysis with leadership</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Providing intro to procurement contact</span></div>
+    </div>
+  </div>
+
+  <div class="terminal-section">
+    <div class="header">
+      <span class="hash" style="color:#6366F1">##</span>
+      <span class="title" style="color:#6366F1">competition</span>
+    </div>
+    <div class="body">
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Incumbent: legacy on-prem solution (3yr contract ending)</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Competitor A: strong on price, weak on integrations</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Competitor B: similar features but no SOC2</span></div>
+      <div class="meddpicc-bullet"><span class="dot">•</span><span class="text">Open source option considered and rejected</span></div>
+    </div>
+  </div>
+</div>
+
+
+<!-- ==================== TRAINING ==================== -->
+<div class="section-label">// insights training</div>
+
+<div class="component-group">
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#F59E0B">fillers: you</span></div>
+    <div class="sub-label">7 fillers (1.4/min)</div>
+    <div class="filler-row"><span class="word">um</span><span class="count">3</span></div>
+    <div class="filler-row"><span class="word">uh</span><span class="count">2</span></div>
+    <div class="filler-row"><span class="word">like</span><span class="count">1</span></div>
+    <div class="filler-row"><span class="word">you know</span><span class="count">1</span></div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#8B949E">fillers: others</span></div>
+    <div class="sub-label">3 fillers (0.6/min)</div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#58A6FF">talk ratio</span></div>
+    <div class="talk-ratio-bar">
+      <div class="you-bar" style="width:62%"></div>
+      <div class="other-bar" style="width:38%"></div>
+    </div>
+    <div class="talk-ratio-labels">
+      <div class="lbl"><div class="dot" style="background:#3FB950"></div>you 62%</div>
+      <div class="lbl">others 38%<div class="dot" style="background:rgba(88,166,255,0.5)"></div></div>
+    </div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#A371F7">pace</span></div>
+    <div class="metric-row"><span class="speaker you">you</span><span class="value">142 wpm</span><span class="trail">1847 words</span></div>
+    <div class="metric-row"><span class="speaker other">others</span><span class="value">128 wpm</span><span class="trail">982 words</span></div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#EC4899">longest monologue</span></div>
+    <div class="metric-row"><span class="speaker you">you</span><span class="value">186 words</span></div>
+    <div class="metric-row"><span class="speaker other">others</span><span class="value">94 words</span></div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#3FB950">questions asked</span></div>
+    <div class="metric-row"><span class="speaker you">you</span><span class="value">8</span></div>
+    <div class="metric-row"><span class="speaker other">others</span><span class="value">3</span></div>
+  </div>
+
+  <div class="training-section">
+    <div class="header"><span class="title" style="color:#D29922">clarity</span></div>
+    <div class="metric-row"><span class="speaker you">you</span><span class="value">18.4</span><span class="trail">avg words/turn</span></div>
+    <div class="metric-row"><span class="speaker other">others</span><span class="value">12.1</span><span class="trail">avg words/turn</span></div>
+    <div class="helper-text">lower = clearer = better</div>
+  </div>
+</div>
+
+
+<!-- ==================== SEND TO ATTIO ==================== -->
+<div class="section-label">// send to attio</div>
+
+<div class="attio-sheet">
+  <div class="attio-header">
+    <div class="attio-logo"><div class="d1"></div><div class="d2"></div></div>
+    <span class="title">send to attio</span>
+    <span class="close">close</span>
+  </div>
+  <div class="attio-body">
+    <div class="attio-card">
+      <div class="card-title">attio account</div>
+      <div class="conn-row">
+        <div class="dot"></div>
+        <span class="text">connected</span>
+        <span class="btn">reconnect</span>
+      </div>
+    </div>
+
+    <div class="attio-card">
+      <div class="card-title">find attio record</div>
+      <div class="scope-tabs">
+        <div class="scope-tab active">both</div>
+        <div class="scope-tab">people</div>
+        <div class="scope-tab">companies</div>
+      </div>
+      <div class="search-row">
+        <div class="search-input">Acme Corp</div>
+        <div class="search-btn">search</div>
+      </div>
+      <div class="selected-record">
+        <span class="pin">📌</span>
+        <span class="name">Acme Corp</span>
+        <span class="type">· companies</span>
+      </div>
+      <div class="search-result selected">
+        <div class="dot" style="background:#58A6FF"></div>
+        <div class="info">
+          <div class="name">Acme Corp</div>
+          <div class="detail">acmecorp.com</div>
+        </div>
+        <span class="check">✓</span>
+      </div>
+      <div class="search-result">
+        <div class="dot" style="background:#A371F7"></div>
+        <div class="info">
+          <div class="name">Sarah Chen</div>
+          <div class="detail">sarah@acmecorp.com</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="attio-card">
+      <div class="card-title">what will be sent</div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">summary</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">discussion flow</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">action items</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">decisions</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">topics</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">MEDDPICC</span></div>
+      <div class="payload-item"><span class="check">✓</span><span class="label">notes</span></div>
+    </div>
+
+    <div class="send-btn">send to attio</div>
+  </div>
+</div>
+
+
+<!-- ==================== EXPORT SETTINGS ==================== -->
+<div class="section-label">// markdown export settings</div>
+
+<div class="export-settings">
+  <div class="title">Export</div>
+  <div class="path-row">
+    <span class="path">~/Documents/miniti</span>
+    <span class="btn">Choose Folder</span>
+  </div>
+  <div class="toggle-row">
+    <div class="top">
+      <div class="toggle-switch on"><div class="knob"></div></div>
+      <span class="label">Auto-export meetings as markdown</span>
+    </div>
+    <span class="desc">Automatically saves each meeting as a markdown file. Works with Obsidian, Claude Code, and other tools.</span>
+  </div>
+  <div class="toggle-row">
+    <div class="top">
+      <div class="toggle-switch on"><div class="knob"></div></div>
+      <span class="label">Generate CLAUDE.md index</span>
+    </div>
+    <span class="desc">Maintains a CLAUDE.md file listing all exported meetings for AI agents.</span>
+  </div>
+  <div class="export-all-btn">Export All Meetings</div>
+</div>
+
+<div style="height:60px"></div>
+
+</body>
+</html>
