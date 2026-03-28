@@ -416,10 +416,16 @@ final class AppState: ObservableObject {
             }
         }
     }
+    @AppStorage("webhookURL") var webhookURL: String = ""
+    @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
+    
+    @Published var wasAutoStopped = false
+    @Published var selectedSettingsTab: String = "general"
     
     private var recordingTimer: Timer?
     private var periodicSaveTimer: Timer?
     private var transcriptHealthTimer: Timer?
+    private var autoStopTimer: Timer?
     private var lastTranscriptReceivedAt: CFAbsoluteTime = 0
     private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
     private var deepgramReconnectTask: Task<Void, Never>?
@@ -762,6 +768,32 @@ final class AppState: ObservableObject {
     private func stopTranscriptHealthMonitoring() {
         transcriptHealthTimer?.invalidate()
         transcriptHealthTimer = nil
+    }
+    
+    private func startAutoStopMonitoring() {
+        autoStopTimer?.invalidate()
+        guard autoStopMinutes > 0 else { return }
+        autoStopTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkAutoStop()
+            }
+        }
+    }
+    
+    private func stopAutoStopMonitoring() {
+        autoStopTimer?.invalidate()
+        autoStopTimer = nil
+    }
+    
+    private func checkAutoStop() {
+        guard isRecording, autoStopMinutes > 0, lastTranscriptReceivedAt > 0 else { return }
+        let gap = CFAbsoluteTimeGetCurrent() - lastTranscriptReceivedAt
+        let threshold = Double(autoStopMinutes) * 60.0
+        if gap >= threshold {
+            DebugLogger.shared.log(.app, "Auto-stop: no transcript activity for \(autoStopMinutes) min")
+            wasAutoStopped = true
+            stopRecording()
+        }
     }
     
     private func checkTranscriptHealth() {
@@ -1500,6 +1532,7 @@ final class AppState: ObservableObject {
         }
         
         isStartingMeeting = true
+        wasAutoStopped = false
         
         // Save previous meeting if exists and has content
         saveCurrentMeetingIfNeeded()
@@ -1566,6 +1599,8 @@ final class AppState: ObservableObject {
     
     /// Go back to home screen (clears current session after saving)
     func goHome() {
+        wasAutoStopped = false
+        
         // End Live Activity
         #if os(iOS)
         endLiveActivity()
@@ -1591,6 +1626,52 @@ final class AppState: ObservableObject {
             exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
         }
         #endif
+
+        // Fire webhook with live in-memory state before clearing
+        if !webhookURL.isEmpty, let meeting = currentMeeting {
+            let transcriptEntries = liveSegments
+                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .sorted { $0.timestamp < $1.timestamp }
+                .map { seg in
+                    WebhookService.MeetingPayload.TranscriptEntry(
+                        speaker: seg.speakerLabel,
+                        text: seg.text,
+                        timestamp: seg.timestamp
+                    )
+                }
+            if trainingMetrics == nil {
+                let segs = liveSegments.map {
+                    TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
+                }
+                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration)
+            }
+            let training = WebhookService.trainingData(from: trainingMetrics)
+            let payload = WebhookService.payloadFromLiveState(
+                meetingID: meeting.id,
+                title: meeting.title,
+                startTime: meeting.startTime,
+                endTime: meeting.endTime,
+                durationSeconds: Int(recordingDuration),
+                summary: liveSummary,
+                actionItems: liveActionItems,
+                keyDecisions: meeting.keyDecisions,
+                topics: liveTopics,
+                discussionFlow: liveDiscussionFlow,
+                notes: liveNotes,
+                metrics: liveMetrics,
+                economicBuyer: liveEconomicBuyer,
+                decisionCriteria: liveDecisionCriteria,
+                decisionProcess: liveDecisionProcess,
+                paperProcess: livePaperProcess,
+                identifiedPain: liveIdentifiedPain,
+                champion: liveChampion,
+                competition: liveCompetition,
+                speakerCount: detectedSpeakers.count,
+                transcript: transcriptEntries,
+                training: training
+            )
+            WebhookService.send(payload: payload, to: webhookURL)
+        }
 
         // Clear session and return to home
         clearCurrentSession()
@@ -1714,6 +1795,12 @@ final class AppState: ObservableObject {
             exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
         }
         #endif
+
+        // Fire webhook with updated meeting data
+        if !webhookURL.isEmpty {
+            let payload = WebhookService.payloadFromMeeting(meeting)
+            WebhookService.send(payload: payload, to: webhookURL)
+        }
 
         isGeneratingInsights = false
     }
@@ -2164,6 +2251,9 @@ final class AppState: ObservableObject {
         // Insights cadence: 30s per mode (steady-state only, after warmup)
         startInsightsCadenceTask()
         
+        // Auto-stop if no transcript activity for configured duration
+        startAutoStopMonitoring()
+        
         // Start Live Activity
         #if os(iOS)
         startLiveActivity()
@@ -2251,6 +2341,7 @@ final class AppState: ObservableObject {
         insightsCadenceTask?.cancel()
         insightsCadenceTask = nil
         stopTranscriptHealthMonitoring()
+        stopAutoStopMonitoring()
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
@@ -2315,6 +2406,7 @@ final class AppState: ObservableObject {
         insightsCadenceTask?.cancel()
         insightsCadenceTask = nil
         stopTranscriptHealthMonitoring()
+        stopAutoStopMonitoring()
         deepgramReconnectTask?.cancel()
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1

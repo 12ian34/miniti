@@ -1,2 +1,2 @@
-- new: Meeting search (macOS + iOS) — fast full-text search across titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow. Results ranked by relevance with highlighted matches and context snippets.
-- fix: iPad layout now fills the full screen width.
+- new: outbound webhooks to send your meeting intelligence elsewhere e.g. zapier, make, n8n, attio or other endpoints.
+- new: auto-stop recording when no speech is detected for a configurable duration.

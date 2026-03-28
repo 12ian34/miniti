@@ -134,6 +134,28 @@ struct MeetingView_iOS: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
+            if appState.wasAutoStopped && isStopped {
+                HStack(spacing: 6) {
+                    Image(systemName: "moon.zzz.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("auto-stopped — no speech detected")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(ColorPalette.Accent.amber)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(ColorPalette.Accent.amber.opacity(0.1))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.Accent.amber.opacity(0.2), lineWidth: 1)
+                )
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+            }
+
             controlBar
         }
         .background(ColorPalette.Background.primary)
