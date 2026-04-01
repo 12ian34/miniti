@@ -15,6 +15,14 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 ## iOS
 
+### ios test
+
+```sh
+[bundle exec] fastlane ios test
+```
+
+Run MinitiMobileTests unit tests on iOS Simulator
+
 ### ios build
 
 ```sh
@@ -51,6 +59,14 @@ Bump build/version if needed, build, and upload to App Store Connect with metada
 
 
 ## Mac
+
+### mac test
+
+```sh
+[bundle exec] fastlane mac test
+```
+
+Run MinitiTests unit tests
 
 ### mac build
 

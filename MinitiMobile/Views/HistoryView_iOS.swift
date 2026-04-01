@@ -149,6 +149,14 @@ struct MeetingRow_iOS: View {
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.muted)
 
+                if let lang = TranscriptionLanguage(rawValue: meeting.language), lang != .english {
+                    Text("·")
+                        .foregroundStyle(ColorPalette.Text.disabled)
+                    Text("\(lang.flag) \(lang.rawValue.uppercased())")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+
                 if !meeting.segments.isEmpty {
                     Text("·")
                         .foregroundStyle(ColorPalette.Text.disabled)
@@ -712,7 +720,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
     }
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {

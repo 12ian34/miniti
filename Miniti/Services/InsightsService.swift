@@ -65,7 +65,7 @@ struct TrainingMetrics {
         let timestamp: TimeInterval
     }
     
-    static func compute(from segments: [Segment], duration: TimeInterval) -> TrainingMetrics {
+    static func compute(from segments: [Segment], duration: TimeInterval, language: String = "en") -> TrainingMetrics {
         let finals = segments
             .enumerated()
             .filter { _, segment in
@@ -84,7 +84,7 @@ struct TrainingMetrics {
             ? (reportedDurationSeconds > 0 ? min(reportedDurationSeconds, lastSpokenTimestamp) : lastSpokenTimestamp)
             : reportedDurationSeconds
         let durationMinutes = max(effectiveDurationSeconds / 60.0, 0.01)
-        let configuredFillersWithTokens: [(tokens: [String], label: String)] = TrainingFillerPreferences.currentFillers()
+        let configuredFillersWithTokens: [(tokens: [String], label: String)] = TrainingFillerPreferences.currentFillers(for: language)
             .map { phrase in
                 (tokens: tokenize(phrase), label: phrase)
             }
@@ -155,7 +155,7 @@ struct TrainingMetrics {
         )
     }
     
-    private static func tokenize(_ text: String) -> [String] {
+    static func tokenize(_ text: String) -> [String] {
         let cleaned = text
             .lowercased()
             .replacingOccurrences(
@@ -166,7 +166,7 @@ struct TrainingMetrics {
         return cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
     }
     
-    private static func countPhraseOccurrences(of phraseTokens: [String], in tokens: [String]) -> Int {
+    static func countPhraseOccurrences(of phraseTokens: [String], in tokens: [String]) -> Int {
         guard !phraseTokens.isEmpty else { return 0 }
         guard tokens.count >= phraseTokens.count else { return 0 }
         
@@ -179,7 +179,7 @@ struct TrainingMetrics {
         return count
     }
     
-    private static func computeLongestMonologue(for speaker: Int, in segments: [Segment]) -> Int {
+    static func computeLongestMonologue(for speaker: Int, in segments: [Segment]) -> Int {
         var longest = 0
         var current = 0
         for seg in segments {
@@ -195,51 +195,52 @@ struct TrainingMetrics {
 }
 
 enum TrainingFillerPreferences {
-    private static let storageKey = "trainingCustomFillers.v1"
-    static let defaultFillers: [String] = [
-        "um",
-        "uh",
-        "hmm",
-        "hm",
-        "er",
-        "ah",
-        "like",
-        "basically",
-        "literally",
-        "actually",
-        "honestly",
-        "uh huh",
-        "you know",
-        "i mean",
-        "kind of",
-        "sort of"
-    ]
+    private static let legacyStorageKey = "trainingCustomFillers.v1"
+    static let defaultFillers: [String] = TranscriptionLanguage.english.defaultFillers
     
-    static func currentFillers(defaults: UserDefaults = .standard) -> [String] {
-        guard
-            let data = defaults.data(forKey: storageKey),
-            let decoded = try? JSONDecoder().decode([String].self, from: data)
-        else {
-            return defaultFillers
-        }
-        
-        let normalized = normalizedFillers(decoded)
-        return normalized.isEmpty ? defaultFillers : normalized
+    private static func storageKey(for language: String) -> String {
+        "trainingCustomFillers.v1.\(language)"
     }
     
-    static func save(_ fillers: [String], defaults: UserDefaults = .standard) {
+    static func defaultFillers(for language: String) -> [String] {
+        TranscriptionLanguage(rawValue: language)?.defaultFillers ?? TranscriptionLanguage.english.defaultFillers
+    }
+    
+    static func currentFillers(for language: String = "en", defaults: UserDefaults = .standard) -> [String] {
+        let key = storageKey(for: language)
+        
+        if let data = defaults.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([String].self, from: data) {
+            let normalized = normalizedFillers(decoded)
+            return normalized.isEmpty ? defaultFillers(for: language) : normalized
+        }
+        
+        if language == "en", let legacyData = defaults.data(forKey: legacyStorageKey),
+           let decoded = try? JSONDecoder().decode([String].self, from: legacyData) {
+            let normalized = normalizedFillers(decoded)
+            if !normalized.isEmpty {
+                save(normalized, for: language, defaults: defaults)
+                return normalized
+            }
+        }
+        
+        return defaultFillers(for: language)
+    }
+    
+    static func save(_ fillers: [String], for language: String = "en", defaults: UserDefaults = .standard) {
         let normalized = normalizedFillers(fillers)
-        if normalized == defaultFillers {
-            defaults.removeObject(forKey: storageKey)
+        let langDefaults = defaultFillers(for: language)
+        if normalized == langDefaults {
+            defaults.removeObject(forKey: storageKey(for: language))
             return
         }
         
         guard let data = try? JSONEncoder().encode(normalized) else { return }
-        defaults.set(data, forKey: storageKey)
+        defaults.set(data, forKey: storageKey(for: language))
     }
     
-    static func reset(defaults: UserDefaults = .standard) {
-        defaults.removeObject(forKey: storageKey)
+    static func reset(for language: String = "en", defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: storageKey(for: language))
     }
     
     static func normalizedFillers(_ fillers: [String]) -> [String] {
@@ -287,14 +288,14 @@ final class InsightsService: Sendable {
     }
     
     /// Generate real-time insights during a meeting (faster, more concise)
-    func generateLiveInsights(transcript: String, existingSummary: String?, existingTitle: String?, mode: InsightsMode = .standard, model: OpenAIModel = .gpt5Mini, apiKey: String) async throws -> LiveInsights {
+    func generateLiveInsights(transcript: String, existingSummary: String?, existingTitle: String?, mode: InsightsMode = .standard, model: OpenAIModel = .gpt5Mini, apiKey: String, language: String = "en") async throws -> LiveInsights {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
         }
         let startedAt = CFAbsoluteTimeGetCurrent()
         DebugLogger.shared.log(
             .app,
-            "BYOK insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil)"
+            "BYOK insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil), language=\(language)"
         )
         
         let contextNote = existingSummary != nil 
@@ -307,6 +308,11 @@ final class InsightsService: Sendable {
             ? "\"title\": \"Short descriptive title for this meeting (3-6 words, like 'Q4 Planning Review' or 'API Integration Discussion')\","
             : ""
         
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "IMPORTANT: The transcript is in \(langName). All content values in your JSON response MUST be in \(langName). JSON keys remain in English.\n\n"
+            : ""
+        
         let prompt: String
         let systemPrompt: String
         let maxCompletionTokens: Int
@@ -316,7 +322,7 @@ final class InsightsService: Sendable {
             systemPrompt = "You provide real-time meeting summaries. Be extremely concise. Focus on what's being discussed RIGHT NOW."
             maxCompletionTokens = 10000
             prompt = """
-            You are providing LIVE meeting insights. Be very concise.
+            \(languageInstruction)You are providing LIVE meeting insights. Be very concise.
             
             \(contextNote)
             
@@ -337,7 +343,7 @@ final class InsightsService: Sendable {
             systemPrompt = "You are a sales qualification analyst using the MEDDPICC framework. Extract qualification insights from sales conversations. Be concise but thorough on qualification criteria."
             maxCompletionTokens = 10000
             prompt = """
-            Analyze this sales call using the MEDDPICC framework. Extract any information mentioned.
+            \(languageInstruction)Analyze this sales call using the MEDDPICC framework. Extract any information mentioned.
             
             \(contextNote)
             
@@ -377,7 +383,7 @@ final class InsightsService: Sendable {
             systemPrompt = "You provide real-time meeting summaries. Be extremely concise. Focus on what's being discussed RIGHT NOW."
             maxCompletionTokens = 10000
             prompt = """
-            You are providing LIVE meeting insights. Be very concise.
+            \(languageInstruction)You are providing LIVE meeting insights. Be very concise.
             
             \(contextNote)
             
@@ -469,18 +475,23 @@ final class InsightsService: Sendable {
     }
     
     /// Generate full insights at end of meeting
-    func generateInsights(transcript: String, model: OpenAIModel = .gpt5Mini, apiKey: String) async throws -> MeetingInsights {
+    func generateInsights(transcript: String, model: OpenAIModel = .gpt5Mini, apiKey: String, language: String = "en") async throws -> MeetingInsights {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
         }
         let startedAt = CFAbsoluteTimeGetCurrent()
         DebugLogger.shared.log(
             .app,
-            "BYOK final insights request: model=\(model.rawValue), transcriptChars=\(transcript.count)"
+            "BYOK final insights request: model=\(model.rawValue), transcriptChars=\(transcript.count), language=\(language)"
         )
         
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "IMPORTANT: The transcript is in \(langName). All content values in your JSON response MUST be in \(langName). JSON keys remain in English.\n\n"
+            : ""
+        
         let prompt = """
-        Analyze this meeting transcript and provide structured insights.
+        \(languageInstruction)Analyze this meeting transcript and provide structured insights.
         
         Respond in JSON format with the following structure:
         {
@@ -581,7 +592,7 @@ private struct ResponseFormat: Codable {
     let type: String
 }
 
-private struct OpenAIResponse: Codable {
+struct OpenAIResponse: Codable {
     let choices: [Choice]
     
     struct Choice: Codable {
@@ -593,7 +604,7 @@ private struct OpenAIResponse: Codable {
     }
 }
 
-private struct OpenAIErrorResponse: Codable {
+struct OpenAIErrorResponse: Codable {
     let error: ErrorDetail
     
     struct ErrorDetail: Codable {
@@ -601,7 +612,7 @@ private struct OpenAIErrorResponse: Codable {
     }
 }
 
-private struct InsightsResponse: Codable {
+struct InsightsResponse: Codable {
     let summary: String
     let actionItems: [String]
     let decisions: [String]
@@ -615,7 +626,7 @@ private struct InsightsResponse: Codable {
     }
 }
 
-private struct LiveInsightsResponse: Codable {
+struct LiveInsightsResponse: Codable {
     let summary: String
     let actionItems: [String]
     let topics: [String]

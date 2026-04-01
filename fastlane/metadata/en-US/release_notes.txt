@@ -1,2 +1,3 @@
-- new: outbound webhooks to send your meeting intelligence elsewhere e.g. zapier, make, n8n, attio or other endpoints.
-- new: auto-stop recording when no speech is detected for a configurable duration.
+- new: multilingual meeting support — record and transcribe in 11 languages including Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, and Russian. Pick a language before each meeting or set a default in Settings. Insights and filler word detection adapt automatically.
+- improvement: Nova-3 is now the only transcription model.
+- improvement: update available banner is larger and easier to read.

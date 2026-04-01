@@ -12,6 +12,7 @@ enum WebhookService {
             let date: String
             let endTime: String?
             let durationSeconds: Int
+            let language: String
             let summary: String?
             let actionItems: [String]
             let keyDecisions: [String]
@@ -24,7 +25,7 @@ enum WebhookService {
             let transcript: [TranscriptEntry]
 
             enum CodingKeys: String, CodingKey {
-                case id, title, date, summary, notes, topics, meddpicc, training, transcript
+                case id, title, date, summary, notes, topics, meddpicc, training, transcript, language
                 case endTime = "end_time"
                 case durationSeconds = "duration_seconds"
                 case actionItems = "action_items"
@@ -143,6 +144,7 @@ enum WebhookService {
         startTime: Date,
         endTime: Date?,
         durationSeconds: Int,
+        language: String = "en",
         summary: String,
         actionItems: [String],
         keyDecisions: [String],
@@ -176,6 +178,7 @@ enum WebhookService {
                 date: fmt.string(from: startTime),
                 endTime: endTime.map { fmt.string(from: $0) },
                 durationSeconds: durationSeconds,
+                language: language,
                 summary: summary.isEmpty ? nil : summary,
                 actionItems: actionItems,
                 keyDecisions: keyDecisions,
@@ -216,7 +219,7 @@ enum WebhookService {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
         }
         let durationSec = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec))
+        let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec, language: meeting.language))
         return MeetingPayload(
             event: "meeting.updated",
             meeting: .init(
@@ -225,6 +228,7 @@ enum WebhookService {
                 date: fmt.string(from: meeting.startTime),
                 endTime: meeting.endTime.map { fmt.string(from: $0) },
                 durationSeconds: duration,
+                language: meeting.language,
                 summary: meeting.summaryText,
                 actionItems: meeting.actionItems,
                 keyDecisions: meeting.keyDecisions,

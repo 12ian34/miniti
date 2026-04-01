@@ -1,41 +1,94 @@
 import Foundation
 import Combine
 
-// MARK: - Deepgram Model Selection
+// MARK: - Transcription Language
 
-enum DeepgramModel: String, CaseIterable, Codable {
-    case nova2 = "nova-2"
-    case nova3 = "nova-3"
+enum TranscriptionLanguage: String, CaseIterable, Codable {
+    case english = "en"
+    case spanish = "es"
+    case swedish = "sv"
+    case greek = "el"
+    case french = "fr"
+    case german = "de"
+    case portuguese = "pt"
+    case italian = "it"
+    case dutch = "nl"
+    case polish = "pl"
+    case russian = "ru"
+    
+    var flag: String {
+        switch self {
+        case .english: return "🇬🇧"
+        case .spanish: return "🇪🇸"
+        case .swedish: return "🇸🇪"
+        case .greek: return "🇬🇷"
+        case .french: return "🇫🇷"
+        case .german: return "🇩🇪"
+        case .portuguese: return "🇵🇹"
+        case .italian: return "🇮🇹"
+        case .dutch: return "🇳🇱"
+        case .polish: return "🇵🇱"
+        case .russian: return "🇷🇺"
+        }
+    }
     
     var displayName: String {
         switch self {
-        case .nova2: return "Nova-2"
-        case .nova3: return "Nova-3"
+        case .english: return "\(flag) English"
+        case .spanish: return "\(flag) Español"
+        case .swedish: return "\(flag) Svenska"
+        case .greek: return "\(flag) Ελληνικά"
+        case .french: return "\(flag) Français"
+        case .german: return "\(flag) Deutsch"
+        case .portuguese: return "\(flag) Português"
+        case .italian: return "\(flag) Italiano"
+        case .dutch: return "\(flag) Nederlands"
+        case .polish: return "\(flag) Polski"
+        case .russian: return "\(flag) Русский"
         }
     }
     
-    var shortDescription: String {
+    var englishName: String {
         switch self {
-        case .nova2: return "faster"
-        case .nova3: return "smarter"
+        case .english: return "English"
+        case .spanish: return "Spanish"
+        case .swedish: return "Swedish"
+        case .greek: return "Greek"
+        case .french: return "French"
+        case .german: return "German"
+        case .portuguese: return "Portuguese"
+        case .italian: return "Italian"
+        case .dutch: return "Dutch"
+        case .polish: return "Polish"
+        case .russian: return "Russian"
         }
     }
     
-    var pros: [String] {
+    var defaultFillers: [String] {
         switch self {
-        case .nova2:
-            return ["Lower latency", "Battle-tested", "Slightly cheaper"]
-        case .nova3:
-            return ["Better diarization", "Higher accuracy", "Handles accents better"]
-        }
-    }
-    
-    var cons: [String] {
-        switch self {
-        case .nova2:
-            return ["Less accurate diarization", "Older model"]
-        case .nova3:
-            return ["Slightly higher latency", "Newer (less tested)"]
+        case .english:
+            return ["um", "uh", "hmm", "hm", "er", "ah", "like", "basically", "literally",
+                    "actually", "honestly", "uh huh", "you know", "i mean", "kind of", "sort of"]
+        case .spanish:
+            return ["eh", "este", "bueno", "o sea", "pues", "es que", "digamos", "entonces", "a ver"]
+        case .swedish:
+            return ["eh", "öh", "liksom", "typ", "alltså", "asså", "va", "ju", "ba"]
+        case .greek:
+            return ["ε", "εε", "δηλαδή", "κοίτα", "λοιπόν", "ας πούμε", "τέλος πάντων"]
+        case .french:
+            return ["euh", "ben", "genre", "en fait", "du coup", "voilà", "quoi", "bah", "bon"]
+        case .german:
+            return ["äh", "ähm", "halt", "also", "sozusagen", "quasi", "irgendwie", "na ja", "genau"]
+        case .portuguese:
+            return ["é", "né", "tipo", "assim", "então", "bom", "quer dizer", "enfim"]
+        case .italian:
+            return ["ehm", "cioè", "tipo", "allora", "praticamente", "insomma", "diciamo", "boh"]
+        case .dutch:
+            return ["eh", "uhm", "eigenlijk", "zeg maar", "weet je", "dus", "nou", "gewoon"]
+        case .polish:
+            return ["ee", "no", "w sumie", "jakby", "znaczy", "generalnie", "w zasadzie", "tak naprawdę"]
+        case .russian:
+            return ["эм", "ну", "вот", "типа", "короче", "как бы", "в общем", "значит", "так сказать"]
         }
     }
 }
@@ -110,7 +163,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var firstSeen: Date = Date()
     }
     
-    private struct PendingSpeakerEvidence {
+    struct PendingSpeakerEvidence {
         var wordCount: Int = 0
         var duration: Double = 0
         var speakerConfidenceSum: Double = 0
@@ -177,7 +230,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         audioPacketsSent
     }
     
-    func connect(model: DeepgramModel = .nova3) {
+    func connect(language: String = "en") {
         guard !apiKey.isEmpty else {
             DebugLogger.shared.log(.deepgram, "No API key — cannot connect")
             error = DeepgramError.noApiKey
@@ -188,7 +241,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             disconnect()
         }
         
-        DebugLogger.shared.log(.deepgram, "Connecting with model=\(model.rawValue)")
+        DebugLogger.shared.log(.deepgram, "Connecting with language=\(language)")
         connectionState = .connecting
         speakerHistory = [:]
         confirmedSpeakerIDs = []
@@ -199,32 +252,27 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         _sendTask = nil
         error = nil
         
-        // Build URL with parameters - optimized for speaker diarization
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
         components.queryItems = [
-            URLQueryItem(name: "model", value: model.rawValue),
-            URLQueryItem(name: "language", value: "en"),
+            URLQueryItem(name: "model", value: "nova-3"),
+            URLQueryItem(name: "language", value: language),
             URLQueryItem(name: "smart_format", value: "true"),
             URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "filler_words", value: "true"),
-            // Diarization - enables speaker identification
             URLQueryItem(name: "diarize", value: "true"),
-            // Streaming settings
             URLQueryItem(name: "interim_results", value: "true"),
-            URLQueryItem(name: "utterance_end_ms", value: model == .nova3 ? "1000" : "1500"),
+            URLQueryItem(name: "utterance_end_ms", value: "1000"),
             URLQueryItem(name: "vad_events", value: "true"),
-            URLQueryItem(name: "endpointing", value: model == .nova3 ? "300" : "500"),
-            // Audio format
+            URLQueryItem(name: "endpointing", value: "300"),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
             URLQueryItem(name: "channels", value: "1"),
-        ] + (model == .nova3 ? [
             URLQueryItem(name: "keyterm", value: "Miniti"),
             URLQueryItem(name: "keyterm", value: "Lightdash"),
             URLQueryItem(name: "keyterm", value: "Ahuja"),
-        ] : [])
+        ]
         
-        print("[Deepgram] Using model: \(model.displayName)")
+        print("[Deepgram] Using Nova-3, language: \(language)")
         
         guard let url = components.url else {
             error = DeepgramError.invalidUrl
@@ -486,17 +534,23 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
     
-    /// Segments words by speaker, creating separate segments when speaker changes
-    /// Uses lookahead to avoid splitting on spurious single-word speaker changes
-    private func segmentBySpeaker(words: [TranscriptUpdate.Word], isFinal: Bool, confidence: Double) -> [SpeakerSegment] {
+    struct SegmentationState {
+        var confirmedSpeakerIDs: Set<Int> = []
+        var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
+    }
+
+    nonisolated static func segmentBySpeaker(
+        words: [TranscriptUpdate.Word],
+        isFinal: Bool,
+        confidence: Double,
+        state: inout SegmentationState
+    ) -> [SpeakerSegment] {
         guard !words.isEmpty else { return [] }
         
-        // Conservative switch confirmation to reduce boundary bleed.
         let minWordsForSpeakerChange = 4
         let minDurationForSpeakerChange = 0.85
         let minAverageSpeakerConfidenceForSwitch = 0.58
         
-        // New speaker IDs need stronger evidence before we start rendering them.
         let minWordsForNewSpeakerPromotion = 6
         let minDurationForNewSpeakerPromotion = 1.50
         let minAverageSpeakerConfidenceForNewSpeaker = 0.65
@@ -511,7 +565,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             let word = words[i]
             
             if word.speaker != currentSpeaker {
-                // Potential speaker change - look ahead to confirm
                 var lookAhead = i
                 let newSpeaker = word.speaker
                 
@@ -538,29 +591,27 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     candidateDuration >= minDurationForSpeakerChange
                 let passesSwitchConfidenceCheck = (newSpeaker == DeepgramService.micSpeakerID) ||
                     ((candidateAverageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForSwitch)
-                let isKnownSpeaker = confirmedSpeakerIDs.contains(newSpeaker) || newSpeaker == DeepgramService.micSpeakerID
+                let isKnownSpeaker = state.confirmedSpeakerIDs.contains(newSpeaker) || newSpeaker == DeepgramService.micSpeakerID
                 
                 var allowSwitch = passesGeneralSwitchChecks && passesSwitchConfidenceCheck
                 if allowSwitch && !isKnownSpeaker {
-                    var evidence = pendingSpeakerEvidence[newSpeaker] ?? PendingSpeakerEvidence()
+                    var evidence = state.pendingSpeakerEvidence[newSpeaker] ?? PendingSpeakerEvidence()
                     evidence.add(words: candidateWords)
-                    pendingSpeakerEvidence[newSpeaker] = evidence
+                    state.pendingSpeakerEvidence[newSpeaker] = evidence
                     
                     let promotedByWords = evidence.wordCount >= minWordsForNewSpeakerPromotion
                     let promotedByDuration = evidence.duration >= minDurationForNewSpeakerPromotion
                     let promotedByConfidence = (evidence.averageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForNewSpeaker
                     let isPromoted = promotedByWords && promotedByDuration && promotedByConfidence
                     if isPromoted {
-                        confirmedSpeakerIDs.insert(newSpeaker)
-                        pendingSpeakerEvidence.removeValue(forKey: newSpeaker)
+                        state.confirmedSpeakerIDs.insert(newSpeaker)
+                        state.pendingSpeakerEvidence.removeValue(forKey: newSpeaker)
                     } else {
                         allowSwitch = false
                     }
                 }
                 
-                // Only split when checks pass; otherwise absorb the run into current speaker.
                 if allowSwitch {
-                    // Save current segment
                     if !currentWords.isEmpty {
                         let text = currentWords.map { $0.text }.joined(separator: " ")
                         let segment = SpeakerSegment(
@@ -575,7 +626,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         segments.append(segment)
                     }
                     
-                    // Start new segment with new speaker
                     currentSpeaker = newSpeaker
                     currentWords = Array(candidateWords)
                     startTime = candidateWords.first?.start ?? word.start
@@ -591,7 +641,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             i += 1
         }
         
-        // Don't forget the last segment
         if !currentWords.isEmpty {
             let text = currentWords.map { $0.text }.joined(separator: " ")
             let segment = SpeakerSegment(
@@ -608,6 +657,17 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         
         return segments
     }
+
+    private func segmentBySpeaker(words: [TranscriptUpdate.Word], isFinal: Bool, confidence: Double) -> [SpeakerSegment] {
+        var state = SegmentationState(
+            confirmedSpeakerIDs: confirmedSpeakerIDs,
+            pendingSpeakerEvidence: pendingSpeakerEvidence
+        )
+        let result = Self.segmentBySpeaker(words: words, isFinal: isFinal, confidence: confidence, state: &state)
+        confirmedSpeakerIDs = state.confirmedSpeakerIDs
+        pendingSpeakerEvidence = state.pendingSpeakerEvidence
+        return result
+    }
     
     private func updateConfirmedSpeakers(from segments: [SpeakerSegment]) {
         for segment in segments {
@@ -617,7 +677,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     }
     
     /// Find the speaker who spoke the most words in this segment
-    private func findDominantSpeaker(words: [TranscriptUpdate.Word]) -> Int {
+    func findDominantSpeaker(words: [TranscriptUpdate.Word]) -> Int {
         var speakerWordCount: [Int: Int] = [:]
         for word in words {
             speakerWordCount[word.speaker, default: 0] += 1
@@ -674,7 +734,7 @@ extension DeepgramService {
 
 // MARK: - Deepgram Response Models
 
-private struct DeepgramResponse: Codable {
+struct DeepgramResponse: Codable {
     let type: String?
     let channel: Channel?
     let isFinal: Bool?

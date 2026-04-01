@@ -585,7 +585,7 @@ final class MinitiAPIService: @unchecked Sendable {
         return encoder
     }()
     
-    private static func decodeFlexibleDate(from decoder: Decoder) throws -> Date {
+    static func decodeFlexibleDate(from decoder: Decoder) throws -> Date {
         let container = try decoder.singleValueContainer()
         
         if let seconds = try? container.decode(Double.self) {
@@ -614,7 +614,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
     }
     
-    private static func timestampToDate(_ value: Double) -> Date {
+    static func timestampToDate(_ value: Double) -> Date {
         // Accept both seconds and milliseconds timestamps.
         if value > 10_000_000_000 {
             return Date(timeIntervalSince1970: value / 1_000)
@@ -643,8 +643,8 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
     
-    /// Check if a newer version is available. Lightweight — no device ID needed.
-    func checkVersion() async throws -> VersionInfo {
+    /// Check if a newer version is available and optionally register the device.
+    func checkVersion(deviceId: String? = nil, appMode: String? = nil) async throws -> VersionInfo {
         var request = URLRequest(url: URL(string: "\(Self.baseURL)/version")!)
         request.httpMethod = "GET"
         request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
@@ -655,6 +655,8 @@ final class MinitiAPIService: @unchecked Sendable {
         #else
         request.setValue("macos", forHTTPHeaderField: "X-Platform")
         #endif
+        if let deviceId { request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID") }
+        if let appMode { request.setValue(appMode, forHTTPHeaderField: "X-App-Mode") }
         
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
@@ -730,13 +732,15 @@ final class MinitiAPIService: @unchecked Sendable {
         mode: String,
         model: String,
         incrementalPayload: IncrementalInsightsPayload? = nil,
-        requestSeq: Int? = nil
+        requestSeq: Int? = nil,
+        language: String = "en"
     ) async throws -> ManagedInsightsResponse {
         let startedAt = CFAbsoluteTimeGetCurrent()
         var body: [String: Any] = [
             "transcript": transcript,
             "mode": mode,
-            "model": model
+            "model": model,
+            "language": language
         ]
         if let existingSummary { body["existing_summary"] = existingSummary }
         if let existingTitle { body["existing_title"] = existingTitle }

@@ -2,6 +2,7 @@ miniti is an AI meeting assistant and speaking coach for iPhone. Record conversa
 
 LIVE TRANSCRIPTION AND RECORDING
 - Real-time speech-to-text while recording
+- 11 languages: English, Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, Russian
 - Automatic speaker labels so you can follow who said what
 - Background recording support
 - Dynamic Island and Lock Screen Live Activity recording status
@@ -36,4 +37,4 @@ If you choose Pro, payment is charged to your Apple ID account at confirmation o
 TERMS OF USE (EULA) 
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-v1.17.0
+v1.18.0

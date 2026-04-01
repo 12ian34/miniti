@@ -14,12 +14,22 @@ struct SettingsView_iOS: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Training Insights") {
-                    NavigationLink(destination: TrainingInsightsSettingsDetail_iOS()) {
+                Section("Language") {
+                    Picker("Default Language", selection: $appState.defaultLanguage) {
+                        ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
+                            Text(lang.displayName).tag(lang.rawValue)
+                        }
+                    }
+                    
+                    Text("Transcription, insights, and training filler detection all adapt to this language. Can be overridden per meeting.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    NavigationLink(destination: FillerSettingsDetail_iOS()) {
                         HStack {
-                            Text("Customize filler detection")
+                            Text("Filler detection")
                             Spacer()
-                            Text("\(TrainingFillerPreferences.currentFillers().count) tracked")
+                            Text("\(TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage).count) tracked")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -234,11 +244,13 @@ struct SettingsView_iOS: View {
                     }
                 }
                 
-                // Models
+                // Models (read-only)
                 Section("Models") {
-                    Picker("Transcription", selection: $appState.deepgramModel) {
-                        Text("Nova-2").tag(DeepgramModel.nova2.rawValue)
-                        Text("Nova-3").tag(DeepgramModel.nova3.rawValue)
+                    HStack {
+                        Text("Transcription")
+                        Spacer()
+                        Text("Nova-3")
+                            .foregroundStyle(.secondary)
                     }
 
                     HStack {
@@ -406,9 +418,9 @@ struct SettingsView_iOS: View {
     }
 }
 
-struct TrainingInsightsSettingsDetail_iOS: View {
+struct FillerSettingsDetail_iOS: View {
     @EnvironmentObject var appState: AppState
-    @State private var fillers: [String] = TrainingFillerPreferences.currentFillers()
+    @State private var fillers: [String] = []
     @State private var newFiller = ""
     @State private var editingIndex: Int?
     @State private var editingText = ""
@@ -417,7 +429,7 @@ struct TrainingInsightsSettingsDetail_iOS: View {
     var body: some View {
         Form {
             Section {
-                Text("Track custom words or phrases in training mode across live and saved meetings.")
+                Text("These words and phrases are tracked in training mode. The list updates when you change the default language in Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -469,7 +481,7 @@ struct TrainingInsightsSettingsDetail_iOS: View {
             
             Section("Actions") {
                 Button("Reset to defaults") {
-                    fillers = TrainingFillerPreferences.defaultFillers
+                    fillers = TrainingFillerPreferences.defaultFillers(for: appState.defaultLanguage)
                     persistFillers()
                     validationMessage = "Restored default filler list."
                 }
@@ -481,10 +493,10 @@ struct TrainingInsightsSettingsDetail_iOS: View {
                 }
             }
         }
-        .navigationTitle("Training Insights")
+        .navigationTitle("Filler Detection")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            fillers = TrainingFillerPreferences.currentFillers()
+            fillers = TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage)
         }
         .alert("Edit filler phrase", isPresented: Binding(
             get: { editingIndex != nil },
@@ -538,8 +550,8 @@ struct TrainingInsightsSettingsDetail_iOS: View {
     
     private func persistFillers() {
         let normalized = TrainingFillerPreferences.normalizedFillers(fillers)
-        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers : normalized
-        TrainingFillerPreferences.save(fillers)
+        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers(for: appState.defaultLanguage) : normalized
+        TrainingFillerPreferences.save(fillers, for: appState.defaultLanguage)
         appState.recomputeTrainingMetrics()
     }
 }

@@ -624,6 +624,8 @@ struct ReadyStateView_iOS: View {
                         .foregroundStyle(ColorPalette.Accent.blue)
                     }
                 } else {
+                    MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
+                    
                     Button {
                         if !appState.isStartingMeeting {
                             appState.startNewMeeting()
@@ -954,59 +956,74 @@ struct UpdateAvailableBanner_iOS: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
                 Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 11))
+                    .font(.system(size: 14))
                 Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
                 
-                if releaseNotes != nil {
-                    Button(isShowingFullNotes ? "hide" : "notes") {
-                        isShowingFullNotes.toggle()
+                Spacer()
+                
+                Button {
+                    if let url = updateURL {
+                        openURL(url)
                     }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.85))
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrow.down.to.line")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("update")
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(ColorPalette.Accent.blue.opacity(0.15))
+                    )
                 }
+                .buttonStyle(.plain)
             }
             .foregroundStyle(ColorPalette.Accent.blue)
             
-            if let notes = releaseNotes {
-                Text(notes)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                    .lineLimit(isShowingFullNotes ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: isShowingFullNotes)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if !isShowingFullNotes {
-                            isShowingFullNotes = true
-                        }
+            if releaseNotes != nil {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isShowingFullNotes.toggle()
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
+                        Text(isShowingFullNotes ? "hide release notes" : "show release notes")
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
             
-            Button {
-                if let url = updateURL {
-                    openURL(url)
-                }
-            } label: {
-                Text("update")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.8))
+            if let notes = releaseNotes, isShowingFullNotes {
+                Text(notes)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 13)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 1)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 320, alignment: .leading)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 360, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 8)
                 .fill(ColorPalette.Accent.blue.opacity(0.08))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
+                        .stroke(ColorPalette.Accent.blue.opacity(0.25), lineWidth: 1)
                 )
         )
     }
@@ -1123,6 +1140,53 @@ struct CompactWaveform_iOS: View {
                     bands[i] = min(1.0, max(0.03, bands[i]))
                 }
             }
+        }
+    }
+}
+
+// MARK: - Language Picker (iOS)
+
+struct MeetingLanguagePicker_iOS: View {
+    @Binding var language: String
+    
+    private var selectedLang: TranscriptionLanguage {
+        TranscriptionLanguage(rawValue: language) ?? .english
+    }
+    
+    var body: some View {
+        Menu {
+            ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
+                Button {
+                    language = lang.rawValue
+                } label: {
+                    HStack {
+                        Text(lang.displayName)
+                        if lang == selectedLang {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedLang.rawValue.uppercased())
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                Text(selectedLang.displayName)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+            }
+            .foregroundStyle(ColorPalette.Text.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(
+                Capsule()
+                    .fill(ColorPalette.Background.secondary)
+            )
+            .overlay(
+                Capsule()
+                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+            )
         }
     }
 }

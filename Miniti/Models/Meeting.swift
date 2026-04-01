@@ -16,6 +16,7 @@ final class Meeting {
     var notes: String = ""
     
     var managedSessionId: String?
+    var language: String = "en"
     
     // MEDDPICC fields
     var meddpiccMetrics: String?
@@ -200,7 +201,7 @@ final class Meeting {
         let segments = self.segments.map {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
         }
-        let metrics = TrainingMetrics.compute(from: segments, duration: duration)
+        let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language)
         guard !metrics.speakers.isEmpty else { return "" }
 
         var md = "## Training\n\n"

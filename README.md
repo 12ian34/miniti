@@ -38,7 +38,7 @@ On first launch, pick a mode. You can switch anytime in Settings (`⌘,`).
 
 1. Toggle mic and/or system audio on the home screen
 2. (Optional) Click **test audio** to verify your mic and system audio are working
-3. (Optional) Choose transcription model in Settings (`⌘,` on macOS)
+3. (Optional) Pick a language from the dropdown (defaults to English)
 4. Click the start button or press `⌘⇧R`
 5. Watch the live transcript — your mic shows as **"You"** (green), remote audio shows as **"Speaker 1"** (blue)
 6. Click stop or press `⌘⇧R` when done
@@ -116,7 +116,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 ### native macOS AI meeting assistant
 
 - mic + system audio recording
-- live transcription with deepgram
+- live transcription in 11 languages with deepgram nova-3
 - live speaker identification
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
@@ -126,7 +126,8 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - keyboard shortcuts for everything
 
 ### Core Transcription
-- **Real-time Transcription**: Live speech-to-text using Deepgram Nova-2/Nova-3 with ~200ms latency
+- **Real-time Transcription**: Live speech-to-text using Deepgram Nova-3 with ~200ms latency
+- **11 Languages**: English, Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, Russian — pick per meeting or set a default
 - **System Audio Capture**: Record audio from video calls (Zoom, Meet, Teams, etc.)
 - **Microphone Capture**: Record your own voice
 - **Source-based Speaker Separation**: Mic audio is labeled "You", system audio is labeled "Speaker 1/2/..." — no more confusion about who said what
@@ -149,6 +150,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 ### Export
 - **Copy to Markdown**: One-click copy for transcript, notes, and insights
 - **Formatted Output**: Clean markdown with speaker labels, action item checkboxes, and structured sections
+- **Auto-export to Local Folder (macOS)**: Automatically save meetings as markdown files to a local folder (default `~/Documents/miniti/`). Works with Obsidian, Claude Code, and other tools. Optional `CLAUDE.md` index file for AI agent discovery. Enable in Settings → Integrations.
 - **Attio CRM Send (Saved Meetings)**: Send a saved meeting summary to Attio (people or companies) with optional task creation from action items
 - **Outbound Webhooks**: POST meeting data as JSON to any URL when a meeting is saved or insights are updated — works with Zapier, Make, n8n, and custom endpoints. Configure in Settings.
 
@@ -164,6 +166,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Side-by-side View**: Transcript and insights displayed together
 - **Resizable Panels**: Drag handle for transcript/notes split, HSplitView for content/insights
 - **Collapsible Panes**: Collapse the sidebar (`⌘[`) or insights pane (`⌘]`) to focus on transcript/notes
+- **Full-text Search**: Search across meeting titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow. Press `/` to focus the search field.
 - **Session Management**: Stop a recording to review, then resume, save, or discard
 - **Auto-stop Recording**: Automatically stops recording when no speech is detected for a configurable duration (off, 3, 5, 10, or 15 minutes)
 - **Stopped Session Shortcuts**: Save (`⌘S`) or discard (`⌘⌫`) directly from the stopped session view
@@ -188,18 +191,30 @@ macOS shortcuts only. Some shortcuts are context-dependent (for example, save/di
 | `⌘⇧I` | Generate Insights |
 | `⌘,` | Settings |
 | `⌘/` | Show All Shortcuts |
+| `/` | Search Meetings |
 | `↑` / `K` | Navigate History Up |
 | `↓` / `J` | Navigate History Down |
 | `Esc` | Close Overlay / Go Home |
 
-## Transcription Models
+## Supported Languages
 
-Select your transcription model in Settings (macOS: `⌘,` → Models):
+Record and transcribe in 11 languages. Set a default in Settings or pick per meeting before recording. Transcription, AI insights, and filler word detection all adapt to the selected language.
 
-| Model | Pros | Cons |
-|-------|------|------|
-| **Nova-2** | Lower latency, battle-tested, slightly cheaper | Less accurate diarization |
-| **Nova-3** | Better diarization, higher accuracy, handles accents better | Slightly higher latency |
+| Language | Code |
+|----------|------|
+| 🇬🇧 English | en |
+| 🇪🇸 Español | es |
+| 🇫🇷 Français | fr |
+| 🇩🇪 Deutsch | de |
+| 🇵🇹 Português | pt |
+| 🇮🇹 Italiano | it |
+| 🇳🇱 Nederlands | nl |
+| 🇸🇪 Svenska | sv |
+| 🇬🇷 Ελληνικά | el |
+| 🇵🇱 Polski | pl |
+| 🇷🇺 Русский | ru |
+
+All transcription uses Deepgram Nova-3. All insights use GPT-5 Mini.
 
 ## Insight Modes
 
@@ -229,7 +244,7 @@ Analyzes your speech patterns in real-time to help you become a better communica
 
 | Metric | What it measures |
 |--------|------------------|
-| Filler words | Counts of "um", "uh", "like", "basically", etc. — per type, per speaker, per minute |
+| Filler words | Counts of "um", "uh", "like", "basically", etc. — per type, per speaker, per minute. Language-specific defaults with custom overrides. |
 | Talk ratio | How much of the conversation each speaker occupies |
 | Speaking pace | Words per minute for each speaker |
 | Longest monologue | Longest uninterrupted speaking stretch |
@@ -403,7 +418,7 @@ It does **not** send:
 ### mobile AI meeting assistant
 
 - mic recording with background support
-- live transcription with deepgram
+- live transcription in 11 languages with deepgram nova-3
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
@@ -413,9 +428,10 @@ It does **not** send:
 
 ### Recording
 - **Microphone Capture**: Record your voice on iPhone or iPad
+- **11 Languages**: Same multilingual support as macOS — pick per meeting or set a default
 - **Background Recording**: Keeps recording when you switch apps or lock your phone
 - **Live Activity**: Dynamic Island shows recording dot and elapsed timer; Lock Screen shows recording status, meeting title, and live transcript line
-- **Live Transcript**: Same real-time transcription as macOS, powered by Deepgram
+- **Live Transcript**: Same real-time transcription as macOS, powered by Deepgram Nova-3
 - **Auto-stop Recording**: Automatically stops recording when no speech is detected for a configurable duration
 
 ### AI Insights
@@ -426,7 +442,7 @@ It does **not** send:
 - **Outbound Webhooks**: POST meeting data as JSON to Zapier, Make, n8n, or any endpoint when a meeting is saved or insights update
 
 ### Meeting History
-- **Browse Past Meetings**: Searchable list with swipe-to-delete
+- **Browse Past Meetings**: Full-text searchable list with swipe-to-delete
 - **Meeting Detail**: Drill into transcript, insights (including MEDDPICC), training stats, and notes for any meeting
 - **Editable Titles**: Rename saved meetings from the history detail view
 - **Generate/Update Insights**: Generate or refresh saved-meeting insights, including MEDDPICC

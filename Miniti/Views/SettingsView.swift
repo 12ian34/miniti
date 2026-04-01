@@ -14,11 +14,11 @@ struct SettingsView: View {
                 }
                 .tag("general")
 
-            TrainingInsightsSettingsView()
+            LanguageSettingsView()
                 .tabItem {
-                    Label("Training", systemImage: "waveform.badge.mic")
+                    Label("Language", systemImage: "globe")
                 }
-                .tag("training")
+                .tag("language")
 
             AccountSettingsView()
                 .tabItem {
@@ -33,12 +33,6 @@ struct SettingsView: View {
                     }
                     .tag("apikeys")
             }
-
-            ModelsSettingsView()
-                .tabItem {
-                    Label("Models", systemImage: "cpu")
-                }
-                .tag("models")
 
             AudioSettingsView()
                 .tabItem {
@@ -216,9 +210,9 @@ struct AccountSettingsView: View {
     }
 }
 
-struct TrainingInsightsSettingsView: View {
+struct LanguageSettingsView: View {
     @EnvironmentObject var appState: AppState
-    @State private var fillers: [String] = TrainingFillerPreferences.currentFillers()
+    @State private var fillers: [String] = []
     @State private var newFiller = ""
     @State private var editingIndex: Int?
     @State private var editingText = ""
@@ -226,6 +220,22 @@ struct TrainingInsightsSettingsView: View {
     
     var body: some View {
         Form {
+            Section("Default Language") {
+                Picker("Language", selection: $appState.defaultLanguage) {
+                    ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
+                        Text(lang.displayName).tag(lang.rawValue)
+                    }
+                }
+                .onChange(of: appState.defaultLanguage) { _, newLang in
+                    fillers = TrainingFillerPreferences.currentFillers(for: newLang)
+                    validationMessage = nil
+                }
+                
+                Text("Transcription, insights, and filler detection all use this language. Changing the language updates the filler list below. Can be overridden per meeting before recording.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
             Section("Filler Detection") {
                 Text("These words and phrases are tracked in training mode across live and saved meetings.")
                     .font(.caption)
@@ -277,7 +287,7 @@ struct TrainingInsightsSettingsView: View {
             
             Section("Actions") {
                 Button("Reset to defaults") {
-                    fillers = TrainingFillerPreferences.defaultFillers
+                    fillers = TrainingFillerPreferences.defaultFillers(for: appState.defaultLanguage)
                     persistFillers()
                     validationMessage = "Restored default filler list."
                 }
@@ -293,7 +303,7 @@ struct TrainingInsightsSettingsView: View {
         .formStyle(.grouped)
         .padding()
         .onAppear {
-            fillers = TrainingFillerPreferences.currentFillers()
+            fillers = TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage)
         }
         .alert("Edit filler phrase", isPresented: Binding(
             get: { editingIndex != nil },
@@ -347,8 +357,8 @@ struct TrainingInsightsSettingsView: View {
     
     private func persistFillers() {
         let normalized = TrainingFillerPreferences.normalizedFillers(fillers)
-        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers : normalized
-        TrainingFillerPreferences.save(fillers)
+        fillers = normalized.isEmpty ? TrainingFillerPreferences.defaultFillers(for: appState.defaultLanguage) : normalized
+        TrainingFillerPreferences.save(fillers, for: appState.defaultLanguage)
         appState.recomputeTrainingMetrics()
     }
 }
@@ -679,108 +689,6 @@ struct PermissionStatusBadge: View {
         }
         .font(.caption)
         .foregroundStyle(granted ? .green : .red)
-    }
-}
-
-struct ModelsSettingsView: View {
-    @EnvironmentObject var appState: AppState
-    
-    private var selectedDeepgramModel: DeepgramModel {
-        DeepgramModel(rawValue: appState.deepgramModel) ?? .nova3
-    }
-    
-    var body: some View {
-        Form {
-            Section("Transcription") {
-                VStack(alignment: .leading, spacing: 10) {
-                    Picker("Model", selection: $appState.deepgramModel) {
-                        ForEach(DeepgramModel.allCases, id: \.self) { model in
-                            Text(model.displayName).tag(model.rawValue)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    
-                    SettingsModelSummaryCard(
-                        title: selectedDeepgramModel.displayName,
-                        subtitle: selectedDeepgramModel.shortDescription.capitalized,
-                        pros: selectedDeepgramModel.pros.prefix(2).joined(separator: " • "),
-                        cons: selectedDeepgramModel.cons.prefix(2).joined(separator: " • ")
-                    )
-                }
-                
-                Text("Deepgram model used for real-time speech-to-text transcription.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Insights") {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text("GPT-5 Mini")
-                            .font(.subheadline.weight(.semibold))
-                        Text("OpenAI")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Text("Generates summaries, action items, topics, discussion flow, and MEDDPICC analysis from your transcript.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.secondary.opacity(0.08))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
-                )
-
-                Text("Insight model is not configurable. All insights use GPT-5 Mini for consistent quality.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .padding()
-    }
-}
-
-private struct SettingsModelSummaryCard: View {
-    let title: String
-    let subtitle: String
-    let pros: String
-    let cons: String
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            
-            Label(pros, systemImage: "plus.circle.fill")
-                .foregroundStyle(.secondary)
-            
-            Label(cons, systemImage: "minus.circle.fill")
-                .foregroundStyle(.secondary)
-        }
-        .font(.caption)
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color.secondary.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.14), lineWidth: 1)
-        )
     }
 }
 
