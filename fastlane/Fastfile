@@ -115,6 +115,18 @@ private_lane :load_app_store_connect_api_key do
 end
 
 platform :ios do
+  desc "Run MinitiMobileTests unit tests on iOS Simulator"
+  lane :test do
+    run_tests(
+      project: PROJECT_PATH,
+      scheme: IOS_SCHEME,
+      destination: "platform=iOS Simulator,name=iPhone 17",
+      derived_data_path: IOS_DERIVED_DATA_PATH,
+      only_testing: ["MinitiMobileTests"],
+      clean: false
+    )
+  end
+
   desc "Build the current iOS release archive locally"
   lane :build do
     build_ios_release
@@ -215,6 +227,18 @@ platform :ios do
 end
 
 platform :mac do
+  desc "Run MinitiTests unit tests"
+  lane :test do
+    run_tests(
+      project: PROJECT_PATH,
+      scheme: MAC_SCHEME,
+      destination: "platform=macOS",
+      derived_data_path: MAC_DERIVED_DATA_PATH,
+      only_testing: ["MinitiTests"],
+      clean: false
+    )
+  end
+
   desc "Build the current macOS Developer ID export locally"
   lane :build do
     build_mac_release

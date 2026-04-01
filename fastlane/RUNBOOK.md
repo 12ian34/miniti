@@ -20,6 +20,17 @@ No separate `fastlane/.env` is needed.
 
 ## iOS
 
+### `fastlane ios test`
+
+What it does:
+- builds the `MinitiMobile` scheme (Debug)
+- runs all tests in the `MinitiMobileTests` target on iPhone 17 Simulator
+- reports pass/fail count
+
+```sh
+fastlane ios test
+```
+
 ### `fastlane ios build`
 
 What it does:
@@ -32,7 +43,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.17.0 changelog:"..."`
+### `fastlane ios beta version:1.18.0 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -44,7 +55,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.17.0`
+### `fastlane ios release version:1.18.0`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -93,6 +104,17 @@ security find-identity -v -p codesigning | rg "Developer ID Application|Apple De
 Notes:
 - `fastlane mac build` now auto-detects the first local `Developer ID Application` identity in your keychain.
 - Optional override: set `MAC_CODESIGN_IDENTITY` (in shell profile or root `.env`) to force a specific identity.
+
+### `fastlane mac test`
+
+What it does:
+- builds the `Miniti` scheme (Debug)
+- runs all tests in the `MinitiTests` target
+- reports pass/fail count
+
+```sh
+fastlane mac test
+```
 
 ### `fastlane mac build`
 
@@ -175,14 +197,14 @@ fastlane ios metadata
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.17.0 changelog:"release notes here"
+fastlane ios beta version:1.18.0 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.17.0
+fastlane ios release version:1.18.0
 ```
 
 ### macOS direct distribution

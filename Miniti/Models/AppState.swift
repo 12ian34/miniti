@@ -99,21 +99,21 @@ final class AppState: ObservableObject {
         let meta: ManagedInsightsMeta?
     }
 
-    private struct LiveSegmentSaveSnapshot: Sendable {
+    struct LiveSegmentSaveSnapshot: Sendable {
         let id: UUID
         let text: String
         let speaker: Int
         let timestamp: TimeInterval
     }
 
-    private struct PersistedSegmentSnapshot: Sendable {
+    struct PersistedSegmentSnapshot: Sendable {
         let id: UUID
         let text: String
         let speaker: Int
         let timestamp: TimeInterval
     }
 
-    private struct SegmentSyncPlan: Sendable {
+    struct SegmentSyncPlan: Sendable {
         let deleteIDs: [UUID]
         let upserts: [LiveSegmentSaveSnapshot]
     }
@@ -405,7 +405,8 @@ final class AppState: ObservableObject {
     }
     @AppStorage("captureSystemAudio") var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
-    @AppStorage("deepgramModel") var deepgramModel: String = DeepgramModel.nova3.rawValue
+    @AppStorage("defaultLanguage") var defaultLanguage: String = TranscriptionLanguage.english.rawValue
+    @Published var meetingLanguage: String = TranscriptionLanguage.english.rawValue
     @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = false {
         didSet {
             if !shareDiagnostics {
@@ -730,8 +731,7 @@ final class AppState: ObservableObject {
                     ]
                 )
                 deepgramService.disconnect()
-                let model = DeepgramModel(rawValue: self.deepgramModel) ?? .nova3
-                deepgramService.connect(model: model)
+                deepgramService.connect(language: self.meetingLanguage)
                 
                 // Give the socket a short window to establish before next retry.
                 for _ in 0..<12 {
@@ -867,7 +867,7 @@ final class AppState: ObservableObject {
         applyAudioRecoveryState(.healthy)
     }
     
-    private func recoverySeverity(_ state: AudioRecoveryState) -> Int {
+    nonisolated static func recoverySeverity(_ state: AudioRecoveryState) -> Int {
         switch state {
         case .healthy: return 0
         case .recovering: return 1
@@ -890,8 +890,8 @@ final class AppState: ObservableObject {
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
         
-        let currentSeverity = recoverySeverity(audioRecoveryState)
-        let nextSeverity = recoverySeverity(nextState)
+        let currentSeverity = Self.recoverySeverity(audioRecoveryState)
+        let nextSeverity = Self.recoverySeverity(nextState)
         if nextSeverity > currentSeverity {
             audioRecoveryState = nextState
             return
@@ -1220,7 +1220,8 @@ final class AppState: ObservableObject {
                         existingSummary: existingSummary, existingTitle: existingTitle,
                         mode: mode.rawValue, model: model.rawValue,
                         incrementalPayload: requestPlan.incrementalPayload,
-                        requestSeq: seq
+                        requestSeq: seq,
+                        language: meetingLanguage
                     )
                 } else {
                     response = try await minitiAPIService.generateInsights(
@@ -1228,7 +1229,8 @@ final class AppState: ObservableObject {
                         existingSummary: existingSummary, existingTitle: existingTitle,
                         mode: mode.rawValue, model: model.rawValue,
                         incrementalPayload: requestPlan.incrementalPayload,
-                        requestSeq: seq
+                        requestSeq: seq,
+                        language: meetingLanguage
                     )
                 }
                 if let responseSeq = response.meta?.requestSeq, responseSeq < lastApplied {
@@ -1250,7 +1252,7 @@ final class AppState: ObservableObject {
                 insights = try await insightsService.generateLiveInsights(
                     transcript: transcript, existingSummary: existingSummary,
                     existingTitle: existingTitle, mode: mode,
-                    model: model, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey, language: meetingLanguage
                 )
                 return LiveInsightsFetchResult(
                     insights: insights,
@@ -1406,13 +1408,17 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func transcriptText(from segments: [LiveSegment]) -> String {
+    nonisolated static func transcriptText(from segments: [LiveSegment]) -> String {
         segments
             .map { "[\($0.speakerLabel)] \($0.text)" }
             .joined(separator: "\n")
     }
 
-    private func tailTranscriptSegments(
+    private func transcriptText(from segments: [LiveSegment]) -> String {
+        Self.transcriptText(from: segments)
+    }
+
+    nonisolated static func tailTranscriptSegments(
         from segments: [LiveSegment],
         maxChars: Int
     ) -> [LiveSegment] {
@@ -1431,6 +1437,13 @@ final class AppState: ObservableObject {
         }
 
         return selected.reversed()
+    }
+
+    private func tailTranscriptSegments(
+        from segments: [LiveSegment],
+        maxChars: Int
+    ) -> [LiveSegment] {
+        Self.tailTranscriptSegments(from: segments, maxChars: maxChars)
     }
 
     private func markManagedInsightsSuccess(
@@ -1537,9 +1550,9 @@ final class AppState: ObservableObject {
         // Save previous meeting if exists and has content
         saveCurrentMeetingIfNeeded()
         
-        // Create new meeting with ISO timestamp
         meetingTimestamp = generateMeetingTitle()
         let meeting = Meeting(title: meetingTimestamp)
+        meeting.language = meetingLanguage
         currentMeeting = meeting
         currentTitleSuffix = ""
         lastTitleUpdateCount = 0
@@ -1620,7 +1633,7 @@ final class AppState: ObservableObject {
                 let segments = liveSegments.map {
                     TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
                 }
-                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
+                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage)
             }
             let markdown = fullMeetingAsMarkdown()
             exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
@@ -1643,7 +1656,7 @@ final class AppState: ObservableObject {
                 let segs = liveSegments.map {
                     TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
                 }
-                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration)
+                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration, language: meetingLanguage)
             }
             let training = WebhookService.trainingData(from: trainingMetrics)
             let payload = WebhookService.payloadFromLiveState(
@@ -1652,6 +1665,7 @@ final class AppState: ObservableObject {
                 startTime: meeting.startTime,
                 endTime: meeting.endTime,
                 durationSeconds: Int(recordingDuration),
+                language: meetingLanguage,
                 summary: liveSummary,
                 actionItems: liveActionItems,
                 keyDecisions: meeting.keyDecisions,
@@ -1733,7 +1747,8 @@ final class AppState: ObservableObject {
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: model.rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue,
+                    language: meeting.language
                 )
                 let insights = response.toLiveInsights()
                 meeting.summaryText = insights.summary
@@ -1743,7 +1758,7 @@ final class AppState: ObservableObject {
             } else {
                 let insights = try await insightsService!.generateInsights(
                     transcript: meeting.fullTranscript,
-                    model: model, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey, language: meeting.language
                 )
                 meeting.summaryText = insights.summary
                 meeting.actionItems = insights.actionItems
@@ -1763,14 +1778,15 @@ final class AppState: ObservableObject {
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: meeting.fullTranscript,
                     existingSummary: meeting.summaryText, existingTitle: nil,
-                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue
+                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
+                    language: meeting.language
                 )
                 meddpiccInsights = response.toLiveInsights()
             } else {
                 meddpiccInsights = try await insightsService!.generateLiveInsights(
                     transcript: meeting.fullTranscript, existingSummary: meeting.summaryText,
                     existingTitle: nil, mode: .meddpicc,
-                    model: model, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey, language: meeting.language
                 )
             }
             meeting.meddpiccMetrics = meddpiccInsights.metrics
@@ -1821,6 +1837,7 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "Resuming interrupted meeting: \(interrupted.title), segments=\(interrupted.segments.count)")
         
         currentMeeting = interrupted
+        meetingLanguage = interrupted.language
         
         // Reconstruct liveSegments from persisted TranscriptSegments
         liveSegments = interrupted.segments
@@ -1921,7 +1938,7 @@ final class AppState: ObservableObject {
                 timestamp: $0.timestamp
             )
         }
-        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration)
+        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage)
     }
     
     /// Save current meeting to SwiftData if it has transcript content.
@@ -2046,7 +2063,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    nonisolated private static func buildSegmentSyncPlan(
+    nonisolated static func buildSegmentSyncPlan(
         finalSegments: [LiveSegmentSaveSnapshot],
         existingSegments: [PersistedSegmentSnapshot]
     ) -> SegmentSyncPlan {
@@ -2191,13 +2208,8 @@ final class AppState: ObservableObject {
             apiKey = deepgramApiKey
         }
         
-        // Configure and start Deepgram with selected model
-        let selectedModel = DeepgramModel(rawValue: deepgramModel) ?? .nova3
         deepgramService.configure(apiKey: apiKey)
         
-        // Wire up source dominance tracking so Deepgram can separate mic vs system speakers.
-        // Only active on macOS when both mic and system audio are enabled.
-        // On iOS there's no system audio — let Deepgram's native diarization handle speakers.
         #if os(macOS)
         if captureMicrophone && captureSystemAudio {
             audioCaptureService.resetSourceTracking()
@@ -2211,7 +2223,7 @@ final class AppState: ObservableObject {
         deepgramService.sourceLookup = nil
         #endif
         
-        deepgramService.connect(model: selectedModel)
+        deepgramService.connect(language: meetingLanguage)
         
         // Configure audio capture
         audioCaptureService.onAudioBuffer = { [weak deepgramService] data in
@@ -2276,10 +2288,9 @@ final class AppState: ObservableObject {
         }
         
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-        let model = (DeepgramModel(rawValue: deepgramModel) ?? .nova3).rawValue
         
         do {
-            let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: model)
+            let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: "nova-3")
             currentSessionId = session.sessionId
             tempDeepgramKey = session.tempApiKey
             managedSessionStartRecordedDuration = accumulatedRecordedDuration
@@ -2461,6 +2472,9 @@ final class AppState: ObservableObject {
         currentTitleSuffix = ""
         lastTitleUpdateCount = 0
         
+        // Reset language to default for next meeting
+        meetingLanguage = defaultLanguage
+        
         // Reset managed session state
         currentSessionId = nil
         tempDeepgramKey = nil
@@ -2533,13 +2547,14 @@ final class AppState: ObservableObject {
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: model.rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue,
+                    language: meetingLanguage
                 )
                 insights = response.toLiveInsights()
             } else {
                 insights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: nil, existingTitle: nil,
-                    mode: .standard, model: model, apiKey: openaiApiKey
+                    mode: .standard, model: model, apiKey: openaiApiKey, language: meetingLanguage
                 )
             }
             
@@ -2591,14 +2606,15 @@ final class AppState: ObservableObject {
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: liveSummary, existingTitle: currentTitleSuffix,
-                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue
+                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
+                    language: meetingLanguage
                 )
                 meddpiccInsights = response.toLiveInsights()
             } else {
                 meddpiccInsights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: liveSummary,
                     existingTitle: currentTitleSuffix, mode: .meddpicc,
-                    model: model, apiKey: openaiApiKey
+                    model: model, apiKey: openaiApiKey, language: meetingLanguage
                 )
             }
             
@@ -2698,7 +2714,8 @@ final class AppState: ObservableObject {
                         existingSummary: existingSummaryContext,
                         existingTitle: nil,
                         mode: InsightsMode.meddpicc.rawValue,
-                        model: model.rawValue
+                        model: model.rawValue,
+                        language: meetingLanguage
                     )
                     meddpiccInsights = response.toLiveInsights()
                 } else {
@@ -2708,7 +2725,8 @@ final class AppState: ObservableObject {
                         existingTitle: nil,
                         mode: .meddpicc,
                         model: model,
-                        apiKey: openaiApiKey
+                        apiKey: openaiApiKey,
+                        language: meetingLanguage
                     )
                 }
                 
@@ -2734,7 +2752,8 @@ final class AppState: ObservableObject {
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: transcriptForRequest,
                     existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: model.rawValue
+                    mode: InsightsMode.standard.rawValue, model: model.rawValue,
+                    language: meetingLanguage
                 )
                 let insights = response.toLiveInsights()
                 meeting.summaryText = insights.summary
@@ -2770,7 +2789,7 @@ final class AppState: ObservableObject {
         isGeneratingInsights = false
     }
 
-    private static func parseMeetingTitle(_ title: String) -> (String, String)? {
+    nonisolated static func parseMeetingTitle(_ title: String) -> (String, String)? {
         for separator in [" - ", " — "] {
             guard let range = title.range(of: separator) else { continue }
             let timestamp = String(title[..<range.lowerBound])
@@ -2789,14 +2808,15 @@ final class AppState: ObservableObject {
         model: String,
         incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil,
         requestSeq: Int? = nil,
-        maxAttempts: Int = 2
+        maxAttempts: Int = 2,
+        language: String = "en"
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
             throw MinitiAPIService.ServiceError.invalidResponse
         }
         DebugLogger.shared.log(
             .app,
-            "Managed insights request with retry: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), maxAttempts=\(maxAttempts)"
+            "Managed insights request with retry: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), maxAttempts=\(maxAttempts), language=\(language)"
         )
 
         var attempt = 1
@@ -2810,7 +2830,8 @@ final class AppState: ObservableObject {
                     mode: mode,
                     model: model,
                     incrementalPayload: incrementalPayload,
-                    requestSeq: requestSeq
+                    requestSeq: requestSeq,
+                    language: language
                 )
             } catch {
                 let shouldRetry = attempt < maxAttempts && Self.isTransientInsightsError(error)
@@ -2825,7 +2846,7 @@ final class AppState: ObservableObject {
         }
     }
 
-    private static func isTransientInsightsError(_ error: Error) -> Bool {
+    nonisolated static func isTransientInsightsError(_ error: Error) -> Bool {
         if let serviceError = error as? MinitiAPIService.ServiceError {
             switch serviceError {
             case .serverError(let message):
@@ -3108,11 +3129,13 @@ final class AppState: ObservableObject {
     // MARK: - Update Check
     
     /// Check if a newer version is available. Runs on launch for all modes.
+    /// Also sends device ID and current mode so the backend can track BYOK devices.
     func checkForUpdates() async {
         guard let minitiAPIService else { return }
         
         do {
-            let versionInfo = try await minitiAPIService.checkVersion()
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            let versionInfo = try await minitiAPIService.checkVersion(deviceId: deviceId, appMode: appMode.rawValue)
             let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
             
             if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
@@ -3126,7 +3149,7 @@ final class AppState: ObservableObject {
     }
     
     /// Simple semver comparison: returns true if `remote` is newer than `local`.
-    private static func isNewer(remote: String, than local: String) -> Bool {
+    nonisolated static func isNewer(remote: String, than local: String) -> Bool {
         let remoteParts = remote.split(separator: ".").compactMap { Int($0) }
         let localParts = local.split(separator: ".").compactMap { Int($0) }
         
@@ -3611,7 +3634,7 @@ final class AppState: ObservableObject {
         return fallback
     }
 
-    static func sanitizeFilename(from title: String) -> String {
+    nonisolated static func sanitizeFilename(from title: String) -> String {
         let lowered = title.lowercased()
         // Replace any non-alphanumeric character (except dash) with a dash
         let sanitized = lowered.unicodeScalars.map { char -> String in

@@ -867,7 +867,7 @@ struct SavedTrainingContent: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
     }
     
     var body: some View {
@@ -1263,7 +1263,7 @@ struct TrainingStatsOverview: View {
 
             guard !segments.isEmpty else { continue }
 
-            let metrics = TrainingMetrics.compute(from: segments, duration: duration)
+            let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
             let speaker = metrics.speakers.first(where: { $0.isLocalMic })
                 ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount })
             guard let speaker else { continue }

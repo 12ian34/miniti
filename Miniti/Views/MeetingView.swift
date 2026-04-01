@@ -249,6 +249,8 @@ struct ReadyStateView: View {
                     .focusable(false)
                 }
             } else {
+                MeetingLanguagePicker(language: $appState.meetingLanguage)
+                
                 Button(action: {
                     if !appState.isStartingMeeting {
                         appState.startNewMeeting()
@@ -536,48 +538,50 @@ struct APIStatusPill: View {
 
 // MARK: - Home Screen Components
 
-struct HomeModelSelector: View {
-    @EnvironmentObject var appState: AppState
+struct MeetingLanguagePicker: View {
+    @Binding var language: String
     
-    private var selectedModel: DeepgramModel {
-        DeepgramModel(rawValue: appState.deepgramModel) ?? .nova3
+    private var selectedLang: TranscriptionLanguage {
+        TranscriptionLanguage(rawValue: language) ?? .english
     }
     
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(DeepgramModel.allCases, id: \.self) { model in
+        Menu {
+            ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
                 Button {
-                    appState.deepgramModel = model.rawValue
+                    language = lang.rawValue
                 } label: {
-                    VStack(spacing: 2) {
-                        Text(model.displayName)
-                            .font(.system(size: 11, weight: selectedModel == model ? .semibold : .medium, design: .monospaced))
-                            .foregroundStyle(selectedModel == model ? Color(hex: "FAFAFA") : Color(hex: "D4D4D8"))
-                        
-                        Text(model.shortDescription)
-                            .font(.system(size: 8, weight: .regular, design: .monospaced))
-                            .foregroundStyle(selectedModel == model ? Color(hex: "D4D4D8") : Color(hex: "A1A1AA"))
+                    HStack {
+                        Text(lang.displayName)
+                        if lang == selectedLang {
+                            Image(systemName: "checkmark")
+                        }
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedModel == model ? Color(hex: "1C1C1F") : Color.clear)
-                    )
                 }
-                .buttonStyle(.plain)
-                .focusable(false)
             }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedLang.rawValue.uppercased())
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                Text(selectedLang.displayName)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+            }
+            .foregroundStyle(ColorPalette.Text.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(ColorPalette.Background.secondary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+            )
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(hex: "0F0F11"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
-                )
-        )
+        .buttonStyle(.plain)
+        .focusable(false)
     }
 }
 
@@ -1554,6 +1558,22 @@ struct TerminalHeader: View {
                     .keyboardShortcut("s", modifiers: .command)
                 }
                 
+                if let lang = TranscriptionLanguage(rawValue: appState.meetingLanguage), lang != .english {
+                    HStack(spacing: 3) {
+                        Text(lang.flag)
+                            .font(.system(size: 11))
+                        Text(lang.rawValue.uppercased())
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(ColorPalette.Background.tertiary)
+                    )
+                }
+                
                 Spacer(minLength: 0)
             }
             
@@ -1693,117 +1713,6 @@ struct TerminalHeader: View {
         } message: {
             Text("This will permanently delete the recording and all associated data.")
         }
-    }
-}
-
-// MARK: - Deepgram Model Selector
-
-struct DeepgramModelSelector: View {
-    @EnvironmentObject var appState: AppState
-    @State private var showPopover = false
-    
-    private var selectedModel: DeepgramModel {
-        DeepgramModel(rawValue: appState.deepgramModel) ?? .nova3
-    }
-    
-    var body: some View {
-        Button {
-            showPopover.toggle()
-        } label: {
-            HStack(spacing: 4) {
-                Text(selectedModel.displayName)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundStyle(Color(hex: "8B949E"))
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: "1C1C1F"))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color(hex: "30363D"), lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .focusable(false)
-        .popover(isPresented: $showPopover, arrowEdge: .bottom) {
-            DeepgramModelPopover(selectedModel: $appState.deepgramModel)
-        }
-    }
-}
-
-struct DeepgramModelPopover: View {
-    @Binding var selectedModel: String
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Transcription Model")
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Color(hex: "E6EDF3"))
-            
-            ForEach(DeepgramModel.allCases, id: \.self) { model in
-                Button {
-                    selectedModel = model.rawValue
-                } label: {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text(model.displayName)
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                            
-                            Spacer()
-                            
-                            if selectedModel == model.rawValue {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(Color(hex: "3FB950"))
-                            }
-                        }
-                        
-                        Text(model.shortDescription)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "8B949E"))
-                        
-                        // Pros
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("+")
-                                .foregroundStyle(Color(hex: "3FB950"))
-                            Text(model.pros.joined(separator: ", "))
-                                .foregroundStyle(Color(hex: "8B949E"))
-                        }
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
-                        
-                        // Cons
-                        HStack(alignment: .top, spacing: 4) {
-                            Text("-")
-                                .foregroundStyle(Color(hex: "F85149"))
-                            Text(model.cons.joined(separator: ", "))
-                                .foregroundStyle(Color(hex: "8B949E"))
-                        }
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
-                    }
-                    .padding(10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedModel == model.rawValue ? Color(hex: "1C1C1F") : Color.clear)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(selectedModel == model.rawValue ? Color(hex: "3FB950").opacity(0.3) : Color.clear, lineWidth: 1)
-                    )
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-        }
-        .padding(12)
-        .frame(width: 280)
-        .background(Color(hex: "0F0F11"))
     }
 }
 
@@ -2132,6 +2041,7 @@ struct AudioSourcePill: View {
 struct UpdateAvailableBanner: View {
     let versionInfo: MinitiAPIService.VersionInfo
     @State private var isShowingFullNotes = false
+    @State private var isHoveringDownload = false
     
     private var releaseNotes: String? {
         guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -2146,59 +2056,84 @@ struct UpdateAvailableBanner: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
                 Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 10))
+                    .font(.system(size: 14))
                     .foregroundStyle(ColorPalette.Accent.blue)
                 
                 Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ColorPalette.Accent.blue)
                 
-                if releaseNotes != nil {
-                    Button(isShowingFullNotes ? "hide notes" : "view notes") {
-                        isShowingFullNotes.toggle()
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.85))
-                }
+                Spacer()
                 
                 if let url = downloadURL {
                     Link(destination: url) {
-                        Text("download")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(ColorPalette.Accent.blue)
+                        HStack(spacing: 7) {
+                            Image(systemName: "arrow.down.to.line")
+                                .font(.system(size: 11, weight: .semibold))
+                            Text("download")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        }
+                        .foregroundStyle(Color(hex: "09090B"))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(isHoveringDownload ? ColorPalette.Accent.blue : ColorPalette.Accent.blue.opacity(0.75))
+                        )
+                        .shadow(
+                            color: isHoveringDownload ? ColorPalette.Accent.blue.opacity(0.3) : ColorPalette.Accent.blue.opacity(0.1),
+                            radius: isHoveringDownload ? 10 : 4, x: 0, y: 2
+                        )
                     }
                     .focusable(false)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            isHoveringDownload = hovering
+                        }
+                    }
                 }
             }
             
-            if let notes = releaseNotes {
-                Text(notes)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.7))
-                    .lineLimit(isShowingFullNotes ? nil : 1)
-                    .fixedSize(horizontal: false, vertical: isShowingFullNotes)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        if !isShowingFullNotes {
-                            isShowingFullNotes = true
-                        }
+            if releaseNotes != nil {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isShowingFullNotes.toggle()
                     }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .bold))
+                            .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
+                        Text(isShowingFullNotes ? "hide release notes" : "show release notes")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+            
+            if let notes = releaseNotes, isShowingFullNotes {
+                Text(notes)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 13)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .frame(maxWidth: 440, alignment: .leading)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: 480, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "58A6FF").opacity(0.08))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.blue.opacity(0.08))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(ColorPalette.Accent.blue.opacity(0.25), lineWidth: 1)
                 )
         )
     }

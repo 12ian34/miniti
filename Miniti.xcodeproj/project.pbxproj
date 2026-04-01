@@ -60,6 +60,22 @@
 		E10000010000000000000003 /* MinitiLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000002 /* MinitiLiveActivityBundle.swift */; };
 		E10000010000000000000004 /* MinitiLiveActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */; };
 		E10000010000000000000005 /* MinitiLiveActivityExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = E30000010000000000000001 /* MinitiLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		T10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
+		T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
+		T10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
+		T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
+		T10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
+		T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
+		T10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
+		T10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
+		U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
+		U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
+		U10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
+		U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
+		U10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
+		U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
+		U10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
+		U10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -69,6 +85,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = E60000010000000000000001;
 			remoteInfo = MinitiLiveActivityExtension;
+		};
+		T91000010000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A60000010000000000000001;
+			remoteInfo = Miniti;
+		};
+		U30000010000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C60000010000000000000001;
+			remoteInfo = MinitiMobile;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -128,6 +158,16 @@
 		E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiLiveActivityLiveActivity.swift; sourceTree = "<group>"; };
 		E20000010000000000000004 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		E30000010000000000000001 /* MinitiLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MinitiLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		T20000010000000000000001 /* MinitiAPIServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiAPIServiceTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000002 /* TrainingMetricsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingMetricsTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000003 /* MeetingModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingModelTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000004 /* WebhookPayloadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookPayloadTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000005 /* AppStateComputationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppStateComputationTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000006 /* DeepgramParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepgramParsingTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000007 /* InsightsParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsParsingTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000008 /* ColorPaletteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPaletteTests.swift; sourceTree = "<group>"; };
+		T30000010000000000000002 /* MinitiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		U20000010000000000000001 /* MinitiMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -152,6 +192,20 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		T40000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		U60000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -162,6 +216,7 @@
 				C50000010000000000000001 /* MinitiMobile */,
 				E50000010000000000000001 /* MinitiLiveActivity */,
 				E50000010000000000000002 /* Shared */,
+				T50000010000000000000001 /* MinitiTests */,
 				A50000010000000000000003 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -187,6 +242,8 @@
 				A30000010000000000000001 /* miniti.app */,
 				C30000010000000000000001 /* MinitiMobile.app */,
 				E30000010000000000000001 /* MinitiLiveActivityExtension.appex */,
+				T30000010000000000000002 /* MinitiTests.xctest */,
+				U20000010000000000000001 /* MinitiMobileTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -282,6 +339,21 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		T50000010000000000000001 /* MinitiTests */ = {
+			isa = PBXGroup;
+			children = (
+				T20000010000000000000001 /* MinitiAPIServiceTests.swift */,
+				T20000010000000000000002 /* TrainingMetricsTests.swift */,
+				T20000010000000000000003 /* MeetingModelTests.swift */,
+				T20000010000000000000004 /* WebhookPayloadTests.swift */,
+				T20000010000000000000005 /* AppStateComputationTests.swift */,
+				T20000010000000000000006 /* DeepgramParsingTests.swift */,
+				T20000010000000000000007 /* InsightsParsingTests.swift */,
+				T20000010000000000000008 /* ColorPaletteTests.swift */,
+			);
+			path = MinitiTests;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -338,6 +410,42 @@
 			productReference = E30000010000000000000001 /* MinitiLiveActivityExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
+		T60000010000000000000001 /* MinitiTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = T80000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiTests" */;
+			buildPhases = (
+				T70000010000000000000001 /* Sources */,
+				T40000010000000000000001 /* Frameworks */,
+				T70000010000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				T92000010000000000000001 /* PBXTargetDependency */,
+			);
+			name = MinitiTests;
+			productName = MinitiTests;
+			productReference = T30000010000000000000002 /* MinitiTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		U50000010000000000000001 /* MinitiMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = UA0000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiMobileTests" */;
+			buildPhases = (
+				U80000010000000000000001 /* Sources */,
+				U60000010000000000000001 /* Frameworks */,
+				U70000010000000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				U40000010000000000000001 /* PBXTargetDependency */,
+			);
+			name = MinitiMobileTests;
+			productName = MinitiMobileTests;
+			productReference = U20000010000000000000001 /* MinitiMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -357,6 +465,14 @@
 					E60000010000000000000001 = {
 						CreatedOnToolsVersion = 16.0;
 					};
+					T60000010000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = A60000010000000000000001;
+					};
+					U50000010000000000000001 = {
+						CreatedOnToolsVersion = 16.0;
+						TestTargetID = C60000010000000000000001;
+					};
 				};
 			};
 			buildConfigurationList = A80000010000000000000002 /* Build configuration list for PBXProject "Miniti" */;
@@ -375,6 +491,8 @@
 				A60000010000000000000001 /* Miniti */,
 				C60000010000000000000001 /* MinitiMobile */,
 				E60000010000000000000001 /* MinitiLiveActivityExtension */,
+				T60000010000000000000001 /* MinitiTests */,
+				U50000010000000000000001 /* MinitiMobileTests */,
 			);
 		};
 /* End PBXProject section */
@@ -397,6 +515,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		E70000010000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		T70000010000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		U70000010000000000000001 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -477,6 +609,36 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		T70000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				T10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */,
+				T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
+				T10000010000000000000003 /* MeetingModelTests.swift in Sources */,
+				T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
+				T10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
+				T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
+				T10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
+				T10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		U80000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */,
+				U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
+				U10000010000000000000003 /* MeetingModelTests.swift in Sources */,
+				U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
+				U10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
+				U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
+				U10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
+				U10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -484,6 +646,16 @@
 			isa = PBXTargetDependency;
 			target = E60000010000000000000001 /* MinitiLiveActivityExtension */;
 			targetProxy = E90000010000000000000001 /* PBXContainerItemProxy */;
+		};
+		T92000010000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A60000010000000000000001 /* Miniti */;
+			targetProxy = T91000010000000000000001 /* PBXContainerItemProxy */;
+		};
+		U40000010000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C60000010000000000000001 /* MinitiMobile */;
+			targetProxy = U30000010000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -619,7 +791,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_APP_SANDBOX = YES;
@@ -638,7 +810,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -656,7 +828,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_APP_SANDBOX = YES;
@@ -675,7 +847,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -691,7 +863,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -710,7 +882,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -731,7 +903,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -750,7 +922,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -769,7 +941,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
@@ -781,7 +953,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -797,7 +969,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 79;
+				CURRENT_PROJECT_VERSION = 81;
 				DEVELOPMENT_TEAM = 9AUR5U5KTF;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
@@ -809,7 +981,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.17.0;
+				MARKETING_VERSION = 1.18.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -818,6 +990,89 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		T90000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 81;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/miniti.app/Contents/MacOS/miniti";
+			};
+			name = Debug;
+		};
+		T90000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 81;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/miniti.app/Contents/MacOS/miniti";
+			};
+			name = Release;
+		};
+		U90000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 81;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) IOS_TEST_TARGET";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MinitiMobile.app/MinitiMobile";
+			};
+			name = Debug;
+		};
+		U90000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 81;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) IOS_TEST_TARGET";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MinitiMobile.app/MinitiMobile";
 				VALIDATE_PRODUCT = YES;
 			};
 			name = Release;
@@ -857,6 +1112,24 @@
 			buildConfigurations = (
 				F10000010000000000000001 /* Debug */,
 				F10000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		T80000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				T90000010000000000000001 /* Debug */,
+				T90000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		UA0000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				U90000010000000000000001 /* Debug */,
+				U90000010000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

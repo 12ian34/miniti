@@ -582,6 +582,11 @@ struct TerminalSidebar: View {
                         .onChange(of: searchFieldFocused) { _, focused in
                             if focused { isSearchActive = true }
                         }
+                        .onAppear {
+                            DispatchQueue.main.async {
+                                searchFieldFocused = false
+                            }
+                        }
                     }
 
                     if !historyCollapsed {
@@ -801,6 +806,14 @@ struct SidebarHistoryItem: View {
                         Text(meeting.formattedDuration)
                             .font(.system(size: 9, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
+
+                        if let lang = TranscriptionLanguage(rawValue: meeting.language), lang != .english {
+                            Text("•")
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                            Text("\(lang.flag) \(lang.rawValue.uppercased())")
+                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+                        }
 
                         if let count = matchCount, count > 0 {
                             Text("•")
@@ -1638,7 +1651,7 @@ struct SavedTrainingSection: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
     }
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
