@@ -160,6 +160,7 @@ struct ReadyStateView: View {
     @Environment(\.openSettings) private var openSettings
     @State private var editingDeepgram = false
     @State private var editingOpenAI = false
+    @State private var confirmEvent: MinitiAPIService.CalendarEvent?
     var meetings: [Meeting] = []
     
     var body: some View {
@@ -211,6 +212,11 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
 
+            // Auto-start banner
+            if let event = appState.pendingAutoStartEvent {
+                AutoStartBanner(event: event, countdown: appState.autoStartCountdown)
+            }
+
             // Start button or blocked state
             if appState.isDeviceDisabled {
                 VStack(spacing: 8) {
@@ -249,25 +255,22 @@ struct ReadyStateView: View {
                     .focusable(false)
                 }
             } else {
-                MeetingLanguagePicker(language: $appState.meetingLanguage)
-                
                 Button(action: {
                     if !appState.isStartingMeeting {
                         appState.startNewMeeting()
                     }
                 }) {
-                    HStack(spacing: 12) {
-                        HStack(spacing: 10) {
-                            if appState.isStartingMeeting {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(Color(hex: "09090B"))
-                            } else {
-                                Circle()
-                                    .fill(Color(hex: "09090B"))
-                                    .frame(width: 8, height: 8)
-                            }
-                            Text(appState.isStartingMeeting ? "starting..." : "relax and take notes")
+                    HStack(spacing: 10) {
+                        if appState.isStartingMeeting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Color(hex: "09090B"))
+                            Text("starting...")
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        } else {
+                            Image(systemName: "record.circle")
+                                .font(.system(size: 15))
+                            Text("start")
                                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                         }
                         
@@ -291,10 +294,16 @@ struct ReadyStateView: View {
                 .focusable(false)
                 .disabled(!appState.canStartRecording || appState.isStartingMeeting)
                 .focusable(false)
+
+                MeetingLanguagePicker(language: $appState.meetingLanguage)
             }
 
-            // Training stats overview
-            TrainingStatsOverview(meetings: meetings)
+            // Upcoming calendar events
+            if appState.pendingAutoStartEvent == nil,
+               appState.googleCalendarEnabled && appState.isGoogleCalendarConnected && !appState.todayEvents.isEmpty {
+                UpcomingEventsPanel(confirmEvent: $confirmEvent)
+                    .frame(maxWidth: 380)
+            }
 
             Spacer()
         }
@@ -337,6 +346,449 @@ struct ReadyStateView: View {
                     .frame(maxWidth: .infinity, maxHeight: 1)
             }
         }
+        .overlay {
+            if let event = confirmEvent {
+                EventConfirmSheet(event: event, onStart: {
+                    appState.startMeetingFromEvent(event)
+                    withAnimation(.easeOut(duration: 0.12)) { confirmEvent = nil }
+                }, onCancel: {
+                    withAnimation(.easeOut(duration: 0.12)) { confirmEvent = nil }
+                })
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            }
+        }
+        
+    }
+}
+
+private struct AutoStartBanner: View {
+    @EnvironmentObject var appState: AppState
+    let event: MinitiAPIService.CalendarEvent
+    let countdown: Int
+    
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(ColorPalette.Accent.green)
+                    .frame(width: 8, height: 8)
+                    .opacity(countdown % 2 == 0 ? 1 : 0.4)
+                    .animation(.easeInOut(duration: 0.5), value: countdown)
+                
+                Text(event.title)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .lineLimit(1)
+            }
+            
+            Text("starting in \(countdown)s")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Accent.green)
+            
+            HStack(spacing: 12) {
+                Button {
+                    appState.startMeetingFromEvent(event)
+                } label: {
+                    Text("start now")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color(hex: "09090B"))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Accent.green)
+                        )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                
+                Button {
+                    appState.dismissAutoStart()
+                } label: {
+                    Text("dismiss")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Background.tertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 360)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.green.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ColorPalette.Accent.green.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+private struct UpcomingEventsPanel: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var confirmEvent: MinitiAPIService.CalendarEvent?
+
+    private var displayEvents: [MinitiAPIService.CalendarEvent] {
+        Array(appState.todayEvents.prefix(5))
+    }
+
+    var body: some View {
+        VStack(alignment: .trailing, spacing: 1) {
+            ForEach(displayEvents) { event in
+                CompactEventRow(event: event)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(.easeOut(duration: 0.15)) {
+                            confirmEvent = event
+                        }
+                    }
+            }
+        }
+        .frame(width: 320)
+    }
+}
+
+private struct EventConfirmSheet: View {
+    let event: MinitiAPIService.CalendarEvent
+    let onStart: () -> Void
+    let onCancel: () -> Void
+
+    private var timeRange: String? {
+        guard let start = event.startDate else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        var s = fmt.string(from: start)
+        if let end = event.endDate { s += " – " + fmt.string(from: end) }
+        return s
+    }
+
+    private var startsInText: String? {
+        guard let start = event.startDate else { return nil }
+        let mins = Int(ceil(start.timeIntervalSince(Date()) / 60))
+        if mins > 1 { return "starts in \(mins) min" }
+        if mins == 1 { return "starts in 1 min" }
+        return nil
+    }
+
+    @State private var keyMonitor: Any?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5)
+                .contentShape(Rectangle())
+                .onTapGesture { onCancel() }
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(event.title)
+                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .lineLimit(2)
+
+                HStack(spacing: 8) {
+                    if let time = timeRange {
+                        Text(time)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.dim)
+                    }
+                    if let soon = startsInText {
+                        Text(soon)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Accent.amber)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(ColorPalette.Accent.amber.opacity(0.12))
+                            )
+                    }
+                }
+                .padding(.top, 6)
+
+                if !event.attendees.isEmpty {
+                    Divider()
+                        .background(ColorPalette.Border.primary)
+                        .padding(.vertical, 10)
+
+                    Text("attendees")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                        .padding(.bottom, 6)
+
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(event.attendees) { a in
+                            HStack(spacing: 8) {
+                                if a.isSelf {
+                                    Text("⬢")
+                                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(ColorPalette.Accent.green)
+                                        .frame(width: 14, height: 14)
+                                } else {
+                                    DomainFavicon(domain: a.domain)
+                                }
+                                VStack(alignment: .leading, spacing: 1) {
+                                    if let name = a.displayName, name != a.email {
+                                        Text(name)
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(a.isSelf ? ColorPalette.Accent.green : ColorPalette.Text.primary)
+                                        Text(a.email)
+                                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(ColorPalette.Text.dim)
+                                    } else {
+                                        Text(a.email)
+                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .foregroundStyle(a.isSelf ? ColorPalette.Accent.green : ColorPalette.Text.primary)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        onCancel()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text("cancel")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            Text("esc")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(ColorPalette.Text.placeholder)
+                        }
+                        .foregroundStyle(ColorPalette.Text.dim)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Background.tertiary)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6)
+                                        .stroke(ColorPalette.Border.primary, lineWidth: 1)
+                                )
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+
+                    Button {
+                        onStart()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "record.circle")
+                                .font(.system(size: 10, weight: .bold))
+                            Text("start")
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            Text("⌘↩")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                        }
+                        .foregroundStyle(Color(hex: "09090B"))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(hex: "3FB950"))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+                .padding(.top, 14)
+            }
+            .padding(20)
+            .frame(width: 340)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(ColorPalette.Background.panel)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(ColorPalette.Border.light, lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.6), radius: 20, y: 8)
+            )
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                if event.keyCode == 53 { // Escape
+                    onCancel()
+                    return nil
+                }
+                if event.modifierFlags.contains(.command) && event.keyCode == 36 { // ⌘↩
+                    onStart()
+                    return nil
+                }
+                return event
+            }
+        }
+        .onDisappear {
+            if let monitor = keyMonitor {
+                NSEvent.removeMonitor(monitor)
+                keyMonitor = nil
+            }
+        }
+    }
+}
+
+private struct CompactEventRow: View {
+    let event: MinitiAPIService.CalendarEvent
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(formattedTime)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
+                .frame(width: 40, alignment: .leading)
+
+            Text(event.title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(isHovered ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 4)
+
+            if let dur = durationText {
+                Text(dur)
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.dim)
+            }
+
+            if !event.attendees.isEmpty {
+                let extCount = event.externalAttendees.count
+                HStack(spacing: 5) {
+                    if !allExternalDomains.isEmpty {
+                        HStack(spacing: 3) {
+                            ForEach(displayDomains, id: \.self) { domain in
+                                DomainFavicon(domain: domain)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: 2) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 8))
+                        Text("\(extCount > 0 ? extCount : event.attendees.count)")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(ColorPalette.Text.dim)
+                }
+            }
+
+            Image(systemName: "record.circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(ColorPalette.Accent.green)
+                .opacity(isHovered ? 1 : 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isHovered ? ColorPalette.Accent.green.opacity(0.08) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(isHovered ? ColorPalette.Accent.green.opacity(0.25) : Color.clear, lineWidth: 1)
+        )
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+    }
+
+    private var isActive: Bool {
+        guard let start = event.startDate, let end = event.endDate else { return false }
+        let now = Date()
+        return now >= start && now <= end
+    }
+
+    private var formattedTime: String {
+        guard let date = event.startDate else { return "" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date).lowercased()
+    }
+
+    private var durationText: String? {
+        guard let start = event.startDate, let end = event.endDate else { return nil }
+        let mins = Int(end.timeIntervalSince(start) / 60)
+        if mins >= 60 {
+            let h = mins / 60
+            let m = mins % 60
+            return m > 0 ? "\(h)h\(m)m" : "\(h)h"
+        }
+        return "\(mins)m"
+    }
+
+    private var allExternalDomains: [String] {
+        Array(Set(event.externalAttendees.map(\.domain).filter { !$0.isEmpty })).sorted()
+    }
+
+    private var displayDomains: [String] {
+        Array(allExternalDomains.prefix(4))
+    }
+}
+
+
+@MainActor
+private final class FaviconCache: ObservableObject {
+    static let shared = FaviconCache()
+    @Published var images: [String: NSImage] = [:]
+    private var inflight: Set<String> = []
+
+    func fetch(_ domain: String) {
+        guard images[domain] == nil, !inflight.contains(domain) else { return }
+        inflight.insert(domain)
+        Task.detached(priority: .utility) {
+            guard let url = URL(string: "https://www.google.com/s2/favicons?domain=\(domain)&sz=32") else { return }
+            do {
+                let (data, _) = try await URLSession.shared.data(from: url)
+                if let img = NSImage(data: data), img.size.width > 1 {
+                    await MainActor.run { self.images[domain] = img }
+                }
+            } catch {}
+        }
+    }
+}
+
+private struct DomainFavicon: View {
+    let domain: String
+    @ObservedObject private var cache = FaviconCache.shared
+
+    var body: some View {
+        Group {
+            if let nsImage = cache.images[domain] {
+                Image(nsImage: nsImage)
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: 12, height: 12)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+            } else {
+                Text(String(domain.prefix(1)).uppercased())
+                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.8))
+                    .frame(width: 12, height: 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(ColorPalette.Accent.blue.opacity(0.15))
+                    )
+            }
+        }
+        .onAppear { cache.fetch(domain) }
     }
 }
 
@@ -1574,6 +2026,22 @@ struct TerminalHeader: View {
                     )
                 }
                 
+                if let meeting = appState.currentMeeting, !meeting.attendees.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "person.2.fill")
+                            .font(.system(size: 9))
+                        Text("\(meeting.attendees.filter { !$0.isSelf }.count)")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(ColorPalette.Text.muted)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(ColorPalette.Background.tertiary)
+                    )
+                }
+                
                 Spacer(minLength: 0)
             }
             
@@ -1605,6 +2073,26 @@ struct TerminalHeader: View {
                     Image(systemName: "moon.zzz.fill")
                         .font(.system(size: 10, weight: .semibold))
                     Text("auto-stopped — no speech detected")
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                }
+                .foregroundStyle(ColorPalette.Accent.amber)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(ColorPalette.Accent.amber.opacity(0.1))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(ColorPalette.Accent.amber.opacity(0.2), lineWidth: 1)
+                )
+            }
+            
+            if appState.calendarEventEndedWhileRecording && appState.isRecording {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar.badge.clock")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("meeting time ended — will stop when silent")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)

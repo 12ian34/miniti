@@ -121,6 +121,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
+- google calendar integration — upcoming meetings, auto-start/stop, attendee context, auto Attio sync
 - meeting history browser
 - native menu bar controls
 - keyboard shortcuts for everything
@@ -147,11 +148,12 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Editable**: Edit notes for historical meetings too
 - **Copy to Markdown**: Export notes with one click
 
-### Export
+### Export & Integrations
 - **Copy to Markdown**: One-click copy for transcript, notes, and insights
 - **Formatted Output**: Clean markdown with speaker labels, action item checkboxes, and structured sections
 - **Auto-export to Local Folder (macOS)**: Automatically save meetings as markdown files to a local folder (default `~/Documents/miniti/`). Works with Obsidian, Claude Code, and other tools. Optional `CLAUDE.md` index file for AI agent discovery. Enable in Settings → Integrations.
 - **Attio CRM Send (Saved Meetings)**: Send a saved meeting summary to Attio (people or companies) with optional task creation from action items
+- **Google Calendar (macOS)**: See upcoming meetings, auto-start/stop recording, pass attendee context to AI, auto-sync to Attio
 - **Outbound Webhooks**: POST meeting data as JSON to any URL when a meeting is saved or insights are updated — works with Zapier, Make, n8n, and custom endpoints. Configure in Settings.
 
 ### Menu Bar
@@ -349,6 +351,33 @@ It does **not** send:
 - Your Attio selection is remembered per meeting, so you can reopen and resend/update later
 - If no action items are detected, task creation is disabled automatically
 - If your backend deployment does not include Attio endpoints yet, the app will show a clear error instead of failing silently
+
+## Google Calendar Integration (macOS)
+
+Connect your Google Calendar to see upcoming meetings and streamline recording.
+
+### What it does
+
+- **Upcoming meetings**: Shows your next 5 calendar events on the home screen
+- **Auto-start**: Counts down and starts recording when a meeting begins (configurable)
+- **Auto-stop**: Shortens the silence timeout after a calendar event ends, so recording stops sooner when the meeting is over
+- **Attendee context**: Passes meeting attendees to AI insights for better speaker attribution and analysis
+- **Auto Attio sync**: Automatically sends meeting summaries to Attio after saving, if attendees match an Attio record
+
+### Setup
+
+1. Open **Settings** (`⌘,`) → **Integrations** → **Google Calendar**
+2. Toggle on **Enable Google Calendar**
+3. Click **Connect** and sign in with your Google account
+4. Configure auto-start, auto-stop, and auto Attio sync toggles as needed
+
+### Notes
+
+- Google Calendar integration is macOS-only
+- Only reads your calendar events (read-only access) — miniti never creates or modifies events
+- Calendar events refresh every 5 minutes
+- Auto-start shows a countdown banner with "start now" and "dismiss" options
+- Dismissed events are tracked so they don't prompt again
 
 ## History & Saved Meetings Guide
 

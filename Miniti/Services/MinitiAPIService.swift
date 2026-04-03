@@ -382,6 +382,156 @@ final class MinitiAPIService: @unchecked Sendable {
         }
     }
 
+    // MARK: - Google Calendar
+
+    struct GoogleConnectStartResponse: Decodable {
+        let authURL: String
+        let callbackScheme: String
+
+        enum CodingKeys: String, CodingKey {
+            case authURL = "auth_url"
+            case callbackScheme = "callback_scheme"
+        }
+    }
+
+    struct GoogleStatusResponse: Decodable {
+        let connected: Bool
+        let email: String?
+    }
+
+    struct GoogleDisconnectResponse: Decodable {
+        let disconnected: Bool
+    }
+
+    struct CalendarEvent: Decodable, Identifiable, Sendable {
+        let id: String
+        let title: String
+        let start: String
+        let end: String
+        let isAllDay: Bool
+        let status: String
+        let meetLink: String?
+        let conferenceUrl: String?
+        let attendees: [CalendarAttendee]
+        let organizer: CalendarOrganizer?
+
+        enum CodingKeys: String, CodingKey {
+            case id, title, start, end, status, attendees, organizer
+            case isAllDay = "is_all_day"
+            case meetLink = "meet_link"
+            case conferenceUrl = "conference_url"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(String.self, forKey: .id)
+            title = try c.decodeIfPresent(String.self, forKey: .title) ?? "Untitled"
+            start = try c.decode(String.self, forKey: .start)
+            end = try c.decode(String.self, forKey: .end)
+            isAllDay = try c.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+            status = try c.decodeIfPresent(String.self, forKey: .status) ?? "confirmed"
+            meetLink = try c.decodeIfPresent(String.self, forKey: .meetLink)
+            conferenceUrl = try c.decodeIfPresent(String.self, forKey: .conferenceUrl)
+            attendees = (try? c.decodeIfPresent([CalendarAttendee].self, forKey: .attendees)) ?? []
+            organizer = try c.decodeIfPresent(CalendarOrganizer.self, forKey: .organizer)
+        }
+
+        var startDate: Date? {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f.date(from: start) ?? {
+                let f2 = ISO8601DateFormatter()
+                f2.formatOptions = [.withInternetDateTime]
+                return f2.date(from: start)
+            }()
+        }
+
+        var endDate: Date? {
+            let f = ISO8601DateFormatter()
+            f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            return f.date(from: end) ?? {
+                let f2 = ISO8601DateFormatter()
+                f2.formatOptions = [.withInternetDateTime]
+                return f2.date(from: end)
+            }()
+        }
+
+        var externalAttendees: [CalendarAttendee] {
+            attendees.filter { !$0.isSelf }
+        }
+
+        var attendeeDomains: Set<String> {
+            Set(externalAttendees.map(\.domain).filter { !$0.isEmpty })
+        }
+    }
+
+    struct CalendarAttendee: Decodable, Identifiable, Sendable {
+        var id: String { email }
+        let email: String
+        let displayName: String?
+        let responseStatus: String
+        let organizer: Bool
+        let isSelf: Bool
+        let domain: String
+
+        enum CodingKeys: String, CodingKey {
+            case email, organizer, domain
+            case displayName = "display_name"
+            case responseStatus = "response_status"
+            case isSelf = "self"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            email = try c.decode(String.self, forKey: .email)
+            displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+            responseStatus = try c.decodeIfPresent(String.self, forKey: .responseStatus) ?? "needsAction"
+            organizer = try c.decodeIfPresent(Bool.self, forKey: .organizer) ?? false
+            isSelf = try c.decodeIfPresent(Bool.self, forKey: .isSelf) ?? false
+            let rawDomain = try c.decodeIfPresent(String.self, forKey: .domain)
+            if let rawDomain, !rawDomain.isEmpty {
+                domain = rawDomain
+            } else {
+                let parts = email.split(separator: "@")
+                domain = parts.count == 2 ? String(parts[1]) : ""
+            }
+        }
+
+        func toMeetingAttendee() -> MeetingAttendee {
+            MeetingAttendee(
+                email: email,
+                displayName: displayName,
+                domain: domain,
+                responseStatus: responseStatus,
+                isOrganizer: organizer,
+                isSelf: isSelf
+            )
+        }
+    }
+
+    struct CalendarOrganizer: Decodable, Sendable {
+        let email: String
+        let displayName: String?
+        let isSelf: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case email
+            case displayName = "display_name"
+            case isSelf = "self"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            email = try c.decode(String.self, forKey: .email)
+            displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+            isSelf = try c.decodeIfPresent(Bool.self, forKey: .isSelf) ?? false
+        }
+    }
+
+    struct GoogleEventsResponse: Decodable {
+        let events: [CalendarEvent]
+    }
+
     // MARK: - Attio
 
     struct AttioConnectStartResponse: Decodable {
@@ -733,7 +883,8 @@ final class MinitiAPIService: @unchecked Sendable {
         model: String,
         incrementalPayload: IncrementalInsightsPayload? = nil,
         requestSeq: Int? = nil,
-        language: String = "en"
+        language: String = "en",
+        attendees: [[String: String]]? = nil
     ) async throws -> ManagedInsightsResponse {
         let startedAt = CFAbsoluteTimeGetCurrent()
         var body: [String: Any] = [
@@ -745,6 +896,7 @@ final class MinitiAPIService: @unchecked Sendable {
         if let existingSummary { body["existing_summary"] = existingSummary }
         if let existingTitle { body["existing_title"] = existingTitle }
         if let requestSeq { body["request_seq"] = requestSeq }
+        if let attendees, !attendees.isEmpty { body["attendees"] = attendees }
         if let incrementalPayload {
             body["incremental"] = true
             body["incremental_payload"] = incrementalPayload.dictionary
@@ -855,6 +1007,48 @@ final class MinitiAPIService: @unchecked Sendable {
         return try decode(AppleVerifyResponse.self, from: data, endpoint: "/apple/verify")
     }
     
+    // MARK: - Google Calendar
+    
+    func googleConnectStart(deviceId: String, callbackScheme: String = "miniti-google") async throws -> GoogleConnectStartResponse {
+        let request = makeRequest(
+            path: "/google/connect/start",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["callback_scheme": callbackScheme]
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(GoogleConnectStartResponse.self, from: data, endpoint: "/google/connect/start")
+    }
+
+    func googleStatus(deviceId: String) async throws -> GoogleStatusResponse {
+        let request = makeRequest(path: "/google/status", deviceId: deviceId)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(GoogleStatusResponse.self, from: data, endpoint: "/google/status")
+    }
+
+    func googleEvents(deviceId: String, timeMin: String? = nil, timeMax: String? = nil, maxResults: Int = 20) async throws -> [CalendarEvent] {
+        var path = "/google/events?max_results=\(maxResults)"
+        if let timeMin { path += "&time_min=\(timeMin)" }
+        if let timeMax { path += "&time_max=\(timeMax)" }
+        let request = makeRequest(path: path, deviceId: deviceId)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(GoogleEventsResponse.self, from: data, endpoint: "/google/events").events
+    }
+
+    func googleDisconnect(deviceId: String) async throws -> GoogleDisconnectResponse {
+        let request = makeRequest(
+            path: "/google/disconnect",
+            method: "POST",
+            deviceId: deviceId
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(GoogleDisconnectResponse.self, from: data, endpoint: "/google/disconnect")
+    }
+
     // MARK: - Attio
     
     func attioConnectStart(deviceId: String, callbackScheme: String = "miniti-attio") async throws -> AttioConnectStartResponse {

@@ -1,3 +1,3 @@
-- new: multilingual meeting support — record and transcribe in 11 languages including Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, and Russian. Pick a language before each meeting or set a default in Settings. Insights and filler word detection adapt automatically.
-- improvement: Nova-3 is now the only transcription model.
-- improvement: update available banner is larger and easier to read.
+- Training is now its own tab with a sortable table showing fillers, pace, clarity, and questions across all your meetings.
+- Meeting titles in history are cleaner — timestamp prefixes are stripped so you see just the meeting name.
+- Language picker moved below the start button on the home screen.

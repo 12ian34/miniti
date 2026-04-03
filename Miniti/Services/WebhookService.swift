@@ -23,16 +23,25 @@ enum WebhookService {
             let training: TrainingData?
             let speakerCount: Int
             let transcript: [TranscriptEntry]
+            let calendarEventId: String?
+            let attendees: [AttendeeEntry]?
 
             enum CodingKeys: String, CodingKey {
-                case id, title, date, summary, notes, topics, meddpicc, training, transcript, language
+                case id, title, date, summary, notes, topics, meddpicc, training, transcript, language, attendees
                 case endTime = "end_time"
                 case durationSeconds = "duration_seconds"
                 case actionItems = "action_items"
                 case keyDecisions = "key_decisions"
                 case discussionFlow = "discussion_flow"
                 case speakerCount = "speaker_count"
+                case calendarEventId = "calendar_event_id"
             }
+        }
+
+        struct AttendeeEntry: Encodable {
+            let email: String
+            let name: String?
+            let domain: String
         }
 
         struct TranscriptEntry: Encodable {
@@ -161,7 +170,9 @@ enum WebhookService {
         competition: String?,
         speakerCount: Int,
         transcript: [MeetingPayload.TranscriptEntry],
-        training: MeetingPayload.TrainingData?
+        training: MeetingPayload.TrainingData?,
+        calendarEventId: String? = nil,
+        attendees: [MeetingAttendee] = []
     ) -> MeetingPayload {
         let fmt = ISO8601DateFormatter()
         let meddpicc = MeetingPayload.MEDDPICCData(
@@ -170,6 +181,9 @@ enum WebhookService {
             paperProcess: paperProcess, identifiedPain: identifiedPain,
             champion: champion, competition: competition
         )
+        let attendeeEntries = attendees.isEmpty ? nil : attendees.map {
+            MeetingPayload.AttendeeEntry(email: $0.email, name: $0.displayName, domain: $0.domain)
+        }
         return MeetingPayload(
             event: "meeting.saved",
             meeting: .init(
@@ -188,7 +202,9 @@ enum WebhookService {
                 meddpicc: meddpicc.isEmpty ? nil : meddpicc,
                 training: training,
                 speakerCount: speakerCount,
-                transcript: transcript
+                transcript: transcript,
+                calendarEventId: calendarEventId,
+                attendees: attendeeEntries
             )
         )
     }
@@ -220,11 +236,15 @@ enum WebhookService {
         }
         let durationSec = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
         let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec, language: meeting.language))
+        let meetingAttendees = meeting.attendees
+        let attendeeEntries = meetingAttendees.isEmpty ? nil : meetingAttendees.map {
+            MeetingPayload.AttendeeEntry(email: $0.email, name: $0.displayName, domain: $0.domain)
+        }
         return MeetingPayload(
             event: "meeting.updated",
             meeting: .init(
                 id: meeting.id.uuidString,
-                title: meeting.title,
+                title: meeting.displayTitle,
                 date: fmt.string(from: meeting.startTime),
                 endTime: meeting.endTime.map { fmt.string(from: $0) },
                 durationSeconds: duration,
@@ -238,7 +258,9 @@ enum WebhookService {
                 meddpicc: meddpicc.isEmpty ? nil : meddpicc,
                 training: training,
                 speakerCount: speakers.count,
-                transcript: transcript
+                transcript: transcript,
+                calendarEventId: meeting.calendarEventId,
+                attendees: attendeeEntries
             )
         )
     }

@@ -34,9 +34,12 @@ struct MainWindow: View {
     @State private var meetings: [Meeting] = []
     @State private var selectedMeetingID: UUID?
     @State private var sidebarCollapsed = false
+    @State private var historyCollapsed = true
     @State private var didInitialize = false
     @State private var searchText = ""
     @State private var isSearchActive = false
+    @State private var searchFocusRequest = 0
+    @State private var showTraining = false
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
@@ -88,13 +91,17 @@ struct MainWindow: View {
                     isCollapsed: $sidebarCollapsed,
                     isSearchActive: $isSearchActive,
                     searchText: $searchText,
+                    showTraining: $showTraining,
+                    historyCollapsed: $historyCollapsed,
+                    searchFocusRequest: searchFocusRequest,
                     searchSnippets: searchSnippets,
                     searchMatchCounts: searchMatchCounts,
                     onDeleteMeeting: { meeting in
                         deleteMeeting(meeting)
                     }
                 )
-                .frame(width: sidebarCollapsed ? 68 : 260)
+                .frame(width: sidebarCollapsed ? 52 : 220)
+                .animation(.easeInOut(duration: 0.2), value: sidebarCollapsed)
                 
                 // Subtle gradient divider
                 ZStack {
@@ -117,8 +124,9 @@ struct MainWindow: View {
                 if let meeting = selectedMeeting {
                     MeetingDetailView(meeting: meeting)
                         .id(meeting.id)
+                } else if showTraining {
+                    TrainingMainView(meetings: meetings)
                 } else {
-                    // Show current session or ready state
                     MeetingView(meetings: meetings)
                 }
             }
@@ -149,6 +157,12 @@ struct MainWindow: View {
         .onChange(of: meetings.map(\.id)) { _, _ in
             selectPendingSavedMeetingIfNeeded()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
+            guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
+            Task { @MainActor in
+                await appState.handleGoogleOAuthCallback(callbackURL)
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshMeetings()
             if appState.appMode == .managed {
@@ -168,6 +182,7 @@ struct MainWindow: View {
     private func setupNavigationHandlers() {
         keyboardService.onNewSession = { [self] in
             appState.createNewSession()
+            showTraining = false
             selectedMeetingID = nil
         }
 
@@ -180,16 +195,14 @@ struct MainWindow: View {
         }
 
         keyboardService.onToggleSidebarCollapse = { [self] in
-            withAnimation(.easeInOut(duration: 0.16)) {
-                sidebarCollapsed.toggle()
-            }
+            sidebarCollapsed.toggle()
         }
 
         keyboardService.onFocusSearch = { [self] in
-            if sidebarCollapsed {
-                withAnimation(.easeInOut(duration: 0.16)) { sidebarCollapsed = false }
-            }
+            sidebarCollapsed = false
+            historyCollapsed = false
             isSearchActive = true
+            searchFocusRequest += 1
         }
 
         keyboardService.onDismissSearch = { [self] in
@@ -263,6 +276,7 @@ struct MainWindow: View {
     private func selectPendingSavedMeetingIfNeeded() {
         guard let pendingID = appState.pendingOpenSavedMeetingID else { return }
         guard let meeting = meetings.first(where: { $0.id == pendingID }) else { return }
+        showTraining = false
         selectedMeetingID = meeting.id
         appState.pendingOpenSavedMeetingID = nil
     }
@@ -286,10 +300,12 @@ struct TerminalSidebar: View {
     @Binding var isCollapsed: Bool
     @Binding var isSearchActive: Bool
     @Binding var searchText: String
+    @Binding var showTraining: Bool
+    @Binding var historyCollapsed: Bool
+    var searchFocusRequest: Int = 0
     let searchSnippets: [UUID: String]
     let searchMatchCounts: [UUID: Int]
     let onDeleteMeeting: (Meeting) -> Void
-    @State private var historyCollapsed = false
     @State private var collapsedStatusPulse = false
     @FocusState private var searchFieldFocused: Bool
 
@@ -298,97 +314,82 @@ struct TerminalSidebar: View {
     }
     
     var body: some View {
-        if isCollapsed {
-            collapsedSidebar
-        } else {
+        ZStack(alignment: .leading) {
             expandedSidebar
+                .frame(width: 220)
+                .opacity(isCollapsed ? 0 : 1)
+
+            collapsedSidebar
+                .frame(maxWidth: .infinity)
+                .opacity(isCollapsed ? 1 : 0)
         }
+        .clipped()
     }
     
     private var collapsedSidebar: some View {
         VStack(alignment: .center, spacing: 0) {
-            Button {
-                selectedMeetingID = nil
-            } label: {
-                Text("⬢")
-                    .font(.system(size: 18, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Theme.accent)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                        .fill(selectedMeetingID == nil ? Theme.bgTertiary : Color.clear)
-                    )
-            }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .padding(.top, 14)
-            
+            // Logo
+            Text("⬢")
+                .font(.system(size: 18, weight: .bold, design: .monospaced))
+                .foregroundStyle(Theme.accent)
+                .padding(.vertical, 18)
+
             GradientDivider()
-                .padding(.top, 14)
-                .padding(.bottom, 12)
-            
-            Button {
-                selectedMeetingID = nil
-            } label: {
-                VStack(spacing: 5) {
-                    Circle()
-                        .fill(appState.currentMeeting == nil ? Theme.textDim : (appState.isRecording ? Theme.accentRed : Theme.accentBlue))
-                        .frame(width: 8, height: 8)
-                        .shadow(
-                            color: (appState.currentMeeting == nil ? Theme.textDim : (appState.isRecording ? Theme.accentRed : Theme.accentBlue)).opacity(0.5),
-                            radius: appState.isRecording ? 4 : 2
-                        )
-                        .scaleEffect(appState.isRecording && collapsedStatusPulse ? 1.18 : 1.0)
-                        .opacity(appState.isRecording && collapsedStatusPulse ? 0.8 : 1.0)
-                    
-                    Text(appState.currentMeeting == nil ? "idle" : (appState.isRecording ? "rec" : "sess"))
-                        .font(.system(size: 8, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(appState.currentMeeting == nil ? Theme.textDim : Theme.textMuted)
-                        .lineLimit(1)
+
+            VStack(spacing: 4) {
+                // Home
+                collapsedNavButton(
+                    icon: appState.currentMeeting != nil ? "record.circle" : "house.fill",
+                    color: appState.currentMeeting != nil ? (appState.isRecording ? Theme.accentRed : Theme.accentBlue) : Theme.accent,
+                    isSelected: selectedMeetingID == nil && !showTraining
+                ) {
+                    showTraining = false
+                    selectedMeetingID = nil
                 }
-                .frame(width: 44, height: 44)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(selectedMeetingID == nil ? Theme.bgTertiary : Theme.bgSecondary.opacity(0.35))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(selectedMeetingID == nil ? Theme.border : Color.clear, lineWidth: 1)
-                        )
-                )
+
+                // Training
+                collapsedNavButton(
+                    icon: "chart.bar.fill",
+                    color: ColorPalette.Accent.amber,
+                    isSelected: showTraining && selectedMeetingID == nil
+                ) {
+                    showTraining = true
+                    selectedMeetingID = nil
+                }
+
+                // History
+                if !historicalMeetings.isEmpty {
+                    collapsedNavButton(
+                        icon: "clock.fill",
+                        color: Theme.textMuted,
+                        isSelected: selectedMeetingID != nil
+                    ) {
+                        historyCollapsed = false
+                        isCollapsed = false
+                    }
+                }
             }
-            .buttonStyle(.plain)
-            .focusable(false)
-            
+            .padding(.top, 10)
+
             Spacer()
-            
+
             VStack(spacing: 0) {
                 GradientDivider()
-                
-                HStack {
-                    Spacer()
-                    VStack(spacing: 3) {
-                        Text("⌘[")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Theme.textDim.opacity(0.5))
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                isCollapsed = false
-                            }
-                        } label: {
-                            Image(systemName: "sidebar.left")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(Theme.textDim)
-                                .frame(width: 28, height: 28)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .fill(Theme.bgTertiary)
-                                )
-                        }
-                        .buttonStyle(.plain)
-                        .focusable(false)
-                    }
-                    Spacer()
+
+                Button {
+                    isCollapsed = false
+                } label: {
+                    Image(systemName: "sidebar.left")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textDim)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Theme.bgTertiary)
+                        )
                 }
+                .buttonStyle(.plain)
+                .focusable(false)
                 .padding(.vertical, 14)
             }
         }
@@ -432,75 +433,87 @@ struct TerminalSidebar: View {
             // Gradient divider
             GradientDivider()
             
-            // Current session or new session button
-            VStack(alignment: .leading, spacing: 6) {
+            // Navigation items
+            VStack(alignment: .leading, spacing: 4) {
                 if let meeting = appState.currentMeeting {
                     SidebarSessionItem(
-                        title: meeting.title,
+                        title: meeting.displayTitle,
                         isRecording: appState.isRecording,
-                        isSelected: selectedMeetingID == nil
+                        isSelected: selectedMeetingID == nil && !showTraining
                     ) {
+                        showTraining = false
                         selectedMeetingID = nil
                     }
                 } else {
-                    // New session button when no current meeting
-                    SidebarItem(
-                        icon: "+",
-                        label: "new session",
-                        isSelected: selectedMeetingID == nil,
+                    SidebarIconItem(
+                        systemIcon: "house.fill",
+                        label: "home",
+                        isSelected: selectedMeetingID == nil && !showTraining,
                         accentColor: Theme.accent,
                         shortcut: "⌘N"
                     ) {
-                        appState.createNewSession()
+                        showTraining = false
                         selectedMeetingID = nil
                     }
                 }
-            }
-            .padding(.top, 12)
-            .padding(.horizontal, 10)
-            
-            // History section
-            if !historicalMeetings.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    GradientDivider()
-                        .padding(.vertical, 12)
 
-                    HStack {
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.16)) {
-                                historyCollapsed.toggle()
-                            }
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
-                                    .font(.system(size: 8, weight: .semibold))
-                                    .foregroundStyle(Theme.textDim.opacity(0.8))
-                                    .frame(width: 10)
-                                Text("history")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(Theme.textDim)
-                            }
-                            .contentShape(Rectangle())
+                SidebarIconItem(
+                    systemIcon: "chart.bar.fill",
+                    label: "training",
+                    isSelected: showTraining && selectedMeetingID == nil,
+                    accentColor: ColorPalette.Accent.amber
+                ) {
+                    showTraining = true
+                    selectedMeetingID = nil
+                }
+
+                if !historicalMeetings.isEmpty {
+                    SidebarIconItem(
+                        systemIcon: "clock.fill",
+                        label: "history",
+                        isSelected: selectedMeetingID != nil,
+                        accentColor: Theme.textMuted,
+                        trailing: {
+                            AnyView(
+                                HStack(spacing: 4) {
+                                    Text("\(historicalMeetings.count)")
+                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .foregroundStyle(Theme.textDim)
+
+                                    Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
+                                        .font(.system(size: 8, weight: .semibold))
+                                        .foregroundStyle(Theme.textDim.opacity(0.6))
+                                }
+                            )
                         }
-                        .buttonStyle(.plain)
-                        .focusable(false)
+                    ) {
+                        withAnimation(.easeInOut(duration: 0.16)) {
+                            historyCollapsed.toggle()
+                        }
+                    }
+                }
+            }
+            .padding(.top, 10)
+            .padding(.horizontal, 10)
 
+            // History list
+            if !historicalMeetings.isEmpty && !historyCollapsed {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
                         Spacer()
 
-                        if !historyCollapsed {
-                            HStack(spacing: 4) {
-                                // Search hint
-                                Text("/")
-                                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(Theme.textDim.opacity(0.6))
-                                    .padding(.horizontal, 5)
-                                    .padding(.vertical, 2)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 3)
-                                            .fill(Theme.bgTertiary)
-                                    )
+                        HStack(spacing: 4) {
+                            Text("/")
+                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 2)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(Theme.bgTertiary)
+                                )
 
-                                HStack(spacing: 2) {
+                            HStack(spacing: 2) {
                                     Text("↑")
                                         .font(.system(size: 8, weight: .medium, design: .monospaced))
                                     Text("K")
@@ -529,104 +542,102 @@ struct TerminalSidebar: View {
                                 )
                             }
                         }
-                    }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 10)
 
                     // Search field
-                    if !historyCollapsed {
-                        HStack(spacing: 6) {
-                            Text("/")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(searchFieldFocused ? Theme.accent : Theme.textDim)
+                    HStack(spacing: 6) {
+                        Text("/")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(searchFieldFocused ? Theme.accent : Theme.textDim)
 
-                            TextField("search meetings", text: $searchText)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Theme.text)
-                                .textFieldStyle(.plain)
-                                .focused($searchFieldFocused)
+                        TextField("search meetings", text: $searchText)
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(Theme.text)
+                            .textFieldStyle(.plain)
+                            .focused($searchFieldFocused)
 
-                            if !searchText.isEmpty {
-                                Text("\(displayedMeetings.count)")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        if !searchText.isEmpty {
+                            Text("\(displayedMeetings.count)")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+
+                            Button {
+                                searchText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .font(.system(size: 10))
                                     .foregroundStyle(Theme.textDim)
-
-                                Button {
-                                    searchText = ""
-                                } label: {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(Theme.textDim)
-                                }
-                                .buttonStyle(.plain)
-                                .focusable(false)
                             }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Theme.bg)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .stroke(searchFieldFocused ? Theme.accent.opacity(0.5) : Theme.border.opacity(0.5), lineWidth: 1)
-                                )
-                        )
-                        .padding(.horizontal, 10)
-                        .onChange(of: isSearchActive) { _, active in
-                            if active {
-                                searchFieldFocused = true
-                            } else {
-                                searchFieldFocused = false
-                            }
-                        }
-                        .onChange(of: searchFieldFocused) { _, focused in
-                            if focused { isSearchActive = true }
-                        }
-                        .onAppear {
-                            DispatchQueue.main.async {
-                                searchFieldFocused = false
-                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
                         }
                     }
-
-                    if !historyCollapsed {
-                        if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
-                            VStack(spacing: 6) {
-                                Text("no results")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Theme.bg)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(searchFieldFocused ? Theme.accent.opacity(0.5) : Theme.border.opacity(0.5), lineWidth: 1)
+                            )
+                    )
+                    .padding(.horizontal, 10)
+                    .onChange(of: isSearchActive) { _, active in
+                        if active {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                searchFieldFocused = true
                             }
-                            .frame(maxWidth: .infinity)
-                            .padding(.top, 20)
                         } else {
-                            ScrollView(showsIndicators: false) {
-                                LazyVStack(alignment: .leading, spacing: 4) {
-                                    ForEach(displayedMeetings) { meeting in
-                                        SidebarHistoryItem(
-                                            meeting: meeting,
-                                            isSelected: selectedMeetingID == meeting.id,
-                                            searchQuery: isSearchActive ? searchText : nil,
-                                            matchSnippet: searchSnippets[meeting.id],
-                                            matchCount: searchMatchCounts[meeting.id],
-                                            action: {
-                                                selectedMeetingID = meeting.id
-                                            },
-                                            onDelete: {
-                                                onDeleteMeeting(meeting)
-                                            }
-                                        )
-                                    }
-                                }
-                                .padding(.horizontal, 10)
-                            }
-                            .scrollIndicators(.hidden)
+                            searchFieldFocused = false
                         }
+                    }
+                    .onChange(of: searchFocusRequest) { _, _ in
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                            searchFieldFocused = true
+                        }
+                    }
+                    .onChange(of: searchFieldFocused) { _, focused in
+                        if focused { isSearchActive = true }
+                    }
+
+                    if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
+                        VStack(spacing: 6) {
+                            Text("no results")
+                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Theme.textDim)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, 20)
+                    } else {
+                        ScrollView(showsIndicators: false) {
+                            LazyVStack(alignment: .leading, spacing: 4) {
+                                ForEach(displayedMeetings) { meeting in
+                                    SidebarHistoryItem(
+                                        meeting: meeting,
+                                        isSelected: selectedMeetingID == meeting.id,
+                                        searchQuery: isSearchActive ? searchText : nil,
+                                        matchSnippet: searchSnippets[meeting.id],
+                                        matchCount: searchMatchCounts[meeting.id],
+                                        action: {
+                                            showTraining = false
+                                            selectedMeetingID = meeting.id
+                                        },
+                                        onDelete: {
+                                            onDeleteMeeting(meeting)
+                                        }
+                                    )
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                        }
+                        .scrollIndicators(.hidden)
                     }
                 }
             }
-            
+
             Spacer()
-            
+
             // Status bar
             VStack(alignment: .leading, spacing: 0) {
                 GradientDivider()
@@ -663,9 +674,7 @@ struct TerminalSidebar: View {
                     Spacer(minLength: 8)
                     
                     Button {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            isCollapsed = true
-                        }
+                        isCollapsed = true
                     } label: {
                         HStack(spacing: 4) {
                             Text("⌘[")
@@ -689,6 +698,21 @@ struct TerminalSidebar: View {
             }
         }
         .background(Theme.bgSecondary)
+    }
+
+    private func collapsedNavButton(icon: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(isSelected ? color : Theme.textDim)
+                .frame(width: 36, height: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(isSelected ? Theme.bgTertiary : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
     }
 
     private func updateCollapsedStatusPulse() {
@@ -732,35 +756,8 @@ struct SidebarHistoryItem: View {
     @State private var isHovering = false
     @State private var showDeleteConfirm = false
     
-    private var splitTitle: (timestamp: String, suffix: String)? {
-        for separator in [" - ", " — "] {
-            guard let range = meeting.title.range(of: separator) else { continue }
-            return (
-                timestamp: String(meeting.title[..<range.lowerBound]),
-                suffix: String(meeting.title[range.upperBound...])
-            )
-        }
-        return nil
-    }
-    
-    private var displayTitle: String {
-        // Show just the suffix if there is one, otherwise timestamp
-        if let splitTitle {
-            return splitTitle.suffix
-        }
-        return meeting.title
-    }
-    
-    private var timestamp: String {
-        // Extract timestamp portion
-        if let splitTitle {
-            return splitTitle.timestamp
-        }
-        return meeting.title
-    }
-    
     private var titleText: String {
-        displayTitle.isEmpty ? timestamp : displayTitle
+        meeting.displayTitle
     }
 
     private var highlightColor: Color { ColorPalette.Accent.amber }
@@ -868,7 +865,7 @@ struct SidebarHistoryItem: View {
                 onDelete()
             }
         } message: {
-            Text("Are you sure you want to delete \"\(displayTitle.isEmpty ? timestamp : displayTitle)\"? This cannot be undone.")
+            Text("Are you sure you want to delete \"\(titleText)\"? This cannot be undone.")
         }
     }
     
@@ -879,43 +876,42 @@ struct SidebarHistoryItem: View {
     }
 }
 
-struct SidebarItem: View {
-    let icon: String
+struct SidebarIconItem: View {
+    let systemIcon: String
     let label: String
     let isSelected: Bool
     let accentColor: Color
     var shortcut: String? = nil
+    var trailing: (() -> AnyView)? = nil
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                Text(icon)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(accentColor)
-                    .frame(width: 16)
-                
+                Image(systemName: systemIcon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(isSelected ? accentColor : Theme.textDim)
+                    .frame(width: 20)
+
                 Text(label)
                     .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .monospaced))
                     .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
-                
+
                 Spacer()
-                
-                if let shortcut = shortcut {
+
+                if let trailing = trailing {
+                    trailing()
+                } else if let shortcut = shortcut {
                     Text(shortcut)
                         .font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 8)
                     .fill(isSelected ? Theme.bgTertiary : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(isSelected ? Theme.border : Color.clear, lineWidth: 1)
-                    )
             )
             .contentShape(RoundedRectangle(cornerRadius: 8))
         }

@@ -811,6 +811,81 @@ struct IntegrationsSettingsView: View {
                 }
             }
 
+            Section("Google Calendar") {
+                Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                
+                if appState.googleCalendarEnabled {
+                    HStack(spacing: 8) {
+                        Circle()
+                            .fill(appState.isGoogleCalendarConnected ? ColorPalette.Status.connected : ColorPalette.Status.disconnected)
+                            .frame(width: 8, height: 8)
+                        
+                        if appState.isGoogleCalendarConnected {
+                            if let email = appState.googleCalendarEmail {
+                                Text(email)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.primary)
+                            } else {
+                                Text("connected")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } else {
+                            Text("not connected")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        if appState.isGoogleCalendarConnected {
+                            Button("Disconnect") {
+                                Task { await appState.googleDisconnect() }
+                            }
+                        } else {
+                            Button("Connect") {
+                                Task { await appState.googleConnect() }
+                            }
+                        }
+                    }
+                    
+                    Text("Read-only access to calendar events. Miniti never modifies your calendar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    
+                    if appState.isGoogleCalendarConnected {
+                        Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
+                        Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        Toggle("Auto-stop after meeting ends", isOn: $appState.autoStopFromCalendar)
+                        Text("Automatically stop recording when the calendar event ends and no one is speaking.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    if appState.isGoogleCalendarConnected && attioExportEnabled {
+                        Toggle("Auto-sync meetings to Attio", isOn: $appState.autoAttioSync)
+                        Text("Automatically match attendee domains to Attio records and send meeting data after saving.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            Section("Attio CRM") {
+                Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
+                Text(attioExportEnabled
+                     ? "\"Send to Attio\" is available in saved meeting history."
+                     : "\"Send to Attio\" is hidden until you enable it here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Webhooks") {
                 TextField("Webhook URL", text: $appState.webhookURL)
                     .textFieldStyle(.roundedBorder)
@@ -832,18 +907,15 @@ struct IntegrationsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-
-            Section("Attio CRM") {
-                Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
-                Text(attioExportEnabled
-                     ? "\"Send to Attio\" is available in saved meeting history."
-                     : "\"Send to Attio\" is hidden until you enable it here.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
         .padding()
+        .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
+            guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
+            Task { @MainActor in
+                await appState.handleGoogleOAuthCallback(callbackURL)
+            }
+        }
     }
 
     private var resolvedExportPath: String {
@@ -891,7 +963,7 @@ struct IntegrationsSettingsView: View {
 struct AboutSettingsView: View {
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
-    @State private var showDebugLog = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
@@ -954,10 +1026,6 @@ struct AboutSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .sheet(isPresented: $showDebugLog) {
-            DebugLogView()
-                .frame(width: 700, height: 500)
-        }
     }
 
     private func handleVersionTap() {
@@ -969,7 +1037,7 @@ struct AboutSettingsView: View {
         }
         lastVersionTap = now
         if versionTapCount >= 5 {
-            showDebugLog = true
+            openWindow(id: "debug-log")
             versionTapCount = 0
         }
     }

@@ -43,7 +43,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.18.0 changelog:"..."`
+### `fastlane ios beta version:1.19.0 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -55,7 +55,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.18.0`
+### `fastlane ios release version:1.19.0`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -197,14 +197,14 @@ fastlane ios metadata
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.18.0 changelog:"release notes here"
+fastlane ios beta version:1.19.0 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.18.0
+fastlane ios release version:1.19.0
 ```
 
 ### macOS direct distribution

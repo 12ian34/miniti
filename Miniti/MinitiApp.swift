@@ -4,10 +4,47 @@ import AppKit
 
 extension Notification.Name {
     static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
+    static let minitiGoogleOAuthCallback = Notification.Name("minitiGoogleOAuthCallback")
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            let scheme = url.scheme?.lowercased() ?? ""
+            guard scheme == "miniti-google" || scheme == "miniti-attio" else { continue }
+            let notificationName: Notification.Name = scheme == "miniti-google"
+                ? .minitiGoogleOAuthCallback
+                : .minitiAttioOAuthCallback
+            NotificationCenter.default.post(
+                name: notificationName,
+                object: nil,
+                userInfo: ["url": url]
+            )
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            self.closeDuplicateWindows()
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        !flag
+    }
+
+    @MainActor private func closeDuplicateWindows() {
+        let mainWindows = NSApp.windows.filter {
+            $0.isVisible && $0.level == .normal && !($0 is NSPanel) &&
+            $0.styleMask.contains(.fullSizeContentView)
+        }
+        guard mainWindows.count > 1 else { return }
+        for window in mainWindows.dropFirst() {
+            window.close()
+        }
+    }
 }
 
 @main
 struct MinitiApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
     @StateObject private var keyboardService = KeyboardShortcutsService.shared
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
@@ -43,14 +80,8 @@ struct MinitiApp: App {
                 }
             }
             .environmentObject(appState)
-            .onOpenURL { url in
-                NotificationCenter.default.post(
-                    name: .minitiAttioOAuthCallback,
-                    object: nil,
-                    userInfo: ["url": url]
-                )
-            }
         }
+        .handlesExternalEvents(matching: ["*"])
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
@@ -101,12 +132,23 @@ struct MinitiApp: App {
         }
         .modelContainer(sharedModelContainer)
         
+        Window("Debug Log", id: "debug-log") {
+            DebugLogView()
+                .frame(minWidth: 600, minHeight: 400)
+        }
+        .defaultSize(width: 750, height: 500)
+        .windowResizability(.contentMinSize)
+        
         // Menu Bar
         MenuBarExtra(isInserted: $showInMenuBar) {
             MenuBarView()
                 .environmentObject(appState)
         } label: {
-            MenuBarIcon(isRecording: appState.isRecording)
+            MenuBarIcon(
+                isRecording: appState.isRecording,
+                nextEventTitle: appState.nextEvent?.title,
+                nextEventTime: menuBarNextEventTime
+            )
         }
     }
     
@@ -175,6 +217,13 @@ struct MinitiApp: App {
         }
     }
     
+    private var menuBarNextEventTime: String? {
+        guard let event = appState.nextEvent, let start = event.startDate else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: start).lowercased()
+    }
+
     private func generateInsights() {
         Task { @MainActor in
             await appState.generateInsights()
@@ -186,18 +235,19 @@ struct MinitiApp: App {
 
 struct MenuBarIcon: View {
     let isRecording: Bool
+    let nextEventTitle: String?
+    let nextEventTime: String?
     @State private var isPulsing: Bool = false
-    
+
     var body: some View {
         Group {
             if isRecording {
-                // Recording: red pill with pulsing dot and REC text
                 HStack(spacing: 4) {
                     Circle()
                         .fill(.white)
                         .frame(width: 6, height: 6)
                         .opacity(isPulsing ? 1.0 : 0.5)
-                    
+
                     Text("REC")
                         .font(.system(size: 9, weight: .bold, design: .monospaced))
                         .foregroundStyle(.white)
@@ -217,10 +267,21 @@ struct MenuBarIcon: View {
                     isPulsing = false
                 }
             } else {
-                // Idle: hexagon icon
-                Text("⬢")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.primary)
+                HStack(spacing: 5) {
+                    Text("⬢")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundStyle(.primary)
+
+                    if let time = nextEventTime, let title = nextEventTitle {
+                        Text(time)
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Text(title)
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
             }
         }
     }
@@ -257,7 +318,7 @@ struct MenuBarView: View {
             // Current meeting info
             if let meeting = appState.currentMeeting {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(meeting.title)
+                    Text(meeting.displayTitle)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
                     

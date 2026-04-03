@@ -112,7 +112,7 @@ struct MeetingRow_iOS: View {
         VStack(alignment: .leading, spacing: 4) {
             if let query = searchQuery, !query.isEmpty {
                 highlightedText(
-                    meeting.title,
+                    meeting.displayTitle,
                     query: query,
                     baseColor: ColorPalette.Text.primary,
                     highlightColor: highlightColor,
@@ -120,7 +120,7 @@ struct MeetingRow_iOS: View {
                 )
                 .lineLimit(1)
             } else {
-                Text(meeting.title)
+                Text(meeting.displayTitle)
                     .font(.system(size: 14, weight: .medium, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(1)
@@ -206,7 +206,7 @@ struct MeetingDetail_iOS: View {
 
     private func transcriptMarkdown() -> String {
         guard !meeting.segments.isEmpty else { return "(no transcript)" }
-        var md = "# \(meeting.title) — Transcript\n\n"
+        var md = "# \(meeting.displayTitle) — Transcript\n\n"
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
         var currentSpeaker: Int? = nil
         for segment in meeting.segments.sorted(by: { $0.timestamp < $1.timestamp }) {
@@ -220,7 +220,7 @@ struct MeetingDetail_iOS: View {
     }
 
     private func insightsMarkdown() -> String {
-        var md = "# \(meeting.title) — Insights\n\n"
+        var md = "# \(meeting.displayTitle) — Insights\n\n"
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
         if let summary = meeting.summaryText, !summary.isEmpty { md += "## Summary\n\n\(summary)\n\n" }
         if !meeting.discussionFlow.isEmpty {
@@ -273,7 +273,7 @@ struct MeetingDetail_iOS: View {
                 }
             }
         }
-        .navigationTitle(meeting.title)
+        .navigationTitle(meeting.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(true)
         .onDisappear {

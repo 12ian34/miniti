@@ -4,10 +4,12 @@ import SwiftData
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var selectedTab: MobileTab = .record
 
     enum MobileTab: String {
         case record = "Record"
+        case training = "Training"
         case history = "History"
     }
 
@@ -27,6 +29,9 @@ struct MainTabView: View {
                 Tab("Record", systemImage: "waveform", value: .record) {
                     MeetingView_iOS()
                 }
+                Tab("Training", systemImage: "chart.bar.fill", value: .training) {
+                    TrainingMainView(meetings: meetings)
+                }
                 Tab("History", systemImage: "clock", value: .history) {
                     HistoryView_iOS()
                 }
@@ -40,6 +45,12 @@ struct MainTabView: View {
                         Label("Record", systemImage: "waveform")
                     }
                     .tag(MobileTab.record)
+
+                TrainingMainView(meetings: meetings)
+                    .tabItem {
+                        Label("Training", systemImage: "chart.bar.fill")
+                    }
+                    .tag(MobileTab.training)
 
                 HistoryView_iOS()
                     .tabItem {
