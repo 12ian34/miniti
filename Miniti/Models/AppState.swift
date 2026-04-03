@@ -228,8 +228,7 @@ final class AppState: ObservableObject {
     // MARK: - Title Updates
     private var lastTitleUpdateCount = 0
     private let titleUpdateThreshold = 15 // Update title less often (every 15 segments)
-    private var currentTitleSuffix: String = "" // Track the descriptive part of title
-    private var meetingTimestamp: String = "" // Store the ISO timestamp prefix
+    private var currentTitleSuffix: String = ""
     private var lastStandardSummaryContext: String = ""
     private var lastMeddpiccSummaryContext: String = ""
     private let managedIncrementalRecentWindowChars = 10_000
@@ -419,6 +418,38 @@ final class AppState: ObservableObject {
     }
     @AppStorage("webhookURL") var webhookURL: String = ""
     @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
+    @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
+    @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
+    @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false
+    @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false
+    
+    @Published var isGoogleCalendarConnected: Bool = false
+    @Published var googleCalendarEmail: String?
+    @Published var upcomingEvents: [MinitiAPIService.CalendarEvent] = []
+    @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent?
+
+    var todayEvents: [MinitiAPIService.CalendarEvent] {
+        let calendar = Calendar.current
+        return upcomingEvents.filter { event in
+            guard let start = event.startDate else { return false }
+            return calendar.isDateInToday(start)
+        }
+    }
+
+    var nextEvent: MinitiAPIService.CalendarEvent? {
+        let now = Date()
+        return todayEvents.first { event in
+            guard let end = event.endDate else { return false }
+            return end > now
+        }
+    }
+    @Published var pendingAutoStartEvent: MinitiAPIService.CalendarEvent?
+    @Published var autoStartCountdown: Int = 0
+    @Published var calendarEventEndedWhileRecording: Bool = false
+    private var calendarRefreshTimer: Timer?
+    private var autoStartCheckTimer: Timer?
+    private var autoStartCountdownTimer: Timer?
+    private var dismissedAutoStartEventIDs: Set<String> = []
     
     @Published var wasAutoStopped = false
     @Published var selectedSettingsTab: String = "general"
@@ -521,6 +552,13 @@ final class AppState: ObservableObject {
         
         // Check for app updates (all modes)
         Task { await checkForUpdates() }
+        
+        // Check Google Calendar connection and fetch events
+        Task {
+            await refreshGoogleCalendarStatus()
+            startCalendarRefreshTimer()
+            startAutoStartMonitoring()
+        }
         
         #if os(iOS)
         // Clean up orphaned Live Activities (app was killed while recording, state lost)
@@ -772,7 +810,8 @@ final class AppState: ObservableObject {
     
     private func startAutoStopMonitoring() {
         autoStopTimer?.invalidate()
-        guard autoStopMinutes > 0 else { return }
+        let hasCalendarAutoStop = autoStopFromCalendar && selectedCalendarEvent != nil
+        guard autoStopMinutes > 0 || hasCalendarAutoStop else { return }
         autoStopTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkAutoStop()
@@ -786,8 +825,30 @@ final class AppState: ObservableObject {
     }
     
     private func checkAutoStop() {
-        guard isRecording, autoStopMinutes > 0, lastTranscriptReceivedAt > 0 else { return }
-        let gap = CFAbsoluteTimeGetCurrent() - lastTranscriptReceivedAt
+        guard isRecording, lastTranscriptReceivedAt > 0 else { return }
+        
+        let now = CFAbsoluteTimeGetCurrent()
+        let gap = now - lastTranscriptReceivedAt
+        
+        // Calendar-aware auto-stop: after event end time, use 2-min silence threshold
+        if autoStopFromCalendar,
+           let event = selectedCalendarEvent,
+           let endDate = event.endDate,
+           Date() > endDate {
+            if !calendarEventEndedWhileRecording {
+                calendarEventEndedWhileRecording = true
+                DebugLogger.shared.log(.app, "Calendar event ended — using 2-min silence threshold")
+            }
+            if gap >= 120 {
+                DebugLogger.shared.log(.app, "Auto-stop: calendar event ended + 2 min silence")
+                wasAutoStopped = true
+                stopRecording()
+                return
+            }
+        }
+        
+        // Normal silence-based auto-stop
+        guard autoStopMinutes > 0 else { return }
         let threshold = Double(autoStopMinutes) * 60.0
         if gap >= threshold {
             DebugLogger.shared.log(.app, "Auto-stop: no transcript activity for \(autoStopMinutes) min")
@@ -1224,13 +1285,22 @@ final class AppState: ObservableObject {
                         language: meetingLanguage
                     )
                 } else {
+                    let meetingAttendees = currentMeeting?.attendees ?? []
+                    let attendeesPayload: [[String: String]]? = meetingAttendees.isEmpty ? nil : meetingAttendees.compactMap { a in
+                        var entry: [String: String] = ["domain": a.domain]
+                        if let name = a.displayName { entry["name"] = name }
+                        if a.isOrganizer { entry["role"] = "organizer" }
+                        else if a.isSelf { entry["role"] = "self" }
+                        return entry
+                    }
                     response = try await minitiAPIService.generateInsights(
                         deviceId: deviceId, transcript: requestPlan.transcriptForRequest,
                         existingSummary: existingSummary, existingTitle: existingTitle,
                         mode: mode.rawValue, model: model.rawValue,
                         incrementalPayload: requestPlan.incrementalPayload,
                         requestSeq: seq,
-                        language: meetingLanguage
+                        language: meetingLanguage,
+                        attendees: attendeesPayload
                     )
                 }
                 if let responseSeq = response.meta?.requestSeq, responseSeq < lastApplied {
@@ -1513,7 +1583,7 @@ final class AppState: ObservableObject {
             let newSuffix = suggestedTitle.trimmingCharacters(in: .whitespaces)
             if newSuffix != currentTitleSuffix {
                 currentTitleSuffix = newSuffix
-                meeting.title = "\(meetingTimestamp) - \(newSuffix)"
+                meeting.title = newSuffix
                 lastTitleUpdateCount = segmentCount
                 DebugLogger.shared.log(.app, "Live title updated: \(meeting.title)")
                 #if os(iOS)
@@ -1546,12 +1616,12 @@ final class AppState: ObservableObject {
         
         isStartingMeeting = true
         wasAutoStopped = false
+        calendarEventEndedWhileRecording = false
         
         // Save previous meeting if exists and has content
         saveCurrentMeetingIfNeeded()
         
-        meetingTimestamp = generateMeetingTitle()
-        let meeting = Meeting(title: meetingTimestamp)
+        let meeting = Meeting(title: "untitled")
         meeting.language = meetingLanguage
         currentMeeting = meeting
         currentTitleSuffix = ""
@@ -1613,6 +1683,7 @@ final class AppState: ObservableObject {
     /// Go back to home screen (clears current session after saving)
     func goHome() {
         wasAutoStopped = false
+        calendarEventEndedWhileRecording = false
         
         // End Live Activity
         #if os(iOS)
@@ -1661,7 +1732,7 @@ final class AppState: ObservableObject {
             let training = WebhookService.trainingData(from: trainingMetrics)
             let payload = WebhookService.payloadFromLiveState(
                 meetingID: meeting.id,
-                title: meeting.title,
+                title: meeting.displayTitle,
                 startTime: meeting.startTime,
                 endTime: meeting.endTime,
                 durationSeconds: Int(recordingDuration),
@@ -1682,9 +1753,16 @@ final class AppState: ObservableObject {
                 competition: liveCompetition,
                 speakerCount: detectedSpeakers.count,
                 transcript: transcriptEntries,
-                training: training
+                training: training,
+                calendarEventId: meeting.calendarEventId,
+                attendees: meeting.attendees
             )
             WebhookService.send(payload: payload, to: webhookURL)
+        }
+
+        // Auto-sync to Attio if configured
+        if let meeting = currentMeeting, !meeting.attendees.isEmpty {
+            autoSyncToAttio(meeting: meeting)
         }
 
         // Clear session and return to home
@@ -1692,6 +1770,7 @@ final class AppState: ObservableObject {
         
         // Reset insights mode to standard for fresh start
         insightsMode = .standard
+        selectedCalendarEvent = nil
     }
 
     /// Save the current meeting (stopping first if needed) and request the UI open it from history.
@@ -1705,6 +1784,10 @@ final class AppState: ObservableObject {
     
     /// Discard current meeting without saving — deletes from SwiftData and clears session
     func discardCurrentMeeting() {
+        if let eventId = selectedCalendarEvent?.id {
+            dismissedAutoStartEventIDs.insert(eventId)
+        }
+
         #if os(iOS)
         endLiveActivity()
         #endif
@@ -1882,10 +1965,11 @@ final class AppState: ObservableObject {
         // Restore detected speakers
         detectedSpeakers = Set(liveSegments.map(\.speaker))
         
-        // Restore title tracking
-        if let (timestamp, suffix) = Self.parseMeetingTitle(interrupted.title) {
-            meetingTimestamp = timestamp
+        // Restore title tracking (handles both old timestamp-prefixed and new clean titles)
+        if let (_, suffix) = Self.parseMeetingTitle(interrupted.title) {
             currentTitleSuffix = suffix
+        } else {
+            currentTitleSuffix = interrupted.title
         }
         
         // Track segment counts so insight generation doesn't re-trigger unnecessarily
@@ -2468,7 +2552,6 @@ final class AppState: ObservableObject {
         liveCompetition = nil
         
         // Reset title tracking
-        meetingTimestamp = ""
         currentTitleSuffix = ""
         lastTitleUpdateCount = 0
         
@@ -2576,7 +2659,7 @@ final class AppState: ObservableObject {
                !suggestedTitle.isEmpty,
                let meeting = currentMeeting {
                 currentTitleSuffix = suggestedTitle
-                meeting.title = "\(meetingTimestamp) - \(suggestedTitle)"
+                meeting.title = suggestedTitle
                 DebugLogger.shared.log(.app, "Final title updated: \(meeting.title)")
                 #if os(iOS)
                 updateLiveActivityState(isRecording: isRecording)
@@ -2809,7 +2892,8 @@ final class AppState: ObservableObject {
         incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil,
         requestSeq: Int? = nil,
         maxAttempts: Int = 2,
-        language: String = "en"
+        language: String = "en",
+        attendees: [[String: String]]? = nil
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
             throw MinitiAPIService.ServiceError.invalidResponse
@@ -2831,7 +2915,8 @@ final class AppState: ObservableObject {
                     model: model,
                     incrementalPayload: incrementalPayload,
                     requestSeq: requestSeq,
-                    language: language
+                    language: language,
+                    attendees: attendees
                 )
             } catch {
                 let shouldRetry = attempt < maxAttempts && Self.isTransientInsightsError(error)
@@ -3162,6 +3247,254 @@ final class AppState: ObservableObject {
         return false
     }
     
+    // MARK: - Google Calendar
+    
+    func refreshGoogleCalendarStatus() async {
+        guard googleCalendarEnabled, let minitiAPIService else {
+            isGoogleCalendarConnected = false
+            googleCalendarEmail = nil
+            return
+        }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let status = try await minitiAPIService.googleStatus(deviceId: deviceId)
+            isGoogleCalendarConnected = status.connected
+            googleCalendarEmail = status.email
+            if status.connected {
+                await fetchUpcomingEvents()
+            } else {
+                upcomingEvents = []
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "Google Calendar status check failed: \(error.localizedDescription)")
+        }
+    }
+    
+    func fetchUpcomingEvents() async {
+        guard googleCalendarEnabled, isGoogleCalendarConnected, let minitiAPIService else {
+            DebugLogger.shared.log(.app, "Google Calendar events fetch skipped: enabled=\(googleCalendarEnabled) connected=\(isGoogleCalendarConnected) service=\(minitiAPIService != nil)")
+            return
+        }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let events = try await minitiAPIService.googleEvents(deviceId: deviceId)
+            DebugLogger.shared.log(.app, "Google Calendar fetched \(events.count) events")
+            upcomingEvents = events
+        } catch {
+            DebugLogger.shared.log(.app, "Google Calendar events fetch failed: \(error)")
+            if case MinitiAPIService.ServiceError.serverError(let msg) = error, msg.contains("google_not_connected") {
+                isGoogleCalendarConnected = false
+                googleCalendarEmail = nil
+                upcomingEvents = []
+            }
+        }
+    }
+    
+    func startCalendarRefreshTimer() {
+        calendarRefreshTimer?.invalidate()
+        guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        calendarRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                await self.fetchUpcomingEvents()
+            }
+        }
+    }
+    
+    func stopCalendarRefreshTimer() {
+        calendarRefreshTimer?.invalidate()
+        calendarRefreshTimer = nil
+    }
+    
+    func startMeetingFromEvent(_ event: MinitiAPIService.CalendarEvent) {
+        cancelAutoStartCountdown()
+        selectedCalendarEvent = event
+        
+        startNewMeeting()
+        
+        guard let meeting = currentMeeting else { return }
+        meeting.title = event.title
+        meeting.calendarEventId = event.id
+        meeting.attendees = event.attendees.map { $0.toMeetingAttendee() }
+        currentTitleSuffix = event.title
+    }
+    
+    // MARK: - Auto-start from Calendar
+    
+    func startAutoStartMonitoring() {
+        autoStartCheckTimer?.invalidate()
+        guard autoStartFromCalendar, googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        autoStartCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkAutoStart()
+            }
+        }
+    }
+    
+    func stopAutoStartMonitoring() {
+        autoStartCheckTimer?.invalidate()
+        autoStartCheckTimer = nil
+        cancelAutoStartCountdown()
+    }
+    
+    private func checkAutoStart() {
+        guard autoStartFromCalendar, googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        guard currentMeeting == nil, !isStartingMeeting else { return }
+        guard pendingAutoStartEvent == nil else { return }
+        
+        let now = Date()
+        for event in upcomingEvents {
+            guard let start = event.startDate else { continue }
+            guard !dismissedAutoStartEventIDs.contains(event.id) else { continue }
+            
+            let secsUntilStart = start.timeIntervalSince(now)
+            if secsUntilStart > 0 && secsUntilStart <= 16 {
+                let countdownSecs = max(1, Int(ceil(secsUntilStart)))
+                beginAutoStartCountdown(for: event, seconds: countdownSecs)
+                return
+            }
+            if secsUntilStart <= 0 && secsUntilStart >= -120 {
+                DebugLogger.shared.log(.app, "Auto-start: event \(event.title) already started, launching immediately")
+                dismissedAutoStartEventIDs.insert(event.id)
+                startMeetingFromEvent(event)
+                return
+            }
+        }
+    }
+    
+    private func beginAutoStartCountdown(for event: MinitiAPIService.CalendarEvent, seconds: Int) {
+        pendingAutoStartEvent = event
+        autoStartCountdown = seconds
+        DebugLogger.shared.log(.app, "Auto-start countdown: \(event.title) in \(seconds)s")
+        
+        autoStartCountdownTimer?.invalidate()
+        autoStartCountdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.pendingAutoStartEvent != nil else { return }
+                self.autoStartCountdown -= 1
+                if self.autoStartCountdown <= 0 {
+                    self.executeAutoStart()
+                }
+            }
+        }
+    }
+    
+    private func executeAutoStart() {
+        guard let event = pendingAutoStartEvent else { return }
+        DebugLogger.shared.log(.app, "Auto-start: starting meeting from calendar event \(event.title)")
+        dismissedAutoStartEventIDs.insert(event.id)
+        autoStartCountdownTimer?.invalidate()
+        autoStartCountdownTimer = nil
+        pendingAutoStartEvent = nil
+        autoStartCountdown = 0
+        startMeetingFromEvent(event)
+    }
+    
+    func dismissAutoStart() {
+        guard let event = pendingAutoStartEvent else { return }
+        dismissedAutoStartEventIDs.insert(event.id)
+        DebugLogger.shared.log(.app, "Auto-start dismissed: \(event.title)")
+        cancelAutoStartCountdown()
+    }
+    
+    func cancelAutoStartCountdown() {
+        autoStartCountdownTimer?.invalidate()
+        autoStartCountdownTimer = nil
+        pendingAutoStartEvent = nil
+        autoStartCountdown = 0
+    }
+    
+    func googleConnect() async {
+        guard let minitiAPIService else { return }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            let response = try await minitiAPIService.googleConnectStart(deviceId: deviceId)
+            guard let url = URL(string: response.authURL) else { return }
+            #if os(macOS)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(response.authURL, forType: .string)
+            NSWorkspace.shared.open(url)
+            #endif
+        } catch {
+            DebugLogger.shared.log(.app, "Google Calendar connect start failed: \(error.localizedDescription)")
+        }
+    }
+    
+    func googleDisconnect() async {
+        guard let minitiAPIService else { return }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            _ = try await minitiAPIService.googleDisconnect(deviceId: deviceId)
+        } catch {
+            DebugLogger.shared.log(.app, "Google Calendar disconnect failed: \(error.localizedDescription)")
+        }
+        isGoogleCalendarConnected = false
+        googleCalendarEmail = nil
+        upcomingEvents = []
+        stopCalendarRefreshTimer()
+    }
+    
+    func autoSyncToAttio(meeting: Meeting) {
+        guard autoAttioSync, googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        let attendees = meeting.attendees
+        let externalDomains = Set(attendees.filter { !$0.isSelf }.map(\.domain).filter { !$0.isEmpty })
+        guard !externalDomains.isEmpty else { return }
+        guard let service = minitiAPIService else { return }
+        
+        let payload = AttioMeetingPayload.from(meeting: meeting)
+        let domainsCopy = externalDomains
+        
+        Task.detached {
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            do {
+                var allMatches: [MinitiAPIService.AttioSearchRecord] = []
+                for domain in domainsCopy {
+                    let results = try await service.attioSearch(
+                        deviceId: deviceId, query: domain, objects: ["companies", "people"]
+                    )
+                    allMatches.append(contentsOf: results)
+                }
+                
+                guard allMatches.count == 1 else {
+                    DebugLogger.shared.log(.app, "Auto Attio sync: \(allMatches.count) matches for domains \(domainsCopy) — skipping (need exactly 1)")
+                    return
+                }
+                
+                let match = allMatches[0]
+                _ = try await service.attioSendMeeting(
+                    deviceId: deviceId,
+                    meetingPayload: payload,
+                    targetObject: match.objectSlug,
+                    targetRecordID: match.idPayload.recordID,
+                    createTasksFromActionItems: false
+                )
+                DebugLogger.shared.log(.app, "Auto Attio sync: sent to \(match.objectSlug) \(match.recordText)")
+            } catch {
+                DebugLogger.shared.log(.app, "Auto Attio sync failed: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    func handleGoogleOAuthCallback(_ url: URL) async {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        let status = components.queryItems?.first(where: { $0.name == "status" })?.value
+        let message = components.queryItems?.first(where: { $0.name == "message" })?.value
+        
+        if status == "success" {
+            DebugLogger.shared.log(.app, "Google Calendar OAuth success")
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            await refreshGoogleCalendarStatus()
+            if !isGoogleCalendarConnected {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                await refreshGoogleCalendarStatus()
+            }
+            startCalendarRefreshTimer()
+            startAutoStartMonitoring()
+        } else {
+            DebugLogger.shared.log(.app, "Google Calendar OAuth failed: \(message ?? "unknown")")
+        }
+    }
+    
     // MARK: - Managed Mode Usage
     
     /// Fetch latest usage info from backend. Call on launch, mode switch, and after sessions.
@@ -3289,14 +3622,6 @@ final class AppState: ObservableObject {
         return false
     }
     
-    private func generateMeetingTitle() -> String {
-        // Compact format: 20260203-232804
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyyMMdd-HHmmss"
-        formatter.timeZone = .current
-        return formatter.string(from: Date())
-    }
-    
     var formattedDuration: String {
         let minutes = Int(recordingDuration) / 60
         let seconds = Int(recordingDuration) % 60
@@ -3321,7 +3646,7 @@ final class AppState: ObservableObject {
     private func updateLiveActivityState(isRecording: Bool) {
         guard let activity = resolveCurrentActivity() else { return }
         let state = RecordingActivityAttributes.ContentState(
-            meetingTitle: currentMeeting?.title ?? "",
+            meetingTitle: currentMeeting?.displayTitle ?? "",
             isRecording: isRecording,
             currentTranscript: currentTranscriptLine,
             elapsedSeconds: isRecording ? nil : Int(recordingDuration)
@@ -3354,7 +3679,7 @@ final class AppState: ObservableObject {
     
     private func endLiveActivity() {
         let finalState = RecordingActivityAttributes.ContentState(
-            meetingTitle: currentMeeting?.title ?? "",
+            meetingTitle: currentMeeting?.displayTitle ?? "",
             isRecording: false,
             currentTranscript: "",
             elapsedSeconds: Int(recordingDuration)
@@ -3419,7 +3744,7 @@ final class AppState: ObservableObject {
         }
         
         let state = RecordingActivityAttributes.ContentState(
-            meetingTitle: meeting.title,
+            meetingTitle: meeting.displayTitle,
             isRecording: isRecording,
             currentTranscript: transcript,
             elapsedSeconds: elapsedSeconds
@@ -3569,7 +3894,7 @@ final class AppState: ObservableObject {
 
     func fullMeetingAsMarkdown() -> String {
         let startDate = currentMeeting?.startTime ?? Date()
-        var md = "# \(currentMeeting?.title ?? "Meeting")\n\n"
+        var md = "# \(currentMeeting?.displayTitle ?? "Meeting")\n\n"
         md += "_\(startDate.formatted(date: .long, time: .shortened))_\n\n"
         md += "---\n\n"
         if !liveNotes.isEmpty {

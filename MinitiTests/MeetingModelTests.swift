@@ -475,4 +475,48 @@ final class MeetingModelTests: XCTestCase {
         XCTAssertEqual(results.count, 1)
         XCTAssertGreaterThanOrEqual(results[0].matchCount, 3)
     }
+
+    // MARK: - displayTitle
+
+    @MainActor
+    func testDisplayTitleOldFormatWithSuffix() {
+        let meeting = Meeting(title: "20260403-143022 - Weekly Standup")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "Weekly Standup")
+    }
+
+    @MainActor
+    func testDisplayTitleOldFormatEmDash() {
+        let meeting = Meeting(title: "20260403-143022 — Weekly Standup")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "Weekly Standup")
+    }
+
+    @MainActor
+    func testDisplayTitleOldFormatTimestampOnly() {
+        let meeting = Meeting(title: "20260403-143022")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "untitled")
+    }
+
+    @MainActor
+    func testDisplayTitleNewFormatCleanTitle() {
+        let meeting = Meeting(title: "Weekly Standup")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "Weekly Standup")
+    }
+
+    @MainActor
+    func testDisplayTitleNewFormatUntitled() {
+        let meeting = Meeting(title: "untitled")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "untitled")
+    }
+
+    @MainActor
+    func testDisplayTitleNonTimestampPrefix() {
+        let meeting = Meeting(title: "2026-04-03 - Weekly Standup")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.displayTitle, "2026-04-03 - Weekly Standup")
+    }
 }

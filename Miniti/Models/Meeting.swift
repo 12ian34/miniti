@@ -18,6 +18,9 @@ final class Meeting {
     var managedSessionId: String?
     var language: String = "en"
     
+    var calendarEventId: String?
+    var attendeesJSON: String?
+    
     // MEDDPICC fields
     var meddpiccMetrics: String?
     var meddpiccEconomicBuyer: String?
@@ -83,6 +86,22 @@ final class Meeting {
         return !trimmed.isEmpty && trimmed != "null" && trimmed != "n/a" && trimmed != "none"
     }
     
+    private static let timestampPattern = /^\d{8}-\d{6}$/
+
+    var displayTitle: String {
+        for separator in [" - ", " — "] {
+            if let range = title.range(of: separator) {
+                let prefix = String(title[..<range.lowerBound])
+                guard prefix.wholeMatch(of: Self.timestampPattern) != nil else { continue }
+                let suffix = String(title[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+                if !suffix.isEmpty { return suffix }
+                return "untitled"
+            }
+        }
+        if title.wholeMatch(of: Self.timestampPattern) != nil { return "untitled" }
+        return title
+    }
+
     var duration: TimeInterval? {
         guard let endTime else { return nil }
         return endTime.timeIntervalSince(startTime)
@@ -230,8 +249,18 @@ final class Meeting {
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    var attendees: [MeetingAttendee] {
+        get {
+            guard let json = attendeesJSON, let data = json.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([MeetingAttendee].self, from: data)) ?? []
+        }
+        set {
+            attendeesJSON = (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8)) ?? nil
+        }
+    }
+    
     func fullMeetingAsMarkdown() -> String {
-        var md = "# \(title)\n\n"
+        var md = "# \(displayTitle)\n\n"
         md += "_\(startTime.formatted(date: .long, time: .shortened))_\n\n"
         md += "---\n\n"
         if !notes.isEmpty {
@@ -248,6 +277,16 @@ final class Meeting {
         md += transcriptAsMarkdown()
         return md
     }
+}
+
+struct MeetingAttendee: Codable, Identifiable, Sendable {
+    var id: String { email }
+    let email: String
+    let displayName: String?
+    let domain: String
+    let responseStatus: String
+    let isOrganizer: Bool
+    let isSelf: Bool
 }
 
 @Model

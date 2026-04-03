@@ -1234,74 +1234,314 @@ extension TerminalSectionInfo {
     )
 }
 
-// MARK: - Training Stats Overview (Home Screen)
+// MARK: - Training Main View (Sidebar)
 
-struct TrainingStatsOverview: View {
+struct TrainingMainView: View {
     let meetings: [Meeting]
+    @State private var sortColumn: TrainingSortColumn = .date
+    @State private var sortAscending = false
+    @State private var cachedRows: [TrainingRow] = []
+    @State private var isComputing = false
+    @State private var lastComputedHash = ""
 
-    private struct MeetingStats {
-        let pace: Double
-        let fillersPerMinute: Double
-        let clarity: Double
-        let questionsAsked: Int
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("training")
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text("speech analytics from your recent meetings")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+
+                if !cachedRows.isEmpty {
+                    TrainingStatsOverview(rows: cachedRows)
+                }
+
+                if isComputing && cachedRows.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("computing metrics...")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.dim)
+                    }
+                    .padding(.vertical, 20)
+                } else if !displayedRows.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        trainingTableHeader
+
+                        ForEach(displayedRows) { row in
+                            trainingTableRow(row)
+                        }
+                    }
+                } else if !isComputing {
+                    Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see training stats.")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                        .padding(.vertical, 20)
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ColorPalette.Background.primary)
+        .task(id: meetingsHash) {
+            await computeRows()
+        }
+        .onAppear {
+            if cachedRows.isEmpty {
+                Task { await computeRows() }
+            }
+        }
     }
 
-    private var recentStats: [MeetingStats] {
-        let sorted = meetings
-            .filter { $0.endTime != nil && !$0.segments.isEmpty }
-            .sorted { $0.startTime > $1.startTime }
+    private var meetingsHash: String {
+        let parts = meetings.compactMap { m -> String? in
+            guard m.endTime != nil else { return nil }
+            return "\(m.id):\(m.segments.count)"
+        }
+        return parts.joined(separator: ",")
+    }
 
-        var result: [MeetingStats] = []
-        for meeting in sorted {
-            guard result.count < 5 else { break }
-            guard let duration = meeting.duration, duration > 30 else { continue }
+    private func computeRows() async {
+        let currentHash = meetingsHash
+        guard currentHash != lastComputedHash else { return }
+        isComputing = true
 
-            let segments = meeting.segments
+        let validMeetings = meetings.filter { $0.endTime != nil && !$0.segments.isEmpty }
+
+        let snapshots: [(UUID, Date, String, [TrainingMetrics.Segment], Double, String)] = validMeetings.compactMap { meeting in
+            guard let duration = meeting.duration, duration > 5 else { return nil }
+            let segs = meeting.segments
                 .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .sorted { $0.timestamp < $1.timestamp }
                 .map { TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: true, timestamp: $0.timestamp) }
-
-            guard !segments.isEmpty else { continue }
-
-            let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
-            let speaker = metrics.speakers.first(where: { $0.isLocalMic })
-                ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount })
-            guard let speaker else { continue }
-
-            result.append(MeetingStats(
-                pace: speaker.wordsPerMinute,
-                fillersPerMinute: speaker.fillersPerMinute,
-                clarity: speaker.avgWordsPerTurn,
-                questionsAsked: speaker.questionsAsked
-            ))
+            guard !segs.isEmpty else { return nil }
+            let titleForRow = meeting.displayTitle
+            return (meeting.id, meeting.startTime, titleForRow, segs, duration, meeting.language)
         }
-        return result
+
+        let rows: [TrainingRow] = await Task.detached(priority: .userInitiated) {
+            snapshots.compactMap { (id, startTime, title, segments, duration, language) in
+                let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language)
+                guard let speaker = metrics.speakers.first(where: { $0.isLocalMic })
+                        ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount }) else { return nil }
+                return TrainingRow(
+                    id: id,
+                    date: startTime,
+                    dateString: TrainingRow.formatDate(startTime),
+                    title: title,
+                    fillers: speaker.fillersPerMinute,
+                    pace: speaker.wordsPerMinute,
+                    clarity: speaker.avgWordsPerTurn,
+                    questions: speaker.questionsAsked
+                )
+            }
+        }.value
+
+        cachedRows = rows
+        lastComputedHash = currentHash
+        isComputing = false
     }
 
+    private var displayedRows: [TrainingRow] {
+        cachedRows.sorted { a, b in
+            let result: Bool
+            switch sortColumn {
+            case .date: result = a.date < b.date
+            case .name: result = a.title.localizedCaseInsensitiveCompare(b.title) == .orderedAscending
+            case .fillers: result = a.fillers < b.fillers
+            case .pace: result = a.pace < b.pace
+            case .clarity: result = a.clarity < b.clarity
+            case .questions: result = a.questions < b.questions
+            }
+            return sortAscending ? result : !result
+        }
+    }
+
+    private var trainingTableHeader: some View {
+        HStack(spacing: 0) {
+            sortableHeader("date", unit: nil, column: .date, width: 80, alignment: .leading)
+            sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            sortableHeader("fillers", unit: "f/min", column: .fillers, width: 70)
+            sortableHeader("pace", unit: "w/min", column: .pace, width: 70)
+            sortableHeader("clarity", unit: "w/turn", column: .clarity, width: 70)
+            sortableHeader("questions", unit: "qs", column: .questions, width: 70)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(ColorPalette.Background.secondary)
+    }
+
+    private func sortableHeader(_ label: String, unit: String?, column: TrainingSortColumn, width: CGFloat? = nil, alignment: Alignment = .trailing) -> some View {
+        Button {
+            if sortColumn == column {
+                sortAscending.toggle()
+            } else {
+                sortColumn = column
+                sortAscending = column == .name || column == .date ? false : true
+            }
+        } label: {
+            HStack(spacing: 3) {
+                if alignment == .leading {
+                    headerContent(label, unit: unit, column: column, alignment: .leading)
+                    Spacer()
+                } else {
+                    Spacer()
+                    headerContent(label, unit: unit, column: column, alignment: .trailing)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .frame(width: width, alignment: alignment)
+    }
+
+    private func headerContent(_ label: String, unit: String?, column: TrainingSortColumn, alignment: HorizontalAlignment) -> some View {
+        VStack(alignment: alignment, spacing: 1) {
+            HStack(spacing: 2) {
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(sortColumn == column ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
+                if sortColumn == column {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            }
+            if let unit {
+                Text(unit)
+                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.dim.opacity(0.6))
+            }
+        }
+    }
+
+    @State private var popoverRowID: UUID?
+
+    private func trainingTableRow(_ row: TrainingRow) -> some View {
+        HStack(spacing: 0) {
+            Text(row.dateString)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .frame(width: 80, alignment: .leading)
+
+            #if os(iOS)
+            Text(row.title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onTapGesture {
+                    popoverRowID = popoverRowID == row.id ? nil : row.id
+                }
+                .popover(isPresented: Binding(
+                    get: { popoverRowID == row.id },
+                    set: { if !$0 { popoverRowID = nil } }
+                )) {
+                    Text(row.title)
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .padding(12)
+                        .presentationCompactAdaptation(.popover)
+                }
+            #else
+            Text(row.title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            #endif
+
+            Text(String(format: "%.1f", row.fillers))
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "F59E0B"))
+                .frame(width: 70, alignment: .trailing)
+
+            Text("\(Int(row.pace))")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "58A6FF"))
+                .frame(width: 70, alignment: .trailing)
+
+            Text("\(Int(row.clarity))")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "A371F7"))
+                .frame(width: 70, alignment: .trailing)
+
+            Text("\(row.questions)")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "3FB950"))
+                .frame(width: 70, alignment: .trailing)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+    }
+
+}
+
+private enum TrainingSortColumn {
+    case date, name, fillers, pace, clarity, questions
+}
+
+struct TrainingRow: Identifiable {
+    let id: UUID
+    let date: Date
+    let dateString: String
+    let title: String
+    let fillers: Double
+    let pace: Double
+    let clarity: Double
+    let questions: Int
+
+    static func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: date)
+    }
+}
+
+// MARK: - Training Stats Overview (Home Screen)
+
+struct TrainingStatsOverview: View {
+    let rows: [TrainingRow]
+
     var body: some View {
-        let stats = recentStats
-        if !stats.isEmpty {
-            let last = stats[0]
-            let avgPace = stats.map(\.pace).reduce(0, +) / Double(stats.count)
-            let avgFillers = stats.map(\.fillersPerMinute).reduce(0, +) / Double(stats.count)
-            let avgClarity = stats.map(\.clarity).reduce(0, +) / Double(stats.count)
-            let avgQuestions = Double(stats.map(\.questionsAsked).reduce(0, +)) / Double(stats.count)
+        let sorted = rows.sorted { $0.date > $1.date }
+        let recent = Array(sorted.prefix(5))
+        if !recent.isEmpty {
+            let last = recent[0]
+            let avgPace = recent.map(\.pace).reduce(0, +) / Double(recent.count)
+            let avgFillers = recent.map(\.fillers).reduce(0, +) / Double(recent.count)
+            let avgClarity = recent.map(\.clarity).reduce(0, +) / Double(recent.count)
+            let avgQuestions = Double(recent.map(\.questions).reduce(0, +)) / Double(recent.count)
+
+            let allPace = sorted.isEmpty ? 0 : sorted.map(\.pace).reduce(0, +) / Double(sorted.count)
+            let allFillers = sorted.isEmpty ? 0 : sorted.map(\.fillers).reduce(0, +) / Double(sorted.count)
+            let allClarity = sorted.isEmpty ? 0 : sorted.map(\.clarity).reduce(0, +) / Double(sorted.count)
+            let allQuestions = sorted.isEmpty ? 0 : Double(sorted.map(\.questions).reduce(0, +)) / Double(sorted.count)
 
             VStack(spacing: 2) {
-                TrainingStatHeader(meetingCount: stats.count)
+                TrainingStatHeader(meetingCount: recent.count, allCount: sorted.count)
 
                 VStack(spacing: 0) {
                     TrainingStatRow(
                         label: "fillers",
+                        allValue: String(format: "%.1f", allFillers),
                         avgValue: String(format: "%.1f", avgFillers),
-                        lastValue: String(format: "%.1f", last.fillersPerMinute),
+                        lastValue: String(format: "%.1f", last.fillers),
                         unit: "f/min",
-                        trend: trend(last: last.fillersPerMinute, avg: avgFillers),
+                        trend: trend(last: last.fillers, avg: avgFillers),
                         color: Color(hex: "F59E0B"),
                         info: .fillers
                     )
                     TrainingStatRow(
                         label: "pace",
+                        allValue: "\(Int(allPace))",
                         avgValue: "\(Int(avgPace))",
                         lastValue: "\(Int(last.pace))",
                         unit: "w/min",
@@ -1311,6 +1551,7 @@ struct TrainingStatsOverview: View {
                     )
                     TrainingStatRow(
                         label: "clarity",
+                        allValue: "\(Int(allClarity))",
                         avgValue: "\(Int(avgClarity))",
                         lastValue: "\(Int(last.clarity))",
                         unit: "w/turn",
@@ -1320,10 +1561,11 @@ struct TrainingStatsOverview: View {
                     )
                     TrainingStatRow(
                         label: "questions",
-                        avgValue: "\(avgQuestions)",
-                        lastValue: "\(last.questionsAsked)",
+                        allValue: String(format: "%.0f", allQuestions),
+                        avgValue: String(format: "%.0f", avgQuestions),
+                        lastValue: "\(last.questions)",
                         unit: "qs",
-                        trend: trend(last: Double(last.questionsAsked), avg: Double(avgQuestions)),
+                        trend: trend(last: Double(last.questions), avg: avgQuestions),
                         color: Color(hex: "3FB950"),
                         info: .questionsAsked
                     )
@@ -1337,7 +1579,7 @@ struct TrainingStatsOverview: View {
                         )
                 )
             }
-            .frame(maxWidth: 360)
+            .frame(maxWidth: 480)
         }
     }
 
@@ -1356,6 +1598,7 @@ struct TrainingStatsOverview: View {
 
 private struct TrainingStatHeader: View {
     let meetingCount: Int
+    let allCount: Int
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1363,6 +1606,13 @@ private struct TrainingStatHeader: View {
                 .frame(width: 100, height: 1)
 
             Spacer(minLength: 4)
+
+            Text("all \(allCount)")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "52525B"))
+                .frame(width: TrainingStatRow.colWidth)
+
+            Spacer(minLength: 8)
 
             Text("last \(meetingCount)")
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
@@ -1385,6 +1635,7 @@ private struct TrainingStatHeader: View {
 
 private struct TrainingStatRow: View {
     let label: String
+    let allValue: String
     let avgValue: String
     let lastValue: String
     let unit: String
@@ -1419,6 +1670,19 @@ private struct TrainingStatRow: View {
             .frame(width: 100, alignment: .leading)
 
             Spacer(minLength: 4)
+
+            HStack(spacing: 4) {
+                Text(allValue)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "71717A"))
+                    .frame(width: Self.numWidth, alignment: .trailing)
+                Text(unit)
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .frame(width: Self.unitWidth, alignment: .leading)
+            }
+
+            Spacer(minLength: 8)
 
             HStack(spacing: 4) {
                 Text(avgValue)

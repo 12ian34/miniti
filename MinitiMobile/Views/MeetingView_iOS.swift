@@ -37,7 +37,7 @@ struct MeetingView_iOS: View {
         case .transcript:
             return appState.transcriptAsMarkdown()
         case .insights:
-            var md = "# \(appState.currentMeeting?.title ?? "Meeting") — Insights\n\n"
+            var md = "# \(appState.currentMeeting?.displayTitle ?? "Meeting") — Insights\n\n"
             if !appState.liveSummary.isEmpty { md += "## Summary\n\n\(appState.liveSummary)\n\n" }
             if !appState.liveDiscussionFlow.isEmpty {
                 md += "## Discussion Flow\n\n"
@@ -624,8 +624,6 @@ struct ReadyStateView_iOS: View {
                         .foregroundStyle(ColorPalette.Accent.blue)
                     }
                 } else {
-                    MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
-                    
                     Button {
                         if !appState.isStartingMeeting {
                             appState.startNewMeeting()
@@ -659,15 +657,12 @@ struct ReadyStateView_iOS: View {
                         )
                     }
                     .disabled(!appState.canStartRecording || appState.isStartingMeeting)
+
+                    MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
                 }
             }
 
-            // Single spacer below main block — training pins near bottom
             Spacer()
-
-            // Training stats near bottom
-            TrainingStatsOverview(meetings: meetings)
-                .padding(.bottom, 24)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
