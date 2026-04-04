@@ -25,7 +25,7 @@ Targets: **Miniti + MinitiMobile**.
 Current shared files:
 - `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`
 - `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `DebugLogger.swift`, `Secrets.swift`
-- `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `TermsAcceptanceView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`
+- `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `TermsAcceptanceView.swift`, `ForceUpdateView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`
 - `Assets.xcassets`
 
 ### macOS-only files

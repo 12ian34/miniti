@@ -120,6 +120,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - live speaker identification
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- questions mode — AI-generated incisive questions to ask during or after a meeting
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - google calendar integration — upcoming meetings, auto-start/stop, attendee context, auto Attio sync
 - meeting history browser
@@ -141,6 +142,7 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Multiple Insight Modes**:
   - **Standard**: General meeting insights (summary, actions, topics, discussion flow)
   - **MEDDPICC**: Sales qualification framework for discovery calls
+  - **Questions**: AI-generated questions to ask — references specific things said in the conversation
 
 ### Notes
 - **Live Notes**: Take notes during meetings in a resizable panel below transcript
@@ -172,11 +174,11 @@ Your BYOK keys stay saved when switching modes — you can switch back later.
 - **Session Management**: Stop a recording to review, then resume, save, or discard
 - **Auto-stop Recording**: Automatically stops recording when no speech is detected for a configurable duration (off, 3, 5, 10, or 15 minutes)
 - **Stopped Session Shortcuts**: Save (`⌘S`) or discard (`⌘⌫`) directly from the stopped session view
-- **Historical Insights Tabs**: Saved meetings on macOS include standard / MEDDPICC / training views with `⌘1` / `⌘2` / `⌘3`
+- **Historical Insights Tabs**: Saved meetings on macOS include standard / MEDDPICC / training / questions views with `⌘1` / `⌘2` / `⌘3` / `⌘4`
 
 ## Keyboard Shortcuts
 
-macOS shortcuts only. Some shortcuts are context-dependent (for example, save/discard require an active session; `⌘1` / `⌘2` / `⌘3` apply in insights views).
+macOS shortcuts only. Some shortcuts are context-dependent (for example, save/discard require an active session; `⌘1` / `⌘2` / `⌘3` / `⌘4` apply in insights views).
 
 | Shortcut | Action |
 |----------|--------|
@@ -190,6 +192,7 @@ macOS shortcuts only. Some shortcuts are context-dependent (for example, save/di
 | `⌘1` | Standard Mode |
 | `⌘2` | MEDDPICC Mode |
 | `⌘3` | Training Mode |
+| `⌘4` | Questions Mode |
 | `⌘⇧I` | Generate Insights |
 | `⌘,` | Settings |
 | `⌘/` | Show All Shortcuts |
@@ -225,6 +228,7 @@ Best for general meetings. Extracts:
 - Summary of discussion
 - Discussion flow (chronological topics)
 - Action items
+- Key decisions
 - Key topics/themes
 
 ### MEDDPICC Mode
@@ -240,6 +244,20 @@ Best for sales discovery calls. Extracts qualification criteria:
 | I | Identify Pain | Problems they're trying to solve |
 | C | Champion | Internal advocate for your solution |
 | C | Competition | Other solutions they're considering |
+
+### Questions Mode
+Generates smart, context-specific questions to ask during or after a meeting. Each question references something specific from the conversation and explains why it matters.
+
+| Type | What it does |
+|------|--------------|
+| Deeper | Follow a thread that was mentioned but not explored |
+| Challenge | Surface a tension or contradiction between two things said |
+| Reframe | Question the premise, not the conclusion |
+| Clarify | Pin down something vague or ambiguous |
+| Explore | Open territory the conversation hasn't touched but should |
+| Follow-up | Turn understanding into action |
+
+Questions update live during recording, can be generated for saved meetings in history, and are included in webhook payloads and markdown exports.
 
 ### Training Mode
 Analyzes your speech patterns in real-time to help you become a better communicator. All metrics are computed locally from the transcript — no LLM calls, no API keys needed.
@@ -332,8 +350,8 @@ It does **not** send:
 ### Before you start
 
 1. Open **Settings** (`⌘,`)
-2. Go to **General**
-3. Turn on **Enable "Send to Attio"** in the **Integrations** section
+2. Go to **Integrations**
+3. Turn on **Enable "Send to Attio"**
 
 ### How to send a meeting to Attio
 
@@ -386,9 +404,9 @@ Connect your Google Calendar to see upcoming meetings and streamline recording.
 - Use the sidebar to browse saved meetings
 - Open a meeting to view:
   - Transcript
-  - Insights (Standard / MEDDPICC / Training)
+  - Insights (Standard / MEDDPICC / Training / Questions)
   - Notes
-- Use `⌘1`, `⌘2`, `⌘3` to switch insight modes
+- Use `⌘1`, `⌘2`, `⌘3`, `⌘4` to switch insight modes
 - Click **update** (or **generate**) to refresh saved-meeting insights
 - Edit notes directly in the saved meeting view
 - Rename meeting titles in history
@@ -397,10 +415,10 @@ Connect your Google Calendar to see upcoming meetings and streamline recording.
 ### iOS
 
 - Open the **History** tab to browse saved meetings
-- Tap a meeting to open transcript, insights, training stats, and notes
+- Tap a meeting to open transcript, insights, training stats, questions, and notes
 - Swipe to delete meetings from the list
 - Edit title and notes from the meeting detail view
-- Generate/update saved-meeting insights (including MEDDPICC)
+- Generate/update saved-meeting insights (including MEDDPICC and questions)
 
 ### Tips
 
@@ -437,7 +455,7 @@ Connect your Google Calendar to see upcoming meetings and streamline recording.
 
 ### Attio issues
 
-- **"Send to Attio" is missing**: Enable it in **Settings → General → Integrations**
+- **"Send to Attio" is missing**: Enable it in **Settings → Integrations**
 - **Can't search**: Connect your Attio account first, then enter at least 2 characters
 - **Attio backend endpoints are not deployed yet**: Your backend deployment does not include Attio routes yet
 - **0 tasks created**: The meeting may not contain usable action items, or Attio may accept the note but not create tasks from the parsed items
@@ -450,6 +468,7 @@ Connect your Google Calendar to see upcoming meetings and streamline recording.
 - live transcription in 11 languages with deepgram nova-3
 - live AI-generated summaries and action items
 - live MEDDPICC analysis
+- questions mode — AI-generated incisive questions to ask during or after a meeting
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - meeting history browser
 - Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
@@ -466,21 +485,22 @@ Connect your Google Calendar to see upcoming meetings and streamline recording.
 ### AI Insights
 - **Live Insights**: Summaries, action items, topics, and discussion flow — same engine as macOS
 - **MEDDPICC Mode**: Full sales qualification analysis on mobile
+- **Questions Mode**: AI-generated questions to ask — same engine as macOS
 
 ### Integrations
 - **Outbound Webhooks**: POST meeting data as JSON to Zapier, Make, n8n, or any endpoint when a meeting is saved or insights update
 
 ### Meeting History
 - **Browse Past Meetings**: Full-text searchable list with swipe-to-delete
-- **Meeting Detail**: Drill into transcript, insights (including MEDDPICC), training stats, and notes for any meeting
+- **Meeting Detail**: Drill into transcript, insights (including MEDDPICC and questions), training stats, and notes for any meeting
 - **Editable Titles**: Rename saved meetings from the history detail view
-- **Generate/Update Insights**: Generate or refresh saved-meeting insights, including MEDDPICC
+- **Generate/Update Insights**: Generate or refresh saved-meeting insights, including MEDDPICC and questions
 - **Editable Notes**: Add or edit notes on saved meetings
 - **Persisted with SwiftData**: Shared data model with macOS
 
 ### Notes
 - **Live Notes**: Take notes during meetings
-- **Copy to Clipboard**: Export transcript, insights, or full meeting as markdown
+- **Share**: Export transcript, insights, or full meeting as markdown via native share sheet
 
 ## Debug Log
 
@@ -511,7 +531,7 @@ These links are also available in the app under **Settings → About**.
 
 ## Contact
 
-For support, questions, or feedback: **miniti@ianahuja.com**
+For support, questions, or feedback: **ian@miniti.app**
 
 ---
 

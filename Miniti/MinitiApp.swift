@@ -67,7 +67,9 @@ struct MinitiApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if !appState.hasAcceptedTerms {
+                if appState.requiresForceUpdate {
+                    ForceUpdateView()
+                } else if !appState.hasAcceptedTerms {
                     TermsAcceptanceView()
                 } else if appState.hasCompletedOnboarding {
                     MainWindow()
@@ -115,7 +117,7 @@ struct MinitiApp: App {
                     toggleRecording()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(!appState.hasAcceptedTerms && !appState.isRecording)
+                .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
                 
                 Button("Generate Insights") {
                     generateInsights()
@@ -205,7 +207,7 @@ struct MinitiApp: App {
     }
     
     private func toggleRecording(appState: AppState) {
-        guard appState.hasAcceptedTerms || appState.isRecording else { return }
+        guard !appState.requiresForceUpdate, appState.hasAcceptedTerms || appState.isRecording else { return }
 
         if appState.isRecording {
             appState.stopRecording()
@@ -356,7 +358,7 @@ struct MenuBarView: View {
                 )
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(!appState.hasAcceptedTerms && !appState.isRecording)
+            .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
             
             if appState.currentMeeting != nil && !appState.liveSegments.isEmpty {
                 Button {

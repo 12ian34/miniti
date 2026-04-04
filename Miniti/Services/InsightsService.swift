@@ -12,12 +12,14 @@ enum InsightsMode: String, CaseIterable, Codable {
     case standard = "standard"
     case meddpicc = "meddpicc"
     case training = "training"
+    case questions = "questions"
     
     var displayName: String {
         switch self {
         case .standard: return "standard"
         case .meddpicc: return "MEDDPICC"
         case .training: return "training"
+        case .questions: return "questions"
         }
     }
     
@@ -26,8 +28,16 @@ enum InsightsMode: String, CaseIterable, Codable {
         case .standard: return "General meeting insights"
         case .meddpicc: return "Sales qualification framework"
         case .training: return "Speech pattern analysis"
+        case .questions: return "Suggested questions to ask"
         }
     }
+}
+
+struct SuggestedQuestion: Codable, Identifiable, Equatable {
+    var id: String { question }
+    let question: String
+    let type: String
+    let context: String
 }
 
 // MARK: - Training Metrics (locally computed, no LLM)
@@ -274,7 +284,7 @@ final class InsightsService: Sendable {
         let summary: String
         let actionItems: [String]
         let topics: [String]
-        let discussionFlow: [String] // Chronological discussion points
+        let discussionFlow: [String]
         let suggestedTitle: String?
         // MEDDPICC fields (optional, only populated in meddpicc mode)
         let metrics: String?
@@ -285,6 +295,8 @@ final class InsightsService: Sendable {
         let identifiedPain: String?
         let champion: String?
         let competition: String?
+        // Questions (optional, only populated in questions mode)
+        let questions: [SuggestedQuestion]
     }
     
     /// Generate real-time insights during a meeting (faster, more concise)
@@ -399,6 +411,43 @@ final class InsightsService: Sendable {
             Latest transcript:
             \(transcript)
             """
+            
+        case .questions:
+            systemPrompt = "You generate incisive questions that reveal what a conversation is missing. You find gaps, unstated assumptions, dropped threads, and tensions between statements. Your questions reference specific things said in the transcript — never generic. Each question should be something a brilliant, curious person would actually say out loud."
+            maxCompletionTokens = 10000
+            prompt = """
+            \(languageInstruction)Analyze this conversation and generate questions the listener should ask. Focus on what's NOT been said, what's been assumed, and what's been glossed over.
+
+            Hard rules:
+            - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+            - Generate 5-8 questions.
+            - Each question MUST reference something specific from the transcript. No generic questions like "what are your priorities" or "tell me more".
+            - Use at least 3 different question types across the set.
+            - Questions must sound natural spoken aloud in a meeting — not academic or stiff.
+            - "context" explains WHY this question matters — what it would reveal or uncover.
+
+            Question types:
+            - "deeper": follow a thread that was mentioned but not explored ("You mentioned X — what specifically about that...")
+            - "challenge": surface a tension or contradiction between two things said
+            - "reframe": question the premise, not the conclusion — step outside the conversation's frame
+            - "clarify": pin down something vague or ambiguous ("When you say 'soon', do you mean...")
+            - "explore": open territory the conversation hasn't touched but should, given context
+            - "follow_up": the natural next move that turns understanding into action
+
+            Respond in JSON:
+            {
+                "questions": [
+                    {
+                        "question": "The actual question to ask",
+                        "type": "deeper|challenge|reframe|clarify|explore|follow_up",
+                        "context": "One line: why this question matters, what it reveals"
+                    }
+                ]
+            }
+
+            Latest transcript:
+            \(transcript)
+            """
         }
         
         let requestBody = OpenAIRequest(
@@ -470,7 +519,8 @@ final class InsightsService: Sendable {
             paperProcess: insightsResponse.paperProcess,
             identifiedPain: insightsResponse.identifiedPain,
             champion: insightsResponse.champion,
-            competition: insightsResponse.competition
+            competition: insightsResponse.competition,
+            questions: insightsResponse.questions
         )
     }
     
@@ -641,6 +691,8 @@ struct LiveInsightsResponse: Codable {
     let identifiedPain: String?
     let champion: String?
     let competition: String?
+    // Questions
+    let questions: [SuggestedQuestion]
     
     enum CodingKeys: String, CodingKey {
         case summary
@@ -656,6 +708,7 @@ struct LiveInsightsResponse: Codable {
         case identifiedPain = "identified_pain"
         case champion
         case competition
+        case questions
     }
     
     init(from decoder: Decoder) throws {
@@ -673,6 +726,7 @@ struct LiveInsightsResponse: Codable {
         identifiedPain = try container.decodeIfPresent(String.self, forKey: .identifiedPain)
         champion = try container.decodeIfPresent(String.self, forKey: .champion)
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
+        questions = try container.decodeIfPresent([SuggestedQuestion].self, forKey: .questions) ?? []
     }
 }
 

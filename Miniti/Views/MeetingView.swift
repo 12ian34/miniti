@@ -1448,6 +1448,15 @@ struct LiveInsightsPanel: View {
                     } else {
                         TrainingEmptyState()
                     }
+                } else if appState.insightsMode == .questions {
+                    if !appState.liveQuestions.isEmpty {
+                        QuestionsContent(questions: appState.liveQuestions)
+                            .padding(.horizontal, 16)
+                    } else if appState.isRecording && !appState.hasReceivedQuestionsInsights {
+                        QuestionsEmptyState(variant: .waiting)
+                    } else if appState.liveQuestions.isEmpty {
+                        QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
+                    }
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isGeneratingInsights {
                         HStack(spacing: 8) {
@@ -1586,24 +1595,27 @@ struct LiveMEDDPICCSections: View {
 
 private struct LiveInsightsEmptyState: View {
     @EnvironmentObject var appState: AppState
-    
+
+    private var mode: InsightsMode { appState.insightsMode }
+
     var body: some View {
-        VStack(spacing: 12) {
-            Text("◇")
+        VStack(spacing: 10) {
+            Text(icon)
                 .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                 .foregroundStyle(Color(hex: "1C1C1F"))
-            
-            if appState.isRecording {
-                Text("listening...")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "484F58"))
-                Text("insights after 5 sentences")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Color(hex: "1C1C1F"))
-            } else if appState.appMode == .byok && appState.openaiApiKey.isEmpty {
-                Text("openai_key_missing")
+
+            if appState.appMode == .byok && appState.openaiApiKey.isEmpty {
+                Text("openai key missing")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "D29922"))
+            } else if appState.isRecording {
+                Text(waitingTitle)
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                Text(waitingSubtitle)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .multilineTextAlignment(.center)
             } else {
                 Text("start recording")
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -1612,6 +1624,33 @@ private struct LiveInsightsEmptyState: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 40)
+    }
+
+    private var icon: String {
+        switch mode {
+        case .standard: return "◇"
+        case .meddpicc: return "◇"
+        case .training: return "◇"
+        case .questions: return "?"
+        }
+    }
+
+    private var waitingTitle: String {
+        switch mode {
+        case .standard: return "listening..."
+        case .meddpicc: return "listening..."
+        case .training: return "waiting for speech..."
+        case .questions: return "listening..."
+        }
+    }
+
+    private var waitingSubtitle: String {
+        switch mode {
+        case .standard: return "summaries and actions appear\nafter a few sentences"
+        case .meddpicc: return "MEDDPICC analysis appears\nonce there's enough context"
+        case .training: return "speech metrics update\nas you speak"
+        case .questions: return "questions appear once there's\nenough to find gaps"
+        }
     }
 }
 

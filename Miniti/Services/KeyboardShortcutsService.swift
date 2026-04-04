@@ -16,6 +16,7 @@ final class KeyboardShortcutsService: ObservableObject {
     var onStandardMode: (() -> Void)?
     var onMeddpiccMode: (() -> Void)?
     var onTrainingMode: (() -> Void)?
+    var onQuestionsMode: (() -> Void)?
     var onToggleHelp: (() -> Void)?
     var onToggleSidebarCollapse: (() -> Void)?
     var onToggleInsightsCollapse: (() -> Void)?
@@ -120,6 +121,12 @@ final class KeyboardShortcutsService: ObservableObject {
         // ⌘3 - Training mode
         if modifiers == .command && event.keyCode == kVK_ANSI_3 {
             onTrainingMode?()
+            return nil
+        }
+        
+        // ⌘4 - Questions mode
+        if modifiers == .command && event.keyCode == kVK_ANSI_4 {
+            onQuestionsMode?()
             return nil
         }
         
@@ -276,6 +283,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "⌘1", description: "Standard mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘2", description: "MEDDPICC mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘3", description: "Training mode", category: "Insights"),
+    KeyboardShortcut(keys: "⌘4", description: "Questions mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
     
     // App

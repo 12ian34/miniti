@@ -31,6 +31,9 @@ final class Meeting {
     var meddpiccChampion: String?
     var meddpiccCompetition: String?
     
+    // Suggested questions (JSON-encoded [SuggestedQuestion])
+    var suggestedQuestionsJSON: String?
+    
     init(
         id: UUID = UUID(),
         title: String = "new",
@@ -73,6 +76,20 @@ final class Meeting {
         self.meddpiccCompetition = meddpiccCompetition
     }
     
+    var suggestedQuestions: [SuggestedQuestion] {
+        get {
+            guard let json = suggestedQuestionsJSON, let data = json.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([SuggestedQuestion].self, from: data)) ?? []
+        }
+        set {
+            suggestedQuestionsJSON = newValue.isEmpty ? nil : (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8))
+        }
+    }
+    
+    var hasQuestions: Bool {
+        !suggestedQuestions.isEmpty
+    }
+    
     var hasMEDDPICC: Bool {
         hasValidValue(meddpiccMetrics) || hasValidValue(meddpiccEconomicBuyer) || 
         hasValidValue(meddpiccDecisionCriteria) || hasValidValue(meddpiccDecisionProcess) ||
@@ -86,7 +103,7 @@ final class Meeting {
         return !trimmed.isEmpty && trimmed != "null" && trimmed != "n/a" && trimmed != "none"
     }
     
-    private static let timestampPattern = /^\d{8}-\d{6}$/
+    private static nonisolated(unsafe) let timestampPattern = /^\d{8}-\d{6}$/
 
     var displayTitle: String {
         for separator in [" - ", " — "] {
@@ -185,6 +202,15 @@ final class Meeting {
             md += "### Topics\n\n"
             for topic in topics {
                 md += "- \(topic)\n"
+            }
+            md += "\n"
+        }
+        
+        // Suggested questions if available
+        if hasQuestions {
+            md += "### Suggested Questions\n\n"
+            for q in suggestedQuestions {
+                md += "- **\(q.question)**\n  _\(q.context)_\n"
             }
             md += "\n"
         }

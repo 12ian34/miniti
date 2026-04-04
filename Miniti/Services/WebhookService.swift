@@ -21,13 +21,14 @@ enum WebhookService {
             let notes: String
             let meddpicc: MEDDPICCData?
             let training: TrainingData?
+            let questions: [QuestionEntry]?
             let speakerCount: Int
             let transcript: [TranscriptEntry]
             let calendarEventId: String?
             let attendees: [AttendeeEntry]?
 
             enum CodingKeys: String, CodingKey {
-                case id, title, date, summary, notes, topics, meddpicc, training, transcript, language, attendees
+                case id, title, date, summary, notes, topics, meddpicc, training, questions, transcript, language, attendees
                 case endTime = "end_time"
                 case durationSeconds = "duration_seconds"
                 case actionItems = "action_items"
@@ -52,6 +53,12 @@ enum WebhookService {
             enum CodingKeys: String, CodingKey {
                 case speaker, text, timestamp
             }
+        }
+
+        struct QuestionEntry: Encodable {
+            let question: String
+            let type: String
+            let context: String
         }
 
         struct MEDDPICCData: Encodable {
@@ -171,6 +178,7 @@ enum WebhookService {
         speakerCount: Int,
         transcript: [MeetingPayload.TranscriptEntry],
         training: MeetingPayload.TrainingData?,
+        questions: [SuggestedQuestion] = [],
         calendarEventId: String? = nil,
         attendees: [MeetingAttendee] = []
     ) -> MeetingPayload {
@@ -201,6 +209,9 @@ enum WebhookService {
                 notes: notes,
                 meddpicc: meddpicc.isEmpty ? nil : meddpicc,
                 training: training,
+                questions: questions.isEmpty ? nil : questions.map {
+                    MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
+                },
                 speakerCount: speakerCount,
                 transcript: transcript,
                 calendarEventId: calendarEventId,
@@ -257,6 +268,9 @@ enum WebhookService {
                 notes: meeting.notes,
                 meddpicc: meddpicc.isEmpty ? nil : meddpicc,
                 training: training,
+                questions: meeting.suggestedQuestions.isEmpty ? nil : meeting.suggestedQuestions.map {
+                    MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
+                },
                 speakerCount: speakers.count,
                 transcript: transcript,
                 calendarEventId: meeting.calendarEventId,
