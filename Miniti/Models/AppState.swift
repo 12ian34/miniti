@@ -134,6 +134,7 @@ final class AppState: ObservableObject {
         let meddpiccIdentifiedPain: String?
         let meddpiccChampion: String?
         let meddpiccCompetition: String?
+        let suggestedQuestions: [SuggestedQuestion]
     }
     
     // MARK: - Recording State
@@ -213,17 +214,26 @@ final class AppState: ObservableObject {
     @Published var liveIdentifiedPain: String? = nil
     @Published var liveChampion: String? = nil
     @Published var liveCompetition: String? = nil
+    // Questions
+    @Published var liveQuestions: [SuggestedQuestion] = []
     
     private var lastInsightSegmentCount = 0
     private let firstInsightThreshold = 3 // First insight after 3 sentences
     private let insightUpdateThreshold = 8 // Subsequent updates every 8 sentences
     
     // MARK: - MEDDPICC Tracking
-    private var lastMEDDPICCSegmentCount = 0 // Track when we last analyzed with MEDDPICC
+    private var lastMEDDPICCSegmentCount = 0
     private var lastMEDDPICCRequestAt: Date? = nil
     private let firstMEDDPICCInsightThreshold = 6
     private let meddpiccInsightUpdateThreshold = 12
     private let meddpiccMinUpdateInterval: TimeInterval = 60
+    
+    // MARK: - Questions Tracking
+    private var lastQuestionsSegmentCount = 0
+    private var lastQuestionsRequestAt: Date? = nil
+    private let firstQuestionsInsightThreshold = 6
+    private let questionsInsightUpdateThreshold = 12
+    private let questionsMinUpdateInterval: TimeInterval = 60
     
     // MARK: - Title Updates
     private var lastTitleUpdateCount = 0
@@ -240,13 +250,17 @@ final class AppState: ObservableObject {
     private var lastAppliedMeddpiccSeq = -1
     private var standardSuccessCount = 0
     private var meddpiccSuccessCount = 0
+    private var questionsSuccessCount = 0
     private var standardCadenceAnchor: Date?
     private var meddpiccCadenceAnchor: Date?
+    private var questionsCadenceAnchor: Date?
     private var standardLastFiredSegmentCount = 0
     private var meddpiccLastFiredSegmentCount = 0
+    private var questionsLastFiredSegmentCount = 0
     private var insightsCadenceTask: Task<Void, Never>?
     private let insightsCadenceInterval: TimeInterval = 30
     private let meddpiccCadenceStagger: TimeInterval = 15
+    private let questionsCadenceStagger: TimeInterval = 22
     
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
@@ -285,6 +299,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Update Check
     @Published var availableUpdate: MinitiAPIService.VersionInfo?
+    @Published var requiresForceUpdate = false
     
     // MARK: - Managed Mode State
     @Published var usageInfo: MinitiAPIService.UsageInfo?
@@ -323,6 +338,7 @@ final class AppState: ObservableObject {
     var hasReceivedStandardInsights: Bool { standardSuccessCount > 0 }
     /// True after first non-degraded MEDDPICC insights response (for warmup placeholder).
     var hasReceivedMeddpiccInsights: Bool { meddpiccSuccessCount > 0 }
+    var hasReceivedQuestionsInsights: Bool { questionsSuccessCount > 0 }
 
     /// Whether managed subscription state is still being resolved.
     var shouldShowManagedSubscriptionPlaceholder: Bool {
@@ -1033,7 +1049,8 @@ final class AppState: ObservableObject {
         }.count
         let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
         let meddpiccWarmup = meddpiccSuccessCount < 2 && finalCount >= 6
-        let shouldTrigger = (standardWarmup || meddpiccWarmup) && finalCount > lastInsightSegmentCount
+        let questionsWarmup = questionsSuccessCount < 2 && finalCount >= 6
+        let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup) && finalCount > lastInsightSegmentCount
         if shouldTrigger {
             lastInsightSegmentCount = finalCount
             Task { await updateLiveInsights() }
@@ -1041,6 +1058,7 @@ final class AppState: ObservableObject {
     }
     
     private var isGeneratingMeddpiccInsights = false
+    private var isGeneratingQuestionsInsights = false
     
     private func startInsightsCadenceTask() {
         insightsCadenceTask?.cancel()
@@ -1078,6 +1096,24 @@ final class AppState: ObservableObject {
                         )
                     }
                 }
+                if questionsSuccessCount >= 2 {
+                    let anchor = questionsCadenceAnchor ?? standardCadenceAnchor?.addingTimeInterval(questionsCadenceStagger) ?? recordingStartDate ?? now
+                    let interval: TimeInterval = questionsCadenceAnchor == nil ? questionsCadenceStagger : insightsCadenceInterval
+                    if now.timeIntervalSince(anchor) >= interval,
+                       finalCount > questionsLastFiredSegmentCount {
+                        let finalSegments = liveSegments
+                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                            .sorted { $0.timestamp < $1.timestamp }
+                        let transcript = transcriptText(from: finalSegments)
+                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
+                        await updateQuestionsInBackground(
+                            transcript: transcript,
+                            finalSegments: finalSegments,
+                            segmentCount: finalCount,
+                            meetingID: meetingID
+                        )
+                    }
+                }
             }
         }
     }
@@ -1085,6 +1121,7 @@ final class AppState: ObservableObject {
     private func resetCadenceAnchors() {
         standardCadenceAnchor = Date()
         meddpiccCadenceAnchor = Date()
+        questionsCadenceAnchor = Date()
     }
 
     private func updateLiveInsights(standardOnly: Bool = false) async {
@@ -1176,6 +1213,28 @@ final class AppState: ObservableObject {
                 )
             }
         }
+        
+        let shouldRunQuestions: Bool = {
+            guard !isGeneratingQuestionsInsights else { return false }
+            let meetsSegmentThreshold = segmentCount >= lastQuestionsSegmentCount + (
+                lastQuestionsSegmentCount == 0 ? firstQuestionsInsightThreshold : questionsInsightUpdateThreshold
+            )
+            let meetsTimeThreshold = lastQuestionsRequestAt.map {
+                Date().timeIntervalSince($0) >= questionsMinUpdateInterval
+            } ?? true
+            return meetsSegmentThreshold && meetsTimeThreshold
+        }()
+        
+        if shouldRunQuestions {
+            Task {
+                await self.updateQuestionsInBackground(
+                    transcript: transcript,
+                    finalSegments: finalSegments,
+                    segmentCount: segmentCount,
+                    meetingID: meetingIDAtRequest
+                )
+            }
+        }
     }
     
     private func updateMeddpiccInBackground(
@@ -1234,6 +1293,43 @@ final class AppState: ObservableObject {
         }
     }
     
+    private func updateQuestionsInBackground(
+        transcript: String,
+        finalSegments: [LiveSegment],
+        segmentCount: Int,
+        meetingID: UUID
+    ) async {
+        guard !isGeneratingQuestionsInsights else { return }
+        guard currentMeeting?.id == meetingID else { return }
+        isGeneratingQuestionsInsights = true
+        defer { isGeneratingQuestionsInsights = false }
+        
+        if let questionsResult = await fetchLiveInsights(
+            mode: .questions,
+            transcript: transcript,
+            finalSegments: finalSegments,
+            existingSummary: nil,
+            existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix
+        ) {
+            guard currentMeeting?.id == meetingID else {
+                DebugLogger.shared.log(.app, "Dropping stale questions insights response (meeting changed)")
+                return
+            }
+            let isDegraded = questionsResult.meta?.degraded ?? false
+            if !isDegraded {
+                questionsCadenceAnchor = Date()
+                questionsLastFiredSegmentCount = segmentCount
+                lastQuestionsRequestAt = Date()
+                applyInsights(questionsResult.insights, segmentCount: segmentCount, mode: .questions)
+                lastQuestionsSegmentCount = segmentCount
+                questionsSuccessCount += 1
+                DebugLogger.shared.log(.app, "Live questions applied: count=\(liveQuestions.count), segmentCount=\(segmentCount)")
+            } else {
+                DebugLogger.shared.log(.app, "Questions insights degraded — not advancing cursor")
+            }
+        }
+    }
+    
     private func fetchLiveInsights(
         mode: InsightsMode,
         transcript: String,
@@ -1265,7 +1361,7 @@ final class AppState: ObservableObject {
                     meddpiccRequestSeq += 1
                     seq = meddpiccRequestSeq
                     lastApplied = lastAppliedMeddpiccSeq
-                case .training:
+                case .training, .questions:
                     seq = 0
                     lastApplied = -1
                 }
@@ -1362,7 +1458,7 @@ final class AppState: ObservableObject {
             switch mode {
             case .standard: return min(managedStandardAckedSegmentCount, finalSegments.count)
             case .meddpicc: return min(managedMeddpiccAckedSegmentCount, finalSegments.count)
-            case .training: return 0
+            case .training, .questions: return 0
             }
         }()
         let deltaSegments = Array(finalSegments.dropFirst(ackedSegmentCount))
@@ -1387,7 +1483,7 @@ final class AppState: ObservableObject {
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .contains { !$0.isEmpty && $0.lowercased() != "null" }
                 return !lastMeddpiccSummaryContext.isEmpty || hasMeddpiccFields
-            case .training:
+            case .training, .questions:
                 return false
             }
         }()
@@ -1452,7 +1548,7 @@ final class AppState: ObservableObject {
                 suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
                 meddpicc: meddpicc
             )
-        case .training:
+        case .training, .questions:
             return ManagedInsightsRequestPlan(
                 transcriptForRequest: fullTranscript,
                 incrementalPayload: nil,
@@ -1528,7 +1624,7 @@ final class AppState: ObservableObject {
             managedStandardAckedSegmentCount = max(managedStandardAckedSegmentCount, segmentCount)
         case .meddpicc:
             managedMeddpiccAckedSegmentCount = max(managedMeddpiccAckedSegmentCount, segmentCount)
-        case .training:
+        case .training, .questions:
             return
         }
 
@@ -1568,6 +1664,8 @@ final class AppState: ObservableObject {
             if let v = insights.identifiedPain, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveIdentifiedPain = v }
             if let v = insights.champion, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveChampion = v }
             if let v = insights.competition, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveCompetition = v }
+        } else if mode == .questions {
+            if !insights.questions.isEmpty { liveQuestions = insights.questions }
         } else {
             if !insights.summary.isEmpty { liveSummary = insights.summary }
             if !insights.actionItems.isEmpty { liveActionItems = insights.actionItems }
@@ -1654,13 +1752,15 @@ final class AppState: ObservableObject {
         liveIdentifiedPain = nil
         liveChampion = nil
         liveCompetition = nil
+        liveQuestions = []
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
+        lastQuestionsSegmentCount = 0
+        lastQuestionsRequestAt = nil
         resetManagedIncrementalTracking()
         
         if appMode == .managed {
-            // Managed mode: request temp key first, then start recording
             Task { await startManagedRecording() }
         } else {
             startRecording()
@@ -1754,6 +1854,7 @@ final class AppState: ObservableObject {
                 speakerCount: detectedSpeakers.count,
                 transcript: transcriptEntries,
                 training: training,
+                questions: liveQuestions,
                 calendarEventId: meeting.calendarEventId,
                 attendees: meeting.attendees
             )
@@ -1885,6 +1986,30 @@ final class AppState: ObservableObject {
             enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
         }
         
+        // Generate questions
+        do {
+            let questionsInsights: InsightsService.LiveInsights
+            if appMode == .managed, minitiAPIService != nil {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await generateManagedInsightsWithRetry(
+                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    existingSummary: nil, existingTitle: nil,
+                    mode: InsightsMode.questions.rawValue, model: model.rawValue,
+                    language: meeting.language
+                )
+                questionsInsights = response.toLiveInsights()
+            } else {
+                questionsInsights = try await insightsService!.generateLiveInsights(
+                    transcript: meeting.fullTranscript, existingSummary: nil,
+                    existingTitle: nil, mode: .questions,
+                    model: model, apiKey: openaiApiKey, language: meeting.language
+                )
+            }
+            meeting.suggestedQuestions = questionsInsights.questions
+        } catch {
+            DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
+        }
+        
         try? modelContext?.save()
 
         // Re-export markdown with updated insights
@@ -1951,6 +2076,7 @@ final class AppState: ObservableObject {
         liveIdentifiedPain = interrupted.meddpiccIdentifiedPain
         liveChampion = interrupted.meddpiccChampion
         liveCompetition = interrupted.meddpiccCompetition
+        liveQuestions = interrupted.suggestedQuestions
         
         if interrupted.hasMEDDPICC {
             insightsMode = .meddpicc
@@ -2067,7 +2193,8 @@ final class AppState: ObservableObject {
             meddpiccPaperProcess: livePaperProcess,
             meddpiccIdentifiedPain: liveIdentifiedPain,
             meddpiccChampion: liveChampion,
-            meddpiccCompetition: liveCompetition
+            meddpiccCompetition: liveCompetition,
+            suggestedQuestions: liveQuestions
         )
     }
 
@@ -2134,6 +2261,7 @@ final class AppState: ObservableObject {
         payload.meeting.meddpiccIdentifiedPain = payload.meddpiccIdentifiedPain
         payload.meeting.meddpiccChampion = payload.meddpiccChampion
         payload.meeting.meddpiccCompetition = payload.meddpiccCompetition
+        payload.meeting.suggestedQuestions = payload.suggestedQuestions
 
         if payload.meeting.modelContext == nil {
             modelContext.insert(payload.meeting)
@@ -2551,6 +2679,14 @@ final class AppState: ObservableObject {
         liveChampion = nil
         liveCompetition = nil
         
+        // Reset questions
+        liveQuestions = []
+        lastQuestionsSegmentCount = 0
+        lastQuestionsRequestAt = nil
+        questionsSuccessCount = 0
+        questionsCadenceAnchor = nil
+        questionsLastFiredSegmentCount = 0
+        
         // Reset title tracking
         currentTitleSuffix = ""
         lastTitleUpdateCount = 0
@@ -2724,6 +2860,39 @@ final class AppState: ObservableObject {
             enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
         }
         
+        // Questions — fire-and-forget, don't block save
+        do {
+            let questionsInsights: InsightsService.LiveInsights
+            
+            if appMode == .managed, minitiAPIService != nil {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await generateManagedInsightsWithRetry(
+                    deviceId: deviceId, transcript: transcript,
+                    existingSummary: nil, existingTitle: currentTitleSuffix,
+                    mode: InsightsMode.questions.rawValue, model: model.rawValue,
+                    language: meetingLanguage
+                )
+                questionsInsights = response.toLiveInsights()
+            } else {
+                questionsInsights = try await insightsService!.generateLiveInsights(
+                    transcript: transcript, existingSummary: nil,
+                    existingTitle: currentTitleSuffix, mode: .questions,
+                    model: model, apiKey: openaiApiKey, language: meetingLanguage
+                )
+            }
+            
+            guard isFinalInsightsRequestStillCurrent() else {
+                DebugLogger.shared.log(.app, "Dropping stale final questions insights response")
+                saveCurrentMeetingIfNeeded()
+                return
+            }
+            
+            liveQuestions = questionsInsights.questions
+            DebugLogger.shared.log(.app, "Final insights complete (questions): count=\(liveQuestions.count)")
+        } catch {
+            DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
+        }
+        
         saveCurrentMeetingIfNeeded()
     }
     
@@ -2748,6 +2917,12 @@ final class AppState: ObservableObject {
                     finalSegments: finalSegments,
                     segmentCount: finalSegments.count,
                     existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                    meetingID: meetingID
+                )
+                await updateQuestionsInBackground(
+                    transcript: transcript,
+                    finalSegments: finalSegments,
+                    segmentCount: finalSegments.count,
                     meetingID: meetingID
                 )
             }
@@ -2783,10 +2958,39 @@ final class AppState: ObservableObject {
         isGeneratingInsights = true
         
         do {
-            let requestedMode: InsightsMode = insightsMode == .training ? .standard : insightsMode
+            let requestedMode: InsightsMode = (insightsMode == .training) ? .standard : insightsMode
             let model = OpenAIModel.gpt5Mini
             
-            if requestedMode == .meddpicc {
+            if requestedMode == .questions {
+                let questionsInsights: InsightsService.LiveInsights
+                
+                if appMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId,
+                        transcript: transcriptForRequest,
+                        existingSummary: nil,
+                        existingTitle: nil,
+                        mode: InsightsMode.questions.rawValue,
+                        model: model.rawValue,
+                        language: meetingLanguage
+                    )
+                    questionsInsights = response.toLiveInsights()
+                } else {
+                    questionsInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcriptForRequest,
+                        existingSummary: nil,
+                        existingTitle: nil,
+                        mode: .questions,
+                        model: model,
+                        apiKey: openaiApiKey,
+                        language: meetingLanguage
+                    )
+                }
+                
+                liveQuestions = questionsInsights.questions
+                meeting.suggestedQuestions = questionsInsights.questions
+            } else if requestedMode == .meddpicc {
                 let meddpiccInsights: InsightsService.LiveInsights
                 
                 if appMode == .managed, minitiAPIService != nil {
@@ -3223,7 +3427,11 @@ final class AppState: ObservableObject {
             let versionInfo = try await minitiAPIService.checkVersion(deviceId: deviceId, appMode: appMode.rawValue)
             let currentVersion = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
             
-            if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
+            if let minVersion = versionInfo.minVersion, Self.isNewer(remote: minVersion, than: currentVersion) {
+                requiresForceUpdate = true
+                availableUpdate = versionInfo
+                DebugLogger.shared.log(.app, "Force update required: min=\(minVersion), current=\(currentVersion)")
+            } else if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
                 availableUpdate = versionInfo
                 DebugLogger.shared.log(.app, "Update available: latest=\(versionInfo.latestVersion), current=\(currentVersion)")
             }

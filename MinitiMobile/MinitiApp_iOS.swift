@@ -23,7 +23,9 @@ struct MinitiMobileApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                if !appState.hasAcceptedTerms {
+                if appState.requiresForceUpdate {
+                    ForceUpdateView()
+                } else if !appState.hasAcceptedTerms {
                     TermsAcceptanceView()
                 } else if appState.hasCompletedOnboarding {
                     MainTabView()

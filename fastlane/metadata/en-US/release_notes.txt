@@ -1,3 +1,3 @@
-- Training is now its own tab with a sortable table showing fillers, pace, clarity, and questions across all your meetings.
-- Meeting titles in history are cleaner - timestamp prefixes are stripped so you see just the meeting name.
-- Language picker moved below the start button on the home screen.
+- New Questions mode in insights — AI generates smart, context-specific questions to ask during or after a meeting. Six types: deeper, challenge, reframe, clarify, explore, and follow-up. Each question references something specific from the conversation and explains why it matters.
+- Questions update live during recording and can be generated for saved meetings in history.
+- Copy individual questions with one tap.

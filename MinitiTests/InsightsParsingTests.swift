@@ -36,6 +36,7 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(resp.title, "Q4 Planning")
         XCTAssertEqual(resp.metrics, "Revenue: $10M")
         XCTAssertEqual(resp.champion, "Director of Ops")
+        XCTAssertTrue(resp.questions.isEmpty)
     }
 
     func testLiveInsightsResponseMinimal() throws {
@@ -48,6 +49,7 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertTrue(resp.discussionFlow.isEmpty)
         XCTAssertNil(resp.title)
         XCTAssertNil(resp.metrics)
+        XCTAssertTrue(resp.questions.isEmpty)
     }
 
     func testLiveInsightsResponseStandardOnly() throws {
@@ -122,26 +124,87 @@ final class InsightsParsingTests: XCTestCase {
 
     // MARK: - InsightsMode
 
+    func testLiveInsightsResponseWithQuestions() throws {
+        let json = """
+        {
+            "questions": [
+                {
+                    "question": "You mentioned the timeline is tight — what specifically would slip if it extends by two weeks?",
+                    "type": "deeper",
+                    "context": "They mentioned a tight timeline but never quantified the consequences"
+                },
+                {
+                    "question": "You said cost is the main factor, but earlier you emphasized speed — which actually wins when they conflict?",
+                    "type": "challenge",
+                    "context": "Surfaces a tension between two stated priorities"
+                }
+            ]
+        }
+        """.data(using: .utf8)!
+
+        let resp = try JSONDecoder().decode(LiveInsightsResponse.self, from: json)
+        XCTAssertEqual(resp.questions.count, 2)
+        XCTAssertEqual(resp.questions[0].type, "deeper")
+        XCTAssertEqual(resp.questions[1].type, "challenge")
+        XCTAssertFalse(resp.questions[0].question.isEmpty)
+        XCTAssertFalse(resp.questions[0].context.isEmpty)
+    }
+
+    // MARK: - SuggestedQuestion
+
+    func testSuggestedQuestionDecoding() throws {
+        let json = """
+        {
+            "question": "What happens if the deal doesn't close this quarter?",
+            "type": "explore",
+            "context": "No one has discussed the downside scenario"
+        }
+        """.data(using: .utf8)!
+
+        let q = try JSONDecoder().decode(SuggestedQuestion.self, from: json)
+        XCTAssertEqual(q.question, "What happens if the deal doesn't close this quarter?")
+        XCTAssertEqual(q.type, "explore")
+        XCTAssertEqual(q.id, q.question)
+    }
+
+    func testSuggestedQuestionEquality() {
+        let a = SuggestedQuestion(question: "Why?", type: "deeper", context: "reason")
+        let b = SuggestedQuestion(question: "Why?", type: "deeper", context: "reason")
+        let c = SuggestedQuestion(question: "How?", type: "clarify", context: "method")
+        XCTAssertEqual(a, b)
+        XCTAssertNotEqual(a, c)
+    }
+
+    func testSuggestedQuestionRoundtrip() throws {
+        let original = SuggestedQuestion(question: "Test question?", type: "reframe", context: "Test context")
+        let data = try JSONEncoder().encode(original)
+        let decoded = try JSONDecoder().decode(SuggestedQuestion.self, from: data)
+        XCTAssertEqual(decoded, original)
+    }
+
     func testInsightsModeDisplayNames() {
         XCTAssertEqual(InsightsMode.standard.displayName, "standard")
         XCTAssertEqual(InsightsMode.meddpicc.displayName, "MEDDPICC")
         XCTAssertEqual(InsightsMode.training.displayName, "training")
+        XCTAssertEqual(InsightsMode.questions.displayName, "questions")
     }
 
     func testInsightsModeDescriptions() {
         XCTAssertEqual(InsightsMode.standard.description, "General meeting insights")
         XCTAssertEqual(InsightsMode.meddpicc.description, "Sales qualification framework")
         XCTAssertEqual(InsightsMode.training.description, "Speech pattern analysis")
+        XCTAssertEqual(InsightsMode.questions.description, "Suggested questions to ask")
     }
 
     func testInsightsModeRawValues() {
         XCTAssertEqual(InsightsMode.standard.rawValue, "standard")
         XCTAssertEqual(InsightsMode.meddpicc.rawValue, "meddpicc")
         XCTAssertEqual(InsightsMode.training.rawValue, "training")
+        XCTAssertEqual(InsightsMode.questions.rawValue, "questions")
     }
 
     func testInsightsModeAllCases() {
-        XCTAssertEqual(InsightsMode.allCases.count, 3)
+        XCTAssertEqual(InsightsMode.allCases.count, 4)
     }
 
     // MARK: - InsightsError

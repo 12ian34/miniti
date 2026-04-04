@@ -484,5 +484,23 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertEqual(info.latestVersion, "1.17.0")
         XCTAssertEqual(info.downloadUrl, "https://example.com/miniti.dmg")
         XCTAssertEqual(info.releaseNotes, "Bug fixes")
+        XCTAssertNil(info.minVersion)
+    }
+
+    func testVersionInfoDecodingWithMinVersion() throws {
+        let json = """
+        {
+            "latest_version": "1.19.0",
+            "min_version": "1.15.0",
+            "download_url": "https://example.com/miniti.dmg",
+            "release_notes": "New features"
+        }
+        """.data(using: .utf8)!
+
+        let info = try decoder.decode(MinitiAPIService.VersionInfo.self, from: json)
+        XCTAssertEqual(info.latestVersion, "1.19.0")
+        XCTAssertEqual(info.minVersion, "1.15.0")
+        XCTAssertEqual(info.downloadUrl, "https://example.com/miniti.dmg")
+        XCTAssertEqual(info.releaseNotes, "New features")
     }
 }

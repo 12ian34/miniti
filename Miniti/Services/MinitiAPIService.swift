@@ -783,11 +783,13 @@ final class MinitiAPIService: @unchecked Sendable {
     
     struct VersionInfo: Decodable {
         let latestVersion: String
+        let minVersion: String?
         let downloadUrl: String
         let releaseNotes: String?
         
         enum CodingKeys: String, CodingKey {
             case latestVersion = "latest_version"
+            case minVersion = "min_version"
             case downloadUrl = "download_url"
             case releaseNotes = "release_notes"
         }
@@ -1367,6 +1369,7 @@ struct ManagedInsightsResponse: Codable {
     let identifiedPain: String?
     let champion: String?
     let competition: String?
+    let questions: [SuggestedQuestion]
     let meta: ManagedInsightsMeta?
 
     enum CodingKeys: String, CodingKey {
@@ -1383,6 +1386,7 @@ struct ManagedInsightsResponse: Codable {
         case identifiedPain = "identified_pain"
         case champion
         case competition
+        case questions
         case meta
     }
 
@@ -1401,10 +1405,10 @@ struct ManagedInsightsResponse: Codable {
         identifiedPain = try container.decodeIfPresent(String.self, forKey: .identifiedPain)
         champion = try container.decodeIfPresent(String.self, forKey: .champion)
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
+        questions = try container.decodeIfPresent([SuggestedQuestion].self, forKey: .questions) ?? []
         meta = try container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)
     }
     
-    /// Convert to InsightsService.LiveInsights for use in AppState.
     func toLiveInsights() -> InsightsService.LiveInsights {
         InsightsService.LiveInsights(
             summary: summary,
@@ -1419,7 +1423,8 @@ struct ManagedInsightsResponse: Codable {
             paperProcess: paperProcess,
             identifiedPain: identifiedPain,
             champion: champion,
-            competition: competition
+            competition: competition,
+            questions: questions
         )
     }
 }

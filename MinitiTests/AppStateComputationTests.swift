@@ -33,6 +33,12 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertTrue(AppState.isNewer(remote: "1.6", than: "1.5.0"))
     }
 
+    func testIsNewerDoubleDigitMinor() {
+        XCTAssertTrue(AppState.isNewer(remote: "1.10.0", than: "1.9.0"))
+        XCTAssertFalse(AppState.isNewer(remote: "1.9.0", than: "1.10.0"))
+        XCTAssertTrue(AppState.isNewer(remote: "1.20.0", than: "1.19.0"))
+    }
+
     func testIsNewerDifferentLengths() {
         XCTAssertTrue(AppState.isNewer(remote: "1.5.0.1", than: "1.5.0"))
         XCTAssertFalse(AppState.isNewer(remote: "1.5.0", than: "1.5.0.1"))

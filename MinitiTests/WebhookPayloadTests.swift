@@ -358,4 +358,67 @@ final class WebhookPayloadTests: XCTestCase {
         XCTAssertEqual(m["title"] as? String, "JSON Test")
         XCTAssertEqual(m["duration_seconds"] as? Int, 120)
     }
+
+    func testPayloadFromLiveStateWithQuestions() {
+        let questions = [
+            SuggestedQuestion(question: "What's the real blocker?", type: "deeper", context: "They mentioned a blocker but didn't elaborate"),
+            SuggestedQuestion(question: "Is speed or cost the priority?", type: "challenge", context: "Conflicting statements")
+        ]
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Test",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 120,
+            summary: "Test",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil,
+            economicBuyer: nil,
+            decisionCriteria: nil,
+            decisionProcess: nil,
+            paperProcess: nil,
+            identifiedPain: nil,
+            champion: nil,
+            competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil,
+            questions: questions
+        )
+        XCTAssertNotNil(payload.meeting.questions)
+        XCTAssertEqual(payload.meeting.questions?.count, 2)
+        XCTAssertEqual(payload.meeting.questions?[0].type, "deeper")
+    }
+
+    func testPayloadFromLiveStateEmptyQuestionsIsNil() {
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Test",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 60,
+            summary: "Test",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil,
+            economicBuyer: nil,
+            decisionCriteria: nil,
+            decisionProcess: nil,
+            paperProcess: nil,
+            identifiedPain: nil,
+            champion: nil,
+            competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil
+        )
+        XCTAssertNil(payload.meeting.questions)
+    }
 }

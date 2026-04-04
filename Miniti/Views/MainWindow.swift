@@ -241,6 +241,14 @@ struct MainWindow: View {
                 appState.switchInsightsMode(to: .training)
             }
         }
+        
+        keyboardService.onQuestionsMode = { [self] in
+            if selectedMeeting != nil {
+                appState.insightsMode = .questions
+            } else {
+                appState.switchInsightsMode(to: .questions)
+            }
+        }
     }
     
     private func navigateHistory(direction: Int) {
@@ -1253,6 +1261,10 @@ struct MeetingDetailView: View {
                                 Text("meddpicc")
                                     .font(.system(size: 9, weight: .medium, design: .monospaced))
                                     .foregroundStyle(Theme.textDim)
+                            } else if appState.insightsMode == .questions && !meeting.hasQuestions {
+                                Text("questions")
+                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Theme.textDim)
                             }
                         }
                         .foregroundStyle(Theme.text)
@@ -1351,31 +1363,40 @@ struct MeetingDetailView: View {
                     }
                 }
                 } else {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 10) {
                         Spacer()
                         Text("◇")
-                            .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                            .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
-                        Text("no insights")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        Text("no insights yet")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textMuted)
+                        Text("use update above to generate")
+                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .foregroundStyle(Theme.textDim)
                         Spacer()
                     }
                     .frame(maxWidth: .infinity)
+                }
+            } else if appState.insightsMode == .questions {
+                if meeting.hasQuestions {
+                    QuestionsContent(questions: meeting.suggestedQuestions)
+                } else {
+                    QuestionsEmptyState(variant: .noQuestions)
                 }
             } else if appState.insightsMode == .meddpicc {
                 if meeting.hasMEDDPICC {
                     SavedMEDDPICCBlocks(meeting: meeting)
                 } else {
-                    VStack(spacing: 12) {
+                    VStack(spacing: 10) {
                         Spacer()
                         Text("◇")
-                            .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                            .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
                         Text("no meddpicc yet")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
                             .foregroundStyle(Theme.textMuted)
-                        Text("use update above")
+                        Text("use update above to generate")
                             .font(.system(size: 10, weight: .regular, design: .monospaced))
                             .foregroundStyle(Theme.textDim)
                         Spacer()
@@ -1386,14 +1407,17 @@ struct MeetingDetailView: View {
                 if !meeting.segments.isEmpty {
                     SavedTrainingSection(meeting: meeting)
                 } else {
-                VStack(spacing: 12) {
+                VStack(spacing: 10) {
                     Spacer()
                     Text("◇")
-                        .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                        .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                         .foregroundStyle(Theme.textDim)
                     Text("no transcript")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
                         .foregroundStyle(Theme.textMuted)
+                    Text("record a meeting to see training stats")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Theme.textDim)
                     Spacer()
                 }
                 .frame(maxWidth: .infinity)

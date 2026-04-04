@@ -104,6 +104,14 @@ struct LiveInsightsContent: View {
                     } else {
                         TrainingEmptyState()
                     }
+                } else if appState.insightsMode == .questions {
+                    if !appState.liveQuestions.isEmpty {
+                        QuestionsContent(questions: appState.liveQuestions)
+                    } else if appState.isRecording && !appState.hasReceivedQuestionsInsights {
+                        QuestionsEmptyState(variant: .waiting)
+                    } else {
+                        QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
+                    }
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
                         Text("no meddpicc yet...")
@@ -191,6 +199,14 @@ private struct LiveInsightsContent_iOSPlain: View {
                         LiveTrainingContent_iOSPlain(metrics: metrics)
                     } else {
                         TrainingEmptyState()
+                    }
+                } else if appState.insightsMode == .questions {
+                    if !appState.liveQuestions.isEmpty {
+                        QuestionsContent(questions: appState.liveQuestions)
+                    } else if appState.isRecording && !appState.hasReceivedQuestionsInsights {
+                        QuestionsEmptyState(variant: .waiting)
+                    } else {
+                        QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
                     }
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
@@ -495,6 +511,156 @@ private struct InsightsPlainBlock_iOS<Content: View>: View {
 }
 #endif
 
+// MARK: - Questions Empty State
+
+struct QuestionsEmptyState: View {
+    enum Variant {
+        case waiting
+        case needsMore
+        case noQuestions
+    }
+
+    let variant: Variant
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("?")
+                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                .foregroundStyle(Color(hex: "58A6FF").opacity(0.3))
+
+            switch variant {
+            case .waiting:
+                Text("generating questions...")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "58A6FF"))
+                ProgressView()
+                    .controlSize(.small)
+            case .needsMore:
+                Text("needs more conversation")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                Text("questions appear once there's enough\nto find gaps and unstated assumptions")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .multilineTextAlignment(.center)
+            case .noQuestions:
+                Text("no questions yet")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                Text("use update above to generate, or\nrecord a longer conversation")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 30)
+    }
+}
+
+// MARK: - Questions Content
+
+struct QuestionsContent: View {
+    let questions: [SuggestedQuestion]
+
+    private static let typeColors: [String: String] = [
+        "deeper": "58A6FF",
+        "challenge": "F85149",
+        "reframe": "D2A8FF",
+        "clarify": "FFA657",
+        "explore": "3FB950",
+        "follow_up": "79C0FF"
+    ]
+
+    var body: some View {
+        if !questions.isEmpty {
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(questions) { q in
+                    QuestionCard(question: q, typeColor: Color(hex: Self.typeColors[q.type] ?? "8B949E"))
+                }
+            }
+        }
+    }
+}
+
+private struct QuestionCard: View {
+    let question: SuggestedQuestion
+    let typeColor: Color
+
+    @State private var showCopied = false
+
+    private var typeLabel: String {
+        question.type.replacingOccurrences(of: "_", with: " ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Rectangle()
+                    .fill(typeColor)
+                    .frame(width: 3, height: 12)
+                    .cornerRadius(1)
+                Text(typeLabel)
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(typeColor)
+
+                Spacer()
+
+                Button {
+                    #if os(macOS)
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(question.question, forType: .string)
+                    #else
+                    UIPasteboard.general.string = question.question
+                    #endif
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showCopied = true
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showCopied = false
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .medium))
+                        Text(showCopied ? "copied" : "copy")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color(hex: "1C1C1F"))
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+
+            Text(question.question)
+                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .padding(.leading, 12)
+
+            Rectangle()
+                .fill(Color(hex: "1C1C1F"))
+                .frame(height: 1)
+                .padding(.leading, 12)
+
+            Text(question.context)
+                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "484F58"))
+                .lineSpacing(3)
+                .padding(.leading, 12)
+        }
+    }
+}
+
 // MARK: - MEDDPICC Content
 
 struct MEDDPICCContent: View {
@@ -657,16 +823,17 @@ struct TrainingContent: View {
 
 struct TrainingEmptyState: View {
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             Text("◇")
-                .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             Text("waiting for speech...")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "484F58"))
-            Text("training metrics update as you speak")
+            Text("fillers, pace, clarity, and talk ratio\nupdate as you speak")
                 .font(.system(size: 10, weight: .regular, design: .monospaced))
                 .foregroundStyle(Color(hex: "3F3F46"))
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 30)
@@ -1284,7 +1451,12 @@ struct TrainingMainView: View {
                         .padding(.vertical, 20)
                 }
             }
+            #if os(iOS)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 20)
+            #else
             .padding(24)
+            #endif
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1363,20 +1535,84 @@ struct TrainingMainView: View {
         }
     }
 
+    #if os(iOS)
+    private static let dateColumnWidth: CGFloat = 62
+    private static let statColumnWidth: CGFloat = 32
+    #else
+    private static let dateColumnWidth: CGFloat = 80
+    private static let statColumnWidth: CGFloat = 70
+    #endif
+
     private var trainingTableHeader: some View {
         HStack(spacing: 0) {
-            sortableHeader("date", unit: nil, column: .date, width: 80, alignment: .leading)
+            #if os(iOS)
+            sortableHeader("date", unit: nil, column: .date, width: Self.dateColumnWidth, alignment: .leading)
+                .padding(.trailing, 4)
+            sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
+                .padding(.leading, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            compactStatHeader("f", fullLabel: "fillers", column: .fillers, color: Color(hex: "F59E0B"), info: .fillers)
+            compactStatHeader("p", fullLabel: "pace", column: .pace, color: Color(hex: "58A6FF"), info: .pace)
+            compactStatHeader("c", fullLabel: "clarity", column: .clarity, color: Color(hex: "A371F7"), info: .clarity)
+            compactStatHeader("q", fullLabel: "questions", column: .questions, color: Color(hex: "3FB950"), info: .questionsAsked)
+            #else
+            sortableHeader("date", unit: nil, column: .date, width: Self.dateColumnWidth, alignment: .leading)
             sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            sortableHeader("fillers", unit: "f/min", column: .fillers, width: 70)
-            sortableHeader("pace", unit: "w/min", column: .pace, width: 70)
-            sortableHeader("clarity", unit: "w/turn", column: .clarity, width: 70)
-            sortableHeader("questions", unit: "qs", column: .questions, width: 70)
+            sortableHeader("fillers", unit: "f/min", column: .fillers, width: Self.statColumnWidth)
+            sortableHeader("pace", unit: "w/min", column: .pace, width: Self.statColumnWidth)
+            sortableHeader("clarity", unit: "w/turn", column: .clarity, width: Self.statColumnWidth)
+            sortableHeader("questions", unit: "qs", column: .questions, width: Self.statColumnWidth)
+            #endif
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(ColorPalette.Background.secondary)
     }
+
+    #if os(iOS)
+    @State private var infoPopupColumn: TrainingSortColumn?
+
+    private func compactStatHeader(_ letter: String, fullLabel: String, column: TrainingSortColumn, color: Color, info: TerminalSectionInfo) -> some View {
+        Button {
+            if sortColumn == column {
+                sortAscending.toggle()
+            } else {
+                sortColumn = column
+                sortAscending = true
+            }
+        } label: {
+            HStack(spacing: 1) {
+                Text(letter)
+                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .foregroundStyle(sortColumn == column ? color : color.opacity(0.5))
+                if sortColumn == column {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(color.opacity(0.7))
+                }
+            }
+            .frame(width: Self.statColumnWidth)
+        }
+        .buttonStyle(.plain)
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+            infoPopupColumn = column
+        })
+        .fullScreenCover(isPresented: Binding(
+            get: { infoPopupColumn == column },
+            set: { if !$0 { infoPopupColumn = nil } }
+        )) {
+            ZStack {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .onTapGesture { infoPopupColumn = nil }
+                TrainingColumnInfoCard(info: info, accent: color) { infoPopupColumn = nil }
+                    .padding(.horizontal, 20)
+            }
+            .background(Color.clear)
+        }
+    }
+    #endif
 
     private func sortableHeader(_ label: String, unit: String?, column: TrainingSortColumn, width: CGFloat? = nil, alignment: Alignment = .trailing) -> some View {
         Button {
@@ -1403,20 +1639,30 @@ struct TrainingMainView: View {
     }
 
     private func headerContent(_ label: String, unit: String?, column: TrainingSortColumn, alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 1) {
+        #if os(iOS)
+        let labelSize: CGFloat = 11
+        let chevronSize: CGFloat = 8
+        let unitSize: CGFloat = 9
+        #else
+        let labelSize: CGFloat = 9
+        let chevronSize: CGFloat = 7
+        let unitSize: CGFloat = 8
+        #endif
+
+        return VStack(alignment: alignment, spacing: 1) {
             HStack(spacing: 2) {
                 Text(label)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: labelSize, weight: .semibold, design: .monospaced))
                     .foregroundStyle(sortColumn == column ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 7, weight: .bold))
+                        .font(.system(size: chevronSize, weight: .bold))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
             }
             if let unit {
                 Text(unit)
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
+                    .font(.system(size: unitSize, weight: .medium, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.dim.opacity(0.6))
             }
         }
@@ -1426,16 +1672,18 @@ struct TrainingMainView: View {
 
     private func trainingTableRow(_ row: TrainingRow) -> some View {
         HStack(spacing: 0) {
-            Text(row.dateString)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(ColorPalette.Text.dim)
-                .frame(width: 80, alignment: .leading)
-
             #if os(iOS)
+            Text(row.dateString)
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .frame(width: Self.dateColumnWidth, alignment: .leading)
+                .padding(.trailing, 4)
+
             Text(row.title)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
+                .padding(.leading, 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .onTapGesture {
                     popoverRowID = popoverRowID == row.id ? nil : row.id
@@ -1445,38 +1693,63 @@ struct TrainingMainView: View {
                     set: { if !$0 { popoverRowID = nil } }
                 )) {
                     Text(row.title)
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.primary)
                         .padding(12)
                         .presentationCompactAdaptation(.popover)
                 }
+
+            Text(String(format: "%.1f", row.fillers))
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "F59E0B"))
+                .frame(width: Self.statColumnWidth, alignment: .center)
+
+            Text("\(Int(row.pace))")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "58A6FF"))
+                .frame(width: Self.statColumnWidth, alignment: .center)
+
+            Text("\(Int(row.clarity))")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "A371F7"))
+                .frame(width: Self.statColumnWidth, alignment: .center)
+
+            Text("\(row.questions)")
+                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "3FB950"))
+                .frame(width: Self.statColumnWidth, alignment: .center)
             #else
+            Text(row.dateString)
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .frame(width: Self.dateColumnWidth, alignment: .leading)
+
             Text(row.title)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            #endif
 
             Text(String(format: "%.1f", row.fillers))
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color(hex: "F59E0B"))
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.pace))")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color(hex: "58A6FF"))
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.clarity))")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color(hex: "A371F7"))
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(row.questions)")
                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                 .foregroundStyle(Color(hex: "3FB950"))
-                .frame(width: 70, alignment: .trailing)
+                .frame(width: Self.statColumnWidth, alignment: .trailing)
+            #endif
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
@@ -1487,6 +1760,65 @@ struct TrainingMainView: View {
 private enum TrainingSortColumn {
     case date, name, fillers, pace, clarity, questions
 }
+
+#if os(iOS)
+private struct TrainingColumnInfoCard: View {
+    let info: TerminalSectionInfo
+    let accent: Color
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Text(info.title)
+                    .font(.system(size: 15, weight: .bold, design: .rounded))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Spacer(minLength: 8)
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(Color.white.opacity(0.08)))
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(info.summary)
+                .font(.system(size: 12, weight: .regular, design: .rounded))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(alignment: .leading, spacing: 7) {
+                ForEach(info.guidance, id: \.self) { line in
+                    HStack(alignment: .top, spacing: 7) {
+                        Circle()
+                            .fill(accent.opacity(0.85))
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 5)
+                        Text(line)
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(ColorPalette.Background.primary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(accent.opacity(0.26), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.28), radius: 20, x: 0, y: 10)
+        )
+        .onTapGesture {}
+    }
+}
+#endif
 
 struct TrainingRow: Identifiable {
     let id: UUID
@@ -1500,7 +1832,7 @@ struct TrainingRow: Identifiable {
 
     static func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.dateFormat = "yy-MM-dd"
         return formatter.string(from: date)
     }
 }
@@ -1603,26 +1935,26 @@ private struct TrainingStatHeader: View {
     var body: some View {
         HStack(spacing: 0) {
             Color.clear
-                .frame(width: 100, height: 1)
+                .frame(width: TrainingStatRow.labelWidth, height: 1)
 
             Spacer(minLength: 4)
 
             Text("all \(allCount)")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last \(meetingCount)")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last 1")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
@@ -1651,9 +1983,17 @@ private struct TrainingStatRow: View {
         }
     }
 
-    fileprivate static let numWidth: CGFloat = 36
-    fileprivate static let unitWidth: CGFloat = 42
-    fileprivate static let colWidth: CGFloat = numWidth + 4 + unitWidth
+    #if os(iOS)
+    fileprivate static let labelWidth: CGFloat = 120
+    fileprivate static let colWidth: CGFloat = 48
+    fileprivate static let fontSize: CGFloat = 12
+    fileprivate static let headerFontSize: CGFloat = 10
+    #else
+    fileprivate static let labelWidth: CGFloat = 100
+    fileprivate static let colWidth: CGFloat = 82
+    fileprivate static let fontSize: CGFloat = 10
+    fileprivate static let headerFontSize: CGFloat = 9
+    #endif
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1663,50 +2003,41 @@ private struct TrainingStatRow: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1)
                 Text(label)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(size: Self.fontSize, weight: .semibold, design: .monospaced))
                     .foregroundStyle(color)
+                    .lineLimit(1)
+                    .fixedSize()
                 TerminalSectionInfoButton(info: info, accent: color)
-            }
-            .frame(width: 100, alignment: .leading)
-
-            Spacer(minLength: 4)
-
-            HStack(spacing: 4) {
-                Text(allValue)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "71717A"))
-                    .frame(width: Self.numWidth, alignment: .trailing)
+                #if os(iOS)
                 Text(unit)
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "3F3F46"))
-                    .frame(width: Self.unitWidth, alignment: .leading)
+                    .lineLimit(1)
+                    .fixedSize()
+                #endif
             }
+            .frame(minWidth: Self.labelWidth, alignment: .leading)
+
+            Spacer(minLength: 4)
+
+            Text(allValue)
+                .font(.system(size: Self.fontSize, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "71717A"))
+                .frame(width: Self.colWidth, alignment: .center)
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 4) {
-                Text(avgValue)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "A1A1AA"))
-                    .frame(width: Self.numWidth, alignment: .trailing)
-                Text(unit)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "52525B"))
-                    .frame(width: Self.unitWidth, alignment: .leading)
-            }
+            Text(avgValue)
+                .font(.system(size: Self.fontSize, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "A1A1AA"))
+                .frame(width: Self.colWidth, alignment: .center)
 
             Spacer(minLength: 8)
 
-            HStack(spacing: 4) {
-                Text(lastValue)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                    .frame(width: Self.numWidth, alignment: .trailing)
-                Text(unit)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "52525B"))
-                    .frame(width: Self.unitWidth, alignment: .leading)
-            }
+            Text(lastValue)
+                .font(.system(size: Self.fontSize, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .frame(width: Self.colWidth, alignment: .center)
 
             Image(systemName: trendIcon)
                 .font(.system(size: 12, weight: .bold))
@@ -1714,7 +2045,7 @@ private struct TrainingStatRow: View {
                 .frame(width: 28)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.vertical, 4)
     }
 }
 

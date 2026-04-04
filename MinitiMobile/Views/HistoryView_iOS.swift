@@ -432,6 +432,8 @@ struct MeetingDetail_iOS: View {
                     historicalMEDDPICCContent
                 case .training:
                     historicalTrainingContent
+                case .questions:
+                    historicalQuestionsContent
                 }
             }
             .padding()
@@ -523,6 +525,16 @@ struct MeetingDetail_iOS: View {
         }
     }
     
+    private var historicalQuestionsContent: some View {
+        Group {
+            if meeting.hasQuestions {
+                QuestionsContent(questions: meeting.suggestedQuestions)
+            } else {
+                QuestionsEmptyState(variant: .noQuestions)
+            }
+        }
+    }
+    
     private var historicalTrainingContent: some View {
         Group {
             if !meeting.segments.isEmpty {
@@ -583,6 +595,10 @@ struct MeetingDetail_iOS: View {
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                         Text("meddpicc")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    } else if appState.insightsMode == .questions && !meeting.hasQuestions {
+                        Text("questions")
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
