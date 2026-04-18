@@ -595,6 +595,27 @@ final class MinitiAPIService: @unchecked Sendable {
                 return recordEmail ?? recordDomain
             }
         }
+
+        var objectLabel: String {
+            switch objectSlug.lowercased() {
+            case "people": return "person"
+            case "companies": return "company"
+            default: return objectSlug
+            }
+        }
+
+        var detailLabel: String {
+            let slug = objectSlug.lowercased()
+            let value = secondaryIdentifier?.trimmingCharacters(in: .whitespaces)
+            if let value, !value.isEmpty {
+                return "\(objectLabel) · \(value)"
+            }
+            switch slug {
+            case "people": return "person · no email"
+            case "companies": return "company · no domain"
+            default: return objectLabel
+            }
+        }
     }
 
     struct AttioSearchResponse: Decodable {

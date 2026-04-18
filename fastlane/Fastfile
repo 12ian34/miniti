@@ -1,5 +1,6 @@
 require "dotenv"
 require "fileutils"
+require "json"
 require "open3"
 require "shellwords"
 
@@ -58,6 +59,43 @@ def read_optional_text_file(path)
   return nil if contents.empty?
 
   contents
+end
+
+# Scan's default simulator picker calls `default_os_version`, which compares
+# `xcodebuild -showsdks` sdkVersion (e.g. "26.4") to `simctl runtime match list -j`
+# (e.g. "26.4.1") with exact string equality and crashes on Xcode 26.4.x — see fastlane#29974.
+# Passing an explicit `device: "Name (major.minor)"` uses the versioned match path and avoids that code.
+def ios_unit_test_simulator_name
+  name = ENV["MINITI_IOS_TEST_DEVICE_NAME"].to_s.strip
+  name.empty? ? "iPhone 17" : name
+end
+
+def ios_unit_test_sdk_row
+  sdks_json, status = Open3.capture2("xcodebuild", "-showsdks", "-json")
+  UI.user_error!("xcodebuild -showsdks -json failed (status #{status.exitstatus}):\n#{sdks_json}") unless status.success?
+
+  sdks = JSON.parse(sdks_json)
+  sim_sdk = sdks.find { |e| e["platform"] == "iphonesimulator" }
+  UI.user_error!("No iphonesimulator SDK in xcodebuild -showsdks output") unless sim_sdk
+
+  sim_sdk
+end
+
+def ios_unit_test_device_spec
+  sdk = ios_unit_test_sdk_row
+  v = sdk["sdkVersion"].to_s
+  UI.user_error!("iphonesimulator sdkVersion missing from -showsdks") if v.empty?
+
+  "#{ios_unit_test_simulator_name} (#{v})"
+end
+
+def ios_unit_test_destination
+  sdk = ios_unit_test_sdk_row
+  os = sdk["productVersion"].to_s
+  os = sdk["sdkVersion"].to_s if os.empty?
+  UI.user_error!("Could not infer simulator OS from -showsdks") if os.empty?
+
+  "platform=iOS Simulator,name=#{ios_unit_test_simulator_name},OS=#{os}"
 end
 
 def ios_app_review_information_from_metadata
@@ -120,7 +158,8 @@ platform :ios do
     run_tests(
       project: PROJECT_PATH,
       scheme: IOS_SCHEME,
-      destination: "platform=iOS Simulator,name=iPhone 17",
+      device: ios_unit_test_device_spec,
+      destination: ios_unit_test_destination,
       derived_data_path: IOS_DERIVED_DATA_PATH,
       only_testing: ["MinitiMobileTests"],
       clean: false

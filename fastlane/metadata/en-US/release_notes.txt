@@ -1,3 +1,1 @@
-- New Questions mode in insights — AI generates smart, context-specific questions to ask during or after a meeting. Six types: deeper, challenge, reframe, clarify, explore, and follow-up. Each question references something specific from the conversation and explains why it matters.
-- Questions update live during recording and can be generated for saved meetings in history.
-- Copy individual questions with one tap.
+- Live system notifications for high-priority suggested questions during a meeting. Opt-in from Settings, off by default. Only fires in the background when the AI flags a question as high priority, rate-limited to one every 2 minutes.

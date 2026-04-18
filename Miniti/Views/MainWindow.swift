@@ -2249,7 +2249,7 @@ struct AttioSendSheet: View {
                             .font(.system(size: 10, weight: .medium, design: .monospaced))
                             .foregroundStyle(Color(hex: "E6EDF3"))
                             .lineLimit(1)
-                        Text("· \(selectedRecordObject)")
+                        Text("· \(selectedObjectLabel)")
                             .font(.system(size: 10, weight: .regular, design: .monospaced))
                             .foregroundStyle(Color(hex: "8B949E"))
                         Spacer()
@@ -2286,16 +2286,10 @@ struct AttioSendSheet: View {
                                         .font(.system(size: 12, weight: .medium, design: .monospaced))
                                         .foregroundStyle(Color(hex: "E6EDF3"))
                                         .lineLimit(1)
-                                    if let secondary = record.secondaryIdentifier, !secondary.isEmpty {
-                                        Text(secondary)
-                                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "8B949E"))
-                                            .textSelection(.enabled)
-                                    } else {
-                                        Text(record.objectSlug)
-                                            .font(.system(size: 10, weight: .regular, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "8B949E"))
-                                    }
+                                    Text(record.detailLabel)
+                                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                        .foregroundStyle(Color(hex: "8B949E"))
+                                        .textSelection(.enabled)
                                 }
                                 Spacer()
                                 if selectedRecordID == record.idPayload.recordID {
@@ -2657,6 +2651,14 @@ struct AttioSendSheet: View {
     private func isMissingAttioBackend(_ error: Error) -> Bool {
         guard case let MinitiAPIService.ServiceError.serverError(message) = error else { return false }
         return message.contains("HTTP 404")
+    }
+
+    private var selectedObjectLabel: String {
+        switch (selectedRecordObject ?? "").lowercased() {
+        case "people": return "person"
+        case "companies": return "company"
+        default: return selectedRecordObject ?? ""
+        }
     }
 
     private func userFacingAttioError(_ error: Error) -> String {

@@ -32,6 +32,12 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
+### 2026-04-18 - v1.21.0
+
+- new: (macOS and iOS) Live system notifications for high-priority suggested questions during a meeting.
+- improvement: (macOS) Attio send now shows the company domain or person email next to each record in the search results, so it's easier to pick the correct one.
+- improvement: (dev) `fastlane ios test` derives the simulator device string and OS from `xcodebuild -showsdks` so unit tests run on Xcode 26.x where the simulator SDK version and `simctl runtime match` patch levels can differ (avoids Fastlane scan crash #29974).
+
 ### 2026-04-04 - v1.20.0
 
 - new: (macOS and iOS) Questions mode - a new insights tab that generates smart, context-specific questions to ask during or after a meeting.
@@ -115,7 +121,7 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 - improvement: Insights pane can be dragged wider (max 600px in live and history views).
 - improvement: Settings Models tab now shows the insight model (GPT-5 Mini) as read-only info on macOS and iOS.
 
-### 2026-03-08 - v1.12.4 (released)
+### 2026-03-08 - v1.12.4
 
 - Fix a bug where live insights context from the previous meeting could leak into a new meeting
 - Improve training metric calculations for pace, filler rates, and question detection, especially in short sessions
@@ -531,6 +537,7 @@ The `Theme` struct in `MainWindow.swift` provides convenient aliases for common 
 - **Training metric help UI (cross-platform)**: All major training metrics (fillers, talk ratio, pace, longest monologue, questions, clarity) expose the same plain-English guidance/ranges in live + historical views. macOS uses native popovers; iOS uses a custom centered floating popup card with dim backdrop and tap-outside-to-dismiss to avoid `.popover`/sheet full-screen presentation quirks.
 - **Training clarity helper copy**: The inline clarity helper is intentionally standardized across macOS/iOS live + historical views as `lower = clearer = better` for fast scanning.
 - **Questions mode**: Fourth `InsightsMode` (`.questions`) that generates AI-suggested questions to ask. Uses an independent LLM prompt focused on conversational gaps: unstated assumptions, dropped threads, tensions between statements. Six question types: `deeper` (follow a thread), `challenge` (surface a contradiction), `reframe` (question the premise), `clarify` (pin down vagueness), `explore` (open untouched territory), `follow_up` (turn understanding into action). Each question includes `question`, `type`, and `context` (why it matters). Runs as a background task like MEDDPICC with its own cadence (staggered 22s after standard, 30s steady-state). Generated on stop, on history update, and during live recording. Persisted in `Meeting.suggestedQuestionsJSON`. Included in webhook payloads and markdown exports. `⌘4` keyboard shortcut on macOS. UI shows questions as cards with type labels, context, and copy buttons.
+- **Incisive question notifications (v1.21.0)**: Opt-in system notifications via `UserNotifications` when the LLM flags a new question with `priority: "high"`. Controlled by `@AppStorage("notifyOnIncisiveQuestions")` (default false). Toggle lives in Settings → Notifications (macOS) / Settings (iOS, between Recording and Webhooks). Wired in `AppState.applyInsights(...)` for `.questions` mode: `notifyNewHighPriorityQuestions(_:)` gates on `isRecording`, app not foregrounded (`NSApplication.shared.isActive` / `UIApplication.shared.applicationState`), per-ID dedupe (`notifiedQuestionIDs`), and a 2-minute minimum interval (`lastQuestionNotificationAt`, `questionNotificationMinInterval = 120`). `SuggestedQuestion.priority: String?` is optional (backward-compatible decode via `decodeIfPresent`) and `isHighPriority` returns true only when `priority == "high"`. Backend (`miniti-api`) emits the field from `/api/insights` in `questions` mode; clients without backend priority support silently never notify. Notification permission is requested lazily when the toggle is switched on (`requestQuestionNotificationPermission(completion:)`, `completion` is `@Sendable` for Swift 6 concurrency compliance).
 - **Finished-meeting update action**: `generateInsights()` respects the selected insights mode for a completed current meeting (`standard` vs `meddpicc`). In Training mode, the action just refreshes local training metrics and does not make AI requests.
 - **Meeting titles**: New meetings start with `title: "untitled"`. AI-suggested titles from `applyInsights()` and `generateFinalInsightsAndSave()` set `meeting.title` directly (no timestamp prefix). Calendar-started meetings use the event title. `currentTitleSuffix` tracks the last-applied title for dedup. `parseMeetingTitle()` is kept as a legacy helper for old meetings that have the `yyyyMMdd-HHmmss - Suffix` format. All display surfaces, markdown exports, webhook payloads, and Live Activity use `meeting.displayTitle` which handles both old and new title formats. Title editing in history views (`TextField`) binds directly to raw `meeting.title`.
 - **isStartingMeeting**: Transient flag set in `startNewMeeting()`, cleared when `startRecording()` succeeds or on failure. iOS shows a "starting..." spinner during this phase. macOS hides the session view.

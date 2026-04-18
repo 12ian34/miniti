@@ -729,6 +729,18 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Notifications") {
+                Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
+                    .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
+                        if newValue {
+                            appState.requestQuestionNotificationPermission()
+                        }
+                    }
+                Text("Sends a system notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Diagnostics") {
                 Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                 Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")

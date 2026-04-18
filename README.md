@@ -259,6 +259,8 @@ Generates smart, context-specific questions to ask during or after a meeting. Ea
 
 Questions update live during recording, can be generated for saved meetings in history, and are included in webhook payloads and markdown exports.
 
+**Live notifications (opt-in)**: Turn on **Notify me about incisive questions** in Settings to get a system notification when the AI flags a high-priority question while recording. Only fires when the app is in the background, rate-limited to one every 2 minutes.
+
 ### Training Mode
 Analyzes your speech patterns in real-time to help you become a better communicator. All metrics are computed locally from the transcript — no LLM calls, no API keys needed.
 
