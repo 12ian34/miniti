@@ -24,8 +24,11 @@ No separate `fastlane/.env` is needed.
 
 What it does:
 - builds the `MinitiMobile` scheme (Debug)
-- runs all tests in the `MinitiMobileTests` target on iPhone 17 Simulator
+- runs all tests in the `MinitiMobileTests` target on the iOS Simulator (default device name `iPhone 17`)
+- picks OS from `xcodebuild -showsdks -json` so Fastlane scan avoids a known Xcode 26.x crash when simulator SDK `sdkVersion` and `simctl runtime match` disagree on the patch segment ([fastlane#29974](https://github.com/fastlane/fastlane/issues/29974))
 - reports pass/fail count
+
+Optional: set `MINITI_IOS_TEST_DEVICE_NAME` if your default simulator is not `iPhone 17` (must match an installed simulator name).
 
 ```sh
 fastlane ios test
@@ -43,7 +46,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.20.0 changelog:"..."`
+### `fastlane ios beta version:1.21.0 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -55,7 +58,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.20.0`
+### `fastlane ios release version:1.21.0`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -197,14 +200,14 @@ fastlane ios metadata
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.20.0 changelog:"release notes here"
+fastlane ios beta version:1.21.0 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.20.0
+fastlane ios release version:1.21.0
 ```
 
 ### macOS direct distribution

@@ -2,9 +2,13 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Combine
+import UserNotifications
 #if os(iOS)
 import ActivityKit
 import StoreKit
+#endif
+#if os(macOS)
+import AppKit
 #endif
 
 @MainActor
@@ -438,6 +442,11 @@ final class AppState: ObservableObject {
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
     @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false
     @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false
+    @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
+
+    private var notifiedQuestionIDs: Set<String> = []
+    private var lastQuestionNotificationAt: Date?
+    private static let questionNotificationMinInterval: TimeInterval = 120 // 2 minutes
     
     @Published var isGoogleCalendarConnected: Bool = false
     @Published var googleCalendarEmail: String?
@@ -1665,7 +1674,10 @@ final class AppState: ObservableObject {
             if let v = insights.champion, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveChampion = v }
             if let v = insights.competition, !v.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { liveCompetition = v }
         } else if mode == .questions {
-            if !insights.questions.isEmpty { liveQuestions = insights.questions }
+            if !insights.questions.isEmpty {
+                liveQuestions = insights.questions
+                notifyNewHighPriorityQuestions(insights.questions)
+            }
         } else {
             if !insights.summary.isEmpty { liveSummary = insights.summary }
             if !insights.actionItems.isEmpty { liveActionItems = insights.actionItems }
@@ -1753,6 +1765,8 @@ final class AppState: ObservableObject {
         liveChampion = nil
         liveCompetition = nil
         liveQuestions = []
+        notifiedQuestionIDs = []
+        lastQuestionNotificationAt = nil
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
@@ -2681,6 +2695,8 @@ final class AppState: ObservableObject {
         
         // Reset questions
         liveQuestions = []
+        notifiedQuestionIDs = []
+        lastQuestionNotificationAt = nil
         lastQuestionsSegmentCount = 0
         lastQuestionsRequestAt = nil
         questionsSuccessCount = 0
@@ -4275,6 +4291,60 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "CLAUDE.md index updated: \(mdFiles.count) meetings")
     }
     #endif
+
+    // MARK: - Incisive Question Notifications
+
+    func requestQuestionNotificationPermission(completion: (@Sendable (Bool) -> Void)? = nil) {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in
+            DispatchQueue.main.async { completion?(granted) }
+        }
+    }
+
+    private func isAppInForeground() -> Bool {
+        #if os(macOS)
+        return NSApplication.shared.isActive
+        #else
+        return UIApplication.shared.applicationState == .active
+        #endif
+    }
+
+    private func notifyNewHighPriorityQuestions(_ questions: [SuggestedQuestion]) {
+        guard notifyOnIncisiveQuestions else { return }
+        guard isRecording else { return }
+
+        // Don't notify when the user is already looking at the app.
+        if isAppInForeground() { return }
+
+        let newHighs = questions.filter { $0.isHighPriority && !notifiedQuestionIDs.contains($0.id) }
+        guard let question = newHighs.first else { return }
+
+        if let last = lastQuestionNotificationAt,
+           Date().timeIntervalSince(last) < Self.questionNotificationMinInterval {
+            // Still mark as seen so we don't surface them later once the cooldown lifts.
+            for q in newHighs { notifiedQuestionIDs.insert(q.id) }
+            return
+        }
+
+        let content = UNMutableNotificationContent()
+        content.title = "incisive question"
+        content.body = question.question
+        content.sound = .default
+
+        let request = UNNotificationRequest(
+            identifier: "miniti.question.\(UUID().uuidString)",
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                DebugLogger.shared.log(.app, "Question notification failed: \(error.localizedDescription)")
+            }
+        }
+
+        lastQuestionNotificationAt = Date()
+        for q in newHighs { notifiedQuestionIDs.insert(q.id) }
+        DebugLogger.shared.log(.app, "Question notification fired: \(question.question.prefix(60))")
+    }
 }
 
 #if os(iOS)

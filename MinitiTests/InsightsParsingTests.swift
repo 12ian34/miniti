@@ -182,6 +182,35 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(decoded, original)
     }
 
+    func testSuggestedQuestionPriorityDecoding() throws {
+        let json = """
+        {
+            "question": "Why is the timeline slipping?",
+            "type": "challenge",
+            "context": "Conflicts with earlier confidence about the date",
+            "priority": "high"
+        }
+        """.data(using: .utf8)!
+
+        let q = try JSONDecoder().decode(SuggestedQuestion.self, from: json)
+        XCTAssertEqual(q.priority, "high")
+        XCTAssertTrue(q.isHighPriority)
+    }
+
+    func testSuggestedQuestionPriorityDefaultsToNotHigh() throws {
+        let json = """
+        {
+            "question": "Tell me more about the rollout plan.",
+            "type": "explore",
+            "context": "Glossed over earlier"
+        }
+        """.data(using: .utf8)!
+
+        let q = try JSONDecoder().decode(SuggestedQuestion.self, from: json)
+        XCTAssertNil(q.priority)
+        XCTAssertFalse(q.isHighPriority)
+    }
+
     func testInsightsModeDisplayNames() {
         XCTAssertEqual(InsightsMode.standard.displayName, "standard")
         XCTAssertEqual(InsightsMode.meddpicc.displayName, "MEDDPICC")

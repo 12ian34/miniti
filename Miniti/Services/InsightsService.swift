@@ -38,6 +38,33 @@ struct SuggestedQuestion: Codable, Identifiable, Equatable {
     let question: String
     let type: String
     let context: String
+    let priority: String?
+
+    var isHighPriority: Bool {
+        priority?.lowercased() == "high"
+    }
+
+    init(question: String, type: String, context: String, priority: String? = nil) {
+        self.question = question
+        self.type = type
+        self.context = context
+        self.priority = priority
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case question
+        case type
+        case context
+        case priority
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        question = try c.decode(String.self, forKey: .question)
+        type = try c.decode(String.self, forKey: .type)
+        context = try c.decode(String.self, forKey: .context)
+        priority = try c.decodeIfPresent(String.self, forKey: .priority)
+    }
 }
 
 // MARK: - Training Metrics (locally computed, no LLM)
@@ -434,13 +461,18 @@ final class InsightsService: Sendable {
             - "explore": open territory the conversation hasn't touched but should, given context
             - "follow_up": the natural next move that turns understanding into action
 
+            Priority:
+            - Label a question "high" ONLY if missing the answer would materially change the outcome of the conversation (an unresolved contradiction, an unstated blocker, a dropped thread that the whole deal/decision hinges on). Otherwise label it "normal".
+            - Be strict. At most 1-2 questions per response should be "high". A response with zero "high" questions is expected and correct. Never default to "high".
+
             Respond in JSON:
             {
                 "questions": [
                     {
                         "question": "The actual question to ask",
                         "type": "deeper|challenge|reframe|clarify|explore|follow_up",
-                        "context": "One line: why this question matters, what it reveals"
+                        "context": "One line: why this question matters, what it reveals",
+                        "priority": "high|normal"
                     }
                 ]
             }

@@ -287,6 +287,18 @@ struct SettingsView_iOS: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("Notifications") {
+                    Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
+                        .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
+                            if newValue {
+                                appState.requestQuestionNotificationPermission()
+                            }
+                        }
+                    Text("Sends a notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Webhooks") {
                     TextField("Webhook URL", text: $appState.webhookURL)
                         .keyboardType(.URL)
