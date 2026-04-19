@@ -35,6 +35,12 @@ struct MinitiMobileApp: App {
             }
             .environmentObject(appState)
             .preferredColorScheme(.dark)
+            .onOpenURL { url in
+                guard url.scheme?.lowercased() == "miniti-google" else { return }
+                Task { @MainActor in
+                    await appState.handleGoogleOAuthCallback(url)
+                }
+            }
         }
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in

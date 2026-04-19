@@ -1,1 +1,1 @@
-- Live system notifications for high-priority suggested questions during a meeting. Opt-in from Settings, off by default. Only fires in the background when the AI flags a question as high priority, rate-limited to one every 2 minutes.
+- Google Calendar integration. Connect your Google account in Settings to see today's upcoming meetings on the home screen, tap any event to start a recording with its title and attendees pre-filled, and get a 15-second auto-start countdown when a meeting is about to begin. Read-only access — Miniti never modifies your calendar.

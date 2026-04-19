@@ -14,7 +14,7 @@ final class MinitiAPIService: @unchecked Sendable {
             return override
         }
         #endif
-        return "https://miniti-api.vercel.app/api"
+        return "https://api.miniti.app/api"
     }()
     
     /// Shared app secret — authenticates requests to the backend (not user-specific).

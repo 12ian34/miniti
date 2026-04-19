@@ -2239,7 +2239,7 @@ struct AttioSendSheet: View {
                 errorLine(searchError)
             }
 
-            if let selectedRecordID, let selectedRecordObject {
+            if let selectedRecordID, selectedRecordObject != nil {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Image(systemName: "pin")

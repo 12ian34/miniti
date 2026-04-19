@@ -299,6 +299,66 @@ struct SettingsView_iOS: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Section("Google Calendar") {
+                    Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                    Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if appState.googleCalendarEnabled {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(appState.isGoogleCalendarConnected ? ColorPalette.Status.connected : ColorPalette.Status.disconnected)
+                                .frame(width: 8, height: 8)
+
+                            if appState.isGoogleCalendarConnected {
+                                if let email = appState.googleCalendarEmail {
+                                    Text(email)
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                } else {
+                                    Text("connected")
+                                        .font(.system(size: 12, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                }
+                            } else {
+                                Text("not connected")
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            if appState.isGoogleCalendarConnected {
+                                Button("Disconnect") {
+                                    Task { await appState.googleDisconnect() }
+                                }
+                            } else {
+                                Button("Connect") {
+                                    Task { await appState.googleConnect() }
+                                }
+                            }
+                        }
+
+                        Text("Read-only access to calendar events. Miniti never modifies your calendar.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        if appState.isGoogleCalendarConnected {
+                            Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
+                            Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip. Only fires while Miniti is open in the foreground.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Toggle("Auto-stop after meeting ends", isOn: $appState.autoStopFromCalendar)
+                            Text("Automatically stop recording when the calendar event ends and no one is speaking.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Webhooks") {
                     TextField("Webhook URL", text: $appState.webhookURL)
                         .keyboardType(.URL)

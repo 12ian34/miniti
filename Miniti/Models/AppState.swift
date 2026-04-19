@@ -6,6 +6,7 @@ import UserNotifications
 #if os(iOS)
 import ActivityKit
 import StoreKit
+import UIKit
 #endif
 #if os(macOS)
 import AppKit
@@ -3638,6 +3639,8 @@ final class AppState: ObservableObject {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(response.authURL, forType: .string)
             NSWorkspace.shared.open(url)
+            #elseif os(iOS)
+            await UIApplication.shared.open(url)
             #endif
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar connect start failed: \(error.localizedDescription)")
