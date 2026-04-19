@@ -194,6 +194,20 @@ What it does:
 fastlane ios metadata
 ```
 
+### `fastlane ios screenshots`
+
+What it does:
+
+- uploads screenshots from `fastlane/screenshots` to App Store Connect
+- `overwrite_screenshots: true` replaces existing screenshots for each locale/device combo
+- no binary upload, no metadata, no build, no version bump
+
+```sh
+fastlane ios screenshots
+```
+
+Layout: `fastlane/screenshots/<locale>/<Device>.png`, e.g. `fastlane/screenshots/en-US/iPhone 6.7 Display-01.png`. Fastlane matches device by filename prefix; use the Apple display class names (`iPhone 6.9 Display`, `iPhone 6.7 Display`, `iPad Pro (6th Gen) 12.9 Display`, etc.).
+
 ## Recommended flows
 
 ### iOS TestFlight
