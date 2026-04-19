@@ -185,7 +185,7 @@ platform :ios do
     )
   end
 
-  desc "Upload metadata and/or screenshots without a new binary. Pass skip_metadata:true or skip_screenshots:true to limit scope."
+  desc "Upload metadata only (no screenshots, no binary)."
   lane :metadata do |options|
     api_key = load_app_store_connect_api_key
 
@@ -195,6 +195,24 @@ platform :ios do
       metadata_path: File.join(REPO_ROOT, "fastlane", "metadata"),
       skip_metadata: options[:skip_metadata] == true,
       skip_screenshots: true,
+      precheck_include_in_app_purchases: false,
+      run_precheck_before_submit: false,
+      submit_for_review: false,
+      force: true
+    )
+  end
+
+  desc "Upload screenshots only (no metadata, no binary). Reads from fastlane/screenshots."
+  lane :screenshots do
+    api_key = load_app_store_connect_api_key
+
+    upload_to_app_store(
+      api_key: api_key,
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: false,
+      screenshots_path: File.join(REPO_ROOT, "fastlane", "screenshots"),
+      overwrite_screenshots: true,
       precheck_include_in_app_purchases: false,
       run_precheck_before_submit: false,
       submit_for_review: false,

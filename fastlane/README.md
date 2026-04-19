@@ -45,7 +45,15 @@ Bump build/version if needed, build, and upload to TestFlight
 [bundle exec] fastlane ios metadata
 ```
 
-Upload metadata and/or screenshots without a new binary. Pass skip_metadata:true or skip_screenshots:true to limit scope.
+Upload metadata only (no screenshots, no binary).
+
+### ios screenshots
+
+```sh
+[bundle exec] fastlane ios screenshots
+```
+
+Upload screenshots only (no metadata, no binary). Reads from fastlane/screenshots.
 
 ### ios release
 
