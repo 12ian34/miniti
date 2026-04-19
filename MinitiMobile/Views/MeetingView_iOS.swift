@@ -546,6 +546,11 @@ struct ReadyStateView_iOS: View {
                     UpdateAvailableBanner_iOS(versionInfo: update)
                 }
 
+                // Auto-start banner
+                if let event = appState.pendingAutoStartEvent {
+                    AutoStartBanner_iOS(event: event, countdown: appState.autoStartCountdown)
+                }
+
                 // Start button or blocked state
                 if appState.isDeviceDisabled {
                     VStack(spacing: 8) {
@@ -659,6 +664,15 @@ struct ReadyStateView_iOS: View {
                     .disabled(!appState.canStartRecording || appState.isStartingMeeting)
 
                     MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
+                }
+
+                // Upcoming calendar events
+                if appState.pendingAutoStartEvent == nil,
+                   appState.googleCalendarEnabled,
+                   appState.isGoogleCalendarConnected,
+                   !appState.todayEvents.isEmpty {
+                    UpcomingEventsPanel_iOS()
+                        .frame(maxWidth: 380)
                 }
             }
 
@@ -1183,5 +1197,163 @@ struct MeetingLanguagePicker_iOS: View {
                     .stroke(ColorPalette.Border.primary, lineWidth: 1)
             )
         }
+    }
+}
+
+// MARK: - Google Calendar UI
+
+private struct AutoStartBanner_iOS: View {
+    @EnvironmentObject var appState: AppState
+    let event: MinitiAPIService.CalendarEvent
+    let countdown: Int
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(ColorPalette.Accent.green)
+                    .frame(width: 8, height: 8)
+                    .opacity(countdown % 2 == 0 ? 1 : 0.4)
+                    .animation(.easeInOut(duration: 0.5), value: countdown)
+
+                Text(event.title)
+                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .lineLimit(1)
+            }
+
+            Text("starting in \(countdown)s")
+                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Accent.green)
+
+            HStack(spacing: 12) {
+                Button {
+                    appState.startMeetingFromEvent(event)
+                } label: {
+                    Text("start now")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(Color.black)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Accent.green)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    appState.dismissAutoStart()
+                } label: {
+                    Text("dismiss")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Background.tertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: 360)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.green.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(ColorPalette.Accent.green.opacity(0.2), lineWidth: 1)
+        )
+    }
+}
+
+private struct UpcomingEventsPanel_iOS: View {
+    @EnvironmentObject var appState: AppState
+
+    private var displayEvents: [MinitiAPIService.CalendarEvent] {
+        Array(appState.todayEvents.prefix(5))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("today")
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .padding(.horizontal, 8)
+
+            VStack(spacing: 2) {
+                ForEach(displayEvents) { event in
+                    Button {
+                        appState.startMeetingFromEvent(event)
+                    } label: {
+                        CompactEventRow_iOS(event: event)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+private struct CompactEventRow_iOS: View {
+    let event: MinitiAPIService.CalendarEvent
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(formattedTime)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
+                .frame(width: 44, alignment: .leading)
+
+            Text(event.title)
+                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 4)
+
+            if !event.attendees.isEmpty {
+                HStack(spacing: 2) {
+                    Image(systemName: "person.2.fill")
+                        .font(.system(size: 8))
+                    let ext = event.externalAttendees.count
+                    Text("\(ext > 0 ? ext : event.attendees.count)")
+                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(ColorPalette.Text.dim)
+            }
+
+            Image(systemName: "record.circle")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(ColorPalette.Accent.green.opacity(0.6))
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(ColorPalette.Background.secondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isActive ? ColorPalette.Accent.green.opacity(0.3) : ColorPalette.Border.primary, lineWidth: 1)
+        )
+    }
+
+    private var isActive: Bool {
+        guard let start = event.startDate, let end = event.endDate else { return false }
+        let now = Date()
+        return now >= start && now <= end
+    }
+
+    private var formattedTime: String {
+        guard let start = event.startDate else { return "" }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm"
+        return fmt.string(from: start)
     }
 }

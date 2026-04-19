@@ -158,7 +158,7 @@ Terms versioning: `currentTermsVersion = 1`. Migrate legacy bool users (`hasAcce
 
 ## 5. Backend API — complete spec
 
-Backend repo is `miniti-api` (separate, Next.js on Vercel). Base URL: `https://miniti-api.vercel.app`. Android v1 uses the same backend with a new `X-Platform: android` header value.
+Backend repo is `miniti-api` (separate, Next.js on Vercel). Base URL: `https://api.miniti.app` (legacy alias `https://miniti-api.vercel.app` still active). Android v1 uses the same backend with a new `X-Platform: android` header value.
 
 ### Auth headers (all app routes require these)
 
