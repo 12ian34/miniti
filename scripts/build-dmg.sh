@@ -70,20 +70,13 @@ if ! command -v create-dmg &>/dev/null; then
 fi
 
 # ─── Prepare staging directory ──────────────────────────────────────────────
-# create-dmg works best with a source folder (not a bare .app), and this
-# lets us include extra files like the README.
+# create-dmg works best with a source folder (not a bare .app).
 STAGING_DIR=$(mktemp -d)
 trap "rm -rf '$STAGING_DIR'" EXIT
 
 echo ""
 echo "Preparing staging directory..."
 cp -R "$APP_PATH" "$STAGING_DIR/miniti.app"
-
-# Include README
-if [[ -f "$REPO_ROOT/README.md" ]]; then
-    cp "$REPO_ROOT/README.md" "$STAGING_DIR/README.md"
-    echo "  Included: README.md"
-fi
 
 # ─── Resolve assets ─────────────────────────────────────────────────────────
 ICON_PATH="$APP_PATH/Contents/Resources/AppIcon.icns"
@@ -111,11 +104,10 @@ echo "Creating $DMG_NAME..."
 CREATE_DMG_ARGS=(
     --volname "miniti"
     --window-pos 200 120
-    --window-size 680 400
+    --window-size 600 400
     --icon-size 128
-    --icon "README.md" 120 190
-    --icon "miniti.app" 340 190
-    --app-drop-link 560 190
+    --icon "miniti.app" 180 190
+    --app-drop-link 420 190
     --hide-extension "miniti.app"
     --no-internet-enable
 )
@@ -161,5 +153,5 @@ echo "  DMG created successfully!"
 echo "  File: $DMG_PATH"
 echo "  Size: $DMG_SIZE"
 echo "  Version: $VERSION"
-echo "  Contents: miniti.app, README.md"
+echo "  Contents: miniti.app"
 echo "================================================"
