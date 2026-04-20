@@ -239,4 +239,55 @@ final class TrainingMetricsTests: XCTestCase {
         let metrics = TrainingMetrics.compute(from: segments, duration: 30, language: "es")
         XCTAssertGreaterThan(metrics.speakers[0].totalFillers, 0)
     }
+
+    func testComputeAttributesYouToExplicitSelfID() {
+        // Speaker 2 is the user (not the mic default). Talk ratio and "You" label
+        // should attach to speaker 2, not 1000.
+        let segments = [
+            TrainingMetrics.Segment(text: "hey everyone quick question", speaker: 2, isFinal: true, timestamp: 0),
+            TrainingMetrics.Segment(text: "that is an interesting point", speaker: 0, isFinal: true, timestamp: 5),
+        ]
+        let metrics = TrainingMetrics.compute(from: segments, duration: 30, selfIDs: [2])
+
+        let you = metrics.speakers.first(where: { $0.isLocalMic })
+        XCTAssertNotNil(you)
+        XCTAssertEqual(you?.speakerLabel, "You")
+        XCTAssertEqual(you?.wordCount, 4)
+        XCTAssertEqual(metrics.talkRatioYou, 4.0 / 9.0, accuracy: 0.01)
+    }
+
+    func testComputeMergesMultipleSelfSpeakersIntoOneYouRow() {
+        // Diarization can split one person's speech across multiple speaker IDs.
+        // When the user marks both IDs as "me", all of those words should collapse
+        // into a single "You" row in the training stats instead of showing two.
+        let segments = [
+            TrainingMetrics.Segment(text: "so basically we need to align the roadmap", speaker: 2, isFinal: true, timestamp: 0),
+            TrainingMetrics.Segment(text: "that sounds good to me", speaker: 1, isFinal: true, timestamp: 5),
+            TrainingMetrics.Segment(text: "and also we should double click on pricing", speaker: 3, isFinal: true, timestamp: 10),
+        ]
+        let metrics = TrainingMetrics.compute(from: segments, duration: 60, selfIDs: [2, 3])
+
+        let youRows = metrics.speakers.filter { $0.isLocalMic }
+        XCTAssertEqual(youRows.count, 1, "self-speakers should collapse into a single You row")
+        let you = youRows.first!
+        XCTAssertEqual(you.speakerLabel, "You")
+        // 8 words from speaker 2 + 8 words from speaker 3 = 16 total "You" words.
+        XCTAssertEqual(you.wordCount, 16)
+
+        // The non-self speaker should still be reported separately.
+        let others = metrics.speakers.filter { !$0.isLocalMic }
+        XCTAssertEqual(others.count, 1)
+        XCTAssertEqual(others.first?.wordCount, 5)
+    }
+
+    func testComputeUsesMappedNameWhenSpeakerNotSelf() {
+        let segments = [
+            TrainingMetrics.Segment(text: "hello world", speaker: 1000, isFinal: true, timestamp: 0),
+            TrainingMetrics.Segment(text: "nice to meet you", speaker: 0, isFinal: true, timestamp: 5),
+        ]
+        let names = ["0": "Alice"]
+        let metrics = TrainingMetrics.compute(from: segments, duration: 30, names: names)
+        let alice = metrics.speakers.first(where: { !$0.isLocalMic })
+        XCTAssertEqual(alice?.speakerLabel, "Alice")
+    }
 }

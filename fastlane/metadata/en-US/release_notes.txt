@@ -1,1 +1,5 @@
-- Google Calendar integration. Connect your Google account in Settings to see today's upcoming meetings on the home screen, tap any event to start a recording with its title and attendees pre-filled, and get a 15-second auto-start countdown when a meeting is about to begin. Read-only access — Miniti never modifies your calendar.
+- Automatic speaker naming — infers real names from the transcript and calendar events. Opt in via Settings.
+- Rename any speaker yourself.
+- New "i zoned out" button. Tap during a meeting to catch up: current topic, questions directed at you, recent discussion, and key recent decisions.
+- Real-time nudges — opt-in notifications when you've been monologuing ~1 min or your filler rate spikes.
+- New docs website at miniti.app/docs.

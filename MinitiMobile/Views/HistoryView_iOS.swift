@@ -186,6 +186,7 @@ struct MeetingDetail_iOS: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var appState: AppState
     @State private var activeSection: DetailSection = .transcript
+    @State private var renamingSpeaker: Int? = nil
 
     enum DetailSection: String, CaseIterable {
         case transcript = "transcript"
@@ -208,11 +209,14 @@ struct MeetingDetail_iOS: View {
         guard !meeting.segments.isEmpty else { return "(no transcript)" }
         var md = "# \(meeting.displayTitle) — Transcript\n\n"
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
-        var currentSpeaker: Int? = nil
+        var currentKey: String? = nil
+        let names = meeting.speakerNames
+        let selfIDs = meeting.selfSpeakerIDs
         for segment in meeting.segments.sorted(by: { $0.timestamp < $1.timestamp }) {
-            if segment.speaker != currentSpeaker {
-                currentSpeaker = segment.speaker
-                md += "\n**\(segment.speakerLabel):**\n"
+            let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: selfIDs)
+            if key != currentKey {
+                currentKey = key
+                md += "\n**\(resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: selfIDs)):**\n"
             }
             md += "\(segment.text) "
         }
@@ -278,6 +282,46 @@ struct MeetingDetail_iOS: View {
         .navigationBarBackButtonHidden(true)
         .onDisappear {
             saveTitle()
+        }
+        .sheet(item: Binding(
+            get: { renamingSpeaker.map { SpeakerRenameTarget(id: $0) } },
+            set: { renamingSpeaker = $0?.id }
+        )) { target in
+            let key = String(target.id)
+            let currentName = meeting.speakerNames[key]
+            let defaultName = resolvedSpeakerLabel(for: target.id, names: nil, selfIDs: meeting.selfSpeakerIDs)
+            let isSelf = meeting.effectiveSelfSpeakerIDs.contains(target.id)
+            let hasOtherSelves = meeting.effectiveSelfSpeakerIDs.subtracting([target.id]).isEmpty == false
+            RenameSpeakerView(
+                speakerID: target.id,
+                currentName: currentName,
+                defaultName: defaultName,
+                isSelf: isSelf,
+                hasOtherSelves: hasOtherSelves,
+                onSave: { newName in
+                    meeting.setSpeakerName(id: key, name: newName)
+                    renamingSpeaker = nil
+                },
+                onClear: {
+                    meeting.setSpeakerName(id: key, name: nil)
+                    renamingSpeaker = nil
+                },
+                onMarkAsSelf: {
+                    meeting.setSelfSpeaker(id: target.id, isSelf: true)
+                    try? modelContext.save()
+                    renamingSpeaker = nil
+                },
+                onUnmarkAsSelf: {
+                    meeting.setSelfSpeaker(id: target.id, isSelf: false)
+                    try? modelContext.save()
+                    renamingSpeaker = nil
+                },
+                onCancel: {
+                    renamingSpeaker = nil
+                }
+            )
+            .presentationDetents([.height(320)])
+            .presentationBackground(Color(hex: "0B0B0D"))
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -359,58 +403,52 @@ struct MeetingDetail_iOS: View {
 
     private var transcriptContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if meeting.segments.isEmpty {
-                    Text("No transcript available")
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding()
-                } else {
-                    let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
-                    ForEach(Array(sortedSegments.enumerated()), id: \.element.id) { index, segment in
-                        let isNewTurn = index == 0 || sortedSegments[index].speaker != sortedSegments[index - 1].speaker
-                        let isMic = segment.speaker == DeepgramService.micSpeakerID
-                        let color = isMic ? ColorPalette.Speaker.mic : speakerColor(segment.speaker)
-
-                        VStack(alignment: .leading, spacing: 0) {
-                            if isNewTurn {
-                                HStack(spacing: 6) {
-                                    Rectangle()
-                                        .fill(color)
-                                        .frame(width: 3, height: 12)
-                                        .cornerRadius(1.5)
-
-                                    Text(segment.speakerLabel)
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                        .foregroundStyle(color)
-
-                                    Text("·")
-                                        .foregroundStyle(ColorPalette.Text.disabled)
-
-                                    Text(segment.formattedTimestamp)
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                        .foregroundStyle(ColorPalette.Text.dim)
-                                }
-                                .padding(.top, 12)
-                                .padding(.bottom, 4)
-                            }
-
-                            HStack(alignment: .top, spacing: 0) {
-                                Rectangle()
-                                    .fill(color.opacity(0.3))
-                                    .frame(width: 2)
-
-                                Text(segment.text)
-                                    .font(.system(size: 13, weight: .regular, design: .monospaced))
-                                    .foregroundStyle(ColorPalette.Text.primary)
-                                    .padding(.leading, 12)
-                                    .padding(.vertical, 4)
-                            }
-                        }
+            if meeting.segments.isEmpty {
+                Text("No transcript available")
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.muted)
+                    .padding()
+            } else {
+                let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
+                let effectiveSelves = meeting.effectiveSelfSpeakerIDs
+                let uniqueSpeakers: [Int] = {
+                    var seen = Set<Int>()
+                    var ordered: [Int] = []
+                    for s in sortedSegments where seen.insert(s.speaker).inserted {
+                        ordered.append(s.speaker)
                     }
+                    return ordered.sorted { a, b in
+                        let aSelf = effectiveSelves.contains(a)
+                        let bSelf = effectiveSelves.contains(b)
+                        if aSelf != bSelf { return aSelf }
+                        return a < b
+                    }
+                }()
+                VStack(alignment: .leading, spacing: 12) {
+                    SpeakerLegend(
+                        speakers: uniqueSpeakers,
+                        isRecording: false,
+                        speakerNames: meeting.speakerNames,
+                        selfIDs: meeting.selfSpeakerIDs,
+                        onRename: { renamingSpeaker = $0 }
+                    )
+                    SelectableTextView(
+                        SelectableAttributed.transcript(
+                            turns: SelectableAttributed.mergeTurns(
+                                sortedSegments.map {
+                                    .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+                                },
+                                speakerNames: meeting.speakerNames,
+                                selfIDs: meeting.selfSpeakerIDs
+                            ),
+                            speakerNames: meeting.speakerNames,
+                            selfIDs: meeting.selfSpeakerIDs
+                        )
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 16)
                 }
             }
-            .padding(16)
         }
     }
     
@@ -736,9 +774,9 @@ struct HistoricalSavedTrainingContent_iOS: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.selfSpeakerIDs)
     }
-    
+
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
         let localSpeakers = metrics.speakers.filter(\.isLocalMic)
         let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }

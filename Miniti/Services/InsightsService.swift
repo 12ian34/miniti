@@ -102,7 +102,11 @@ struct TrainingMetrics {
         let timestamp: TimeInterval
     }
     
-    static func compute(from segments: [Segment], duration: TimeInterval, language: String = "en") -> TrainingMetrics {
+    static func compute(from segments: [Segment], duration: TimeInterval, language: String = "en", names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> TrainingMetrics {
+        let effectiveSelfIDs: Set<Int> = {
+            if let selfIDs, !selfIDs.isEmpty { return selfIDs }
+            return [DeepgramService.micSpeakerID]
+        }()
         let finals = segments
             .enumerated()
             .filter { _, segment in
@@ -126,51 +130,76 @@ struct TrainingMetrics {
                 (tokens: tokenize(phrase), label: phrase)
             }
             .filter { !$0.tokens.isEmpty }
-        
-        let speakerIDs = Array(Set(finals.map(\.speaker))).sorted { a, b in
-            if a == DeepgramService.micSpeakerID { return true }
-            if b == DeepgramService.micSpeakerID { return false }
-            return a < b
+
+        // Group speakers: all self-IDs collapse into one virtual "self" bucket so split
+        // diarization (one person showing up as two speaker IDs) produces unified stats.
+        // Non-self IDs remain individual buckets.
+        enum Group: Hashable {
+            case selfSpeaker
+            case other(Int)
         }
-        
+        var groupedSegments: [Group: [Segment]] = [:]
+        for seg in finals {
+            let key: Group = effectiveSelfIDs.contains(seg.speaker) ? .selfSpeaker : .other(seg.speaker)
+            groupedSegments[key, default: []].append(seg)
+        }
+        let sortedGroups: [Group] = groupedSegments.keys.sorted { a, b in
+            switch (a, b) {
+            case (.selfSpeaker, _): return true
+            case (_, .selfSpeaker): return false
+            case (.other(let lhs), .other(let rhs)): return lhs < rhs
+            }
+        }
+
         var totalWordsAll = 0
         var youWordCount = 0
         var speakerStatsList: [SpeakerStats] = []
-        
-        for speakerID in speakerIDs {
-            let speakerSegments = finals.filter { $0.speaker == speakerID }
-            let isMic = speakerID == DeepgramService.micSpeakerID
-            let label = isMic ? "You" : "Speaker \(speakerID + 1)"
-            
+
+        for group in sortedGroups {
+            let speakerSegments = groupedSegments[group] ?? []
+            let isLocalMic = group == .selfSpeaker
+            let label: String = {
+                switch group {
+                case .selfSpeaker: return "You"
+                case .other(let id): return resolvedSpeakerLabel(for: id, names: names, selfIDs: selfIDs)
+                }
+            }()
+
             var wordCount = 0
             var fillerMap: [String: Int] = [:]
             var questionsAsked = 0
-            
+
             for seg in speakerSegments {
                 let tokens = tokenize(seg.text)
                 wordCount += tokens.count
-                
+
                 questionsAsked += seg.text.filter { $0 == "?" }.count
-                
+
                 for (phraseTokens, label) in configuredFillersWithTokens {
                     let count = countPhraseOccurrences(of: phraseTokens, in: tokens)
                     if count > 0 { fillerMap[label, default: 0] += count }
                 }
             }
-            
+
             totalWordsAll += wordCount
-            if isMic { youWordCount = wordCount }
-            
+            if isLocalMic { youWordCount = wordCount }
+
             let totalFillers = fillerMap.values.reduce(0, +)
             let fillerEntries = fillerMap
                 .sorted { $0.value > $1.value }
                 .map { FillerEntry(word: $0.key, count: $0.value) }
-            
-            let longestMonologue = computeLongestMonologue(for: speakerID, in: finals)
-            
+
+            let monologueIDs: Set<Int> = {
+                switch group {
+                case .selfSpeaker: return effectiveSelfIDs
+                case .other(let id): return [id]
+                }
+            }()
+            let longestMonologue = computeLongestMonologue(forSpeakers: monologueIDs, in: finals)
+
             speakerStatsList.append(SpeakerStats(
                 speakerLabel: label,
-                isLocalMic: isMic,
+                isLocalMic: isLocalMic,
                 wordCount: wordCount,
                 segmentCount: speakerSegments.count,
                 fillers: fillerEntries,
@@ -217,10 +246,14 @@ struct TrainingMetrics {
     }
     
     static func computeLongestMonologue(for speaker: Int, in segments: [Segment]) -> Int {
+        computeLongestMonologue(forSpeakers: [speaker], in: segments)
+    }
+
+    static func computeLongestMonologue(forSpeakers speakers: Set<Int>, in segments: [Segment]) -> Int {
         var longest = 0
         var current = 0
         for seg in segments {
-            if seg.speaker == speaker {
+            if speakers.contains(seg.speaker) {
                 current += tokenize(seg.text).count
             } else {
                 longest = max(longest, current)
@@ -296,6 +329,51 @@ enum TrainingFillerPreferences {
         }
         
         return normalized
+    }
+}
+
+struct CatchUpResult: Codable, Equatable {
+    let currentTopic: String
+    let questionsForYou: [String]
+    let recentDiscussion: [String]
+    let keyDecisions: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case currentTopic = "current_topic"
+        case questionsForYou = "questions_for_you"
+        case recentDiscussion = "recent_discussion"
+        case keyDecisions = "key_decisions"
+    }
+
+    init(
+        currentTopic: String,
+        questionsForYou: [String],
+        recentDiscussion: [String],
+        keyDecisions: [String]
+    ) {
+        self.currentTopic = currentTopic
+        self.questionsForYou = questionsForYou
+        self.recentDiscussion = recentDiscussion
+        self.keyDecisions = keyDecisions
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        currentTopic = (try c.decodeIfPresent(String.self, forKey: .currentTopic) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        questionsForYou = (try c.decodeIfPresent([String].self, forKey: .questionsForYou) ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        recentDiscussion = (try c.decodeIfPresent([String].self, forKey: .recentDiscussion) ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        keyDecisions = (try c.decodeIfPresent([String].self, forKey: .keyDecisions) ?? [])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    var isEmpty: Bool {
+        currentTopic.isEmpty && questionsForYou.isEmpty && recentDiscussion.isEmpty && keyDecisions.isEmpty
     }
 }
 
@@ -556,6 +634,109 @@ final class InsightsService: Sendable {
         )
     }
     
+    /// Quick "i zoned out" catch-up. Takes the recent portion of the transcript and surfaces
+    /// what's being discussed right now, any questions directed at the user that may be unanswered,
+    /// recent discussion highlights, and key decisions made while the user was not paying attention.
+    func generateCatchUp(
+        recentTranscript: String,
+        fullTranscript: String?,
+        model: OpenAIModel = .gpt5Mini,
+        apiKey: String,
+        language: String = "en"
+    ) async throws -> CatchUpResult {
+        let trimmed = recentTranscript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw InsightsError.emptyTranscript
+        }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        DebugLogger.shared.log(
+            .app,
+            "BYOK catchup request: model=\(model.rawValue), recentChars=\(recentTranscript.count), fullChars=\(fullTranscript?.count ?? 0), language=\(language)"
+        )
+
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "IMPORTANT: The transcript is in \(langName). All content values in your JSON response MUST be in \(langName). JSON keys remain in English.\n\n"
+            : ""
+
+        let fullContextBlock: String = {
+            guard let full = fullTranscript?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !full.isEmpty, full != trimmed else {
+                return ""
+            }
+            return "Earlier meeting context (for grounding only — do not summarize this, focus on the recent window):\n\(full)\n\n"
+        }()
+
+        let systemPrompt = "You help someone who just zoned out catch up on a live meeting in 5 seconds. You ground everything in the transcript — never invent questions, topics, or decisions that aren't there. You are concise, specific, and actionable."
+
+        let prompt = """
+        \(languageInstruction)The person on the mic (labeled "You") just zoned out of their meeting. Give them a fast catch-up based strictly on what's in the transcript.
+
+        \(fullContextBlock)Most recent portion of the meeting (focus here):
+        \(recentTranscript)
+
+        Hard rules:
+        - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+        - "current_topic" must be a single short sentence describing what is being discussed RIGHT NOW (at the end of the transcript). If unclear, say so briefly.
+        - "questions_for_you" lists questions that were directed at "You" in the recent window that do NOT appear to have been answered. Quote or paraphrase faithfully. If none, return an empty array. Never invent.
+        - "recent_discussion" is a chronological bullet list (3-6 items) of what happened in the recent window. Each item is a short phrase, not a full sentence.
+        - "key_decisions" lists any decisions, commitments, or agreements made in the recent window. Empty array if none.
+        - Be specific. Reference names, numbers, and concrete terms from the transcript. Never generic.
+
+        Respond in JSON:
+        {
+            "current_topic": "single short sentence",
+            "questions_for_you": ["unanswered question directed at You"],
+            "recent_discussion": ["bullet point 1", "bullet point 2"],
+            "key_decisions": ["decision 1"]
+        }
+        """
+
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            messages: [
+                Message(role: "system", content: systemPrompt),
+                Message(role: "user", content: prompt)
+            ],
+            maxCompletionTokens: 4000,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            DebugLogger.shared.log(.app, "BYOK catchup response error: status=\(statusCode)")
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                throw InsightsError.apiError(errorResponse.error.message)
+            }
+            throw InsightsError.invalidResponse
+        }
+
+        let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
+
+        guard let content = openAIResponse.choices.first?.message.content,
+              let jsonData = content.data(using: .utf8) else {
+            DebugLogger.shared.log(.app, "BYOK catchup response missing content")
+            throw InsightsError.noContent
+        }
+
+        let parsed = try JSONDecoder().decode(CatchUpResult.self, from: jsonData)
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "BYOK catchup response: duration=\(String(format: "%.2fs", duration)), topicChars=\(parsed.currentTopic.count), questions=\(parsed.questionsForYou.count), discussion=\(parsed.recentDiscussion.count), decisions=\(parsed.keyDecisions.count)"
+        )
+        return parsed
+    }
+
     /// Generate full insights at end of meeting
     func generateInsights(transcript: String, model: OpenAIModel = .gpt5Mini, apiKey: String, language: String = "en") async throws -> MeetingInsights {
         guard !transcript.isEmpty else {
@@ -647,6 +828,155 @@ final class InsightsService: Sendable {
             decisions: insightsResponse.decisions,
             topics: insightsResponse.topics
         )
+    }
+
+    /// Infer real speaker names from the transcript.
+    ///
+    /// Input transcript should embed each turn as `[SpeakerID:N] text` so the model sees
+    /// the stable internal IDs (mic = 1000, remote = 0, 1, 2, ...). `candidates` is an
+    /// optional list of known attendee display names (from calendar) used to bias the
+    /// model toward real names when available. Returns a `[speakerIDString: name]` map;
+    /// IDs the model cannot confidently resolve are omitted.
+    func inferSpeakerNames(
+        transcript: String,
+        candidates: [String],
+        model: OpenAIModel = .gpt5Mini,
+        apiKey: String,
+        language: String = "en"
+    ) async throws -> [String: String] {
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw InsightsError.emptyTranscript
+        }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        DebugLogger.shared.log(
+            .app,
+            "BYOK speaker-names request: model=\(model.rawValue), transcriptChars=\(transcript.count), candidates=\(candidates.count), language=\(language)"
+        )
+
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "The transcript is in \(langName). Names may be in \(langName) or English.\n\n"
+            : ""
+
+        let candidateBlock: String = {
+            let cleaned = candidates
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !cleaned.isEmpty else { return "" }
+            return "Known attendees (bias toward these names when a speaker matches one):\n- \(cleaned.joined(separator: "\n- "))\n\n"
+        }()
+
+        let systemPrompt = "You identify real speaker names from meeting transcripts. You only return a name when the transcript contains clear evidence (someone introduced themselves, addressed by name, or self-identified). You never guess. Unknown speakers are omitted."
+
+        let prompt = """
+        \(languageInstruction)\(candidateBlock)Infer the real first name (or first + last if clearly stated) for each speaker in the transcript.
+
+        The transcript is tagged with internal speaker IDs like `[SpeakerID:1000] ...` for the device's microphone (the user) and `[SpeakerID:0]`, `[SpeakerID:1]`, etc. for remote speakers.
+
+        Hard rules:
+        - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+        - Keys are the numeric speaker IDs as strings (e.g. "1000", "0", "1").
+        - Values are the inferred names as strings (e.g. "Sarah", "Tom Chen").
+        - OMIT any speaker ID you cannot confidently identify. Do not include placeholders like "Speaker 1", "Unknown", or empty strings.
+        - Only return a name when the transcript contains clear evidence: self-introduction ("I'm Sarah"), being addressed ("Thanks Tom"), or explicit attribution.
+        - Prefer the "Known attendees" list when a speaker's statements match one of them.
+        - Do NOT invent names. It is fine (and expected) to return `{}` if no speakers can be identified.
+
+        Respond in JSON:
+        {
+            "speakers": {
+                "1000": "First name or empty if unknown",
+                "0": "First name or empty if unknown"
+            }
+        }
+
+        Transcript:
+        \(transcript)
+        """
+
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            messages: [
+                Message(role: "system", content: systemPrompt),
+                Message(role: "user", content: prompt)
+            ],
+            maxCompletionTokens: 1500,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            DebugLogger.shared.log(.app, "BYOK speaker-names response error: status=\(statusCode)")
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                throw InsightsError.apiError(errorResponse.error.message)
+            }
+            throw InsightsError.invalidResponse
+        }
+
+        let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
+
+        guard let content = openAIResponse.choices.first?.message.content,
+              let jsonData = content.data(using: .utf8) else {
+            DebugLogger.shared.log(.app, "BYOK speaker-names response missing content")
+            throw InsightsError.noContent
+        }
+
+        let parsed = try JSONDecoder().decode(SpeakerNamesResponse.self, from: jsonData)
+        let cleaned = SpeakerNamesResponse.sanitize(parsed.speakers)
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "BYOK speaker-names response: duration=\(String(format: "%.2fs", duration)), identified=\(cleaned.count)/\(parsed.speakers.count)"
+        )
+        return cleaned
+    }
+}
+
+// MARK: - Speaker Names Response
+
+struct SpeakerNamesResponse: Decodable {
+    let speakers: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case speakers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        // Accept both `{ "speakers": { ... } }` and a bare `{ "1000": "...", ... }` top-level object.
+        if let nested = try? container.decode([String: String].self, forKey: .speakers) {
+            speakers = nested
+        } else {
+            let flat = try decoder.singleValueContainer().decode([String: String].self)
+            speakers = flat
+        }
+    }
+
+    /// Drop empty/placeholder values and trim whitespace so downstream code can rely on the map.
+    static func sanitize(_ raw: [String: String]) -> [String: String] {
+        var out: [String: String] = [:]
+        for (key, value) in raw {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let lower = trimmed.lowercased()
+            if lower == "unknown" || lower == "null" || lower == "n/a" || lower == "none" { continue }
+            // Reject "Speaker 2", "S 3", etc. — these are just restatements of the ID.
+            if lower.hasPrefix("speaker ") || lower.hasPrefix("s ") { continue }
+            // Trim keys (sometimes the model returns "1000 ").
+            let cleanKey = key.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanKey.isEmpty, Int(cleanKey) != nil else { continue }
+            out[cleanKey] = trimmed
+        }
+        return out
     }
 }
 

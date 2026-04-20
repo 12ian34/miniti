@@ -1488,45 +1488,42 @@ struct LiveInsightsPanel: View {
                     
                     if !appState.liveSummary.isEmpty {
                         LiveInsightSection(title: "summary", color: Color(hex: "58A6FF")) {
-                            Text(appState.liveSummary)
-                                .font(.system(size: 12, weight: .regular, design: .monospaced))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(4)
+                            SelectableTextView(
+                                SelectableAttributed.body(
+                                    appState.liveSummary,
+                                    fontSize: 12,
+                                    color: Color(hex: "E6EDF3"),
+                                    lineSpacing: 4
+                                )
+                            )
                         }
                     }
-                    
+
                     if !appState.liveDiscussionFlow.isEmpty {
                         LiveInsightSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(Array(appState.liveDiscussionFlow.enumerated()), id: \.offset) { index, item in
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Text("\(index + 1).")
-                                            .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "F59E0B").opacity(0.7))
-                                            .frame(width: 16, alignment: .trailing)
-                                        Text(item)
-                                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "D4D4D8"))
-                                    }
-                                }
-                            }
+                            SelectableTextView(
+                                SelectableAttributed.bulletList(
+                                    items: appState.liveDiscussionFlow.enumerated().map { "\($0.offset + 1). \($0.element)" },
+                                    prefix: "",
+                                    prefixColor: Color(hex: "F59E0B"),
+                                    fontSize: 11,
+                                    textColor: Color(hex: "D4D4D8")
+                                )
+                            )
                         }
                     }
-                    
+
                     if !appState.liveActionItems.isEmpty {
                         LiveInsightSection(title: "actions", color: Color(hex: "3FB950")) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(appState.liveActionItems, id: \.self) { item in
-                                    HStack(alignment: .top, spacing: 8) {
-                                        Text("→")
-                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "3FB950"))
-                                        Text(item)
-                                            .font(.system(size: 11, weight: .regular, design: .monospaced))
-                                            .foregroundStyle(Color(hex: "E6EDF3"))
-                                    }
-                                }
-                            }
+                            SelectableTextView(
+                                SelectableAttributed.bulletList(
+                                    items: appState.liveActionItems,
+                                    prefix: "→",
+                                    prefixColor: Color(hex: "3FB950"),
+                                    fontSize: 11,
+                                    textColor: Color(hex: "E6EDF3")
+                                )
+                            )
                         }
                     }
                     
@@ -2048,7 +2045,11 @@ struct TerminalHeader: View {
                     .focusable(false)
                     .keyboardShortcut("s", modifiers: .command)
                 }
-                
+
+                if appState.isRecording {
+                    ZonedOutButton()
+                }
+
                 if let lang = TranscriptionLanguage(rawValue: appState.meetingLanguage), lang != .english {
                     HStack(spacing: 3) {
                         Text(lang.flag)
@@ -2663,6 +2664,253 @@ struct UpdateAvailableBanner: View {
                         .stroke(ColorPalette.Accent.blue.opacity(0.25), lineWidth: 1)
                 )
         )
+    }
+}
+
+// MARK: - Zoned Out button + popover
+
+struct ZonedOutButton: View {
+    @EnvironmentObject var appState: AppState
+    private let accent = Color(hex: "D2A8FF")
+
+    var body: some View {
+        Button {
+            if appState.isZonedOutPresented {
+                appState.dismissZonedOutCatchUp()
+            } else {
+                appState.triggerZonedOutCatchUp()
+            }
+        } label: {
+            HStack(spacing: 6) {
+                HStack(spacing: 6) {
+                    Text("😶")
+                        .font(.system(size: 12))
+                        .frame(width: 11)
+                    Text("zoned out")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                }
+                Text("⌘⇧Z")
+                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .foregroundStyle(accent.opacity(0.5))
+                    .lineLimit(1)
+            }
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(accent)
+            .frame(height: 30)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(accent.opacity(0.12))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(accent.opacity(0.28), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .disabled(!appState.canRequestZonedOutCatchUp && appState.zonedOutCatchUp == nil && !appState.isGeneratingCatchUp)
+        .popover(
+            isPresented: Binding(
+                get: { appState.isZonedOutPresented },
+                set: { newValue in
+                    if newValue {
+                        appState.isZonedOutPresented = true
+                    } else {
+                        // Funnel any popover dismissal (outside-click, Escape, etc.)
+                        // through the cleanup path so in-flight requests are cancelled.
+                        appState.dismissZonedOutCatchUp()
+                    }
+                }
+            ),
+            arrowEdge: .bottom
+        ) {
+            ZonedOutPopoverContent()
+                .environmentObject(appState)
+                .frame(width: 420, height: 460)
+        }
+    }
+}
+
+private struct ZonedOutPopoverContent: View {
+    @EnvironmentObject var appState: AppState
+    private let accent = Color(hex: "D2A8FF")
+
+    private var generatedLabel: String? {
+        guard let date = appState.zonedOutCatchUpGeneratedAt else { return nil }
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 5 { return "just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        return "\(minutes)m ago"
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("😶")
+                    .font(.system(size: 14))
+                Text("catch me up")
+                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(accent)
+                Spacer(minLength: 0)
+                if let label = generatedLabel {
+                    Text(label)
+                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+                Button {
+                    appState.refreshZonedOutCatchUp()
+                } label: {
+                    HStack(spacing: 4) {
+                        if appState.isGeneratingCatchUp {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(accent)
+                        } else {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(appState.isGeneratingCatchUp ? "thinking" : "refresh")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(accent)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(accent.opacity(0.12))
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .disabled(appState.isGeneratingCatchUp)
+            }
+
+            Divider()
+                .overlay(ColorPalette.Border.subtle)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let catchUp = appState.zonedOutCatchUp {
+                        if !catchUp.currentTopic.isEmpty {
+                            ZonedOutSection(title: "current topic", accent: accent) {
+                                Text(catchUp.currentTopic)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.primary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+
+                        if !catchUp.questionsForYou.isEmpty {
+                            ZonedOutSection(title: "questions for you", accent: Color(hex: "FFA657")) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(catchUp.questionsForYou, id: \.self) { q in
+                                        HStack(alignment: .top, spacing: 6) {
+                                            Text("?")
+                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                .foregroundStyle(Color(hex: "FFA657"))
+                                            Text(q)
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundStyle(ColorPalette.Text.primary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !catchUp.recentDiscussion.isEmpty {
+                            ZonedOutSection(title: "recent discussion", accent: ColorPalette.Accent.blue) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(catchUp.recentDiscussion, id: \.self) { line in
+                                        HStack(alignment: .top, spacing: 6) {
+                                            Text("›")
+                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .foregroundStyle(ColorPalette.Text.muted)
+                                            Text(line)
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundStyle(ColorPalette.Text.secondary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !catchUp.keyDecisions.isEmpty {
+                            ZonedOutSection(title: "key decisions", accent: ColorPalette.Accent.green) {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    ForEach(catchUp.keyDecisions, id: \.self) { line in
+                                        HStack(alignment: .top, spacing: 6) {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 9, weight: .bold))
+                                                .foregroundStyle(ColorPalette.Accent.green)
+                                                .padding(.top, 3)
+                                            Text(line)
+                                                .font(.system(size: 12, design: .monospaced))
+                                                .foregroundStyle(ColorPalette.Text.primary)
+                                                .fixedSize(horizontal: false, vertical: true)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if appState.isGeneratingCatchUp {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(accent)
+                            Text("catching you up…")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(ColorPalette.Text.muted)
+                        }
+                    }
+
+                    if let err = appState.zonedOutCatchUpError {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(ColorPalette.Accent.amber)
+                            Text(err)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(ColorPalette.Accent.amber)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(ColorPalette.Accent.amber.opacity(0.08))
+                        )
+                    }
+
+                    Text("covers roughly the last 3 minutes of discussion")
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted.opacity(0.7))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 400)
+        }
+        .padding(14)
+        .background(ColorPalette.Background.panel)
+    }
+}
+
+private struct ZonedOutSection<Content: View>: View {
+    let title: String
+    let accent: Color
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(accent)
+                .textCase(.lowercase)
+            content()
+        }
     }
 }
 

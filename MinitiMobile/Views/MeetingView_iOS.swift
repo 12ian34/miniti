@@ -179,12 +179,41 @@ struct MeetingView_iOS: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                ShareLink(item: shareContent) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(ColorPalette.Text.muted)
+                HStack(spacing: 12) {
+                    if appState.isRecording {
+                        Button {
+                            appState.triggerZonedOutCatchUp()
+                        } label: {
+                            Text("😶")
+                                .font(.system(size: 18))
+                                .accessibilityLabel("catch me up")
+                        }
+                        .disabled(!appState.canRequestZonedOutCatchUp && appState.zonedOutCatchUp == nil && !appState.isGeneratingCatchUp)
+                    }
+                    ShareLink(item: shareContent) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
                 }
             }
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { appState.isZonedOutPresented },
+                set: { newValue in
+                    if newValue {
+                        appState.isZonedOutPresented = true
+                    } else {
+                        // Funnel swipe-down dismissal through the cleanup path so
+                        // in-flight requests are cancelled, not orphaned.
+                        appState.dismissZonedOutCatchUp()
+                    }
+                }
+            )
+        ) {
+            ZonedOutSheet_iOS()
+                .environmentObject(appState)
         }
         .overlay {
             if showSavedOverlay {
@@ -1355,5 +1384,203 @@ private struct CompactEventRow_iOS: View {
         let fmt = DateFormatter()
         fmt.dateFormat = "HH:mm"
         return fmt.string(from: start)
+    }
+}
+
+// MARK: - Zoned Out sheet (iOS)
+
+struct ZonedOutSheet_iOS: View {
+    @EnvironmentObject var appState: AppState
+    private let accent = Color(hex: "D2A8FF")
+
+    private var generatedLabel: String? {
+        guard let date = appState.zonedOutCatchUpGeneratedAt else { return nil }
+        let seconds = Int(Date().timeIntervalSince(date))
+        if seconds < 5 { return "just now" }
+        if seconds < 60 { return "\(seconds)s ago" }
+        let minutes = seconds / 60
+        return "\(minutes)m ago"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                ColorPalette.Background.primary.ignoresSafeArea()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        HStack(spacing: 10) {
+                            Text("😶")
+                                .font(.system(size: 22))
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("catch me up")
+                                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(accent)
+                                Text("covers the last ~3 minutes")
+                                    .font(.system(size: 10, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.muted)
+                            }
+                            Spacer(minLength: 0)
+                            if let label = generatedLabel {
+                                Text(label)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.muted)
+                            }
+                        }
+
+                        if let catchUp = appState.zonedOutCatchUp {
+                            if !catchUp.currentTopic.isEmpty {
+                                ZonedOutSection_iOS(title: "current topic", accent: accent) {
+                                    Text(catchUp.currentTopic)
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .foregroundStyle(ColorPalette.Text.primary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+
+                            if !catchUp.questionsForYou.isEmpty {
+                                ZonedOutSection_iOS(title: "questions for you", accent: Color(hex: "FFA657")) {
+                                    VStack(alignment: .leading, spacing: 8) {
+                                        ForEach(catchUp.questionsForYou, id: \.self) { q in
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Text("?")
+                                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                                    .foregroundStyle(Color(hex: "FFA657"))
+                                                Text(q)
+                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .foregroundStyle(ColorPalette.Text.primary)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !catchUp.recentDiscussion.isEmpty {
+                                ZonedOutSection_iOS(title: "recent discussion", accent: ColorPalette.Accent.blue) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(catchUp.recentDiscussion, id: \.self) { line in
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Text("›")
+                                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                                    .foregroundStyle(ColorPalette.Text.muted)
+                                                Text(line)
+                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .foregroundStyle(ColorPalette.Text.secondary)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !catchUp.keyDecisions.isEmpty {
+                                ZonedOutSection_iOS(title: "key decisions", accent: ColorPalette.Accent.green) {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ForEach(catchUp.keyDecisions, id: \.self) { line in
+                                            HStack(alignment: .top, spacing: 8) {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 10, weight: .bold))
+                                                    .foregroundStyle(ColorPalette.Accent.green)
+                                                    .padding(.top, 3)
+                                                Text(line)
+                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .foregroundStyle(ColorPalette.Text.primary)
+                                                    .fixedSize(horizontal: false, vertical: true)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else if appState.isGeneratingCatchUp {
+                            HStack(spacing: 10) {
+                                ProgressView().tint(accent)
+                                Text("catching you up…")
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Text.muted)
+                            }
+                            .padding(.vertical, 20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        if let err = appState.zonedOutCatchUpError {
+                            HStack(alignment: .top, spacing: 8) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(ColorPalette.Accent.amber)
+                                Text(err)
+                                    .font(.system(size: 12, design: .monospaced))
+                                    .foregroundStyle(ColorPalette.Accent.amber)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(ColorPalette.Accent.amber.opacity(0.08))
+                            )
+                        }
+                    }
+                    .padding(16)
+                }
+            }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        appState.dismissZonedOutCatchUp()
+                    } label: {
+                        Text("done")
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        appState.refreshZonedOutCatchUp()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if appState.isGeneratingCatchUp {
+                                ProgressView().controlSize(.mini).tint(accent)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            Text(appState.isGeneratingCatchUp ? "thinking" : "refresh")
+                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        }
+                        .foregroundStyle(accent)
+                    }
+                    .disabled(appState.isGeneratingCatchUp)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+}
+
+private struct ZonedOutSection_iOS<Content: View>: View {
+    let title: String
+    let accent: Color
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .foregroundStyle(accent)
+            content()
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Background.secondary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(accent.opacity(0.2), lineWidth: 1)
+        )
     }
 }

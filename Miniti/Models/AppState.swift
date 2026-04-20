@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Combine
-import UserNotifications
+@preconcurrency import UserNotifications
 #if os(iOS)
 import ActivityKit
 import StoreKit
@@ -140,6 +140,9 @@ final class AppState: ObservableObject {
         let meddpiccChampion: String?
         let meddpiccCompetition: String?
         let suggestedQuestions: [SuggestedQuestion]
+        let speakerNames: [String: String]
+        let speakerOverrides: Set<String>
+        let selfSpeakerIDs: Set<Int>
     }
     
     // MARK: - Recording State
@@ -221,7 +224,28 @@ final class AppState: ObservableObject {
     @Published var liveCompetition: String? = nil
     // Questions
     @Published var liveQuestions: [SuggestedQuestion] = []
-    
+    // Inferred speaker names: [speakerID as string: name]
+    @Published var liveSpeakerNames: [String: String] = [:]
+    // Speaker IDs the user has manually named. Inference will not overwrite these.
+    @Published var liveSpeakerOverrides: Set<String> = []
+    // Speaker IDs the user has marked as themselves. Empty = platform default (mic on macOS).
+    // Supports multiple IDs so split diarization (one person across two IDs) can be unified.
+    @Published var liveSelfSpeakerIDs: Set<Int> = []
+
+    // MARK: - Zoned Out catch-up (user-triggered, one-shot)
+    @Published var zonedOutCatchUp: CatchUpResult?
+    @Published var isGeneratingCatchUp: Bool = false
+    @Published var zonedOutCatchUpError: String?
+    @Published var isZonedOutPresented: Bool = false
+    @Published var zonedOutCatchUpGeneratedAt: Date?
+    private var activeCatchUpTask: Task<Void, Never>?
+    private let catchUpRecentWindowSeconds: TimeInterval = 180
+    /// Minimum finalized segments before the "i zoned out" button becomes usable.
+    private let catchUpTriggerMinSegments: Int = 2
+    /// Fallback floor for the window passed to the LLM in quiet meetings — we always
+    /// include at least this many trailing segments even if they fall outside the window.
+    private let catchUpFallbackWindowSegments: Int = 8
+
     private var lastInsightSegmentCount = 0
     private let firstInsightThreshold = 3 // First insight after 3 sentences
     private let insightUpdateThreshold = 8 // Subsequent updates every 8 sentences
@@ -239,6 +263,16 @@ final class AppState: ObservableObject {
     private let firstQuestionsInsightThreshold = 6
     private let questionsInsightUpdateThreshold = 12
     private let questionsMinUpdateInterval: TimeInterval = 60
+
+    // MARK: - Speaker Names Tracking
+    private var lastSpeakerNamesSegmentCount = 0
+    private var lastSpeakerNamesRequestAt: Date? = nil
+    /// First inference fires once enough of the meeting has happened for names to show up.
+    private let firstSpeakerNamesThreshold = 8
+    /// Subsequent inferences are rare — names don't change often.
+    private let speakerNamesUpdateThreshold = 40
+    private let speakerNamesMinUpdateInterval: TimeInterval = 120
+    private var isGeneratingSpeakerNames = false
     
     // MARK: - Title Updates
     private var lastTitleUpdateCount = 0
@@ -444,10 +478,31 @@ final class AppState: ObservableObject {
     @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false
     @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false
     @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
+    @AppStorage("notifyOnMonologue") var notifyOnMonologue: Bool = false
+    @AppStorage("notifyOnHighFillerRate") var notifyOnHighFillerRate: Bool = false
+    @AppStorage("notifyOnUpcomingMeeting") var notifyOnUpcomingMeeting: Bool = false
+    @AppStorage("autoInferSpeakerNames") var autoInferSpeakerNames: Bool = true
 
     private var notifiedQuestionIDs: Set<String> = []
     private var lastQuestionNotificationAt: Date?
     private static let questionNotificationMinInterval: TimeInterval = 120 // 2 minutes
+
+    // Real-time nudges (local, no LLM)
+    private var lastMonologueNudgeAt: Date?
+    private var lastFillerNudgeAt: Date?
+    private var monologueNudgedForRun: Bool = false
+    private var lastEvaluatedFinalSegmentID: UUID?
+    /// Cached pre-tokenized filler phrases for the current meeting language.
+    /// Rebuilt lazily when `meetingLanguage` changes or the meeting resets.
+    private var cachedFillerTokensLanguage: String?
+    private var cachedFillerTokens: [[String]] = []
+    private static let monologueNudgeMinInterval: TimeInterval = 180   // 3 minutes between monologue nudges
+    private static let fillerNudgeMinInterval: TimeInterval = 180       // 3 minutes between filler nudges
+    private static let monologueMinSeconds: TimeInterval = 60           // sustained for at least 60s of "You"
+    private static let monologueMinWords: Int = 180                     // and at least ~180 words
+    private static let fillerWindowSeconds: TimeInterval = 60           // rolling filler-rate window
+    private static let fillerNudgeMinFillersPerMinute: Double = 8       // threshold (you-only)
+    private static let fillerWindowMinYouWords: Int = 20                // don't nudge on a few words
     
     @Published var isGoogleCalendarConnected: Bool = false
     @Published var googleCalendarEmail: String?
@@ -1065,8 +1120,10 @@ final class AppState: ObservableObject {
             lastInsightSegmentCount = finalCount
             Task { await updateLiveInsights() }
         }
+
+        evaluateRealtimeNudges()
     }
-    
+
     private var isGeneratingMeddpiccInsights = false
     private var isGeneratingQuestionsInsights = false
     
@@ -1122,6 +1179,27 @@ final class AppState: ObservableObject {
                             segmentCount: finalCount,
                             meetingID: meetingID
                         )
+                    }
+                }
+                // Speaker names: low-cadence, best-effort. Rely on its own throttle.
+                if autoInferSpeakerNames, !isGeneratingSpeakerNames {
+                    let meetsSegmentThreshold = finalCount >= lastSpeakerNamesSegmentCount + (
+                        lastSpeakerNamesSegmentCount == 0 ? firstSpeakerNamesThreshold : speakerNamesUpdateThreshold
+                    )
+                    let meetsTimeThreshold = lastSpeakerNamesRequestAt.map {
+                        now.timeIntervalSince($0) >= self.speakerNamesMinUpdateInterval
+                    } ?? true
+                    if meetsSegmentThreshold && meetsTimeThreshold {
+                        let finalSegments = liveSegments
+                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                            .sorted { $0.timestamp < $1.timestamp }
+                        if let meetingID = currentMeeting?.id, !finalSegments.isEmpty {
+                            await updateSpeakerNamesInBackground(
+                                finalSegments: finalSegments,
+                                segmentCount: finalCount,
+                                meetingID: meetingID
+                            )
+                        }
                     }
                 }
             }
@@ -1339,7 +1417,319 @@ final class AppState: ObservableObject {
             }
         }
     }
-    
+
+    // MARK: - Speaker Names Inference
+
+    /// Build the list of candidate real names to bias the LLM toward.
+    /// Currently drawn from calendar attendees (excluding the local user).
+    private func speakerNameCandidates() -> [String] {
+        guard let meeting = currentMeeting else { return [] }
+        return meeting.attendees.compactMap { attendee -> String? in
+            if attendee.isSelf { return nil }
+            let name = attendee.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return name.isEmpty ? nil : name
+        }
+    }
+
+    /// Kick off a background speaker-name inference. No-op if disabled, already running,
+    /// or the transcript is too short. Results are merged into `liveSpeakerNames`.
+    private func updateSpeakerNamesInBackground(
+        finalSegments: [LiveSegment],
+        segmentCount: Int,
+        meetingID: UUID
+    ) async {
+        guard autoInferSpeakerNames else { return }
+        guard !isGeneratingSpeakerNames else { return }
+        guard currentMeeting?.id == meetingID else { return }
+        let transcript = Self.transcriptTextWithSpeakerIDs(from: finalSegments)
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        isGeneratingSpeakerNames = true
+        defer { isGeneratingSpeakerNames = false }
+
+        let candidates = speakerNameCandidates()
+        let model = OpenAIModel.gpt5Mini
+
+        do {
+            let inferred: [String: String]
+            if appMode == .managed, let minitiAPIService {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                inferred = try await minitiAPIService.inferSpeakerNames(
+                    deviceId: deviceId,
+                    transcript: transcript,
+                    candidates: candidates,
+                    model: model.rawValue,
+                    language: meetingLanguage
+                )
+            } else if let insightsService, !openaiApiKey.isEmpty {
+                inferred = try await insightsService.inferSpeakerNames(
+                    transcript: transcript,
+                    candidates: candidates,
+                    model: model,
+                    apiKey: openaiApiKey,
+                    language: meetingLanguage
+                )
+            } else {
+                return
+            }
+
+            guard currentMeeting?.id == meetingID else {
+                DebugLogger.shared.log(.app, "Dropping stale speaker-names response (meeting changed)")
+                return
+            }
+
+            lastSpeakerNamesRequestAt = Date()
+            lastSpeakerNamesSegmentCount = segmentCount
+
+            guard !inferred.isEmpty else {
+                DebugLogger.shared.log(.app, "Speaker-names: no names inferred this cycle")
+                return
+            }
+
+            // Merge: keep existing names; never overwrite a user-overridden name.
+            var merged = liveSpeakerNames
+            var applied = 0
+            for (key, value) in inferred where !liveSpeakerOverrides.contains(key) {
+                merged[key] = value
+                applied += 1
+            }
+            liveSpeakerNames = merged
+            DebugLogger.shared.log(.app, "Speaker-names applied: total=\(merged.count), added/updated=\(applied), skipped_overrides=\(inferred.count - applied)")
+        } catch {
+            DebugLogger.shared.log(.app, "Speaker-names inference failed: \(error.localizedDescription)")
+        }
+    }
+
+    /// Set or clear a user-controlled speaker name for the current live meeting.
+    /// Pass a non-empty name to set + mark as overridden (inference won't overwrite).
+    /// Pass `nil` or whitespace to clear the override so inference can refill.
+    func setLiveSpeakerName(id: Int, name: String?) {
+        let key = String(id)
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var names = liveSpeakerNames
+        var overrides = liveSpeakerOverrides
+        if trimmed.isEmpty {
+            names.removeValue(forKey: key)
+            overrides.remove(key)
+        } else {
+            names[key] = trimmed
+            overrides.insert(key)
+        }
+        liveSpeakerNames = names
+        liveSpeakerOverrides = overrides
+
+        // Mirror to the persisted meeting (if any) so the change survives across
+        // resume-interrupted, app restarts, history, exports, and webhooks.
+        if let meeting = currentMeeting {
+            meeting.setSpeakerName(id: key, name: trimmed.isEmpty ? nil : trimmed)
+            saveCurrentMeetingIfNeeded()
+        }
+        DebugLogger.shared.log(.app, "Speaker-name override: id=\(key), name=\(trimmed.isEmpty ? "<cleared>" : trimmed)")
+    }
+
+    /// Toggle whether a speaker is marked as the user ("You"). Supports multiple speakers
+    /// being marked as self — useful when diarization splits one person across IDs. Marking
+    /// clears any inferred/custom name for that ID so the resolver returns "You".
+    func setLiveSelfSpeaker(id: Int, isSelf: Bool) {
+        var set = liveSelfSpeakerIDs
+        if isSelf {
+            if set.isEmpty { set = effectiveLiveSelfSpeakerIDs }
+            set.insert(id)
+        } else {
+            set.remove(id)
+        }
+        liveSelfSpeakerIDs = set
+
+        if isSelf {
+            let key = String(id)
+            var names = liveSpeakerNames
+            var overrides = liveSpeakerOverrides
+            if names.removeValue(forKey: key) != nil { liveSpeakerNames = names }
+            if overrides.remove(key) != nil { liveSpeakerOverrides = overrides }
+        }
+        if let meeting = currentMeeting {
+            meeting.setSelfSpeaker(id: id, isSelf: isSelf)
+            saveCurrentMeetingIfNeeded()
+        }
+        DebugLogger.shared.log(.app, "Self speaker toggle: id=\(id), isSelf=\(isSelf), total=\(liveSelfSpeakerIDs.count)")
+    }
+
+    /// The effective self-speaker set during the live session — explicit markings, or the
+    /// mic speaker as a default. Always non-empty.
+    var effectiveLiveSelfSpeakerIDs: Set<Int> {
+        liveSelfSpeakerIDs.isEmpty ? [DeepgramService.micSpeakerID] : liveSelfSpeakerIDs
+    }
+
+    // MARK: - Zoned Out catch-up
+
+    var canRequestZonedOutCatchUp: Bool {
+        guard isRecording, currentMeeting != nil else { return false }
+        let finalCount = liveSegments.filter {
+            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }.count
+        return finalCount >= catchUpTriggerMinSegments && !isGeneratingCatchUp
+    }
+
+    /// Present the Zoned Out catch-up UI and kick off a fresh fetch.
+    func triggerZonedOutCatchUp() {
+        guard isRecording, currentMeeting != nil else { return }
+        DebugLogger.shared.log(.app, "Zoned out catch-up requested")
+        isZonedOutPresented = true
+        activeCatchUpTask?.cancel()
+        activeCatchUpTask = Task { @MainActor [weak self] in
+            await self?.fetchZonedOutCatchUp(userInitiated: true)
+        }
+    }
+
+    /// Re-fetch the catch-up while the sheet is already open.
+    func refreshZonedOutCatchUp() {
+        guard isRecording, currentMeeting != nil else { return }
+        activeCatchUpTask?.cancel()
+        activeCatchUpTask = Task { @MainActor [weak self] in
+            await self?.fetchZonedOutCatchUp(userInitiated: true)
+        }
+    }
+
+    func dismissZonedOutCatchUp() {
+        // Idempotent — safe to call repeatedly (e.g. when the sheet swipes down
+        // AND the user taps "done"). Cancels any in-flight fetch; the in-flight
+        // task self-exits via `Task.isCancelled` check before applying state.
+        activeCatchUpTask?.cancel()
+        activeCatchUpTask = nil
+        isGeneratingCatchUp = false
+        if isZonedOutPresented {
+            isZonedOutPresented = false
+        }
+    }
+
+    private func resetZonedOutState() {
+        activeCatchUpTask?.cancel()
+        activeCatchUpTask = nil
+        zonedOutCatchUp = nil
+        zonedOutCatchUpError = nil
+        isGeneratingCatchUp = false
+        isZonedOutPresented = false
+        zonedOutCatchUpGeneratedAt = nil
+    }
+
+    @MainActor
+    private func fetchZonedOutCatchUp(userInitiated: Bool) async {
+        if isGeneratingCatchUp {
+            DebugLogger.shared.log(.app, "Zoned out catch-up skipped: already in flight")
+            return
+        }
+
+        let finalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+
+        guard !finalSegments.isEmpty else {
+            zonedOutCatchUpError = "not enough speech captured yet — try again in a few seconds"
+            return
+        }
+
+        let meetingIDAtRequest = currentMeeting?.id
+        let recentSegments = recentCatchUpSegments(from: finalSegments)
+        let recentTranscript = transcriptText(from: recentSegments)
+        let fullTranscript = transcriptText(from: finalSegments)
+
+        guard !recentTranscript.isEmpty else {
+            zonedOutCatchUpError = "not enough speech captured yet — try again in a few seconds"
+            return
+        }
+
+        isGeneratingCatchUp = true
+        zonedOutCatchUpError = nil
+
+        DebugLogger.shared.log(
+            .app,
+            "Zoned out catch-up start: recentSegments=\(recentSegments.count), recentChars=\(recentTranscript.count), fullChars=\(fullTranscript.count)"
+        )
+
+        do {
+            let result: CatchUpResult
+            if appMode == .managed, let minitiAPIService {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                result = try await minitiAPIService.generateCatchUp(
+                    deviceId: deviceId,
+                    recentTranscript: recentTranscript,
+                    fullTranscript: fullTranscript,
+                    model: OpenAIModel.gpt5Mini.rawValue,
+                    language: meetingLanguage
+                )
+            } else {
+                guard let insightsService, !openaiApiKey.isEmpty else {
+                    zonedOutCatchUpError = "openai api key required in settings"
+                    isGeneratingCatchUp = false
+                    return
+                }
+                result = try await insightsService.generateCatchUp(
+                    recentTranscript: recentTranscript,
+                    fullTranscript: fullTranscript,
+                    model: .gpt5Mini,
+                    apiKey: openaiApiKey,
+                    language: meetingLanguage
+                )
+            }
+
+            if Task.isCancelled {
+                DebugLogger.shared.log(.app, "Dropping cancelled catch-up response")
+                isGeneratingCatchUp = false
+                return
+            }
+
+            guard currentMeeting?.id == meetingIDAtRequest else {
+                DebugLogger.shared.log(.app, "Dropping stale catch-up response (meeting changed)")
+                isGeneratingCatchUp = false
+                return
+            }
+
+            if result.isEmpty {
+                zonedOutCatchUp = nil
+                zonedOutCatchUpError = "catch-up not available yet — keep recording for a bit and try again"
+            } else {
+                zonedOutCatchUp = result
+                zonedOutCatchUpError = nil
+                zonedOutCatchUpGeneratedAt = Date()
+            }
+            isGeneratingCatchUp = false
+            _ = userInitiated
+        } catch {
+            // Cancellation is not a failure — the user (or a new request) cancelled us.
+            if Task.isCancelled || (error is CancellationError) {
+                DebugLogger.shared.log(.app, "Zoned out catch-up cancelled")
+                isGeneratingCatchUp = false
+                return
+            }
+            DebugLogger.shared.log(.app, "Zoned out catch-up FAILED: \(error.localizedDescription)")
+            enqueueDiagnosticEvent(
+                "insights_catchup_failed",
+                category: .insights,
+                level: .warning,
+                details: ["error": error.localizedDescription]
+            )
+            if zonedOutCatchUp == nil {
+                zonedOutCatchUpError = "couldn't generate catch-up — \(error.localizedDescription.lowercased())"
+            } else {
+                zonedOutCatchUpError = "couldn't refresh catch-up — showing the last one"
+            }
+            isGeneratingCatchUp = false
+        }
+    }
+
+    /// Tail segments inside the catch-up window (default 3 minutes of wall-clock transcript time).
+    /// Always keeps at least `catchUpFallbackWindowSegments` so we can still catch up in quiet meetings.
+    private func recentCatchUpSegments(from finalSegments: [LiveSegment]) -> [LiveSegment] {
+        guard !finalSegments.isEmpty else { return [] }
+        guard let last = finalSegments.last else { return finalSegments }
+        let cutoff = last.timestamp - catchUpRecentWindowSeconds
+        let windowed = finalSegments.filter { $0.timestamp >= cutoff }
+        if windowed.count >= catchUpFallbackWindowSegments { return windowed }
+        let minCount = min(finalSegments.count, catchUpFallbackWindowSegments)
+        return Array(finalSegments.suffix(minCount))
+    }
+
     private func fetchLiveInsights(
         mode: InsightsMode,
         transcript: String,
@@ -1594,6 +1984,14 @@ final class AppState: ObservableObject {
         Self.transcriptText(from: segments)
     }
 
+    /// Build a transcript with raw speaker IDs embedded (e.g. `[SpeakerID:1000] ...`).
+    /// Used for speaker-name inference so the model returns a map keyed by the stable internal IDs.
+    nonisolated static func transcriptTextWithSpeakerIDs(from segments: [LiveSegment]) -> String {
+        segments
+            .map { "[SpeakerID:\($0.speaker)] \($0.text)" }
+            .joined(separator: "\n")
+    }
+
     nonisolated static func tailTranscriptSegments(
         from segments: [LiveSegment],
         maxChars: Int
@@ -1766,13 +2164,20 @@ final class AppState: ObservableObject {
         liveChampion = nil
         liveCompetition = nil
         liveQuestions = []
+        liveSpeakerNames = [:]
+        liveSpeakerOverrides = []
+        liveSelfSpeakerIDs = []
         notifiedQuestionIDs = []
         lastQuestionNotificationAt = nil
+        resetZonedOutState()
+        resetNudgeState()
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
         lastQuestionsSegmentCount = 0
         lastQuestionsRequestAt = nil
+        lastSpeakerNamesSegmentCount = 0
+        lastSpeakerNamesRequestAt = nil
         resetManagedIncrementalTracking()
         
         if appMode == .managed {
@@ -1819,7 +2224,7 @@ final class AppState: ObservableObject {
                 let segments = liveSegments.map {
                     TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
                 }
-                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage)
+                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSelfSpeakerIDs)
             }
             let markdown = fullMeetingAsMarkdown()
             exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
@@ -1828,12 +2233,14 @@ final class AppState: ObservableObject {
 
         // Fire webhook with live in-memory state before clearing
         if !webhookURL.isEmpty, let meeting = currentMeeting {
+            let names = liveSpeakerNames
+            let selfIDs = liveSelfSpeakerIDs
             let transcriptEntries = liveSegments
                 .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .sorted { $0.timestamp < $1.timestamp }
                 .map { seg in
                     WebhookService.MeetingPayload.TranscriptEntry(
-                        speaker: seg.speakerLabel,
+                        speaker: resolvedSpeakerLabel(for: seg.speaker, names: names, selfIDs: selfIDs),
                         text: seg.text,
                         timestamp: seg.timestamp
                     )
@@ -1842,7 +2249,7 @@ final class AppState: ObservableObject {
                 let segs = liveSegments.map {
                     TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
                 }
-                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration, language: meetingLanguage)
+                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration, language: meetingLanguage, names: names, selfIDs: selfIDs)
             }
             let training = WebhookService.trainingData(from: trainingMetrics)
             let payload = WebhookService.payloadFromLiveState(
@@ -1867,6 +2274,7 @@ final class AppState: ObservableObject {
                 champion: liveChampion,
                 competition: liveCompetition,
                 speakerCount: detectedSpeakers.count,
+                speakerNames: names,
                 transcript: transcriptEntries,
                 training: training,
                 questions: liveQuestions,
@@ -2092,7 +2500,10 @@ final class AppState: ObservableObject {
         liveChampion = interrupted.meddpiccChampion
         liveCompetition = interrupted.meddpiccCompetition
         liveQuestions = interrupted.suggestedQuestions
-        
+        liveSpeakerNames = interrupted.speakerNames
+        liveSpeakerOverrides = interrupted.speakerOverrides
+        liveSelfSpeakerIDs = interrupted.selfSpeakerIDs
+
         if interrupted.hasMEDDPICC {
             insightsMode = .meddpicc
         }
@@ -2163,9 +2574,9 @@ final class AppState: ObservableObject {
                 timestamp: $0.timestamp
             )
         }
-        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage)
+        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSelfSpeakerIDs)
     }
-    
+
     /// Save current meeting to SwiftData if it has transcript content.
     /// Called periodically during recording, on background transition, and on goHome/stopRecording.
     /// Does NOT set endTime — callers (stopRecording, goHome) set it explicitly so that
@@ -2209,7 +2620,10 @@ final class AppState: ObservableObject {
             meddpiccIdentifiedPain: liveIdentifiedPain,
             meddpiccChampion: liveChampion,
             meddpiccCompetition: liveCompetition,
-            suggestedQuestions: liveQuestions
+            suggestedQuestions: liveQuestions,
+            speakerNames: liveSpeakerNames,
+            speakerOverrides: liveSpeakerOverrides,
+            selfSpeakerIDs: liveSelfSpeakerIDs
         )
     }
 
@@ -2277,6 +2691,9 @@ final class AppState: ObservableObject {
         payload.meeting.meddpiccChampion = payload.meddpiccChampion
         payload.meeting.meddpiccCompetition = payload.meddpiccCompetition
         payload.meeting.suggestedQuestions = payload.suggestedQuestions
+        payload.meeting.speakerNames = payload.speakerNames
+        payload.meeting.speakerOverrides = payload.speakerOverrides
+        payload.meeting.selfSpeakerIDs = payload.selfSpeakerIDs
 
         if payload.meeting.modelContext == nil {
             modelContext.insert(payload.meeting)
@@ -2698,11 +3115,21 @@ final class AppState: ObservableObject {
         liveQuestions = []
         notifiedQuestionIDs = []
         lastQuestionNotificationAt = nil
+        resetZonedOutState()
+        resetNudgeState()
         lastQuestionsSegmentCount = 0
         lastQuestionsRequestAt = nil
         questionsSuccessCount = 0
         questionsCadenceAnchor = nil
         questionsLastFiredSegmentCount = 0
+
+        // Reset speaker names
+        liveSpeakerNames = [:]
+        liveSpeakerOverrides = []
+        liveSelfSpeakerIDs = []
+        lastSpeakerNamesSegmentCount = 0
+        lastSpeakerNamesRequestAt = nil
+        isGeneratingSpeakerNames = false
         
         // Reset title tracking
         currentTitleSuffix = ""
@@ -3505,12 +3932,14 @@ final class AppState: ObservableObject {
             let events = try await minitiAPIService.googleEvents(deviceId: deviceId)
             DebugLogger.shared.log(.app, "Google Calendar fetched \(events.count) events")
             upcomingEvents = events
+            rescheduleMeetingReminders()
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar events fetch failed: \(error)")
             if case MinitiAPIService.ServiceError.serverError(let msg) = error, msg.contains("google_not_connected") {
                 isGoogleCalendarConnected = false
                 googleCalendarEmail = nil
                 upcomingEvents = []
+                rescheduleMeetingReminders()
             }
         }
     }
@@ -3659,6 +4088,7 @@ final class AppState: ObservableObject {
         googleCalendarEmail = nil
         upcomingEvents = []
         stopCalendarRefreshTimer()
+        rescheduleMeetingReminders()
     }
     
     func autoSyncToAttio(meeting: Meeting) {
@@ -4022,18 +4452,20 @@ final class AppState: ObservableObject {
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty 
         }
         
-        var currentSpeaker: Int? = nil
+        var currentKey: String? = nil
+        let names = liveSpeakerNames.isEmpty ? nil : liveSpeakerNames
         for segment in finalSegments {
-            if segment.speaker != currentSpeaker {
-                currentSpeaker = segment.speaker
-                md += "\n**\(segment.speakerLabel):**\n"
+            let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: liveSelfSpeakerIDs)
+            if key != currentKey {
+                currentKey = key
+                md += "\n**\(resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: liveSelfSpeakerIDs)):**\n"
             }
             md += "\(segment.text) "
         }
-        
+
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-    
+
     func insightsAsMarkdown() -> String {
         var md = "## Insights\n\n"
         
@@ -4347,6 +4779,234 @@ final class AppState: ObservableObject {
         lastQuestionNotificationAt = Date()
         for q in newHighs { notifiedQuestionIDs.insert(q.id) }
         DebugLogger.shared.log(.app, "Question notification fired: \(question.question.prefix(60))")
+    }
+
+    // MARK: - Upcoming Meeting Reminders
+
+    /// Schedules local notifications ~60s before each upcoming calendar event.
+    /// Always cancels previously-scheduled reminders first, so cancelled/rescheduled
+    /// events don't fire stale notifications. Safe to call whenever `upcomingEvents`
+    /// changes or the toggle flips.
+    func rescheduleMeetingReminders() {
+        UNUserNotificationCenter.current().getPendingNotificationRequests { [weak self] pending in
+            let staleIDs = pending
+                .filter { $0.identifier.hasPrefix("miniti.meeting-reminder.") }
+                .map { $0.identifier }
+            if !staleIDs.isEmpty {
+                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: staleIDs)
+            }
+            Task { @MainActor [weak self] in
+                self?.scheduleMeetingRemindersIfEnabled()
+            }
+        }
+    }
+
+    private func scheduleMeetingRemindersIfEnabled() {
+        guard notifyOnUpcomingMeeting else { return }
+        guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
+
+        let now = Date()
+        let center = UNUserNotificationCenter.current()
+        for event in upcomingEvents {
+            guard let start = event.startDate else { continue }
+            let fireAt = start.addingTimeInterval(-60)
+            let interval = fireAt.timeIntervalSince(now)
+            guard interval > 0 else { continue }
+
+            let content = UNMutableNotificationContent()
+            content.title = "meeting in 1 minute"
+            content.body = event.title
+            content.sound = .default
+
+            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
+            let request = UNNotificationRequest(
+                identifier: "miniti.meeting-reminder.\(event.id)",
+                content: content,
+                trigger: trigger
+            )
+            center.add(request) { error in
+                if let error {
+                    DebugLogger.shared.log(.app, "Meeting reminder schedule failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    // MARK: - Real-time Nudges (monologue + filler rate)
+
+    /// Permission request shared between question notifications and nudges.
+    func requestNudgeNotificationPermission(completion: (@Sendable (Bool) -> Void)? = nil) {
+        requestQuestionNotificationPermission(completion: completion)
+    }
+
+    func resetNudgeState() {
+        lastMonologueNudgeAt = nil
+        lastFillerNudgeAt = nil
+        monologueNudgedForRun = false
+        lastEvaluatedFinalSegmentID = nil
+        cachedFillerTokensLanguage = nil
+        cachedFillerTokens = []
+    }
+
+    /// Returns the tokenized filler phrases for the given language, rebuilding the
+    /// cache only when the language changes. Cache is cleared in `resetNudgeState()`
+    /// so mid-meeting filler list edits are picked up on the next meeting.
+    private func fillerTokens(for language: String) -> [[String]] {
+        if cachedFillerTokensLanguage == language {
+            return cachedFillerTokens
+        }
+        let tokens = TrainingFillerPreferences.currentFillers(for: language)
+            .map { TrainingMetrics.tokenize($0) }
+            .filter { !$0.isEmpty }
+        cachedFillerTokensLanguage = language
+        cachedFillerTokens = tokens
+        return tokens
+    }
+
+    /// Called from the transcript finalization hot path after a new batch of final segments lands.
+    /// Short-circuits aggressively — most calls return within a couple of property reads.
+    func evaluateRealtimeNudges() {
+        // Global gates
+        guard isRecording else { return }
+        guard notifyOnMonologue || notifyOnHighFillerRate else { return }
+
+        // Find the most recent final segment to avoid re-evaluating the same batch twice.
+        guard let lastFinal = liveSegments.last(where: { $0.isFinal }) else { return }
+        guard lastFinal.id != lastEvaluatedFinalSegmentID else { return }
+        lastEvaluatedFinalSegmentID = lastFinal.id
+
+        // Don't interrupt when the user is looking at the app — nudges are for when attention is elsewhere.
+        if isAppInForeground() { return }
+
+        // Determine which speaker to coach.
+        // macOS: mic-dominant segments are always tagged with `micSpeakerID` so we can
+        //   confidently target only "You" and never coach remote speakers.
+        // iOS: there is no mic/remote separation — Deepgram just diarizes voices on the mic,
+        //   so we coach whichever speaker is currently talking (the phone owner is typically
+        //   the only or dominant speaker).
+        #if os(iOS)
+        let targetSpeakerIDs: Set<Int> = [lastFinal.speaker]
+        #else
+        let targetSpeakerIDs = effectiveLiveSelfSpeakerIDs
+        guard targetSpeakerIDs.contains(lastFinal.speaker) else {
+            // Last final was a remote speaker; reset run flag and skip.
+            monologueNudgedForRun = false
+            return
+        }
+        #endif
+
+        if notifyOnMonologue {
+            evaluateMonologueNudge(targetSpeakers: targetSpeakerIDs)
+        }
+        if notifyOnHighFillerRate {
+            evaluateFillerRateNudge(targetSpeakers: targetSpeakerIDs)
+        }
+    }
+
+    private func evaluateMonologueNudge(targetSpeakers: Set<Int>) {
+        if let last = lastMonologueNudgeAt,
+           Date().timeIntervalSince(last) < Self.monologueNudgeMinInterval {
+            return
+        }
+
+        // Walk backwards over liveSegments; accumulate contiguous target-speaker run.
+        // Skip interim (non-final) segments; break on the first final from a different speaker.
+        // This avoids allocating a filtered copy of `liveSegments` every new segment.
+        var runWordCount = 0
+        var runStartTimestamp: TimeInterval?
+        var runEndTimestamp: TimeInterval?
+        for seg in liveSegments.reversed() {
+            guard seg.isFinal else { continue }
+            if targetSpeakers.contains(seg.speaker) {
+                let words = TrainingMetrics.tokenize(seg.text).count
+                runWordCount += words
+                runStartTimestamp = seg.timestamp
+                if runEndTimestamp == nil { runEndTimestamp = seg.timestamp }
+            } else {
+                break
+            }
+        }
+
+        guard let start = runStartTimestamp, let end = runEndTimestamp else {
+            monologueNudgedForRun = false
+            return
+        }
+
+        // Use recordingDuration as the right edge so we account for the time that has
+        // elapsed since the last You segment finalized (still inside the same run).
+        let runSeconds = max(recordingDuration - start, end - start)
+
+        // Detect run boundary: if we haven't nudged since the last non-You break, allow a new nudge.
+        // monologueNudgedForRun is cleared whenever a non-You segment is seen.
+        if runWordCount < Self.monologueMinWords || runSeconds < Self.monologueMinSeconds {
+            return
+        }
+        guard !monologueNudgedForRun else { return }
+
+        sendLocalNudge(
+            identifier: "miniti.nudge.monologue.\(UUID().uuidString)",
+            title: "heads up",
+            body: "you've been talking for a while — consider pausing to check in."
+        )
+        lastMonologueNudgeAt = Date()
+        monologueNudgedForRun = true
+        DebugLogger.shared.log(.app, "Monologue nudge fired: words=\(runWordCount) seconds=\(Int(runSeconds))")
+    }
+
+    private func evaluateFillerRateNudge(targetSpeakers: Set<Int>) {
+        if let last = lastFillerNudgeAt,
+           Date().timeIntervalSince(last) < Self.fillerNudgeMinInterval {
+            return
+        }
+
+        let windowEnd = recordingDuration
+        let windowStart = max(0, windowEnd - Self.fillerWindowSeconds)
+
+        // Walk backwards over liveSegments and break out as soon as we cross the
+        // window boundary — avoids filtering the whole segment array.
+        let fillers = fillerTokens(for: meetingLanguage)
+        var youWordCount = 0
+        var fillerCount = 0
+        var sawAnyWindowSegment = false
+        for seg in liveSegments.reversed() {
+            guard seg.isFinal else { continue }
+            if seg.timestamp < windowStart { break }
+            if seg.timestamp > windowEnd { continue }
+            if !targetSpeakers.contains(seg.speaker) { continue }
+            sawAnyWindowSegment = true
+            let tokens = TrainingMetrics.tokenize(seg.text)
+            youWordCount += tokens.count
+            for phraseTokens in fillers {
+                fillerCount += TrainingMetrics.countPhraseOccurrences(of: phraseTokens, in: tokens)
+            }
+        }
+        guard sawAnyWindowSegment else { return }
+
+        guard youWordCount >= Self.fillerWindowMinYouWords else { return }
+        let windowMinutes = max(Self.fillerWindowSeconds / 60.0, 0.01)
+        let fillersPerMinute = Double(fillerCount) / windowMinutes
+        guard fillersPerMinute >= Self.fillerNudgeMinFillersPerMinute else { return }
+
+        sendLocalNudge(
+            identifier: "miniti.nudge.filler.\(UUID().uuidString)",
+            title: "heads up",
+            body: "you've used a lot of filler words recently (\(Int(fillersPerMinute.rounded()))/min)."
+        )
+        lastFillerNudgeAt = Date()
+        DebugLogger.shared.log(.app, "Filler nudge fired: fillers=\(fillerCount) words=\(youWordCount) rate=\(String(format: "%.1f", fillersPerMinute))/min")
+    }
+
+    private func sendLocalNudge(identifier: String, title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                DebugLogger.shared.log(.app, "Nudge notification failed: \(error.localizedDescription)")
+            }
+        }
     }
 }
 
