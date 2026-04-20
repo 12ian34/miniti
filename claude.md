@@ -490,7 +490,7 @@ Run iOS tests: `fastlane ios test` (or `xcodebuild test -scheme MinitiMobile -de
 Changelog entries in `claude.md` should be written as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
 Never modify older changelog entries after they are written. Add corrections, clarifications, or reversals only as a new entry at the top.
 
-`README.md` should not contain a changelog for this project. Keep it focused on current end-user functionality, setup, and usage guides.
+There is no `README.md` in this repo. End-user documentation lives at `https://miniti.app/docs`; the public-facing changelog lives at `https://miniti.app/changelog`.
 
 ## Color Palette
 
@@ -941,7 +941,7 @@ Direct notarized distribution via DMG (not Mac App Store — sandbox restriction
 - Tracked in git (not gitignored) — safe because `scripts/` is not referenced in `project.pbxproj`, so Xcode Cloud ignores it entirely
 - Requires `create-dmg` (auto-installed via Homebrew if missing)
 - Validates code signature and notarization before packaging
-- Creates a drag-to-Applications DMG with README (app center, Applications symlink right, README left)
+- Creates a drag-to-Applications DMG (miniti.app on the left, Applications symlink on the right)
 - Staples the notarization ticket to the DMG
 - Version extracted from the app's `Info.plist` (for display only — output filename is always `miniti.dmg`)
 - Background image: `scripts/dmg-background.png`; volume icon pulled from app's `AppIcon.icns`

@@ -1079,7 +1079,7 @@ Same rules as the Swift repo:
 - No code references, function names, file paths, or implementation details
 - Never modify older changelog entries — add corrections as new entries at the top
 - Tag entries with `(Android)` or note "first Android release" for clarity when relevant
-- README should not contain a changelog — focus on current functionality, setup, usage
+- User-facing docs and changelog live at `https://miniti.app/docs` and `https://miniti.app/changelog`; this repo does not ship a README
 
 ---
 
