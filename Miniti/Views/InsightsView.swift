@@ -139,21 +139,22 @@ struct LiveInsightsContent: View {
                     // Summary (always shown)
                     if !appState.liveSummary.isEmpty {
                         TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                            Text(appState.liveSummary)
-                                .font(.system(size: 13, weight: .regular, design: .monospaced))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(6)
+                            SelectableTextView(
+                                SelectableAttributed.body(appState.liveSummary)
+                            )
                         }
                     }
-                    
+
                     // Action Items
                     if !appState.liveActionItems.isEmpty {
                         TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
-                                    TerminalListItem(index: index, text: item, style: .checkbox)
-                                }
-                            }
+                            SelectableTextView(
+                                SelectableAttributed.bulletList(
+                                    items: appState.liveActionItems,
+                                    prefix: "→",
+                                    prefixColor: Color(hex: "3FB950")
+                                )
+                            )
                         }
                     }
                     
@@ -223,30 +224,33 @@ private struct LiveInsightsContent_iOSPlain: View {
                     }
                     if !appState.liveSummary.isEmpty {
                         InsightsPlainBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
-                            Text(appState.liveSummary)
-                                .font(.system(size: 13, weight: .regular, design: .monospaced))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(6)
+                            SelectableTextView(
+                                SelectableAttributed.body(appState.liveSummary)
+                            )
                         }
                     }
-                    
+
                     if !appState.liveDiscussionFlow.isEmpty {
                         InsightsPlainBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(appState.liveDiscussionFlow.enumerated()), id: \.offset) { index, item in
-                                    TerminalListItem(index: index, text: item, style: .arrow)
-                                }
-                            }
+                            SelectableTextView(
+                                SelectableAttributed.bulletList(
+                                    items: appState.liveDiscussionFlow,
+                                    prefix: "->",
+                                    prefixColor: Color(hex: "D29922")
+                                )
+                            )
                         }
                     }
 
                     if !appState.liveActionItems.isEmpty {
                         InsightsPlainBlock_iOS(title: "action items", color: Color(hex: "3FB950")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(appState.liveActionItems.enumerated()), id: \.offset) { index, item in
-                                    TerminalListItem(index: index, text: item, style: .checkbox)
-                                }
-                            }
+                            SelectableTextView(
+                                SelectableAttributed.bulletList(
+                                    items: appState.liveActionItems,
+                                    prefix: "→",
+                                    prefixColor: Color(hex: "3FB950")
+                                )
+                            )
                         }
                     }
                     
@@ -721,18 +725,15 @@ struct MEDDPICCBulletText: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            ForEach(Array(bullets.enumerated()), id: \.offset) { _, bullet in
-                HStack(alignment: .top, spacing: 8) {
-                    Text("•")
-                        .font(.system(size: fontSize, weight: .regular, design: .monospaced))
-                        .foregroundStyle(color.opacity(0.5))
-                    Text(bullet)
-                        .font(.system(size: fontSize, weight: .regular, design: .monospaced))
-                        .foregroundStyle(color)
-                }
-            }
-        }
+        SelectableTextView(
+            SelectableAttributed.bulletList(
+                items: bullets,
+                prefix: "•",
+                prefixColor: color.opacity(0.5),
+                fontSize: fontSize,
+                textColor: color
+            )
+        )
     }
 }
 
@@ -1034,9 +1035,9 @@ struct SavedTrainingContent: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.selfSpeakerIDs)
     }
-    
+
     var body: some View {
         TrainingContent(metrics: metrics)
     }
@@ -1050,40 +1051,43 @@ struct TerminalInsightsContent: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let summary = meeting.summaryText {
                     TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                        Text(summary)
-                            .font(.system(size: 13, weight: .regular, design: .monospaced))
-                            .foregroundStyle(Color(hex: "E6EDF3"))
-                            .lineSpacing(6)
+                        SelectableTextView(SelectableAttributed.body(summary))
                     }
                 }
-                
+
                 if !meeting.discussionFlow.isEmpty {
                     TerminalSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
-                                TerminalListItem(index: index, text: item, style: .arrow)
-                            }
-                        }
+                        SelectableTextView(
+                            SelectableAttributed.bulletList(
+                                items: meeting.discussionFlow,
+                                prefix: "->",
+                                prefixColor: Color(hex: "D29922")
+                            )
+                        )
                     }
                 }
-                
+
                 if !meeting.actionItems.isEmpty {
                     TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(meeting.actionItems.enumerated()), id: \.offset) { index, item in
-                                TerminalListItem(index: index, text: item, style: .checkbox)
-                            }
-                        }
+                        SelectableTextView(
+                            SelectableAttributed.bulletList(
+                                items: meeting.actionItems,
+                                prefix: "→",
+                                prefixColor: Color(hex: "3FB950")
+                            )
+                        )
                     }
                 }
-                
+
                 if !meeting.keyDecisions.isEmpty {
                     TerminalSection(title: "decisions", color: Color(hex: "D29922")) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(meeting.keyDecisions.enumerated()), id: \.offset) { index, decision in
-                                TerminalListItem(index: index, text: decision, style: .arrow)
-                            }
-                        }
+                        SelectableTextView(
+                            SelectableAttributed.bulletList(
+                                items: meeting.keyDecisions,
+                                prefix: "->",
+                                prefixColor: Color(hex: "D29922")
+                            )
+                        )
                     }
                 }
                 
@@ -1486,7 +1490,7 @@ struct TrainingMainView: View {
 
         let validMeetings = meetings.filter { $0.endTime != nil && !$0.segments.isEmpty }
 
-        let snapshots: [(UUID, Date, String, [TrainingMetrics.Segment], Double, String)] = validMeetings.compactMap { meeting in
+        let snapshots: [(UUID, Date, String, [TrainingMetrics.Segment], Double, String, [String: String], Set<Int>)] = validMeetings.compactMap { meeting in
             guard let duration = meeting.duration, duration > 5 else { return nil }
             let segs = meeting.segments
                 .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1494,12 +1498,12 @@ struct TrainingMainView: View {
                 .map { TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: true, timestamp: $0.timestamp) }
             guard !segs.isEmpty else { return nil }
             let titleForRow = meeting.displayTitle
-            return (meeting.id, meeting.startTime, titleForRow, segs, duration, meeting.language)
+            return (meeting.id, meeting.startTime, titleForRow, segs, duration, meeting.language, meeting.speakerNames, meeting.selfSpeakerIDs)
         }
 
         let rows: [TrainingRow] = await Task.detached(priority: .userInitiated) {
-            snapshots.compactMap { (id, startTime, title, segments, duration, language) in
-                let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language)
+            snapshots.compactMap { (id, startTime, title, segments, duration, language, names, selfIDs) in
+                let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language, names: names, selfIDs: selfIDs)
                 guard let speaker = metrics.speakers.first(where: { $0.isLocalMic })
                         ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount }) else { return nil }
                 return TrainingRow(

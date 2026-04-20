@@ -17,6 +17,7 @@ final class KeyboardShortcutsService: ObservableObject {
     var onMeddpiccMode: (() -> Void)?
     var onTrainingMode: (() -> Void)?
     var onQuestionsMode: (() -> Void)?
+    var onZonedOut: (() -> Void)?
     var onToggleHelp: (() -> Void)?
     var onToggleSidebarCollapse: (() -> Void)?
     var onToggleInsightsCollapse: (() -> Void)?
@@ -130,6 +131,12 @@ final class KeyboardShortcutsService: ObservableObject {
             return nil
         }
         
+        // ⌘⇧Z - Zoned Out catch-up
+        if modifiers == [.command, .shift] && event.keyCode == kVK_ANSI_Z {
+            onZonedOut?()
+            return nil
+        }
+
         // ⌘/ or ⌘? - Toggle help
         if modifiers == .command && event.keyCode == kVK_ANSI_Slash {
             showingHelp.toggle()
@@ -285,6 +292,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "⌘3", description: "Training mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘4", description: "Questions mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
+    KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out — catch me up", category: "Insights"),
     
     // App
     KeyboardShortcut(keys: "⌘/", description: "Show shortcuts", category: "App"),
@@ -316,6 +324,7 @@ private let kVK_ANSI_K: UInt16 = 0x28
 private let kVK_ANSI_1: UInt16 = 0x12
 private let kVK_ANSI_2: UInt16 = 0x13
 private let kVK_ANSI_3: UInt16 = 0x14
+private let kVK_ANSI_Z: UInt16 = 0x06
 private let kVK_ANSI_Slash: UInt16 = 0x2C
 private let kVK_ANSI_LeftBracket: UInt16 = 0x21
 private let kVK_ANSI_RightBracket: UInt16 = 0x1E

@@ -12,6 +12,7 @@ struct TranscriptView: View {
     @State private var interimText: String = ""
     @State private var currentSpeaker: Int = 0
     @State private var interimSpeaker: Int? = nil
+    @State private var renamingSpeaker: Int? = nil
 
     private var hasInterimText: Bool {
         !interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -22,18 +23,21 @@ struct TranscriptView: View {
         detectedSpeakers: Set<Int>
     ) {
         let visible = liveSegments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let names = appState.liveSpeakerNames
+        let selfIDs = appState.liveSelfSpeakerIDs
 
-        var merged: [AppState.LiveSegment] = []
-        for segment in visible {
-            if var last = merged.last,
-               last.speaker == segment.speaker,
-               !endsSentence(last.text) {
-                last.text = joinTranscriptFragments(last.text, segment.text)
-                last.isFinal = last.isFinal && segment.isFinal
-                merged[merged.count - 1] = last
-            } else {
-                merged.append(segment)
-            }
+        let turns: [SelectableAttributed.TranscriptTurn] = visible.map {
+            .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+        }
+        let mergedTurns = SelectableAttributed.mergeTurns(turns, speakerNames: names, selfIDs: selfIDs)
+        let mergedSegments: [AppState.LiveSegment] = mergedTurns.map { turn in
+            AppState.LiveSegment(
+                id: UUID(),
+                text: turn.text,
+                speaker: turn.speaker,
+                timestamp: turn.timestamp,
+                isFinal: true
+            )
         }
 
         var speakers = detectedSpeakers
@@ -42,10 +46,12 @@ struct TranscriptView: View {
         }
 
         cachedVisibleSegments = visible
-        cachedDisplaySegments = merged
+        cachedDisplaySegments = mergedSegments
+        let effectiveSelves = appState.effectiveLiveSelfSpeakerIDs
         cachedUniqueSpeakers = speakers.sorted { a, b in
-            if a == DeepgramService.micSpeakerID { return true }
-            if b == DeepgramService.micSpeakerID { return false }
+            let aSelf = effectiveSelves.contains(a)
+            let bSelf = effectiveSelves.contains(b)
+            if aSelf != bSelf { return aSelf }
             return a < b
         }
     }
@@ -95,30 +101,41 @@ struct TranscriptView: View {
         return segments[index].speaker != segments[index - 1].speaker
     }
 
-    private func endsSentence(_ text: String) -> Bool {
-        let trailingClosers = CharacterSet(charactersIn: "\"'”’)]}")
-        let sentenceTerminators: Set<Character> = [".", "!", "?", "…"]
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let scalar = trimmed.unicodeScalars.last, trailingClosers.contains(scalar) {
-            trimmed.removeLast()
-        }
-        guard let last = trimmed.last else { return false }
-        return sentenceTerminators.contains(last)
+    @ViewBuilder
+    private func renameSpeakerView(for speakerID: Int) -> some View {
+        let key = String(speakerID)
+        let currentName = appState.liveSpeakerNames[key]
+        let defaultName = resolvedSpeakerLabel(for: speakerID, names: nil, selfIDs: appState.liveSelfSpeakerIDs)
+        let isSelf = appState.effectiveLiveSelfSpeakerIDs.contains(speakerID)
+        let hasOtherSelves = appState.effectiveLiveSelfSpeakerIDs.subtracting([speakerID]).isEmpty == false
+        RenameSpeakerView(
+            speakerID: speakerID,
+            currentName: currentName,
+            defaultName: defaultName,
+            isSelf: isSelf,
+            hasOtherSelves: hasOtherSelves,
+            onSave: { newName in
+                appState.setLiveSpeakerName(id: speakerID, name: newName)
+                renamingSpeaker = nil
+            },
+            onClear: {
+                appState.setLiveSpeakerName(id: speakerID, name: nil)
+                renamingSpeaker = nil
+            },
+            onMarkAsSelf: {
+                appState.setLiveSelfSpeaker(id: speakerID, isSelf: true)
+                renamingSpeaker = nil
+            },
+            onUnmarkAsSelf: {
+                appState.setLiveSelfSpeaker(id: speakerID, isSelf: false)
+                renamingSpeaker = nil
+            },
+            onCancel: {
+                renamingSpeaker = nil
+            }
+        )
     }
 
-    private func joinTranscriptFragments(_ lhs: String, _ rhs: String) -> String {
-        let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
-        let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !left.isEmpty else { return right }
-        guard !right.isEmpty else { return left }
-
-        let noLeadingSpaceChars: Set<Character> = [",", ".", "!", "?", ";", ":", ")", "]", "}"]
-        if let first = right.first, noLeadingSpaceChars.contains(first) {
-            return left + right
-        }
-        return left + " " + right
-    }
-    
     var body: some View {
         Group {
             if cachedVisibleSegments.isEmpty && !hasInterimText && !appState.isRecording {
@@ -127,30 +144,62 @@ struct TranscriptView: View {
                 VStack(spacing: 0) {
                     // Speaker legend (show when recording or has segments)
                     if appState.isRecording || !cachedVisibleSegments.isEmpty {
-                        SpeakerLegend(speakers: cachedUniqueSpeakers, isRecording: appState.isRecording)
+                        SpeakerLegend(
+                            speakers: cachedUniqueSpeakers,
+                            isRecording: appState.isRecording,
+                            speakerNames: appState.liveSpeakerNames,
+                            selfIDs: appState.liveSelfSpeakerIDs,
+                            onRename: { renamingSpeaker = $0 }
+                        )
+                        #if os(macOS)
+                        .popover(item: Binding(
+                            get: { renamingSpeaker.map { SpeakerRenameTarget(id: $0) } },
+                            set: { renamingSpeaker = $0?.id }
+                        )) { target in
+                            renameSpeakerView(for: target.id)
+                        }
+                        #else
+                        .sheet(item: Binding(
+                            get: { renamingSpeaker.map { SpeakerRenameTarget(id: $0) } },
+                            set: { renamingSpeaker = $0?.id }
+                        )) { target in
+                            renameSpeakerView(for: target.id)
+                                .presentationDetents([.height(260)])
+                                .presentationBackground(Color(hex: "0B0B0D"))
+                        }
+                        #endif
                     }
                     
                     ScrollViewReader { proxy in
                         GeometryReader { scrollGeometry in
                             ZStack(alignment: .bottomTrailing) {
                                 ScrollView {
-                                    LazyVStack(alignment: .leading, spacing: 6) {
-                                        ForEach(Array(cachedDisplaySegments.enumerated()), id: \.element.id) { index, segment in
-                                            TerminalSegmentRow(
-                                                segment: segment,
-                                                isNewTurn: isNewSpeakerTurn(at: index, in: cachedDisplaySegments),
-                                                isFirst: index == 0
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        if !cachedDisplaySegments.isEmpty {
+                                            SelectableTextView(
+                                                SelectableAttributed.transcript(
+                                                    turns: cachedDisplaySegments.map {
+                                                        .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+                                                    },
+                                                    speakerNames: appState.liveSpeakerNames,
+                                                    selfIDs: appState.liveSelfSpeakerIDs
+                                                )
                                             )
-                                            .id(segment.id)
+                                            .id("transcript")
                                         }
-                                        
+
                                         // Interim (live typing) text
                                         if hasInterimText {
                                             let interimSpeakerValue = interimSpeaker ?? currentSpeaker
                                             TerminalInterimRow(
                                                 text: interimText,
                                                 speaker: interimSpeakerValue,
-                                                isNewTurn: cachedDisplaySegments.last?.speaker != interimSpeakerValue
+                                                isNewTurn: cachedDisplaySegments.last.map {
+                                                    SelectableAttributed.displayGroupKey(speaker: $0.speaker, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
+                                                    != SelectableAttributed.displayGroupKey(speaker: interimSpeakerValue, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
+                                                } ?? true,
+                                                speakerNames: appState.liveSpeakerNames,
+                                                selfIDs: appState.liveSelfSpeakerIDs
                                             )
                                             .id("interim")
                                         }
@@ -264,6 +313,18 @@ struct TranscriptView: View {
                 detectedSpeakers: newSpeakers
             )
         }
+        .onChange(of: appState.liveSpeakerNames) { _, _ in
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: appState.detectedSpeakers
+            )
+        }
+        .onChange(of: appState.liveSelfSpeakerIDs) { _, _ in
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: appState.detectedSpeakers
+            )
+        }
         .onReceive(appState.transcriptRuntime.$interimText) { value in
             interimText = value
         }
@@ -358,7 +419,10 @@ private struct TranscriptScrollWheelObserver: NSViewRepresentable {
 struct SpeakerLegend: View {
     let speakers: [Int]
     var isRecording: Bool = false
-    
+    var speakerNames: [String: String]? = nil
+    var selfIDs: Set<Int>? = nil
+    var onRename: ((Int) -> Void)? = nil
+
     var body: some View {
         HStack(spacing: 16) {
             // Recording indicator
@@ -372,20 +436,29 @@ struct SpeakerLegend: View {
                         .foregroundStyle(Color(hex: "F85149"))
                 }
             }
-            
+
             Text("speakers:")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .foregroundStyle(Color(hex: "484F58"))
-            
+
             if speakers.isEmpty {
                 Text("detecting...")
                     .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: "484F58"))
             } else {
-                ForEach(speakers, id: \.self) { speaker in
-                    let label = speakerLabel(for: speaker)
-                    let color = speakerColor(for: speaker)
-                    HStack(spacing: 4) {
+                let uniqueSpeakers: [Int] = {
+                    var seen = Set<String>()
+                    var out: [Int] = []
+                    for s in speakers {
+                        let key = SelectableAttributed.displayGroupKey(speaker: s, names: speakerNames, selfIDs: selfIDs)
+                        if seen.insert(key).inserted { out.append(s) }
+                    }
+                    return out
+                }()
+                ForEach(uniqueSpeakers, id: \.self) { speaker in
+                    let label = speakerLabel(for: speaker, names: speakerNames, selfIDs: selfIDs)
+                    let color = speakerColor(for: speaker, selfIDs: selfIDs)
+                    let chip = HStack(spacing: 4) {
                         Circle()
                             .fill(color)
                             .frame(width: 6, height: 6)
@@ -393,20 +466,34 @@ struct SpeakerLegend: View {
                             .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundStyle(color)
                     }
+                    if let onRename {
+                        Button {
+                            onRename(speaker)
+                        } label: {
+                            chip
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help("rename speaker")
+                    } else {
+                        chip
+                    }
                 }
             }
             
             Spacer()
             
             // Show count
-            let remoteSpeakers = speakers.filter { $0 != DeepgramService.micSpeakerID }
+            let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
+            let selfCount = speakers.filter { effectiveSelves.contains($0) }.count
+            let remoteCount = speakers.count - selfCount
             if speakers.count == 1 && !speakers.isEmpty {
-                let isMic = speakers[0] == DeepgramService.micSpeakerID
-                Text(isMic ? "(mic only)" : "(single speaker)")
+                let isSelf = effectiveSelves.contains(speakers[0])
+                Text(isSelf ? "(you only)" : "(single speaker)")
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "484F58"))
-            } else if speakers.contains(DeepgramService.micSpeakerID) && remoteSpeakers.count == 1 {
-                Text("(you + 1 remote)")
+            } else if selfCount >= 1 && remoteCount == 1 {
+                Text(selfCount > 1 ? "(you ×\(selfCount) + 1 remote)" : "(you + 1 remote)")
                     .font(.system(size: 9, weight: .regular, design: .monospaced))
                     .foregroundStyle(Color(hex: "484F58"))
             }
@@ -439,25 +526,20 @@ private let remoteSpeakerColors: [Color] = [
 /// Distinct green for "You" (local mic).
 private let micSpeakerColor = Color(hex: "3FB950")
 
-func speakerColor(for speaker: Int) -> Color {
-    if speaker == DeepgramService.micSpeakerID {
+func speakerColor(for speaker: Int, selfIDs: Set<Int>? = nil) -> Color {
+    let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
+    if effectiveSelves.contains(speaker) {
         return micSpeakerColor
     }
     return remoteSpeakerColors[speaker % remoteSpeakerColors.count]
 }
 
-func speakerLabel(for speaker: Int) -> String {
-    if speaker == DeepgramService.micSpeakerID {
-        return "You"
-    }
-    return "S\(speaker + 1)"
+func speakerLabel(for speaker: Int, names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> String {
+    resolvedShortSpeakerLabel(for: speaker, names: names, selfIDs: selfIDs)
 }
 
-func speakerDisplayName(for speaker: Int) -> String {
-    if speaker == DeepgramService.micSpeakerID {
-        return "You"
-    }
-    return "Speaker \(speaker + 1)"
+func speakerDisplayName(for speaker: Int, names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> String {
+    resolvedSpeakerLabel(for: speaker, names: names, selfIDs: selfIDs)
 }
 
 // MARK: - Terminal Style Components
@@ -466,9 +548,11 @@ struct TerminalSegmentRow: View {
     let segment: AppState.LiveSegment
     var isNewTurn: Bool = true
     var isFirst: Bool = false
-    
-    private var color: Color { speakerColor(for: segment.speaker) }
-    
+    var speakerNames: [String: String]? = nil
+    var selfIDs: Set<Int>? = nil
+
+    private var color: Color { speakerColor(for: segment.speaker, selfIDs: selfIDs) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Speaker turn indicator
@@ -478,14 +562,14 @@ struct TerminalSegmentRow: View {
                         .fill(color)
                         .frame(width: 3, height: 12)
                         .cornerRadius(1.5)
-                    
-                    Text(speakerDisplayName(for: segment.speaker))
+
+                    Text(speakerDisplayName(for: segment.speaker, names: speakerNames, selfIDs: selfIDs))
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(color)
-                    
+
                     Text("•")
                         .foregroundStyle(Color(hex: "1C1C1F"))
-                    
+
                     Text(formatTimestamp(segment.timestamp))
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                         .foregroundStyle(Color(hex: "484F58"))
@@ -528,11 +612,13 @@ struct TerminalInterimRow: View {
     let text: String
     let speaker: Int
     var isNewTurn: Bool = true
-    
+    var speakerNames: [String: String]? = nil
+    var selfIDs: Set<Int>? = nil
+
     @State private var cursorVisible = true
-    
-    private var color: Color { speakerColor(for: speaker) }
-    
+
+    private var color: Color { speakerColor(for: speaker, selfIDs: selfIDs) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Speaker turn indicator (only show if new turn)
@@ -542,8 +628,8 @@ struct TerminalInterimRow: View {
                         .fill(color.opacity(0.6))
                         .frame(width: 3, height: 12)
                         .cornerRadius(1.5)
-                    
-                    Text(speakerDisplayName(for: speaker))
+
+                    Text(speakerDisplayName(for: speaker, names: speakerNames, selfIDs: selfIDs))
                         .font(.system(size: 10, weight: .semibold, design: .monospaced))
                         .foregroundStyle(color.opacity(0.7))
                     
@@ -631,6 +717,145 @@ struct EmptyTranscriptView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(hex: "09090B"))
+    }
+}
+
+
+// MARK: - Rename Speaker
+
+/// Identifiable wrapper so we can drive a popover/sheet from an optional Int.
+struct SpeakerRenameTarget: Identifiable, Equatable {
+    let id: Int
+}
+
+/// Small editor that renames a single speaker. Shared by macOS popover and iOS sheet.
+/// On save, calls `onSave` with a trimmed non-empty name. On clear, calls `onClear`
+/// (which should remove the user override so automatic inference can refill).
+struct RenameSpeakerView: View {
+    let speakerID: Int
+    let currentName: String?
+    let defaultName: String
+    let isSelf: Bool
+    var hasOtherSelves: Bool = false
+    let onSave: (String) -> Void
+    let onClear: () -> Void
+    let onMarkAsSelf: () -> Void
+    let onUnmarkAsSelf: () -> Void
+    let onCancel: () -> Void
+
+    @State private var draft: String = ""
+    @FocusState private var focused: Bool
+
+    private var color: Color {
+        speakerColor(for: speakerID, selfIDs: isSelf ? [speakerID] : nil)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(color)
+                    .frame(width: 8, height: 8)
+                Text("rename speaker")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Color(hex: "C9D1D9"))
+                Spacer()
+            }
+
+            TextField(defaultName, text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color(hex: "0F0F11"))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
+                )
+                .focused($focused)
+                .onSubmit { commit() }
+
+            Text(currentName == nil
+                 ? "automatic name will appear when detected."
+                 : "currently: \(currentName!)")
+                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .foregroundStyle(Color(hex: "484F58"))
+
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    if isSelf { onUnmarkAsSelf() } else { onMarkAsSelf() }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: isSelf ? "person.fill.checkmark" : "person.crop.circle.badge.plus")
+                            .font(.system(size: 11))
+                        Text(isSelf ? "unmark as me" : (hasOtherSelves ? "also mark as me" : "this is me"))
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(isSelf ? Color(hex: "1F3A22") : Color(hex: "13151A"))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(isSelf ? Color(hex: "3FB950") : Color(hex: "1C1C1F"), lineWidth: 1)
+                    )
+                    .foregroundStyle(isSelf ? Color(hex: "3FB950") : Color(hex: "C9D1D9"))
+                }
+                .buttonStyle(.plain)
+
+                if !isSelf && hasOtherSelves {
+                    Text("diarization sometimes splits one person across IDs — mark each one.")
+                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "484F58"))
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button(role: .destructive) {
+                    onClear()
+                } label: {
+                    Text("clear")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                .disabled(currentName == nil)
+
+                Spacer()
+
+                Button {
+                    onCancel()
+                } label: {
+                    Text("cancel")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button {
+                    commit()
+                } label: {
+                    Text("save")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(minWidth: 260, idealWidth: 280)
+        .background(Color(hex: "0B0B0D"))
+        .onAppear {
+            draft = currentName ?? ""
+            focused = true
+        }
+    }
+
+    private func commit() {
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        onSave(trimmed)
     }
 }
 

@@ -285,9 +285,14 @@ struct SettingsView_iOS: View {
                     Text("Automatically stop recording when no speech is detected for the selected duration.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
+                    Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
-                Section("Notifications") {
+                Section("Nudges") {
                     Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
                         .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
                             if newValue {
@@ -295,6 +300,40 @@ struct SettingsView_iOS: View {
                             }
                         }
                     Text("Sends a notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Nudge me when I'm monologuing", isOn: $appState.notifyOnMonologue)
+                        .onChange(of: appState.notifyOnMonologue) { _, newValue in
+                            if newValue {
+                                appState.requestNudgeNotificationPermission()
+                            }
+                        }
+                    Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Only fires when the app is in the background, limited to one every 3 minutes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Nudge me when I'm using too many fillers", isOn: $appState.notifyOnHighFillerRate)
+                        .onChange(of: appState.notifyOnHighFillerRate) { _, newValue in
+                            if newValue {
+                                appState.requestNudgeNotificationPermission()
+                            }
+                        }
+                    Text("Alerts you when filler words like \"um\" and \"uh\" spike in your last minute of speaking. Uses your configured filler list per language. Only fires when the app is in the background, limited to one every 3 minutes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Remind me 1 minute before upcoming meetings", isOn: $appState.notifyOnUpcomingMeeting)
+                        .onChange(of: appState.notifyOnUpcomingMeeting) { _, newValue in
+                            if newValue {
+                                appState.requestNudgeNotificationPermission { _ in
+                                    Task { @MainActor in appState.rescheduleMeetingReminders() }
+                                }
+                            } else {
+                                appState.rescheduleMeetingReminders()
+                            }
+                        }
+                    Text("Fires a notification about 60 seconds before each upcoming Google Calendar event starts. Requires Google Calendar to be connected. In addition to Calendar's own alerts.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -407,6 +446,15 @@ struct SettingsView_iOS: View {
                     Link(destination: URL(string: "https://miniti.app")!) {
                         HStack {
                             Text("Website")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Link(destination: URL(string: "https://miniti.app/docs")!) {
+                        HStack {
+                            Text("Docs")
                             Spacer()
                             Image(systemName: "arrow.up.right")
                                 .font(.caption)

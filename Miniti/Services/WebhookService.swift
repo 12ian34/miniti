@@ -23,6 +23,7 @@ enum WebhookService {
             let training: TrainingData?
             let questions: [QuestionEntry]?
             let speakerCount: Int
+            let speakerNames: [String: String]?
             let transcript: [TranscriptEntry]
             let calendarEventId: String?
             let attendees: [AttendeeEntry]?
@@ -35,6 +36,7 @@ enum WebhookService {
                 case keyDecisions = "key_decisions"
                 case discussionFlow = "discussion_flow"
                 case speakerCount = "speaker_count"
+                case speakerNames = "speaker_names"
                 case calendarEventId = "calendar_event_id"
             }
         }
@@ -176,6 +178,7 @@ enum WebhookService {
         champion: String?,
         competition: String?,
         speakerCount: Int,
+        speakerNames: [String: String] = [:],
         transcript: [MeetingPayload.TranscriptEntry],
         training: MeetingPayload.TrainingData?,
         questions: [SuggestedQuestion] = [],
@@ -213,6 +216,7 @@ enum WebhookService {
                     MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
                 },
                 speakerCount: speakerCount,
+                speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
                 calendarEventId: calendarEventId,
                 attendees: attendeeEntries
@@ -235,9 +239,11 @@ enum WebhookService {
             identifiedPain: meeting.meddpiccIdentifiedPain,
             champion: meeting.meddpiccChampion, competition: meeting.meddpiccCompetition
         )
+        let speakerNames = meeting.speakerNames
+        let selfIDs = meeting.selfSpeakerIDs
         let transcript = finalSegments.map { seg in
             MeetingPayload.TranscriptEntry(
-                speaker: seg.speakerLabel,
+                speaker: resolvedSpeakerLabel(for: seg.speaker, names: speakerNames, selfIDs: selfIDs),
                 text: seg.text,
                 timestamp: seg.timestamp
             )
@@ -246,7 +252,7 @@ enum WebhookService {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
         }
         let durationSec = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec, language: meeting.language))
+        let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec, language: meeting.language, names: speakerNames, selfIDs: selfIDs))
         let meetingAttendees = meeting.attendees
         let attendeeEntries = meetingAttendees.isEmpty ? nil : meetingAttendees.map {
             MeetingPayload.AttendeeEntry(email: $0.email, name: $0.displayName, domain: $0.domain)
@@ -272,6 +278,7 @@ enum WebhookService {
                     MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
                 },
                 speakerCount: speakers.count,
+                speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
                 calendarEventId: meeting.calendarEventId,
                 attendees: attendeeEntries

@@ -960,6 +960,99 @@ final class MinitiAPIService: @unchecked Sendable {
         return decoded
     }
 
+    /// Managed-mode proxy for the "i zoned out" catch-up feature.
+    /// Posts to /api/insights with mode="catchup" and expects a dedicated catchup payload back.
+    /// If the backend hasn't been updated to support this mode yet, the response will decode
+    /// with empty fields and the caller should surface a graceful "not available" state.
+    func generateCatchUp(
+        deviceId: String,
+        recentTranscript: String,
+        fullTranscript: String?,
+        model: String,
+        language: String = "en"
+    ) async throws -> CatchUpResult {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var body: [String: Any] = [
+            "transcript": recentTranscript,
+            "mode": "catchup",
+            "model": model,
+            "language": language
+        ]
+        if let fullTranscript, !fullTranscript.isEmpty, fullTranscript != recentTranscript {
+            body["full_transcript"] = fullTranscript
+        }
+
+        let request = makeRequest(
+            path: "/insights",
+            method: "POST",
+            deviceId: deviceId,
+            body: body
+        )
+        DebugLogger.shared.log(
+            .app,
+            "API catchup request: model=\(model), recentChars=\(recentTranscript.count), fullChars=\(fullTranscript?.count ?? 0), language=\(language)"
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(CatchUpResult.self, from: data, endpoint: "/insights catchup")
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "API catchup response: duration=\(String(format: "%.2fs", duration)), topicChars=\(decoded.currentTopic.count), questions=\(decoded.questionsForYou.count), discussion=\(decoded.recentDiscussion.count), decisions=\(decoded.keyDecisions.count)"
+        )
+        return decoded
+    }
+
+    /// Managed-mode speaker name inference. Posts to /api/insights with mode="speaker_names".
+    /// Transcript is expected to include `[SpeakerID:N] ...` tags so the backend prompt can
+    /// map internal IDs to real names. `candidates` is a list of known attendee names used
+    /// to bias the model. If the backend hasn't been updated to support this mode yet, the
+    /// response decodes with an empty speakers map and callers should treat that as a no-op.
+    func inferSpeakerNames(
+        deviceId: String,
+        transcript: String,
+        candidates: [String],
+        model: String,
+        language: String = "en"
+    ) async throws -> [String: String] {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var body: [String: Any] = [
+            "transcript": transcript,
+            "mode": "speaker_names",
+            "model": model,
+            "language": language
+        ]
+        let cleanedCandidates = candidates
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !cleanedCandidates.isEmpty {
+            body["candidates"] = cleanedCandidates
+        }
+
+        let request = makeRequest(
+            path: "/insights",
+            method: "POST",
+            deviceId: deviceId,
+            body: body
+        )
+        DebugLogger.shared.log(
+            .app,
+            "API speaker-names request: model=\(model), transcriptChars=\(transcript.count), candidates=\(cleanedCandidates.count), language=\(language)"
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(ManagedSpeakerNamesResponse.self, from: data, endpoint: "/insights speaker_names")
+        let cleaned = SpeakerNamesResponse.sanitize(decoded.speakers)
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "API speaker-names response: duration=\(String(format: "%.2fs", duration)), identified=\(cleaned.count)/\(decoded.speakers.count)"
+        )
+        return cleaned
+    }
+
     func sendClientEvents(deviceId: String, events: [ClientEventPayload]) async throws {
         guard !events.isEmpty else { return }
 
@@ -1447,5 +1540,25 @@ struct ManagedInsightsResponse: Codable {
             competition: competition,
             questions: questions
         )
+    }
+}
+
+/// Backend response for `mode: "speaker_names"` on `/api/insights`.
+/// Older backend deployments that don't know about this mode may return `{}` or a standard
+/// insights response — in both cases we decode to an empty `speakers` map and no-op.
+struct ManagedSpeakerNamesResponse: Decodable {
+    let speakers: [String: String]
+
+    enum CodingKeys: String, CodingKey {
+        case speakers
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try? decoder.container(keyedBy: CodingKeys.self)
+        if let map = try? container?.decodeIfPresent([String: String].self, forKey: .speakers) {
+            speakers = map
+        } else {
+            speakers = [:]
+        }
     }
 }

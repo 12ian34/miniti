@@ -33,6 +33,23 @@ final class Meeting {
     
     // Suggested questions (JSON-encoded [SuggestedQuestion])
     var suggestedQuestionsJSON: String?
+
+    // Inferred speaker names (JSON-encoded [String: String] where key is speaker ID as string)
+    var speakerNamesJSON: String?
+
+    // Speaker IDs (as strings) that the user has manually named/overridden.
+    // Present entries — even if the name is the same as the inference — are excluded
+    // from automatic inference merges. JSON-encoded [String] for backward compat.
+    var speakerOverridesJSON: String?
+
+    // Legacy single-speaker "self" marker. Kept for SwiftData backward compat with meetings
+    // saved before multi-self support landed. New code should read/write `selfSpeakerIDs`.
+    var selfSpeakerID: Int?
+
+    // All speaker IDs the user has marked as themselves ("You"). JSON-encoded [Int].
+    // Supports the case where diarization splits one person across multiple speaker IDs —
+    // marking each of those IDs as "You" unifies their training stats and transcript label.
+    var selfSpeakerIDsJSON: String?
     
     init(
         id: UUID = UUID(),
@@ -89,6 +106,119 @@ final class Meeting {
     var hasQuestions: Bool {
         !suggestedQuestions.isEmpty
     }
+
+    var speakerNames: [String: String] {
+        get {
+            guard let json = speakerNamesJSON, let data = json.data(using: .utf8) else { return [:] }
+            return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        }
+        set {
+            let cleaned = newValue.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if cleaned.isEmpty {
+                speakerNamesJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it to nil.
+            if let data = try? JSONEncoder().encode(cleaned),
+               let str = String(data: data, encoding: .utf8) {
+                speakerNamesJSON = str
+            }
+        }
+    }
+
+    var hasSpeakerNames: Bool {
+        !speakerNames.isEmpty
+    }
+
+    var speakerOverrides: Set<String> {
+        get {
+            guard let json = speakerOverridesJSON, let data = json.data(using: .utf8) else { return [] }
+            return Set((try? JSONDecoder().decode([String].self, from: data)) ?? [])
+        }
+        set {
+            if newValue.isEmpty {
+                speakerOverridesJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it.
+            if let data = try? JSONEncoder().encode(Array(newValue).sorted()),
+               let str = String(data: data, encoding: .utf8) {
+                speakerOverridesJSON = str
+            }
+        }
+    }
+
+    /// Set or clear a user-controlled speaker name. Pass a non-empty name to set + mark as overridden.
+    /// Pass `nil` or whitespace to clear the override — future automatic inference can then refill it.
+    func setSpeakerName(id: String, name: String?) {
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var names = speakerNames
+        var overrides = speakerOverrides
+        if trimmed.isEmpty {
+            names.removeValue(forKey: id)
+            overrides.remove(id)
+        } else {
+            names[id] = trimmed
+            overrides.insert(id)
+        }
+        speakerNames = names
+        speakerOverrides = overrides
+    }
+
+    /// The explicit set of speaker IDs marked as the user. Empty = no explicit override;
+    /// resolvers then fall back to the mic speaker on macOS. Reads merge the legacy
+    /// `selfSpeakerID` column so meetings saved before multi-self still work.
+    var selfSpeakerIDs: Set<Int> {
+        get {
+            var set: Set<Int> = []
+            if let json = selfSpeakerIDsJSON, let data = json.data(using: .utf8),
+               let decoded = try? JSONDecoder().decode([Int].self, from: data) {
+                set.formUnion(decoded)
+            }
+            if let legacy = selfSpeakerID { set.insert(legacy) }
+            return set
+        }
+        set {
+            if newValue.isEmpty {
+                selfSpeakerIDsJSON = nil
+                selfSpeakerID = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(Array(newValue).sorted()),
+               let str = String(data: data, encoding: .utf8) {
+                selfSpeakerIDsJSON = str
+                selfSpeakerID = newValue.sorted().first
+            }
+        }
+    }
+
+    /// Toggle whether a speaker is marked as the user. When marking as self, also clears any
+    /// inferred/custom name for that ID so the resolver returns "You" unambiguously.
+    func setSelfSpeaker(id: Int, isSelf: Bool) {
+        var set = selfSpeakerIDs
+        if isSelf {
+            if set.isEmpty { set = effectiveSelfSpeakerIDs }
+            set.insert(id)
+        } else {
+            set.remove(id)
+        }
+        selfSpeakerIDs = set
+
+        if isSelf {
+            let key = String(id)
+            var names = speakerNames
+            var overrides = speakerOverrides
+            if names.removeValue(forKey: key) != nil { speakerNames = names }
+            if overrides.remove(key) != nil { speakerOverrides = overrides }
+        }
+    }
+
+    /// Effective "self" set used by resolvers and training metrics. If the user hasn't
+    /// marked anyone, we fall back to the mic speaker — keeping macOS working out of the box.
+    var effectiveSelfSpeakerIDs: Set<Int> {
+        let explicit = selfSpeakerIDs
+        return explicit.isEmpty ? [DeepgramService.micSpeakerID] : explicit
+    }
     
     var hasMEDDPICC: Bool {
         hasValidValue(meddpiccMetrics) || hasValidValue(meddpiccEconomicBuyer) || 
@@ -135,11 +265,13 @@ final class Meeting {
     }
     
     var fullTranscript: String {
-        segments
+        let names = speakerNames
+        let selfIDs = selfSpeakerIDs
+        return segments
             .filter { $0.isFinal }
             .sorted { $0.timestamp < $1.timestamp }
             .map { segment in
-                let speaker = segment.speakerLabel
+                let speaker = resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: selfIDs)
                 return "[\(speaker)] \(segment.text)"
             }
             .joined(separator: "\n")
@@ -153,18 +285,22 @@ final class Meeting {
     
     func transcriptAsMarkdown() -> String {
         var md = "## Transcript\n\n"
-        
+
         let sortedSegments = segments.filter { $0.isFinal }.sorted { $0.timestamp < $1.timestamp }
-        
-        var currentSpeaker: Int? = nil
+        let names = speakerNames
+        let selfIDs = selfSpeakerIDs
+
+        var currentKey: String? = nil
         for segment in sortedSegments {
-            if segment.speaker != currentSpeaker {
-                currentSpeaker = segment.speaker
-                md += "\n**\(segment.speakerLabel):**\n"
+            let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: selfIDs)
+            if key != currentKey {
+                currentKey = key
+                let label = resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: selfIDs)
+                md += "\n**\(label):**\n"
             }
             md += "\(segment.text) "
         }
-        
+
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
@@ -246,7 +382,13 @@ final class Meeting {
         let segments = self.segments.map {
             TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
         }
-        let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language)
+        let metrics = TrainingMetrics.compute(
+            from: segments,
+            duration: duration,
+            language: language,
+            names: speakerNames,
+            selfIDs: selfSpeakerIDs
+        )
         guard !metrics.speakers.isEmpty else { return "" }
 
         var md = "## Training\n\n"
@@ -303,6 +445,30 @@ final class Meeting {
         md += transcriptAsMarkdown()
         return md
     }
+}
+
+/// Resolve a display label for a speaker ID. Priority:
+/// 1. Explicit user-marked self (`selfIDs` contains speaker) → "You" (wins over mapped name)
+/// 2. Inferred/custom name from `names`
+/// 3. Implicit default (mic speaker when `selfIDs` is nil/empty) → "You"
+/// 4. "Speaker N" fallback
+func resolvedSpeakerLabel(for speaker: Int, names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> String {
+    if let selfIDs, selfIDs.contains(speaker) { return "You" }
+    if let mapped = names?[String(speaker)]?.trimmingCharacters(in: .whitespacesAndNewlines), !mapped.isEmpty {
+        return mapped
+    }
+    if (selfIDs ?? []).isEmpty, speaker == DeepgramService.micSpeakerID { return "You" }
+    return "Speaker \(speaker + 1)"
+}
+
+/// Short variant used where horizontal space is tight (e.g. the live transcript gutter).
+func resolvedShortSpeakerLabel(for speaker: Int, names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> String {
+    if let selfIDs, selfIDs.contains(speaker) { return "You" }
+    if let mapped = names?[String(speaker)]?.trimmingCharacters(in: .whitespacesAndNewlines), !mapped.isEmpty {
+        return mapped
+    }
+    if (selfIDs ?? []).isEmpty, speaker == DeepgramService.micSpeakerID { return "You" }
+    return "S\(speaker + 1)"
 }
 
 struct MeetingAttendee: Codable, Identifiable, Sendable {

@@ -112,20 +112,41 @@ struct MinitiApp: App {
             
             CommandGroup(after: .newItem) {
                 Divider()
-                
+
                 Button(appState.isRecording ? "Stop Recording" : "Start Recording") {
                     toggleRecording()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
-                
+
                 Button("Generate Insights") {
                     generateInsights()
                 }
                 .keyboardShortcut("i", modifiers: [.command, .shift])
                 .disabled(appState.currentMeeting == nil || appState.liveSegments.isEmpty)
             }
-            
+
+            CommandGroup(replacing: .sidebar) {}
+            CommandGroup(replacing: .toolbar) {}
+
+            CommandGroup(replacing: .undoRedo) {}
+            CommandGroup(replacing: .pasteboard) {}
+            CommandGroup(replacing: .textEditing) {}
+
+            SettingsCommands(appState: appState)
+
+            CommandGroup(replacing: .help) {
+                Button("Miniti Docs") {
+                    if let url = URL(string: "https://miniti.app/docs") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+                Button("Miniti Support") {
+                    if let url = URL(string: "https://miniti.app/support") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
+            }
         }
         
         Settings {
@@ -198,7 +219,16 @@ struct MinitiApp: App {
             guard let appState else { return }
             appState.switchInsightsMode(to: .training)
         }
-        
+
+        keyboardService.onZonedOut = { [weak appState] in
+            guard let appState else { return }
+            if appState.isZonedOutPresented {
+                appState.dismissZonedOutCatchUp()
+            } else if appState.isRecording {
+                appState.triggerZonedOutCatchUp()
+            }
+        }
+
         keyboardService.startMonitoring()
     }
     
@@ -399,5 +429,29 @@ struct MenuBarView: View {
         let mins = Int(seconds) / 60
         let secs = Int(seconds) % 60
         return String(format: "%d:%02d", mins, secs)
+    }
+}
+
+struct SettingsCommands: Commands {
+    @ObservedObject var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+
+    var body: some Commands {
+        CommandMenu("Settings") {
+            Button("General") { open("general") }
+            Button("Language") { open("language") }
+            Button("Account") { open("account") }
+            if appState.appMode == .byok {
+                Button("API Keys") { open("apikeys") }
+            }
+            Button("Audio") { open("audio") }
+            Button("Integrations") { open("integrations") }
+            Button("About") { open("about") }
+        }
+    }
+
+    private func open(_ tab: String) {
+        appState.selectedSettingsTab = tab
+        openSettings()
     }
 }

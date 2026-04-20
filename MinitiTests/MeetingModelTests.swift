@@ -519,4 +519,231 @@ final class MeetingModelTests: XCTestCase {
         context.insert(meeting)
         XCTAssertEqual(meeting.displayTitle, "2026-04-03 - Weekly Standup")
     }
+
+    // MARK: - Speaker name resolution
+
+    func testResolvedSpeakerLabelFallsBackToYouForMic() {
+        let label = resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil)
+        XCTAssertEqual(label, "You")
+    }
+
+    func testResolvedSpeakerLabelFallsBackToSpeakerNForRemote() {
+        XCTAssertEqual(resolvedSpeakerLabel(for: 0, names: nil), "Speaker 1")
+        XCTAssertEqual(resolvedSpeakerLabel(for: 2, names: nil), "Speaker 3")
+    }
+
+    func testResolvedSpeakerLabelUsesMappedName() {
+        let names = ["1000": "Alice", "0": "Bob"]
+        XCTAssertEqual(resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: names), "Alice")
+        XCTAssertEqual(resolvedSpeakerLabel(for: 0, names: names), "Bob")
+    }
+
+    func testResolvedSpeakerLabelFallsBackWhenMappingMissing() {
+        let names = ["1000": "Alice"]
+        XCTAssertEqual(resolvedSpeakerLabel(for: 0, names: names), "Speaker 1")
+    }
+
+    func testResolvedSpeakerLabelFallsBackWhenMappingIsWhitespace() {
+        let names = ["1000": "   "]
+        XCTAssertEqual(resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: names), "You")
+    }
+
+    func testResolvedShortSpeakerLabelFallsBack() {
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil), "You")
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: 1, names: nil), "S2")
+    }
+
+    func testResolvedShortSpeakerLabelUsesMappedName() {
+        let names = ["1": "Chen"]
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: 1, names: names), "Chen")
+    }
+
+    // MARK: - selfSpeakerIDs override
+
+    func testResolvedSpeakerLabelHonorsExplicitSelfID() {
+        XCTAssertEqual(resolvedSpeakerLabel(for: 2, names: nil, selfIDs: [2]), "You")
+        XCTAssertEqual(
+            resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil, selfIDs: [2]),
+            "Speaker \(DeepgramService.micSpeakerID + 1)"
+        )
+    }
+
+    func testResolvedShortSpeakerLabelHonorsExplicitSelfID() {
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: 2, names: nil, selfIDs: [2]), "You")
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: 0, names: nil, selfIDs: [2]), "S1")
+    }
+
+    func testResolvedSpeakerLabelSelfWinsOverMappedName() {
+        let names = ["2": "Alice"]
+        XCTAssertEqual(resolvedSpeakerLabel(for: 2, names: names, selfIDs: [2]), "You")
+    }
+
+    func testResolvedSpeakerLabelHonorsMultipleSelfIDs() {
+        // Multiple speakers marked as self should all resolve to "You".
+        XCTAssertEqual(resolvedSpeakerLabel(for: 2, names: nil, selfIDs: [2, 3]), "You")
+        XCTAssertEqual(resolvedSpeakerLabel(for: 3, names: nil, selfIDs: [2, 3]), "You")
+        XCTAssertEqual(resolvedSpeakerLabel(for: 4, names: nil, selfIDs: [2, 3]), "Speaker 5")
+    }
+
+    @MainActor
+    func testMeetingSetSelfSpeakerRoundtrip() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        XCTAssertTrue(meeting.selfSpeakerIDs.isEmpty)
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [DeepgramService.micSpeakerID])
+
+        // First explicit mark: the previously-implicit mic self is materialized so
+        // "also mark as me" preserves "You" instead of demoting it to a raw speaker ID.
+        meeting.setSelfSpeaker(id: 3, isSelf: true)
+        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID, 3])
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [DeepgramService.micSpeakerID, 3])
+
+        meeting.setSelfSpeaker(id: 3, isSelf: false)
+        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID])
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [DeepgramService.micSpeakerID])
+    }
+
+    @MainActor
+    func testMeetingSetSelfSpeakerSupportsMultiple() {
+        // Diarization can split one person across multiple IDs; the user should be able
+        // to mark all of them as "me" and undo each independently. The implicit mic self
+        // is materialized on the first mark so the user doesn't lose "You".
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.setSelfSpeaker(id: 2, isSelf: true)
+        meeting.setSelfSpeaker(id: 3, isSelf: true)
+        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID, 2, 3])
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [DeepgramService.micSpeakerID, 2, 3])
+
+        // Unmarking one preserves the others.
+        meeting.setSelfSpeaker(id: 2, isSelf: false)
+        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID, 3])
+    }
+
+    @MainActor
+    func testMeetingSetSelfSpeakerClearsExistingNameAndOverride() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.setSpeakerName(id: "2", name: "Alice")
+        XCTAssertEqual(meeting.speakerNames["2"], "Alice")
+        XCTAssertTrue(meeting.speakerOverrides.contains("2"))
+
+        meeting.setSelfSpeaker(id: 2, isSelf: true)
+        XCTAssertNil(meeting.speakerNames["2"])
+        XCTAssertFalse(meeting.speakerOverrides.contains("2"))
+    }
+
+    @MainActor
+    func testMeetingSelfSpeakerIDsMergesLegacyColumn() {
+        // Meetings saved before multi-self support have only the legacy `selfSpeakerID` column.
+        // Reading `selfSpeakerIDs` must still surface that ID.
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.selfSpeakerID = 5
+        XCTAssertTrue(meeting.selfSpeakerIDs.contains(5))
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [5])
+    }
+
+    // MARK: - SpeakerNamesResponse sanitize
+
+    func testSpeakerNamesSanitizeTrimsAndDropsEmpty() {
+        let raw: [String: String] = ["1000": "  Alice  ", "0": "", "1": "   "]
+        let cleaned = SpeakerNamesResponse.sanitize(raw)
+        XCTAssertEqual(cleaned, ["1000": "Alice"])
+    }
+
+    func testSpeakerNamesSanitizeRejectsPlaceholders() {
+        let raw: [String: String] = ["1000": "Unknown", "0": "n/a", "1": "null", "2": "none"]
+        let cleaned = SpeakerNamesResponse.sanitize(raw)
+        XCTAssertTrue(cleaned.isEmpty)
+    }
+
+    func testSpeakerNamesSanitizeRejectsSpeakerRestatements() {
+        let raw: [String: String] = ["0": "Speaker 2", "1": "S 3", "2": "Alice"]
+        let cleaned = SpeakerNamesResponse.sanitize(raw)
+        XCTAssertEqual(cleaned, ["2": "Alice"])
+    }
+
+    func testSpeakerNamesSanitizeRejectsNonNumericKeys() {
+        let raw: [String: String] = ["alice": "Alice", "1000": "Bob", "": "Carol"]
+        let cleaned = SpeakerNamesResponse.sanitize(raw)
+        XCTAssertEqual(cleaned, ["1000": "Bob"])
+    }
+
+    func testSpeakerNamesSanitizeTrimsKey() {
+        let raw: [String: String] = [" 1000 ": "Alice"]
+        let cleaned = SpeakerNamesResponse.sanitize(raw)
+        XCTAssertEqual(cleaned, ["1000": "Alice"])
+    }
+
+    // MARK: - SpeakerNamesResponse decoding
+
+    func testSpeakerNamesResponseDecodesNestedShape() throws {
+        let json = "{\"speakers\":{\"1000\":\"Alice\",\"0\":\"Bob\"}}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SpeakerNamesResponse.self, from: json)
+        XCTAssertEqual(decoded.speakers, ["1000": "Alice", "0": "Bob"])
+    }
+
+    func testSpeakerNamesResponseDecodesFlatShape() throws {
+        let json = "{\"1000\":\"Alice\",\"0\":\"Bob\"}".data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(SpeakerNamesResponse.self, from: json)
+        XCTAssertEqual(decoded.speakers, ["1000": "Alice", "0": "Bob"])
+    }
+
+    // MARK: - Meeting.speakerNames roundtrip
+
+    @MainActor
+    func testMeetingSpeakerNamesRoundtrip() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.speakerNames = ["1000": "Alice", "0": "Bob"]
+        XCTAssertEqual(meeting.speakerNames, ["1000": "Alice", "0": "Bob"])
+        XCTAssertTrue(meeting.hasSpeakerNames)
+        XCTAssertNotNil(meeting.speakerNamesJSON)
+    }
+
+    @MainActor
+    func testMeetingSpeakerNamesFiltersEmptyValues() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.speakerNames = ["1000": "Alice", "0": "   "]
+        XCTAssertEqual(meeting.speakerNames, ["1000": "Alice"])
+    }
+
+    @MainActor
+    func testMeetingSpeakerNamesEmptyClearsJSON() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.speakerNames = ["1000": "Alice"]
+        XCTAssertNotNil(meeting.speakerNamesJSON)
+        meeting.speakerNames = [:]
+        XCTAssertNil(meeting.speakerNamesJSON)
+        XCTAssertFalse(meeting.hasSpeakerNames)
+    }
+
+    @MainActor
+    func testMeetingSpeakerNamesDefaultIsEmpty() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        XCTAssertEqual(meeting.speakerNames, [:])
+        XCTAssertFalse(meeting.hasSpeakerNames)
+    }
+
+    @MainActor
+    func testMeetingFullTranscriptUsesResolvedNames() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        let segs = [
+            TranscriptSegment(text: "Hello", speaker: DeepgramService.micSpeakerID, timestamp: 0, isFinal: true),
+            TranscriptSegment(text: "Hi there", speaker: 0, timestamp: 5, isFinal: true)
+        ]
+        meeting.segments = segs
+        meeting.speakerNames = ["1000": "Alice", "0": "Bob"]
+
+        let transcript = meeting.fullTranscript
+        XCTAssertTrue(transcript.contains("Alice"))
+        XCTAssertTrue(transcript.contains("Bob"))
+        XCTAssertFalse(transcript.contains("Speaker 1"))
+        XCTAssertFalse(transcript.contains("You"))
+    }
 }
