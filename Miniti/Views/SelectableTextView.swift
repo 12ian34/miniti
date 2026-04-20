@@ -62,7 +62,6 @@ final class _SelectableTextContainer: NSView {
         tv.textContainer?.widthTracksTextView = true
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
-        tv.autoresizingMask = [.width]
         tv.textStorage?.setAttributedString(attributed)
         self.textView = tv
         super.init(frame: .zero)
@@ -75,14 +74,26 @@ final class _SelectableTextContainer: NSView {
         guard textView.textStorage?.isEqual(to: attributed) == false else { return }
         textView.textStorage?.setAttributedString(attributed)
         lastMeasuredWidth = -1
-        invalidateIntrinsicContentSize()
-        needsLayout = true
+        // Do NOT call invalidateIntrinsicContentSize() or needsLayout = true here.
+        // updateNSView can run inside an in-progress SwiftUI/AppKit layout pass,
+        // and either call would propagate setNeedsUpdateConstraints up the host
+        // view chain during layout, which AppKit traps as a recursive constraint
+        // update. Sizing is driven by our sizeThatFits(_:nsView:context:)
+        // implementation, so SwiftUI re-measures automatically when the
+        // representable's attributed input changes.
     }
 
     override func layout() {
         super.layout()
-        textView.frame = bounds
-        textView.textContainer?.containerSize = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+        if textView.frame != bounds {
+            textView.frame = bounds
+        }
+        if let container = textView.textContainer {
+            let targetSize = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
+            if container.containerSize != targetSize {
+                container.containerSize = targetSize
+            }
+        }
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
