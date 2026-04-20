@@ -72,6 +72,7 @@
 		T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
 		T10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
 		T10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
+		T10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
 		U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
 		U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
 		U10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
@@ -80,6 +81,7 @@
 		U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
 		U10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
 		U10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
+		U10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -172,6 +174,7 @@
 		T20000010000000000000006 /* DeepgramParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepgramParsingTests.swift; sourceTree = "<group>"; };
 		T20000010000000000000007 /* InsightsParsingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsParsingTests.swift; sourceTree = "<group>"; };
 		T20000010000000000000008 /* ColorPaletteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPaletteTests.swift; sourceTree = "<group>"; };
+		T20000010000000000000009 /* SelectableAttributedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableAttributedTests.swift; sourceTree = "<group>"; };
 		T30000010000000000000002 /* MinitiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		U20000010000000000000001 /* MinitiMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -358,6 +361,7 @@
 				T20000010000000000000006 /* DeepgramParsingTests.swift */,
 				T20000010000000000000007 /* InsightsParsingTests.swift */,
 				T20000010000000000000008 /* ColorPaletteTests.swift */,
+				T20000010000000000000009 /* SelectableAttributedTests.swift */,
 			);
 			path = MinitiTests;
 			sourceTree = "<group>";
@@ -633,6 +637,7 @@
 				T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				T10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
 				T10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
+				T10000010000000000000009 /* SelectableAttributedTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -648,6 +653,7 @@
 				U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				U10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
 				U10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
+				U10000010000000000000009 /* SelectableAttributedTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

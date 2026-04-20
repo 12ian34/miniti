@@ -62,10 +62,22 @@ final class _SelectableTextContainer: NSView {
         tv.textContainer?.widthTracksTextView = true
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false
+        // Disable autoresizing-mask-derived constraints. Without this, AppKit
+        // regenerates autoresizing constraints on every bounds change and
+        // forwards the engine events to SwiftUI's hosting view, which schedules
+        // a setNeedsUpdateConstraints mid-traversal and crashes the window
+        // display cycle with an NSInternalInconsistencyException.
+        tv.translatesAutoresizingMaskIntoConstraints = false
         tv.textStorage?.setAttributedString(attributed)
         self.textView = tv
         super.init(frame: .zero)
         addSubview(tv)
+        NSLayoutConstraint.activate([
+            tv.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tv.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tv.topAnchor.constraint(equalTo: topAnchor),
+            tv.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -83,19 +95,6 @@ final class _SelectableTextContainer: NSView {
         // representable's attributed input changes.
     }
 
-    override func layout() {
-        super.layout()
-        if textView.frame != bounds {
-            textView.frame = bounds
-        }
-        if let container = textView.textContainer {
-            let targetSize = NSSize(width: bounds.width, height: .greatestFiniteMagnitude)
-            if container.containerSize != targetSize {
-                container.containerSize = targetSize
-            }
-        }
-    }
-
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if abs(width - lastMeasuredWidth) < 0.5 { return lastMeasuredHeight }
         guard let storage = textView.textStorage else { return 0 }
@@ -103,12 +102,14 @@ final class _SelectableTextContainer: NSView {
         // can under-report height on the first render (before glyphs have been
         // generated / the view is in a window), which let the interim row paint
         // on top of the first finalized segment.
+        // Do NOT mutate textView/textContainer state here — sizeThatFits runs
+        // during SwiftUI measurement and any layout-triggering side effect can
+        // re-enter the window's constraint traversal.
         let rect = storage.boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading],
             context: nil
         )
-        textView.textContainer?.containerSize = NSSize(width: width, height: .greatestFiniteMagnitude)
         lastMeasuredWidth = width
         lastMeasuredHeight = ceil(rect.height)
         return lastMeasuredHeight
