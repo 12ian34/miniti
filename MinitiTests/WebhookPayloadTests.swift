@@ -241,6 +241,81 @@ final class WebhookPayloadTests: XCTestCase {
         XCTAssertEqual(payload.meeting.language, "es")
     }
 
+    func testPayloadFromLiveStateIncludesSpeakerNamesAndCalendarContext() throws {
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Pipeline Review",
+            startTime: Date(),
+            endTime: Date(),
+            durationSeconds: 300,
+            summary: "Reviewed the deal",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil, economicBuyer: nil, decisionCriteria: nil,
+            decisionProcess: nil, paperProcess: nil, identifiedPain: nil,
+            champion: nil, competition: nil,
+            speakerCount: 2,
+            speakerNames: ["0": "Alice", "\(DeepgramService.micSpeakerID)": "You"],
+            transcript: [],
+            training: nil,
+            calendarEventId: "evt_123",
+            attendees: [
+                MeetingAttendee(
+                    email: "alice@example.com",
+                    displayName: "Alice",
+                    domain: "example.com",
+                    responseStatus: "accepted",
+                    isOrganizer: false,
+                    isSelf: false
+                )
+            ]
+        )
+
+        let data = try JSONEncoder().encode(payload)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let meeting = json["meeting"] as! [String: Any]
+        let speakerNames = meeting["speaker_names"] as? [String: Any]
+        let attendees = meeting["attendees"] as? [[String: Any]]
+
+        XCTAssertEqual(meeting["calendar_event_id"] as? String, "evt_123")
+        XCTAssertEqual(speakerNames?["0"] as? String, "Alice")
+        XCTAssertEqual(attendees?.first?["email"] as? String, "alice@example.com")
+        XCTAssertEqual(attendees?.first?["domain"] as? String, "example.com")
+    }
+
+    func testPayloadFromLiveStateOmitsEmptySpeakerNamesAndCalendarContext() throws {
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Standalone Meeting",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 60,
+            summary: "Summary",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil, economicBuyer: nil, decisionCriteria: nil,
+            decisionProcess: nil, paperProcess: nil, identifiedPain: nil,
+            champion: nil, competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil
+        )
+
+        let data = try JSONEncoder().encode(payload)
+        let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let meeting = json["meeting"] as! [String: Any]
+
+        XCTAssertNil(meeting["speaker_names"])
+        XCTAssertNil(meeting["calendar_event_id"])
+        XCTAssertNil(meeting["attendees"])
+    }
+
     // MARK: - payloadFromMeeting
 
     @MainActor

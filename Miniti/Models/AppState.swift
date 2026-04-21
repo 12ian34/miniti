@@ -104,6 +104,11 @@ final class AppState: ObservableObject {
         let meta: ManagedInsightsMeta?
     }
 
+    struct GoogleOAuthCallbackPayload: Equatable {
+        let status: String?
+        let message: String?
+    }
+
     struct LiveSegmentSaveSnapshot: Sendable {
         let id: UUID
         let text: String
@@ -281,12 +286,18 @@ final class AppState: ObservableObject {
     private var lastStandardSummaryContext: String = ""
     private var lastMeddpiccSummaryContext: String = ""
     private let managedIncrementalRecentWindowChars = 10_000
+    // Keep managed questions on full-transcript requests until the backend rollout
+    // accepts `incremental_payload` for `mode=questions`.
+    private let managedQuestionsIncrementalEnabled = false
     private var managedStandardAckedSegmentCount = 0
     private var managedMeddpiccAckedSegmentCount = 0
+    private var managedQuestionsAckedSegmentCount = 0
     private var standardRequestSeq = 0
     private var meddpiccRequestSeq = 0
+    private var questionsRequestSeq = 0
     private var lastAppliedStandardSeq = -1
     private var lastAppliedMeddpiccSeq = -1
+    private var lastAppliedQuestionsSeq = -1
     private var standardSuccessCount = 0
     private var meddpiccSuccessCount = 0
     private var questionsSuccessCount = 0
@@ -496,13 +507,13 @@ final class AppState: ObservableObject {
     /// Rebuilt lazily when `meetingLanguage` changes or the meeting resets.
     private var cachedFillerTokensLanguage: String?
     private var cachedFillerTokens: [[String]] = []
-    private static let monologueNudgeMinInterval: TimeInterval = 180   // 3 minutes between monologue nudges
-    private static let fillerNudgeMinInterval: TimeInterval = 180       // 3 minutes between filler nudges
-    private static let monologueMinSeconds: TimeInterval = 60           // sustained for at least 60s of "You"
-    private static let monologueMinWords: Int = 180                     // and at least ~180 words
-    private static let fillerWindowSeconds: TimeInterval = 60           // rolling filler-rate window
-    private static let fillerNudgeMinFillersPerMinute: Double = 8       // threshold (you-only)
-    private static let fillerWindowMinYouWords: Int = 20                // don't nudge on a few words
+    nonisolated private static let monologueNudgeMinInterval: TimeInterval = 180   // 3 minutes between monologue nudges
+    nonisolated private static let fillerNudgeMinInterval: TimeInterval = 180       // 3 minutes between filler nudges
+    nonisolated private static let monologueMinSeconds: TimeInterval = 60           // sustained for at least 60s of "You"
+    nonisolated private static let monologueMinWords: Int = 180                     // and at least ~180 words
+    nonisolated private static let fillerWindowSeconds: TimeInterval = 60           // rolling filler-rate window
+    nonisolated private static let fillerNudgeMinFillersPerMinute: Double = 8       // threshold (you-only)
+    nonisolated private static let fillerWindowMinYouWords: Int = 20                // don't nudge on a few words
     
     @Published var isGoogleCalendarConnected: Bool = false
     @Published var googleCalendarEmail: String?
@@ -1109,9 +1120,7 @@ final class AppState: ObservableObject {
         
         // Warmup: fire first request when we have 4 segments (standard) or 6 (MEDDPICC).
         // Steady-state: cadence task handles 30s intervals.
-        let finalCount = liveSegments.filter {
-            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
+        let finalCount = Self.finalizedLiveSegmentCount(in: liveSegments)
         let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
         let meddpiccWarmup = meddpiccSuccessCount < 2 && finalCount >= 6
         let questionsWarmup = questionsSuccessCount < 2 && finalCount >= 6
@@ -1134,9 +1143,17 @@ final class AppState: ObservableObject {
             while !Task.isCancelled, isRecording {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled, isRecording else { break }
-                let finalCount = liveSegments.filter {
-                    $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }.count
+                let liveSegmentsSnapshot = liveSegments
+                let finalCount = Self.finalizedLiveSegmentCount(in: liveSegmentsSnapshot)
+                var finalizedSegmentsCache: [LiveSegment]?
+                func finalizedSegments() -> [LiveSegment] {
+                    if let finalizedSegmentsCache {
+                        return finalizedSegmentsCache
+                    }
+                    let snapshot = Self.finalizedLiveSegments(from: liveSegmentsSnapshot)
+                    finalizedSegmentsCache = snapshot
+                    return snapshot
+                }
                 let now = Date()
                 if standardSuccessCount >= 2,
                    let anchor = standardCadenceAnchor,
@@ -1149,9 +1166,7 @@ final class AppState: ObservableObject {
                     let interval: TimeInterval = meddpiccCadenceAnchor == nil ? meddpiccCadenceStagger : insightsCadenceInterval
                     if now.timeIntervalSince(anchor) >= interval,
                        finalCount > meddpiccLastFiredSegmentCount {
-                        let finalSegments = liveSegments
-                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            .sorted { $0.timestamp < $1.timestamp }
+                        let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
                         guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
                         await updateMeddpiccInBackground(
@@ -1168,9 +1183,7 @@ final class AppState: ObservableObject {
                     let interval: TimeInterval = questionsCadenceAnchor == nil ? questionsCadenceStagger : insightsCadenceInterval
                     if now.timeIntervalSince(anchor) >= interval,
                        finalCount > questionsLastFiredSegmentCount {
-                        let finalSegments = liveSegments
-                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            .sorted { $0.timestamp < $1.timestamp }
+                        let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
                         guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
                         await updateQuestionsInBackground(
@@ -1190,9 +1203,7 @@ final class AppState: ObservableObject {
                         now.timeIntervalSince($0) >= self.speakerNamesMinUpdateInterval
                     } ?? true
                     if meetsSegmentThreshold && meetsTimeThreshold {
-                        let finalSegments = liveSegments
-                            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                            .sorted { $0.timestamp < $1.timestamp }
+                        let finalSegments = finalizedSegments()
                         if let meetingID = currentMeeting?.id, !finalSegments.isEmpty {
                             await updateSpeakerNamesInBackground(
                                 finalSegments: finalSegments,
@@ -1218,9 +1229,7 @@ final class AppState: ObservableObject {
             return
         }
         
-        let finalSegments = liveSegments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.timestamp < $1.timestamp }
+        let finalSegments = Self.finalizedLiveSegments(from: liveSegments)
         
         let transcript = transcriptText(from: finalSegments)
         
@@ -1405,11 +1414,19 @@ final class AppState: ObservableObject {
             }
             let isDegraded = questionsResult.meta?.degraded ?? false
             if !isDegraded {
+                if let seq = questionsResult.meta?.requestSeq {
+                    lastAppliedQuestionsSeq = seq
+                }
                 questionsCadenceAnchor = Date()
                 questionsLastFiredSegmentCount = segmentCount
                 lastQuestionsRequestAt = Date()
                 applyInsights(questionsResult.insights, segmentCount: segmentCount, mode: .questions)
                 lastQuestionsSegmentCount = segmentCount
+                markManagedInsightsSuccess(
+                    mode: .questions,
+                    segmentCount: segmentCount,
+                    usedIncrementalPayload: questionsResult.usedIncrementalPayload
+                )
                 questionsSuccessCount += 1
                 DebugLogger.shared.log(.app, "Live questions applied: count=\(liveQuestions.count), segmentCount=\(segmentCount)")
             } else {
@@ -1741,15 +1758,14 @@ final class AppState: ObservableObject {
         
         do {
             let insights: InsightsService.LiveInsights
-            var usedIncrementalPayload = false
+            let requestPlan = makeManagedInsightsRequestPlan(
+                mode: mode,
+                finalSegments: finalSegments,
+                fullTranscript: transcript
+            )
+            let usedIncrementalPayload = requestPlan.usesIncrementalPayload
             
             if appMode == .managed, let minitiAPIService {
-                let requestPlan = makeManagedInsightsRequestPlan(
-                    mode: mode,
-                    finalSegments: finalSegments,
-                    fullTranscript: transcript
-                )
-                usedIncrementalPayload = requestPlan.usesIncrementalPayload
                 let seq: Int
                 let lastApplied: Int
                 switch mode {
@@ -1761,7 +1777,11 @@ final class AppState: ObservableObject {
                     meddpiccRequestSeq += 1
                     seq = meddpiccRequestSeq
                     lastApplied = lastAppliedMeddpiccSeq
-                case .training, .questions:
+                case .questions:
+                    questionsRequestSeq += 1
+                    seq = questionsRequestSeq
+                    lastApplied = lastAppliedQuestionsSeq
+                case .training:
                     seq = 0
                     lastApplied = -1
                 }
@@ -1812,13 +1832,14 @@ final class AppState: ObservableObject {
             } else {
                 DebugLogger.shared.log(
                     .app,
-                    "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count)"
+                    "Live insights request: mode=\(mode.rawValue), model=\(model.rawValue), fullTranscriptChars=\(transcript.count), requestTranscriptChars=\(requestPlan.transcriptForRequest.count), incremental=\(usedIncrementalPayload)"
                 )
                 guard let insightsService, !openaiApiKey.isEmpty else { return nil }
                 insights = try await insightsService.generateLiveInsights(
-                    transcript: transcript, existingSummary: existingSummary,
+                    transcript: requestPlan.transcriptForRequest, existingSummary: existingSummary,
                     existingTitle: existingTitle, mode: mode,
-                    model: model, apiKey: openaiApiKey, language: meetingLanguage
+                    model: model, apiKey: openaiApiKey, language: meetingLanguage,
+                    incrementalPayload: requestPlan.incrementalPayload
                 )
                 return LiveInsightsFetchResult(
                     insights: insights,
@@ -1845,7 +1866,22 @@ final class AppState: ObservableObject {
         finalSegments: [LiveSegment],
         fullTranscript: String
     ) -> ManagedInsightsRequestPlan {
-        let successCount = mode == .standard ? standardSuccessCount : meddpiccSuccessCount
+        if appMode == .managed, mode == .questions, !managedQuestionsIncrementalEnabled {
+            return ManagedInsightsRequestPlan(
+                transcriptForRequest: fullTranscript,
+                incrementalPayload: nil,
+                usesIncrementalPayload: false
+            )
+        }
+
+        let successCount: Int = {
+            switch mode {
+            case .standard: return standardSuccessCount
+            case .meddpicc: return meddpiccSuccessCount
+            case .questions: return questionsSuccessCount
+            case .training: return 0
+            }
+        }()
         if successCount < 2 {
             return ManagedInsightsRequestPlan(
                 transcriptForRequest: fullTranscript,
@@ -1858,7 +1894,8 @@ final class AppState: ObservableObject {
             switch mode {
             case .standard: return min(managedStandardAckedSegmentCount, finalSegments.count)
             case .meddpicc: return min(managedMeddpiccAckedSegmentCount, finalSegments.count)
-            case .training, .questions: return 0
+            case .questions: return min(managedQuestionsAckedSegmentCount, finalSegments.count)
+            case .training: return 0
             }
         }()
         let deltaSegments = Array(finalSegments.dropFirst(ackedSegmentCount))
@@ -1883,7 +1920,9 @@ final class AppState: ObservableObject {
                 .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .contains { !$0.isEmpty && $0.lowercased() != "null" }
                 return !lastMeddpiccSummaryContext.isEmpty || hasMeddpiccFields
-            case .training, .questions:
+            case .questions:
+                return !liveQuestions.isEmpty
+            case .training:
                 return false
             }
         }()
@@ -1920,7 +1959,8 @@ final class AppState: ObservableObject {
                 actionItems: liveActionItems,
                 topics: liveTopics,
                 suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
-                meddpicc: nil
+                meddpicc: nil,
+                questions: nil
             )
         case .meddpicc:
             var meddpicc: [String: String] = [:]
@@ -1946,9 +1986,27 @@ final class AppState: ObservableObject {
                 actionItems: [],
                 topics: [],
                 suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
-                meddpicc: meddpicc
+                meddpicc: meddpicc,
+                questions: nil
             )
-        case .training, .questions:
+        case .questions:
+            rollingState = MinitiAPIService.IncrementalInsightsRollingState(
+                summary: nil,
+                discussionFlow: [],
+                actionItems: [],
+                topics: [],
+                suggestedTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                meddpicc: nil,
+                questions: liveQuestions.map {
+                    .init(
+                        question: $0.question,
+                        type: $0.type,
+                        context: $0.context,
+                        priority: $0.priority
+                    )
+                }
+            )
+        case .training:
             return ManagedInsightsRequestPlan(
                 transcriptForRequest: fullTranscript,
                 incrementalPayload: nil,
@@ -2025,14 +2083,14 @@ final class AppState: ObservableObject {
         segmentCount: Int,
         usedIncrementalPayload: Bool
     ) {
-        guard appMode == .managed else { return }
-
         switch mode {
         case .standard:
             managedStandardAckedSegmentCount = max(managedStandardAckedSegmentCount, segmentCount)
         case .meddpicc:
             managedMeddpiccAckedSegmentCount = max(managedMeddpiccAckedSegmentCount, segmentCount)
-        case .training, .questions:
+        case .questions:
+            managedQuestionsAckedSegmentCount = max(managedQuestionsAckedSegmentCount, segmentCount)
+        case .training:
             return
         }
 
@@ -2044,17 +2102,22 @@ final class AppState: ObservableObject {
     private func resetManagedIncrementalTracking() {
         managedStandardAckedSegmentCount = 0
         managedMeddpiccAckedSegmentCount = 0
+        managedQuestionsAckedSegmentCount = 0
         standardRequestSeq = 0
         meddpiccRequestSeq = 0
+        questionsRequestSeq = 0
         lastAppliedStandardSeq = -1
         lastAppliedMeddpiccSeq = -1
+        lastAppliedQuestionsSeq = -1
         standardSuccessCount = 0
         meddpiccSuccessCount = 0
+        questionsSuccessCount = 0
     }
 
     private func restoreManagedIncrementalTracking(finalCount: Int) {
         managedStandardAckedSegmentCount = finalCount
         managedMeddpiccAckedSegmentCount = finalCount
+        managedQuestionsAckedSegmentCount = finalCount
     }
     
     /// Apply insights from either BYOK or managed mode to the live state.
@@ -3903,8 +3966,7 @@ final class AppState: ObservableObject {
     
     func refreshGoogleCalendarStatus() async {
         guard googleCalendarEnabled, let minitiAPIService else {
-            isGoogleCalendarConnected = false
-            googleCalendarEmail = nil
+            applyGoogleCalendarDisconnectedState()
             return
         }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
@@ -3915,7 +3977,7 @@ final class AppState: ObservableObject {
             if status.connected {
                 await fetchUpcomingEvents()
             } else {
-                upcomingEvents = []
+                applyGoogleCalendarDisconnectedState()
             }
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar status check failed: \(error.localizedDescription)")
@@ -3936,10 +3998,7 @@ final class AppState: ObservableObject {
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar events fetch failed: \(error)")
             if case MinitiAPIService.ServiceError.serverError(let msg) = error, msg.contains("google_not_connected") {
-                isGoogleCalendarConnected = false
-                googleCalendarEmail = nil
-                upcomingEvents = []
-                rescheduleMeetingReminders()
+                applyGoogleCalendarDisconnectedState()
             }
         }
     }
@@ -4063,13 +4122,25 @@ final class AppState: ObservableObject {
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
             let response = try await minitiAPIService.googleConnectStart(deviceId: deviceId)
-            guard let url = URL(string: response.authURL) else { return }
+            guard response.callbackScheme.lowercased() == "miniti-google" else {
+                DebugLogger.shared.log(.app, "Google Calendar connect start unexpected callback scheme: \(response.callbackScheme)")
+                return
+            }
+            guard let url = URL(string: response.authURL) else {
+                DebugLogger.shared.log(.app, "Google Calendar connect start invalid auth URL")
+                return
+            }
             #if os(macOS)
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(response.authURL, forType: .string)
-            NSWorkspace.shared.open(url)
+            guard NSWorkspace.shared.open(url) else {
+                DebugLogger.shared.log(.app, "Google Calendar connect browser open failed")
+                return
+            }
             #elseif os(iOS)
-            await UIApplication.shared.open(url)
+            let opened = await UIApplication.shared.open(url)
+            guard opened else {
+                DebugLogger.shared.log(.app, "Google Calendar connect browser open failed")
+                return
+            }
             #endif
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar connect start failed: \(error.localizedDescription)")
@@ -4077,17 +4148,23 @@ final class AppState: ObservableObject {
     }
     
     func googleDisconnect() async {
-        guard let minitiAPIService else { return }
-        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-        do {
-            _ = try await minitiAPIService.googleDisconnect(deviceId: deviceId)
-        } catch {
-            DebugLogger.shared.log(.app, "Google Calendar disconnect failed: \(error.localizedDescription)")
+        if let minitiAPIService {
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            do {
+                _ = try await minitiAPIService.googleDisconnect(deviceId: deviceId)
+            } catch {
+                DebugLogger.shared.log(.app, "Google Calendar disconnect failed: \(error.localizedDescription)")
+            }
         }
+        applyGoogleCalendarDisconnectedState()
+    }
+
+    func applyGoogleCalendarDisconnectedState() {
         isGoogleCalendarConnected = false
         googleCalendarEmail = nil
         upcomingEvents = []
         stopCalendarRefreshTimer()
+        stopAutoStartMonitoring()
         rescheduleMeetingReminders()
     }
     
@@ -4133,11 +4210,12 @@ final class AppState: ObservableObject {
     }
     
     func handleGoogleOAuthCallback(_ url: URL) async {
-        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
-        let status = components.queryItems?.first(where: { $0.name == "status" })?.value
-        let message = components.queryItems?.first(where: { $0.name == "message" })?.value
+        guard let payload = Self.parseGoogleOAuthCallback(url) else {
+            DebugLogger.shared.log(.app, "Ignoring invalid Google Calendar OAuth callback: \(url.absoluteString)")
+            return
+        }
         
-        if status == "success" {
+        if payload.status == "success" {
             DebugLogger.shared.log(.app, "Google Calendar OAuth success")
             try? await Task.sleep(nanoseconds: 500_000_000)
             await refreshGoogleCalendarStatus()
@@ -4148,8 +4226,17 @@ final class AppState: ObservableObject {
             startCalendarRefreshTimer()
             startAutoStartMonitoring()
         } else {
-            DebugLogger.shared.log(.app, "Google Calendar OAuth failed: \(message ?? "unknown")")
+            DebugLogger.shared.log(.app, "Google Calendar OAuth failed: \(payload.message ?? "unknown")")
         }
+    }
+
+    nonisolated static func parseGoogleOAuthCallback(_ url: URL) -> GoogleOAuthCallbackPayload? {
+        guard url.scheme?.lowercased() == "miniti-google" else { return nil }
+        guard url.host?.lowercased() == "oauth-callback" else { return nil }
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        let status = components.queryItems?.first(where: { $0.name == "status" })?.value
+        let message = components.queryItems?.first(where: { $0.name == "message" })?.value
+        return GoogleOAuthCallbackPayload(status: status, message: message)
     }
     
     // MARK: - Managed Mode Usage
@@ -4878,22 +4965,16 @@ final class AppState: ObservableObject {
         // Don't interrupt when the user is looking at the app — nudges are for when attention is elsewhere.
         if isAppInForeground() { return }
 
-        // Determine which speaker to coach.
-        // macOS: mic-dominant segments are always tagged with `micSpeakerID` so we can
-        //   confidently target only "You" and never coach remote speakers.
-        // iOS: there is no mic/remote separation — Deepgram just diarizes voices on the mic,
-        //   so we coach whichever speaker is currently talking (the phone owner is typically
-        //   the only or dominant speaker).
-        #if os(iOS)
-        let targetSpeakerIDs: Set<Int> = [lastFinal.speaker]
-        #else
-        let targetSpeakerIDs = effectiveLiveSelfSpeakerIDs
-        guard targetSpeakerIDs.contains(lastFinal.speaker) else {
-            // Last final was a remote speaker; reset run flag and skip.
+        guard let targetSpeakerIDs = Self.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: lastFinal.speaker,
+            effectiveSelfSpeakerIDs: effectiveLiveSelfSpeakerIDs,
+            explicitSelfSpeakerIDs: liveSelfSpeakerIDs,
+            detectedSpeakers: detectedSpeakers,
+            prefersSingleSpeakerFallback: Self.realtimeNudgesPreferSingleSpeakerFallback
+        ) else {
             monologueNudgedForRun = false
             return
         }
-        #endif
 
         if notifyOnMonologue {
             evaluateMonologueNudge(targetSpeakers: targetSpeakerIDs)
@@ -4936,9 +5017,11 @@ final class AppState: ObservableObject {
         // elapsed since the last You segment finalized (still inside the same run).
         let runSeconds = max(recordingDuration - start, end - start)
 
-        // Detect run boundary: if we haven't nudged since the last non-You break, allow a new nudge.
-        // monologueNudgedForRun is cleared whenever a non-You segment is seen.
-        if runWordCount < Self.monologueMinWords || runSeconds < Self.monologueMinSeconds {
+        // Drop the latch as soon as the current contiguous run falls back below the
+        // nudge threshold. This lets future speaker turns trigger again without
+        // requiring platform-specific reset logic.
+        if !Self.isEligibleMonologueRun(wordCount: runWordCount, runSeconds: runSeconds) {
+            monologueNudgedForRun = false
             return
         }
         guard !monologueNudgedForRun else { return }
@@ -5007,6 +5090,48 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Nudge notification failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    #if os(iOS)
+    nonisolated static let realtimeNudgesPreferSingleSpeakerFallback = true
+    #else
+    nonisolated static let realtimeNudgesPreferSingleSpeakerFallback = false
+    #endif
+
+    nonisolated static func realtimeNudgeTargetSpeakerIDs(
+        lastFinalSpeaker: Int,
+        effectiveSelfSpeakerIDs: Set<Int>,
+        explicitSelfSpeakerIDs: Set<Int>,
+        detectedSpeakers: Set<Int>,
+        prefersSingleSpeakerFallback: Bool
+    ) -> Set<Int>? {
+        if effectiveSelfSpeakerIDs.contains(lastFinalSpeaker) {
+            return effectiveSelfSpeakerIDs
+        }
+
+        guard prefersSingleSpeakerFallback else { return nil }
+        guard explicitSelfSpeakerIDs.isEmpty else { return nil }
+        guard detectedSpeakers.count <= 1 else { return nil }
+        return [lastFinalSpeaker]
+    }
+
+    nonisolated static func isEligibleMonologueRun(wordCount: Int, runSeconds: TimeInterval) -> Bool {
+        wordCount >= monologueMinWords && runSeconds >= monologueMinSeconds
+    }
+
+    nonisolated static func isFinalNonEmptyLiveSegment(_ segment: LiveSegment) -> Bool {
+        segment.isFinal && !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    nonisolated static func finalizedLiveSegmentCount(in liveSegments: [LiveSegment]) -> Int {
+        liveSegments.lazy.filter(Self.isFinalNonEmptyLiveSegment).count
+    }
+
+    nonisolated static func finalizedLiveSegments(from liveSegments: [LiveSegment]) -> [LiveSegment] {
+        liveSegments
+            .lazy
+            .filter(Self.isFinalNonEmptyLiveSegment)
+            .sorted { $0.timestamp < $1.timestamp }
     }
 }
 

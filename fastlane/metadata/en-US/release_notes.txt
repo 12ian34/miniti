@@ -1,5 +1,6 @@
-- Automatic speaker naming — infers real names from the transcript and calendar events. Opt in via Settings.
-- Rename any speaker yourself.
-- New "i zoned out" button. Tap during a meeting to catch up: current topic, questions directed at you, recent discussion, and key recent decisions.
-- Real-time nudges — opt-in notifications when you've been monologuing ~1 min or your filler rate spikes.
-- New docs website at miniti.app/docs.
+- Live insights stay faster and more reliable in longer meetings by updating from recent context instead of repeatedly reprocessing the full conversation.
+- Questions mode now prepares incremental rolling-state updates too (BYOK).
+- Live meeting updates do less repeated transcript work behind the scenes, which helps longer recordings stay lighter.
+- Fix: disconnecting Google Calendar now immediately clears pending reminders and auto-start countdowns instead of leaving stale meeting actions behind.
+- Fix: real-time coaching nudges no longer target the wrong speaker in multi-person room audio, and monologue nudges recover properly after speaker changes.
+- Fix: managed mode now keeps the same device identity more reliably if secure keychain storage is temporarily unavailable.
