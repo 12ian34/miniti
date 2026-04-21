@@ -283,12 +283,32 @@ final class MinitiAPIService: @unchecked Sendable {
     }
 
     struct IncrementalInsightsRollingState: Sendable {
+        struct QuestionState: Sendable {
+            let question: String
+            let type: String
+            let context: String
+            let priority: String?
+
+            var dictionary: [String: Any] {
+                var result: [String: Any] = [
+                    "question": question,
+                    "type": type,
+                    "context": context
+                ]
+                if let priority, !priority.isEmpty {
+                    result["priority"] = priority
+                }
+                return result
+            }
+        }
+
         let summary: String?
         let discussionFlow: [String]
         let actionItems: [String]
         let topics: [String]
         let suggestedTitle: String?
         let meddpicc: [String: String]?
+        let questions: [QuestionState]?
 
         var dictionary: [String: Any] {
             var result: [String: Any] = [
@@ -314,6 +334,9 @@ final class MinitiAPIService: @unchecked Sendable {
                     meddpiccResult[key] = meddpicc[key] ?? NSNull()
                 }
                 result["meddpicc"] = meddpiccResult
+            }
+            if let questions, !questions.isEmpty {
+                result["questions"] = questions.map(\.dictionary)
             }
             return result
         }

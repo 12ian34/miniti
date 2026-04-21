@@ -405,14 +405,23 @@ final class InsightsService: Sendable {
     }
     
     /// Generate real-time insights during a meeting (faster, more concise)
-    func generateLiveInsights(transcript: String, existingSummary: String?, existingTitle: String?, mode: InsightsMode = .standard, model: OpenAIModel = .gpt5Mini, apiKey: String, language: String = "en") async throws -> LiveInsights {
+    func generateLiveInsights(
+        transcript: String,
+        existingSummary: String?,
+        existingTitle: String?,
+        mode: InsightsMode = .standard,
+        model: OpenAIModel = .gpt5Mini,
+        apiKey: String,
+        language: String = "en",
+        incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil
+    ) async throws -> LiveInsights {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
         }
         let startedAt = CFAbsoluteTimeGetCurrent()
         DebugLogger.shared.log(
             .app,
-            "BYOK insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil), language=\(language)"
+            "BYOK insights request: mode=\(mode.rawValue), model=\(model.rawValue), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil), incremental=\(incrementalPayload != nil), language=\(language)"
         )
         
         let contextNote = existingSummary != nil 
@@ -438,63 +447,143 @@ final class InsightsService: Sendable {
         case .standard:
             systemPrompt = "You provide real-time meeting summaries. Be extremely concise. Focus on what's being discussed RIGHT NOW."
             maxCompletionTokens = 10000
-            prompt = """
-            \(languageInstruction)You are providing LIVE meeting insights. Be very concise.
-            
-            \(contextNote)
-            
-            Respond in JSON:
-            {
-                \(titleInstruction)
-                "summary": "Brief 1-2 sentence summary of what's being discussed",
-                "action_items": ["Any action items mentioned (keep short)"],
-                "topics": ["Broad themes/categories being discussed (1-2 words each, max 4 topics, e.g. 'Strategy', 'Budget', 'Timeline')"],
-                "discussion_flow": ["Chronological list of what was discussed, in order (e.g. 'Introductions', 'Reviewed Q3 metrics', 'Discussed budget concerns', 'Agreed on next steps')"]
+            if let incrementalPayload {
+                let rollingState = Self.prettyJSONString(from: incrementalPayload.rollingState.dictionary) ?? "{}"
+                prompt = """
+                \(languageInstruction)You are updating LIVE meeting insights incrementally. Be concise, but preserve important context.
+
+                Current rolling state:
+                \(rollingState)
+
+                Recent transcript window (current context):
+                \(incrementalPayload.recentTranscript)
+
+                Newly added transcript since the last successful update:
+                \(incrementalPayload.transcriptDelta)
+
+                Update the rolling state in place.
+
+                Hard rules:
+                - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+                - Preserve still-valid summary, action items, topics, and discussion flow from the rolling state unless the new transcript clearly changes them.
+                - Only add items that are grounded in the transcript. Never invent.
+                - `discussion_flow` should stay chronological across the meeting so far, not just the delta.
+
+                Respond in JSON:
+                {
+                    \(titleInstruction)
+                    "summary": "Brief 1-2 sentence summary of what's being discussed",
+                    "action_items": ["Any action items mentioned (keep short)"],
+                    "topics": ["Broad themes/categories being discussed (1-2 words each, max 4 topics, e.g. 'Strategy', 'Budget', 'Timeline')"],
+                    "discussion_flow": ["Chronological list of what was discussed, in order (e.g. 'Introductions', 'Reviewed Q3 metrics', 'Discussed budget concerns', 'Agreed on next steps')"]
+                }
+                """
+            } else {
+                prompt = """
+                \(languageInstruction)You are providing LIVE meeting insights. Be very concise.
+                
+                \(contextNote)
+                
+                Respond in JSON:
+                {
+                    \(titleInstruction)
+                    "summary": "Brief 1-2 sentence summary of what's being discussed",
+                    "action_items": ["Any action items mentioned (keep short)"],
+                    "topics": ["Broad themes/categories being discussed (1-2 words each, max 4 topics, e.g. 'Strategy', 'Budget', 'Timeline')"],
+                    "discussion_flow": ["Chronological list of what was discussed, in order (e.g. 'Introductions', 'Reviewed Q3 metrics', 'Discussed budget concerns', 'Agreed on next steps')"]
+                }
+                
+                Latest transcript:
+                \(transcript)
+                """
             }
-            
-            Latest transcript:
-            \(transcript)
-            """
             
         case .meddpicc:
             systemPrompt = "You are a sales qualification analyst using the MEDDPICC framework. Extract qualification insights from sales conversations. Be concise but thorough on qualification criteria."
             maxCompletionTokens = 10000
-            prompt = """
-            \(languageInstruction)Analyze this sales call using the MEDDPICC framework. Extract any information mentioned.
-            
-            \(contextNote)
-            
-            MEDDPICC Framework:
-            - Metrics: Quantifiable success measures the prospect mentioned
-            - Economic Buyer: Who controls budget/final decision
-            - Decision Criteria: Factors influencing their decision
-            - Decision Process: Their buying/evaluation process
-            - Paper Process: Legal, procurement, security review steps
-            - Identify Pain: Problems they're trying to solve
-            - Champion: Internal advocate for your solution
-            - Competition: Other solutions they're considering
-            
-            For each MEDDPICC field, list each distinct point on its own line starting with "- ". Use null if no information.
-            
-            Respond in JSON:
-            {
-                \(titleInstruction)
-                "summary": "Brief summary of the sales conversation",
-                "action_items": ["Follow-up actions needed"],
-                "topics": ["Broad themes discussed (1-2 words each)"],
-                "metrics": "- Point one\\n- Point two (or null)",
-                "economic_buyer": "- Point one\\n- Point two (or null)",
-                "decision_criteria": "- Point one\\n- Point two (or null)",
-                "decision_process": "- Point one\\n- Point two (or null)",
-                "paper_process": "- Point one\\n- Point two (or null)",
-                "identified_pain": "- Point one\\n- Point two (or null)",
-                "champion": "- Point one\\n- Point two (or null)",
-                "competition": "- Point one\\n- Point two (or null)"
+            if let incrementalPayload {
+                let rollingState = Self.prettyJSONString(from: incrementalPayload.rollingState.dictionary) ?? "{}"
+                prompt = """
+                \(languageInstruction)Analyze this sales call incrementally using the MEDDPICC framework. Update the existing state with only the new information that appeared since the last successful update.
+
+                Current rolling state:
+                \(rollingState)
+
+                Recent transcript window (current context):
+                \(incrementalPayload.recentTranscript)
+
+                Newly added transcript since the last successful update:
+                \(incrementalPayload.transcriptDelta)
+
+                MEDDPICC Framework:
+                - Metrics: Quantifiable success measures the prospect mentioned
+                - Economic Buyer: Who controls budget/final decision
+                - Decision Criteria: Factors influencing their decision
+                - Decision Process: Their buying/evaluation process
+                - Paper Process: Legal, procurement, security review steps
+                - Identify Pain: Problems they're trying to solve
+                - Champion: Internal advocate for your solution
+                - Competition: Other solutions they're considering
+
+                Hard rules:
+                - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+                - Preserve still-valid MEDDPICC findings from the rolling state unless the new transcript clearly refines or contradicts them.
+                - For each MEDDPICC field, list each distinct point on its own line starting with "- ". Use null if no information.
+
+                Respond in JSON:
+                {
+                    \(titleInstruction)
+                    "summary": "Brief summary of the sales conversation",
+                    "action_items": ["Follow-up actions needed"],
+                    "topics": ["Broad themes discussed (1-2 words each)"],
+                    "metrics": "- Point one\\n- Point two (or null)",
+                    "economic_buyer": "- Point one\\n- Point two (or null)",
+                    "decision_criteria": "- Point one\\n- Point two (or null)",
+                    "decision_process": "- Point one\\n- Point two (or null)",
+                    "paper_process": "- Point one\\n- Point two (or null)",
+                    "identified_pain": "- Point one\\n- Point two (or null)",
+                    "champion": "- Point one\\n- Point two (or null)",
+                    "competition": "- Point one\\n- Point two (or null)"
+                }
+                """
+            } else {
+                prompt = """
+                \(languageInstruction)Analyze this sales call using the MEDDPICC framework. Extract any information mentioned.
+                
+                \(contextNote)
+                
+                MEDDPICC Framework:
+                - Metrics: Quantifiable success measures the prospect mentioned
+                - Economic Buyer: Who controls budget/final decision
+                - Decision Criteria: Factors influencing their decision
+                - Decision Process: Their buying/evaluation process
+                - Paper Process: Legal, procurement, security review steps
+                - Identify Pain: Problems they're trying to solve
+                - Champion: Internal advocate for your solution
+                - Competition: Other solutions they're considering
+                
+                For each MEDDPICC field, list each distinct point on its own line starting with "- ". Use null if no information.
+                
+                Respond in JSON:
+                {
+                    \(titleInstruction)
+                    "summary": "Brief summary of the sales conversation",
+                    "action_items": ["Follow-up actions needed"],
+                    "topics": ["Broad themes discussed (1-2 words each)"],
+                    "metrics": "- Point one\\n- Point two (or null)",
+                    "economic_buyer": "- Point one\\n- Point two (or null)",
+                    "decision_criteria": "- Point one\\n- Point two (or null)",
+                    "decision_process": "- Point one\\n- Point two (or null)",
+                    "paper_process": "- Point one\\n- Point two (or null)",
+                    "identified_pain": "- Point one\\n- Point two (or null)",
+                    "champion": "- Point one\\n- Point two (or null)",
+                    "competition": "- Point one\\n- Point two (or null)"
+                }
+                
+                Latest transcript:
+                \(transcript)
+                """
             }
-            
-            Latest transcript:
-            \(transcript)
-            """
         
         case .training:
             systemPrompt = "You provide real-time meeting summaries. Be extremely concise. Focus on what's being discussed RIGHT NOW."
@@ -520,44 +609,96 @@ final class InsightsService: Sendable {
         case .questions:
             systemPrompt = "You generate incisive questions that reveal what a conversation is missing. You find gaps, unstated assumptions, dropped threads, and tensions between statements. Your questions reference specific things said in the transcript — never generic. Each question should be something a brilliant, curious person would actually say out loud."
             maxCompletionTokens = 10000
-            prompt = """
-            \(languageInstruction)Analyze this conversation and generate questions the listener should ask. Focus on what's NOT been said, what's been assumed, and what's been glossed over.
+            if let incrementalPayload {
+                let rollingState = Self.prettyJSONString(from: incrementalPayload.rollingState.dictionary) ?? "{}"
+                prompt = """
+                \(languageInstruction)Analyze this conversation incrementally and update the current shortlist of questions the listener should ask. Focus on what's NOT been said, what's been assumed, and what's been glossed over.
 
-            Hard rules:
-            - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
-            - Generate 5-8 questions.
-            - Each question MUST reference something specific from the transcript. No generic questions like "what are your priorities" or "tell me more".
-            - Use at least 3 different question types across the set.
-            - Questions must sound natural spoken aloud in a meeting — not academic or stiff.
-            - "context" explains WHY this question matters — what it would reveal or uncover.
+                Current rolling state:
+                \(rollingState)
 
-            Question types:
-            - "deeper": follow a thread that was mentioned but not explored ("You mentioned X — what specifically about that...")
-            - "challenge": surface a tension or contradiction between two things said
-            - "reframe": question the premise, not the conclusion — step outside the conversation's frame
-            - "clarify": pin down something vague or ambiguous ("When you say 'soon', do you mean...")
-            - "explore": open territory the conversation hasn't touched but should, given context
-            - "follow_up": the natural next move that turns understanding into action
+                Recent transcript window (current context):
+                \(incrementalPayload.recentTranscript)
 
-            Priority:
-            - Label a question "high" ONLY if missing the answer would materially change the outcome of the conversation (an unresolved contradiction, an unstated blocker, a dropped thread that the whole deal/decision hinges on). Otherwise label it "normal".
-            - Be strict. At most 1-2 questions per response should be "high". A response with zero "high" questions is expected and correct. Never default to "high".
+                Newly added transcript since the last successful update:
+                \(incrementalPayload.transcriptDelta)
 
-            Respond in JSON:
-            {
-                "questions": [
-                    {
-                        "question": "The actual question to ask",
-                        "type": "deeper|challenge|reframe|clarify|explore|follow_up",
-                        "context": "One line: why this question matters, what it reveals",
-                        "priority": "high|normal"
-                    }
-                ]
+                Hard rules:
+                - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+                - Keep the best 5-8 questions to ask right now.
+                - Each question MUST reference something specific from the transcript. No generic questions like "what are your priorities" or "tell me more".
+                - Use at least 3 different question types across the set.
+                - Questions must sound natural spoken aloud in a meeting — not academic or stiff.
+                - "context" explains WHY this question matters — what it would reveal or uncover.
+                - Treat any prior rolling-state questions as the baseline set. Keep strong existing questions stable unless they are clearly answered, obsolete, or superseded by stronger new evidence.
+                - Do not reshuffle the whole list unless the conversation actually changed direction.
+                - Prefer unresolved gaps from the recent transcript window over older resolved threads.
+                - Deduplicate aggressively against the rolling state and against other questions in the same response.
+
+                Question types:
+                - "deeper": follow a thread that was mentioned but not explored ("You mentioned X — what specifically about that...")
+                - "challenge": surface a tension or contradiction between two things said
+                - "reframe": question the premise, not the conclusion — step outside the conversation's frame
+                - "clarify": pin down something vague or ambiguous ("When you say 'soon', do you mean...")
+                - "explore": open territory the conversation hasn't touched but should, given context
+                - "follow_up": the natural next move that turns understanding into action
+
+                Priority:
+                - Label a question "high" ONLY if missing the answer would materially change the outcome of the conversation (an unresolved contradiction, an unstated blocker, a dropped thread that the whole deal/decision hinges on). Otherwise label it "normal".
+                - Be strict. At most 1-2 questions per response should be "high". A response with zero "high" questions is expected and correct. Never default to "high".
+
+                Respond in JSON:
+                {
+                    "questions": [
+                        {
+                            "question": "The actual question to ask",
+                            "type": "deeper|challenge|reframe|clarify|explore|follow_up",
+                            "context": "One line: why this question matters, what it reveals",
+                            "priority": "high|normal"
+                        }
+                    ]
+                }
+                """
+            } else {
+                prompt = """
+                \(languageInstruction)Analyze this conversation and generate questions the listener should ask. Focus on what's NOT been said, what's been assumed, and what's been glossed over.
+
+                Hard rules:
+                - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+                - Generate 5-8 questions.
+                - Each question MUST reference something specific from the transcript. No generic questions like "what are your priorities" or "tell me more".
+                - Use at least 3 different question types across the set.
+                - Questions must sound natural spoken aloud in a meeting — not academic or stiff.
+                - "context" explains WHY this question matters — what it would reveal or uncover.
+
+                Question types:
+                - "deeper": follow a thread that was mentioned but not explored ("You mentioned X — what specifically about that...")
+                - "challenge": surface a tension or contradiction between two things said
+                - "reframe": question the premise, not the conclusion — step outside the conversation's frame
+                - "clarify": pin down something vague or ambiguous ("When you say 'soon', do you mean...")
+                - "explore": open territory the conversation hasn't touched but should, given context
+                - "follow_up": the natural next move that turns understanding into action
+
+                Priority:
+                - Label a question "high" ONLY if missing the answer would materially change the outcome of the conversation (an unresolved contradiction, an unstated blocker, a dropped thread that the whole deal/decision hinges on). Otherwise label it "normal".
+                - Be strict. At most 1-2 questions per response should be "high". A response with zero "high" questions is expected and correct. Never default to "high".
+
+                Respond in JSON:
+                {
+                    "questions": [
+                        {
+                            "question": "The actual question to ask",
+                            "type": "deeper|challenge|reframe|clarify|explore|follow_up",
+                            "context": "One line: why this question matters, what it reveals",
+                            "priority": "high|normal"
+                        }
+                    ]
+                }
+
+                Latest transcript:
+                \(transcript)
+                """
             }
-
-            Latest transcript:
-            \(transcript)
-            """
         }
         
         let requestBody = OpenAIRequest(
@@ -632,6 +773,19 @@ final class InsightsService: Sendable {
             competition: insightsResponse.competition,
             questions: insightsResponse.questions
         )
+    }
+
+    private static func prettyJSONString(from object: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(
+                withJSONObject: object,
+                options: [.prettyPrinted, .sortedKeys]
+              ),
+              let json = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+        return json
     }
     
     /// Quick "i zoned out" catch-up. Takes the recent portion of the transcript and surfaces

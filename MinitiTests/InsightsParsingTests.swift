@@ -211,6 +211,50 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertFalse(q.isHighPriority)
     }
 
+    // MARK: - Incremental questions payload
+
+    func testIncrementalRollingStateIncludesQuestionsDictionary() {
+        let rollingState = MinitiAPIService.IncrementalInsightsRollingState(
+            summary: nil,
+            discussionFlow: [],
+            actionItems: [],
+            topics: [],
+            suggestedTitle: "Weekly Deal Review",
+            meddpicc: nil,
+            questions: [
+                .init(
+                    question: "You said procurement is still vague — who actually owns that step internally?",
+                    type: "clarify",
+                    context: "Ownership of procurement is still unresolved.",
+                    priority: "high"
+                )
+            ]
+        )
+
+        let dictionary = rollingState.dictionary
+        let questions = dictionary["questions"] as? [[String: Any]]
+
+        XCTAssertEqual(questions?.count, 1)
+        XCTAssertEqual(questions?.first?["question"] as? String, "You said procurement is still vague — who actually owns that step internally?")
+        XCTAssertEqual(questions?.first?["type"] as? String, "clarify")
+        XCTAssertEqual(questions?.first?["context"] as? String, "Ownership of procurement is still unresolved.")
+        XCTAssertEqual(questions?.first?["priority"] as? String, "high")
+    }
+
+    func testIncrementalRollingStateOmitsEmptyQuestionsArray() {
+        let rollingState = MinitiAPIService.IncrementalInsightsRollingState(
+            summary: nil,
+            discussionFlow: [],
+            actionItems: [],
+            topics: [],
+            suggestedTitle: nil,
+            meddpicc: nil,
+            questions: []
+        )
+
+        XCTAssertNil(rollingState.dictionary["questions"])
+    }
+
     func testInsightsModeDisplayNames() {
         XCTAssertEqual(InsightsMode.standard.displayName, "standard")
         XCTAssertEqual(InsightsMode.meddpicc.displayName, "MEDDPICC")

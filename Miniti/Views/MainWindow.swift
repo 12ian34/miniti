@@ -28,6 +28,8 @@ struct Theme {
 }
 
 struct MainWindow: View {
+    private static let historySearchDebounceNanoseconds: UInt64 = 200_000_000
+
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var keyboardService: KeyboardShortcutsService
     @Environment(\.modelContext) private var modelContext
@@ -37,9 +39,11 @@ struct MainWindow: View {
     @State private var historyCollapsed = true
     @State private var didInitialize = false
     @State private var searchText = ""
+    @State private var debouncedSearchText = ""
     @State private var isSearchActive = false
     @State private var searchFocusRequest = 0
     @State private var showTraining = false
+    @State private var searchDebounceTask: Task<Void, Never>?
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
@@ -51,12 +55,12 @@ struct MainWindow: View {
     }
 
     private var searchResults: [MeetingSearchResult] {
-        guard isSearchActive, !searchText.isEmpty else { return [] }
-        return MeetingSearchResult.search(query: searchText, in: historicalMeetings)
+        guard isSearchActive, !debouncedSearchText.isEmpty else { return [] }
+        return MeetingSearchResult.search(query: debouncedSearchText, in: historicalMeetings)
     }
 
     private var displayedMeetings: [Meeting] {
-        if isSearchActive && !searchText.isEmpty {
+        if isSearchActive && !debouncedSearchText.isEmpty {
             return searchResults.map(\.meeting)
         }
         return historicalMeetings
@@ -142,6 +146,7 @@ struct MainWindow: View {
             initializeIfNeeded()
             refreshMeetings()
             selectPendingSavedMeetingIfNeeded()
+            debouncedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         .onChange(of: appState.currentMeeting) { _, newMeeting in
             // When starting a new meeting, deselect historical meeting
@@ -156,6 +161,20 @@ struct MainWindow: View {
         }
         .onChange(of: meetings.map(\.id)) { _, _ in
             selectPendingSavedMeetingIfNeeded()
+        }
+        .onChange(of: searchText) { _, newValue in
+            scheduleSearchDebounce(for: newValue)
+        }
+        .onChange(of: isSearchActive) { _, active in
+            if active {
+                scheduleSearchDebounce(for: searchText)
+            } else {
+                searchDebounceTask?.cancel()
+                debouncedSearchText = ""
+            }
+        }
+        .onDisappear {
+            searchDebounceTask?.cancel()
         }
         .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
             guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
@@ -296,6 +315,23 @@ struct MainWindow: View {
 
         if let selectedMeetingID, !fetched.contains(where: { $0.id == selectedMeetingID }) {
             self.selectedMeetingID = nil
+        }
+    }
+
+    private func scheduleSearchDebounce(for query: String) {
+        searchDebounceTask?.cancel()
+
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isSearchActive, !trimmed.isEmpty else {
+            debouncedSearchText = ""
+            return
+        }
+
+        searchDebounceTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: Self.historySearchDebounceNanoseconds)
+            guard !Task.isCancelled else { return }
+            guard isSearchActive else { return }
+            debouncedSearchText = trimmed
         }
     }
 }
@@ -2078,6 +2114,11 @@ struct AttioLogoMark: View {
 }
 
 struct AttioSendSheet: View {
+    struct OAuthCallbackPayload: Equatable {
+        let status: String?
+        let message: String?
+    }
+
     @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
     @AppStorage("attioCreateTasksFromActionItems") private var createTasksFromActionItems: Bool = true
@@ -2136,10 +2177,10 @@ struct AttioSendSheet: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .minitiAttioOAuthCallback)) { notification in
             guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
-            guard callbackURL.scheme?.lowercased() == "miniti-attio" else { return }
-            DebugLogger.shared.log(.app, "[attio] oauth callback received path=\(callbackURL.host ?? "")")
+            guard let payload = Self.parseOAuthCallback(callbackURL) else { return }
+            DebugLogger.shared.log(.app, "[attio] oauth callback received status=\(payload.status ?? "nil")")
             Task { @MainActor in
-                await handleOAuthCallback(callbackURL)
+                await handleOAuthCallback(payload)
             }
         }
 #if os(macOS) || os(tvOS)
@@ -2557,17 +2598,14 @@ struct AttioSendSheet: View {
     }
 
     @MainActor
-    private func handleOAuthCallback(_ callbackURL: URL) async {
-        let components = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false)
-        let statusValue = components?.queryItems?.first(where: { $0.name == "status" })?.value
-        let message = components?.queryItems?.first(where: { $0.name == "message" })?.value
+    private func handleOAuthCallback(_ payload: OAuthCallbackPayload) async {
         DebugLogger.shared.log(
             .app,
-            "[attio] oauth callback parsed status=\(statusValue ?? "nil") message=\((message ?? "").prefix(120))"
+            "[attio] oauth callback parsed status=\(payload.status ?? "nil") message=\((payload.message ?? "").prefix(120))"
         )
 
-        if statusValue != "success" {
-            connectionError = message ?? "Attio connection failed"
+        if payload.status != "success" {
+            connectionError = payload.message ?? "Attio connection failed"
             DebugLogger.shared.log(.app, "[attio] oauth callback failed")
             return
         }
@@ -2702,6 +2740,15 @@ struct AttioSendSheet: View {
             return "Attio backend endpoints are not deployed yet"
         }
         return error.localizedDescription
+    }
+
+    nonisolated static func parseOAuthCallback(_ url: URL) -> OAuthCallbackPayload? {
+        guard url.scheme?.lowercased() == "miniti-attio" else { return nil }
+        guard url.host?.lowercased() == "oauth-callback" else { return nil }
+        let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        let status = components?.queryItems?.first(where: { $0.name == "status" })?.value
+        let message = components?.queryItems?.first(where: { $0.name == "message" })?.value
+        return OAuthCallbackPayload(status: status, message: message)
     }
 
     private func selectRecord(_ record: MinitiAPIService.AttioSearchRecord) {

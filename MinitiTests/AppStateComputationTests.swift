@@ -336,6 +336,16 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(state.displayMinutesLimit, 500)
     }
 
+    #if os(iOS)
+    @MainActor
+    func testDisplayMinutesLimitManagedUsesLocalAppStoreEntitlementWhileUsageLoads() {
+        let state = AppState()
+        state.appMode = .managed
+        state.hasActiveAppStoreSubscription = true
+        XCTAssertEqual(state.displayMinutesLimit, 5000)
+    }
+    #endif
+
     @MainActor
     func testDisplayMinutesRemaining() {
         let state = AppState()
@@ -400,6 +410,16 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertFalse(state.isPro)
     }
 
+    #if os(iOS)
+    @MainActor
+    func testIsProUsesLocalAppStoreEntitlementWhenBackendStateIsStale() {
+        let state = AppState()
+        state.appMode = .managed
+        state.hasActiveAppStoreSubscription = true
+        XCTAssertTrue(state.isPro)
+    }
+    #endif
+
     // MARK: - isLimitReached
 
     @MainActor
@@ -416,6 +436,26 @@ final class AppStateComputationTests: XCTestCase {
         state.usageInfo = Self.makeUsageInfo(used: 100, limit: 500)
         XCTAssertFalse(state.isLimitReached)
     }
+
+    #if os(iOS)
+    @MainActor
+    func testIsLimitReachedManagedIgnoresStaleBackendLimitWhenAppStoreSubscriptionIsActive() {
+        let state = AppState()
+        state.appMode = .managed
+        state.hasActiveAppStoreSubscription = true
+        state.usageInfo = Self.makeUsageInfo(used: 500, limit: 500)
+        XCTAssertFalse(state.isLimitReached)
+    }
+
+    @MainActor
+    func testManagedSubscriptionPlaceholderHiddenWhenLocalAppStoreEntitlementIsAlreadyActive() {
+        let state = AppState()
+        state.appMode = .managed
+        state.isLoadingUsage = true
+        state.hasActiveAppStoreSubscription = true
+        XCTAssertFalse(state.shouldShowManagedSubscriptionPlaceholder)
+    }
+    #endif
 
     @MainActor
     func testIsLimitReachedManagedAtLimit() {
@@ -489,6 +529,27 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(AppState.AudioRecoveryState.degraded.label, "audio degraded")
     }
 
+    // MARK: - Google Calendar disconnect cleanup
+
+    @MainActor
+    func testApplyGoogleCalendarDisconnectedStateClearsStaleCalendarUI() {
+        let state = AppState()
+        let event = Self.makeCalendarEvent(id: "evt-1", title: "Pipeline review")
+        state.isGoogleCalendarConnected = true
+        state.googleCalendarEmail = "ian@example.com"
+        state.upcomingEvents = [event]
+        state.pendingAutoStartEvent = event
+        state.autoStartCountdown = 9
+
+        state.applyGoogleCalendarDisconnectedState()
+
+        XCTAssertFalse(state.isGoogleCalendarConnected)
+        XCTAssertNil(state.googleCalendarEmail)
+        XCTAssertTrue(state.upcomingEvents.isEmpty)
+        XCTAssertNil(state.pendingAutoStartEvent)
+        XCTAssertEqual(state.autoStartCountdown, 0)
+    }
+
     // MARK: - recoverySeverity
 
     func testRecoverySeverityHealthy() {
@@ -501,6 +562,139 @@ final class AppStateComputationTests: XCTestCase {
 
     func testRecoverySeverityDegraded() {
         XCTAssertEqual(AppState.recoverySeverity(.degraded), 2)
+    }
+
+    // MARK: - Realtime nudge targeting
+
+    func testRealtimeNudgeTargetSpeakerIDsMacTargetsExplicitSelfOnly() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: DeepgramService.micSpeakerID,
+            effectiveSelfSpeakerIDs: [DeepgramService.micSpeakerID],
+            explicitSelfSpeakerIDs: [],
+            detectedSpeakers: [DeepgramService.micSpeakerID, 0],
+            prefersSingleSpeakerFallback: false
+        )
+        XCTAssertEqual(result, [DeepgramService.micSpeakerID])
+    }
+
+    func testRealtimeNudgeTargetSpeakerIDsMacSkipsRemoteSpeaker() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: 0,
+            effectiveSelfSpeakerIDs: [DeepgramService.micSpeakerID],
+            explicitSelfSpeakerIDs: [],
+            detectedSpeakers: [DeepgramService.micSpeakerID, 0],
+            prefersSingleSpeakerFallback: false
+        )
+        XCTAssertNil(result)
+    }
+
+    func testRealtimeNudgeTargetSpeakerIDsIOSSingleSpeakerFallback() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: 2,
+            effectiveSelfSpeakerIDs: [DeepgramService.micSpeakerID],
+            explicitSelfSpeakerIDs: [],
+            detectedSpeakers: [2],
+            prefersSingleSpeakerFallback: true
+        )
+        XCTAssertEqual(result, [2])
+    }
+
+    func testRealtimeNudgeTargetSpeakerIDsIOSSkipsMultiSpeakerWithoutExplicitSelf() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: 2,
+            effectiveSelfSpeakerIDs: [DeepgramService.micSpeakerID],
+            explicitSelfSpeakerIDs: [],
+            detectedSpeakers: [1, 2],
+            prefersSingleSpeakerFallback: true
+        )
+        XCTAssertNil(result)
+    }
+
+    func testRealtimeNudgeTargetSpeakerIDsIOSUsesExplicitSelfWhenAvailable() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: 7,
+            effectiveSelfSpeakerIDs: [7, 8],
+            explicitSelfSpeakerIDs: [7, 8],
+            detectedSpeakers: [7, 9],
+            prefersSingleSpeakerFallback: true
+        )
+        XCTAssertEqual(result, [7, 8])
+    }
+
+    func testRealtimeNudgeTargetSpeakerIDsIOSSkipsNonSelfWhenExplicitSelfExists() {
+        let result = AppState.realtimeNudgeTargetSpeakerIDs(
+            lastFinalSpeaker: 9,
+            effectiveSelfSpeakerIDs: [7, 8],
+            explicitSelfSpeakerIDs: [7, 8],
+            detectedSpeakers: [7, 9],
+            prefersSingleSpeakerFallback: true
+        )
+        XCTAssertNil(result)
+    }
+
+    // MARK: - Monologue run gating
+
+    func testIsEligibleMonologueRunRequiresWordsAndTime() {
+        XCTAssertFalse(AppState.isEligibleMonologueRun(wordCount: 179, runSeconds: 120))
+        XCTAssertFalse(AppState.isEligibleMonologueRun(wordCount: 300, runSeconds: 59))
+        XCTAssertTrue(AppState.isEligibleMonologueRun(wordCount: 180, runSeconds: 60))
+    }
+
+    // MARK: - Google OAuth callback parsing
+
+    func testParseGoogleOAuthCallbackAcceptsExpectedSchemeAndHost() {
+        let url = URL(string: "miniti-google://oauth-callback?status=success&message=ok")!
+        let payload = AppState.parseGoogleOAuthCallback(url)
+        XCTAssertEqual(payload, .init(status: "success", message: "ok"))
+    }
+
+    func testParseGoogleOAuthCallbackRejectsUnexpectedScheme() {
+        let url = URL(string: "miniti-attio://oauth-callback?status=success")!
+        XCTAssertNil(AppState.parseGoogleOAuthCallback(url))
+    }
+
+    func testParseGoogleOAuthCallbackRejectsUnexpectedHost() {
+        let url = URL(string: "miniti-google://wrong-host?status=success")!
+        XCTAssertNil(AppState.parseGoogleOAuthCallback(url))
+    }
+
+    #if os(macOS)
+    func testParseAttioOAuthCallbackAcceptsExpectedSchemeAndHost() {
+        let url = URL(string: "miniti-attio://oauth-callback?status=success&message=ok")!
+        let payload = AttioSendSheet.parseOAuthCallback(url)
+        XCTAssertEqual(payload, .init(status: "success", message: "ok"))
+    }
+
+    func testParseAttioOAuthCallbackRejectsUnexpectedScheme() {
+        let url = URL(string: "miniti-google://oauth-callback?status=success")!
+        XCTAssertNil(AttioSendSheet.parseOAuthCallback(url))
+    }
+
+    func testParseAttioOAuthCallbackRejectsUnexpectedHost() {
+        let url = URL(string: "miniti-attio://wrong-host?status=success")!
+        XCTAssertNil(AttioSendSheet.parseOAuthCallback(url))
+    }
+    #endif
+
+    // MARK: - finalized live segments
+
+    func testFinalizedLiveSegmentCountIgnoresInterimAndBlankSegments() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "hello", speaker: 0, timestamp: 2, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "   ", speaker: 0, timestamp: 1, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "draft", speaker: 0, timestamp: 0, isFinal: false),
+        ]
+        XCTAssertEqual(AppState.finalizedLiveSegmentCount(in: segments), 1)
+    }
+
+    func testFinalizedLiveSegmentsReturnsSortedSnapshot() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "later", speaker: 0, timestamp: 5, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "first", speaker: 0, timestamp: 1, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "", speaker: 0, timestamp: 0, isFinal: true),
+        ]
+        let snapshot = AppState.finalizedLiveSegments(from: segments)
+        XCTAssertEqual(snapshot.map(\.text), ["first", "later"])
     }
 
     // MARK: - transcriptText
@@ -582,5 +776,25 @@ final class AppStateComputationTests: XCTestCase {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return try! decoder.decode(MinitiAPIService.UsageInfo.self, from: data)
+    }
+
+    private static func makeCalendarEvent(
+        id: String,
+        title: String,
+        start: Date = Date().addingTimeInterval(300),
+        end: Date = Date().addingTimeInterval(3600)
+    ) -> MinitiAPIService.CalendarEvent {
+        let formatter = ISO8601DateFormatter()
+        let json: [String: Any] = [
+            "id": id,
+            "title": title,
+            "start": formatter.string(from: start),
+            "end": formatter.string(from: end),
+            "is_all_day": false,
+            "status": "confirmed",
+            "attendees": [],
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: json)
+        return try! JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: data)
     }
 }

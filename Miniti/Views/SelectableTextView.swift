@@ -97,19 +97,37 @@ final class _SelectableTextContainer: NSView {
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if abs(width - lastMeasuredWidth) < 0.5 { return lastMeasuredHeight }
-        guard let storage = textView.textStorage else { return 0 }
-        // Measure via the attributed string directly. NSTextView's layout manager
-        // can under-report height on the first render (before glyphs have been
-        // generated / the view is in a window), which let the interim row paint
-        // on top of the first finalized segment.
-        // Do NOT mutate textView/textContainer state here — sizeThatFits runs
-        // during SwiftUI measurement and any layout-triggering side effect can
-        // re-enter the window's constraint traversal.
-        let rect = storage.boundingRect(
-            with: NSSize(width: width, height: .greatestFiniteMagnitude),
-            options: [.usesLineFragmentOrigin, .usesFontLeading],
-            context: nil
-        )
+        guard let storage = textView.textStorage,
+              let displayContainer = textView.textContainer,
+              let displayLayoutManager = textView.layoutManager else { return 0 }
+
+        // Measure via a throwaway layout manager attached to a COPY of the real
+        // text storage. Side-effect free (does not mutate the live textView's
+        // container or layoutManager), but we must force full glyph generation
+        // before reading usedRect — ensureLayout(for:) alone under-reports on
+        // some macOS versions because glyphs are generated lazily.
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = displayContainer.lineFragmentPadding
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+
+        let layoutManager = NSLayoutManager()
+        layoutManager.usesFontLeading = displayLayoutManager.usesFontLeading
+        layoutManager.typesetterBehavior = displayLayoutManager.typesetterBehavior
+        layoutManager.allowsNonContiguousLayout = false
+        layoutManager.addTextContainer(container)
+
+        let measurementStorage = NSTextStorage(attributedString: storage)
+        measurementStorage.addLayoutManager(layoutManager)
+
+        // Canonical force-full-layout idiom: glyphRange(for:) triggers glyph
+        // generation for the entire container, then ensureLayout guarantees
+        // layout is committed for those glyphs, then usedRect reflects the
+        // real rendered height.
+        _ = layoutManager.glyphRange(for: container)
+        layoutManager.ensureLayout(for: container)
+        let rect = layoutManager.usedRect(for: container)
+
         lastMeasuredWidth = width
         lastMeasuredHeight = ceil(rect.height)
         return lastMeasuredHeight
