@@ -1217,7 +1217,7 @@ struct TerminalSectionInfoButton: View {
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 Text(info.summary)
                     .font(.system(size: 11, weight: .regular, design: .rounded))
-                    .foregroundStyle(Color(hex: "C9D1D9"))
+                    .foregroundStyle(ColorPalette.Text.muted)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(info.guidance, id: \.self) { line in
@@ -1228,7 +1228,7 @@ struct TerminalSectionInfoButton: View {
                                 .padding(.top, 4)
                             Text(line)
                                 .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(Color(hex: "C9D1D9"))
+                                .foregroundStyle(ColorPalette.Text.muted)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1276,7 +1276,7 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
                 Button(action: onClose) {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(Color(hex: "C9D1D9"))
+                        .foregroundStyle(ColorPalette.Text.muted)
                         .frame(width: 22, height: 22)
                         .background(
                             Circle()
@@ -1288,7 +1288,7 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
 
             Text(info.summary)
                 .font(.system(size: 12, weight: .regular, design: .rounded))
-                .foregroundStyle(Color(hex: "C9D1D9"))
+                .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 7) {
@@ -1300,7 +1300,7 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
                             .padding(.top, 5)
                         Text(line)
                             .font(.system(size: 11, weight: .medium, design: .rounded))
-                            .foregroundStyle(Color(hex: "C9D1D9"))
+                            .foregroundStyle(ColorPalette.Text.muted)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

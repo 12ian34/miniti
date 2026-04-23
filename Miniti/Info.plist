@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.23.1</string>
+	<string>1.24.1</string>
 	<key>CFBundleVersion</key>
-	<string>90</string>
+	<string>93</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -41,5 +41,16 @@
 	<string>14.2</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026. All rights reserved.</string>
+	<!-- Sparkle auto-update. Set SUPublicEDKey to the base64 public key printed
+	     by `generate_keys` (Sparkle's tool) and keep the private key in Keychain.
+	     The appcast is served by the miniti-api backend. -->
+	<key>SUFeedURL</key>
+	<string>https://api.miniti.app/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>PPTQN9NX3TgaZYqGLR6EcP6JRNuxlIHxTnxYnrlhliE=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

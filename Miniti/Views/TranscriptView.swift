@@ -165,7 +165,7 @@ struct TranscriptView: View {
                         )) { target in
                             renameSpeakerView(for: target.id)
                                 .presentationDetents([.height(260)])
-                                .presentationBackground(Color(hex: "0B0B0D"))
+                                .presentationBackground(ColorPalette.Background.primary)
                         }
                         #endif
                     }
@@ -277,7 +277,7 @@ struct TranscriptView: View {
                                         .foregroundStyle(Color(hex: "E6EDF3"))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
-                                        .background(Color(hex: "1F6FEB").opacity(0.95))
+                                        .background(ColorPalette.Accent.blue.opacity(0.95))
                                         .clipShape(Capsule())
                                         .onTapGesture {
                                             isAutoScrollEnabled = true
@@ -758,7 +758,7 @@ struct RenameSpeakerView: View {
                     .frame(width: 8, height: 8)
                 Text("rename speaker")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "C9D1D9"))
+                    .foregroundStyle(ColorPalette.Text.muted)
                 Spacer()
             }
 
@@ -803,7 +803,7 @@ struct RenameSpeakerView: View {
                         RoundedRectangle(cornerRadius: 4)
                             .stroke(isSelf ? Color(hex: "3FB950") : Color(hex: "1C1C1F"), lineWidth: 1)
                     )
-                    .foregroundStyle(isSelf ? Color(hex: "3FB950") : Color(hex: "C9D1D9"))
+                    .foregroundStyle(isSelf ? ColorPalette.Accent.greenGitHub : ColorPalette.Text.muted)
                 }
                 .buttonStyle(.plain)
 
@@ -845,7 +845,7 @@ struct RenameSpeakerView: View {
         }
         .padding(14)
         .frame(minWidth: 260, idealWidth: 280)
-        .background(Color(hex: "0B0B0D"))
+        .background(ColorPalette.Background.primary)
         .onAppear {
             draft = currentName ?? ""
             focused = true

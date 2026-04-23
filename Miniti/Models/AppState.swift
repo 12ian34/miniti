@@ -493,6 +493,10 @@ final class AppState: ObservableObject {
     @AppStorage("notifyOnHighFillerRate") var notifyOnHighFillerRate: Bool = false
     @AppStorage("notifyOnUpcomingMeeting") var notifyOnUpcomingMeeting: Bool = false
     @AppStorage("autoInferSpeakerNames") var autoInferSpeakerNames: Bool = true
+    /// Timestamp (TimeInterval since 1970) after which the calendar nudge card on the
+    /// home screen should stop being hidden. 0 = never dismissed. `.infinity` (or any
+    /// value > 10 years from now) = permanently dismissed via the `×` button.
+    @AppStorage("calendarNudgeDismissedUntil") var calendarNudgeDismissedUntil: Double = 0
 
     private var notifiedQuestionIDs: Set<String> = []
     private var lastQuestionNotificationAt: Date?
@@ -4116,7 +4120,32 @@ final class AppState: ObservableObject {
         pendingAutoStartEvent = nil
         autoStartCountdown = 0
     }
-    
+
+    /// True when the home-screen calendar nudge card should be visible.
+    /// Conditions: calendar not connected, user hasn't permanently dismissed,
+    /// and any snooze window has elapsed.
+    var shouldShowCalendarNudge: Bool {
+        if isGoogleCalendarConnected { return false }
+        if calendarNudgeDismissedUntil > Date().timeIntervalSince1970 { return false }
+        return true
+    }
+
+    /// Snooze the calendar nudge for ~30 days.
+    func snoozeCalendarNudge() {
+        calendarNudgeDismissedUntil = Date().addingTimeInterval(30 * 24 * 3600).timeIntervalSince1970
+    }
+
+    /// Permanently dismiss the calendar nudge (10 years).
+    func dismissCalendarNudgeForever() {
+        calendarNudgeDismissedUntil = Date().addingTimeInterval(10 * 365 * 24 * 3600).timeIntervalSince1970
+    }
+
+    /// Enable the integration and kick off OAuth. Used by the nudge card.
+    func startCalendarConnectFromNudge() {
+        googleCalendarEnabled = true
+        Task { await googleConnect() }
+    }
+
     func googleConnect() async {
         guard let minitiAPIService else { return }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()

@@ -321,7 +321,7 @@ struct MeetingDetail_iOS: View {
                 }
             )
             .presentationDetents([.height(320)])
-            .presentationBackground(Color(hex: "0B0B0D"))
+            .presentationBackground(ColorPalette.Background.primary)
         }
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -731,28 +731,28 @@ struct MeetingDetail_iOS: View {
 struct SavedMEDDPICCContent: View {
     let meeting: Meeting
     
-    private var fields: [(title: String, color: String, value: String?)] {
+    private var fields: [(title: String, color: Color, value: String?)] {
         [
-            ("metrics", "3B82F6", meeting.meddpiccMetrics),
-            ("economic buyer", "8B5CF6", meeting.meddpiccEconomicBuyer),
-            ("decision criteria", "EC4899", meeting.meddpiccDecisionCriteria),
-            ("decision process", "F59E0B", meeting.meddpiccDecisionProcess),
-            ("paper process", "F97316", meeting.meddpiccPaperProcess),
-            ("identified pain", "EF4444", meeting.meddpiccIdentifiedPain),
-            ("champion", "22C55E", meeting.meddpiccChampion),
-            ("competition", "6366F1", meeting.meddpiccCompetition),
+            ("metrics", ColorPalette.MEDDPICC.metrics, meeting.meddpiccMetrics),
+            ("economic buyer", ColorPalette.MEDDPICC.economicBuyer, meeting.meddpiccEconomicBuyer),
+            ("decision criteria", ColorPalette.MEDDPICC.decisionCriteria, meeting.meddpiccDecisionCriteria),
+            ("decision process", ColorPalette.MEDDPICC.decisionProcess, meeting.meddpiccDecisionProcess),
+            ("paper process", ColorPalette.MEDDPICC.paperProcess, meeting.meddpiccPaperProcess),
+            ("identified pain", ColorPalette.MEDDPICC.identifiedPain, meeting.meddpiccIdentifiedPain),
+            ("champion", ColorPalette.MEDDPICC.champion, meeting.meddpiccChampion),
+            ("competition", ColorPalette.MEDDPICC.competition, meeting.meddpiccCompetition),
         ]
     }
-    
+
     private func hasValue(_ value: String?) -> Bool {
         guard let value else { return false }
         let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
     }
-    
+
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
-            HistoricalDetailBlock_iOS(title: field.title, color: Color(hex: field.color)) {
+            HistoricalDetailBlock_iOS(title: field.title, color: field.color) {
                 MEDDPICCBulletText(field.value!, fontSize: 13)
             }
         }
