@@ -18,8 +18,8 @@ xcuserdata/
 # Swift Package Manager
 .build/
 Packages/
-Package.resolved
-*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
 
 # dev app
 miniti*.app/
