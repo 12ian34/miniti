@@ -145,13 +145,37 @@ else
     echo "  Warning: DMG verification returned non-zero (may be fine for non-notarized builds)."
 fi
 
+# ─── Sparkle EdDSA signature (for appcast) ──────────────────────────────────
+# If Sparkle's `sign_update` is on PATH, emit the EdDSA signature + byte length
+# needed for the appcast enclosure. The private key must be in Keychain (set up
+# once via `generate_keys`).
+echo ""
+if command -v sign_update &>/dev/null; then
+    echo "Generating Sparkle signature..."
+    SIGN_OUTPUT=$(sign_update "$DMG_PATH" 2>&1 || true)
+    if [[ -n "$SIGN_OUTPUT" ]]; then
+        echo "  $SIGN_OUTPUT"
+        echo ""
+        echo "  Paste the above attributes into the appcast enclosure, e.g.:"
+        echo "    <enclosure url=\"https://miniti.app/dmg/miniti-${VERSION}.dmg\""
+        echo "               $SIGN_OUTPUT"
+        echo "               type=\"application/octet-stream\" />"
+    else
+        echo "  Warning: sign_update produced no output — skipping Sparkle signature."
+    fi
+else
+    echo "Note: Sparkle's sign_update not on PATH — skipping appcast signature generation."
+    echo "      Install with: brew install --cask sparkle  (or use the SPM-vendored binary)"
+fi
+
 # ─── Done ────────────────────────────────────────────────────────────────────
 DMG_SIZE=$(du -h "$DMG_PATH" | cut -f1 | xargs)
+DMG_SIZE_BYTES=$(stat -f%z "$DMG_PATH" 2>/dev/null || wc -c < "$DMG_PATH" | xargs)
 echo ""
 echo "================================================"
 echo "  DMG created successfully!"
 echo "  File: $DMG_PATH"
-echo "  Size: $DMG_SIZE"
+echo "  Size: $DMG_SIZE ($DMG_SIZE_BYTES bytes)"
 echo "  Version: $VERSION"
 echo "  Contents: miniti.app"
 echo "================================================"

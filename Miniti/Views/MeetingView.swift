@@ -212,6 +212,11 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
 
+            // Calendar integration nudge
+            if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
+                CalendarNudgeCard()
+            }
+
             // Auto-start banner
             if let event = appState.pendingAutoStartEvent {
                 AutoStartBanner(event: event, countdown: appState.autoStartCountdown)
@@ -2565,6 +2570,117 @@ struct AudioSourcePill: View {
 }
 
 // MARK: - Update Available Banner
+
+struct CalendarNudgeCard: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isHovering = false
+    @State private var isConnecting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Accent.green)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("see your meetings here")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+
+                    Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    appState.dismissCalendarNudgeForever()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("dismiss permanently")
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    guard !isConnecting else { return }
+                    isConnecting = true
+                    appState.startCalendarConnectFromNudge()
+                    // The browser-based OAuth returns to the app asynchronously;
+                    // flip back after a short grace period so the button re-enables.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        isConnecting = false
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isConnecting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(Color(hex: "09090B"))
+                        } else {
+                            Image(systemName: "link")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(isConnecting ? "opening browser..." : "connect calendar")
+                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "09090B"))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .disabled(isConnecting)
+                .onHover { hovering in
+                    withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+                }
+
+                Button {
+                    appState.snoozeCalendarNudge()
+                } label: {
+                    Text("not now")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Background.tertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+            .padding(.leading, 28)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 480, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.green.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
+                )
+        )
+    }
+}
 
 struct UpdateAvailableBanner: View {
     let versionInfo: MinitiAPIService.VersionInfo

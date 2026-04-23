@@ -135,6 +135,15 @@ struct MinitiApp: App {
 
             SettingsCommands(appState: appState)
 
+            #if canImport(Sparkle)
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    UpdateService.shared.checkForUpdates()
+                }
+                .disabled(!UpdateService.shared.canCheckForUpdates)
+            }
+            #endif
+
             CommandGroup(replacing: .help) {
                 Button("Miniti Docs") {
                     if let url = URL(string: "https://miniti.app/docs") {

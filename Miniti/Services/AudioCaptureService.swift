@@ -70,6 +70,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemCallbackStallCheck: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemInputRMS: Float = 0
+    // Post-recovery health tracking. After any system-tap recovery we watch the
+    // next few heartbeats for the new tap being alive but silent (inRMS≈0 with
+    // near-zero non-silent delta). If degraded heartbeats exceed the budget, we
+    // escalate to a full capture restart (matching what user-initiated stop/continue does).
+    nonisolated(unsafe) private var postRecoveryHeartbeatsRemaining: Int = 0
+    nonisolated(unsafe) private var postRecoveryDegradedHeartbeats: Int = 0
+    nonisolated(unsafe) private var postRecoveryBaselineCallbacks: Int = 0
+    nonisolated(unsafe) private var postRecoveryBaselineNonSilent: Int = 0
+    nonisolated(unsafe) private var lastFullRestartAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var isEscalatingFullRestart = false
     private var isRestartingMicAfterConfigChange = false
     private var isRestartingSystemAfterOutputChange = false
     private var lastOutputChangeRestartAt: CFAbsoluteTime = 0
@@ -198,12 +209,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &inputAddr, DispatchQueue.main
         ) { [weak self] _, _ in
-            DebugLogger.shared.log(.audio, "Default INPUT device changed → \(Self.defaultInputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Default INPUT device changed → \(Self.detailedInputDeviceInfo())")
             Task { @MainActor in
                 self?.handleEngineConfigurationChange()
             }
         }
-        
+
         var outputAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultOutputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -212,19 +223,97 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &outputAddr, DispatchQueue.main
         ) { [weak self] _, _ in
-            DebugLogger.shared.log(.audio, "Default OUTPUT device changed → \(Self.defaultOutputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Default OUTPUT device changed → \(Self.detailedOutputDeviceInfo())")
             Task { @MainActor in
                 self?.handleDefaultOutputDeviceChange()
             }
+        }
+
+        // Device list changes catch Bluetooth/USB connect/disconnect events that
+        // don't flip the default input/output (e.g. headphones connecting but system
+        // keeping built-in as default). Without this we had silent recoveries with
+        // no log trail to diagnose.
+        var devicesAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddr, DispatchQueue.main
+        ) { _, _ in
+            DebugLogger.shared.log(
+                .audio,
+                "Audio device list changed — output=\(Self.detailedOutputDeviceInfo()), input=\(Self.detailedInputDeviceInfo())"
+            )
         }
     }
     
     nonisolated static func defaultInputDeviceInfo() -> String {
         return deviceInfo(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
-    
+
     nonisolated static func defaultOutputDeviceInfo() -> String {
         return deviceInfo(selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    nonisolated private static func transportTypeName(_ t: UInt32) -> String {
+        switch t {
+        case kAudioDeviceTransportTypeBuiltIn: return "builtin"
+        case kAudioDeviceTransportTypeAggregate: return "aggregate"
+        case kAudioDeviceTransportTypeVirtual: return "virtual"
+        case kAudioDeviceTransportTypePCI: return "pci"
+        case kAudioDeviceTransportTypeUSB: return "usb"
+        case kAudioDeviceTransportTypeFireWire: return "firewire"
+        case kAudioDeviceTransportTypeBluetooth: return "bluetooth"
+        case kAudioDeviceTransportTypeBluetoothLE: return "bluetooth-le"
+        case kAudioDeviceTransportTypeHDMI: return "hdmi"
+        case kAudioDeviceTransportTypeDisplayPort: return "displayport"
+        case kAudioDeviceTransportTypeAirPlay: return "airplay"
+        case kAudioDeviceTransportTypeAVB: return "avb"
+        case kAudioDeviceTransportTypeThunderbolt: return "thunderbolt"
+        case kAudioDeviceTransportTypeContinuityCaptureWired: return "continuity-wired"
+        case kAudioDeviceTransportTypeContinuityCaptureWireless: return "continuity-wireless"
+        default: return "transport:0x" + String(t, radix: 16)
+        }
+    }
+
+    /// Returns "Name (48000Hz, id:N, transport=bluetooth)". Used around recovery/stall
+    /// events so we can tell in the debug log whether a Bluetooth/AirPlay handoff was
+    /// in play.
+    nonisolated static func detailedDeviceInfo(selector: AudioObjectPropertySelector) -> String {
+        var deviceID: AudioDeviceID = 0
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID
+        ) == noErr else { return "unknown (read error)" }
+
+        var nameRef: CFString?
+        var nameSize = UInt32(MemoryLayout<CFString?>.size)
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = withUnsafeMutablePointer(to: &nameRef) { ptr in
+            AudioObjectGetPropertyData(deviceID, &nameAddr, 0, nil, &nameSize, UnsafeMutableRawPointer(ptr))
+        }
+        let name = (nameRef as String?) ?? "unknown"
+
+        let sampleRate = deviceNominalSampleRate(deviceID)
+        let transport = deviceTransportType(deviceID).map(transportTypeName) ?? "transport:?"
+
+        return "\(name) (\(Int(sampleRate))Hz, id:\(deviceID), \(transport))"
+    }
+
+    nonisolated static func detailedOutputDeviceInfo() -> String {
+        return detailedDeviceInfo(selector: kAudioHardwarePropertyDefaultOutputDevice)
+    }
+
+    nonisolated static func detailedInputDeviceInfo() -> String {
+        return detailedDeviceInfo(selector: kAudioHardwarePropertyDefaultInputDevice)
     }
 
     nonisolated static func defaultInputDeviceID() -> AudioDeviceID? {
@@ -396,6 +485,25 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastSilenceCheck = 0
         lastSystemCallbackStallCheck = 0
         sysCallbackCount = 0
+        postRecoveryHeartbeatsRemaining = 0
+        postRecoveryDegradedHeartbeats = 0
+        postRecoveryBaselineCallbacks = 0
+        postRecoveryBaselineNonSilent = 0
+        lastSystemInputRMS = 0
+    }
+
+    /// Begin watching the next few heartbeats for recovery that's technically
+    /// "complete" (tap started, callbacks firing) but silent (inRMS≈0, no non-silent
+    /// delta). Called at the end of every recovery path.
+    private func beginPostRecoveryHealthCheck(reason: String) {
+        postRecoveryHeartbeatsRemaining = 3
+        postRecoveryDegradedHeartbeats = 0
+        postRecoveryBaselineCallbacks = sysCallbackCount
+        postRecoveryBaselineNonSilent = sysNonSilentCallbacks
+        DebugLogger.shared.log(
+            .audio,
+            "Post-recovery health check armed (reason=\(reason), output=\(Self.defaultOutputDeviceInfo()))"
+        )
     }
     
     nonisolated private func currentRingSampleCount() -> Int {
@@ -657,7 +765,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             self.isRestartingMicAfterConfigChange = true
             defer { self.isRestartingMicAfterConfigChange = false }
             
-            DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.defaultInputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.detailedInputDeviceInfo())")
             
             self.stopMicrophoneCapture()
             do {
@@ -704,6 +812,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.lastSystemNonSilentAt = restartedAt
                 self.lastSystemCallbackAt = restartedAt
                 self.lastSystemAutoRestartAt = restartedAt
+                self.beginPostRecoveryHealthCheck(reason: "output-change restart")
                 DebugLogger.shared.log(.audio, "System tap restart complete after output change")
             } catch {
                 self.setSystemAudioActive(false)
@@ -792,6 +901,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             lastSystemNonSilentAt = now
             lastSystemCallbackAt = now
             lastSystemAutoRestartAt = now
+            beginPostRecoveryHealthCheck(reason: "mix-mode restart after mic recovery")
             DebugLogger.shared.log(.audio, "System tap restarted with mixing after mic recovery")
         } catch {
             setSystemAudioActive(false)
@@ -829,6 +939,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             lastSystemNonSilentAt = restartedAt
             lastSystemCallbackAt = restartedAt
             lastSystemAutoRestartAt = restartedAt
+            beginPostRecoveryHealthCheck(reason: "silent-stall recovery")
             DebugLogger.shared.log(.audio, "System tap recovery complete")
         } catch {
             setSystemAudioActive(false)
@@ -844,6 +955,43 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
     }
     
+    /// Second-tier recovery when the first system-tap restart came back empty
+    /// (callbacks firing but inRMS≈0 across multiple heartbeats). Mirrors what
+    /// happens when the user hits stop → continue: full teardown of both mic +
+    /// system, then a fresh startCapture. Only fires from the post-recovery
+    /// health check, with its own cooldown so it can't loop.
+    private func escalateFullCaptureRestart(
+        microphone: Bool,
+        systemAudio: Bool,
+        reason: String
+    ) async {
+        guard isCapturing else { return }
+        guard !isEscalatingFullRestart else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastFullRestartAt > 60.0 else {
+            DebugLogger.shared.log(
+                .audio,
+                "Full capture restart suppressed (cooldown, reason=\(reason))"
+            )
+            return
+        }
+        isEscalatingFullRestart = true
+        lastFullRestartAt = now
+        defer { isEscalatingFullRestart = false }
+
+        DebugLogger.shared.log(
+            .audio,
+            "Full capture restart starting (reason=\(reason), input=\(Self.detailedInputDeviceInfo()), output=\(Self.detailedOutputDeviceInfo()))"
+        )
+
+        do {
+            try await startCapture(microphone: microphone, systemAudio: systemAudio)
+            DebugLogger.shared.log(.audio, "Full capture restart complete")
+        } catch {
+            DebugLogger.shared.log(.audio, "Full capture restart FAILED: \(error.localizedDescription)")
+        }
+    }
+
     private func recoverSystemTapAfterCallbackStall(
         mixWithMic: Bool,
         callbackGap: CFAbsoluteTime
@@ -870,6 +1018,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             lastSystemNonSilentAt = restartedAt
             lastSystemCallbackAt = restartedAt
             lastSystemAutoRestartAt = restartedAt
+            beginPostRecoveryHealthCheck(reason: "callback-stall recovery")
             DebugLogger.shared.log(.audio, "System tap callback-stall recovery complete")
         } catch {
             setSystemAudioActive(false)
@@ -1287,6 +1436,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastSystemCallbackAt = now
         
         sysInputFrameCount += framesPerChannel
+        lastSystemInputRMS = normalizedInputRMS
         if normalizedInputRMS > 0.0003 {
             sysNonSilentCallbacks += 1
             lastSystemNonSilentAt = now
@@ -1345,20 +1495,21 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             DebugLogger.shared.log(.audio, "System first output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], inRMS=\(String(format: "%.5f", normalizedInputRMS))")
         }
         
-        // Silence detection safety net (every 3s). With the built-in clock
+        // Silence detection safety net (every 2s). With the built-in clock
         // source, tap stalls should not occur, but this catches unknown edge
-        // cases. Threshold is 18s to avoid false positives during normal
-        // conversation (one person talking while the other is silent).
-        if now - lastSilenceCheck > 3.0 {
+        // cases — primarily Bluetooth route/profile changes mid-call. Threshold
+        // tightened from 18s to 8s in v1.24.0 to halve the transcript gap seen
+        // when headphones connect mid-meeting.
+        if now - lastSilenceCheck > 2.0 {
             lastSilenceCheck = now
             let silenceDuration = now - lastSystemNonSilentAt
-            let hadPriorSignal = sysNonSilentCallbacks >= 120
-            let cooldownElapsed = (now - lastSystemAutoRestartAt) > 45.0
-            if hadPriorSignal && cooldownElapsed && silenceDuration > 18.0 {
+            let hadPriorSignal = sysNonSilentCallbacks >= 40
+            let cooldownElapsed = (now - lastSystemAutoRestartAt) > 30.0
+            if hadPriorSignal && cooldownElapsed && silenceDuration > 8.0 {
                 lastSystemAutoRestartAt = now
                 DebugLogger.shared.log(
                     .audio,
-                    "System tap appears stalled (silent \(String(format: "%.1f", silenceDuration))s after prior signal) — scheduling restart"
+                    "System tap appears stalled (silent \(String(format: "%.1f", silenceDuration))s after prior signal, output=\(Self.detailedOutputDeviceInfo())) — scheduling restart"
                 )
                 Task { @MainActor [weak self] in
                     await self?.recoverSystemTapAfterSilentStall(
@@ -1381,6 +1532,49 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             )
             if sysCallbackCount > 60 && sysNonSilentCallbacks == 0 {
                 DebugLogger.shared.log(.audio, "System warning: tap callbacks are active but all buffers are near-silent")
+            }
+
+            // Post-recovery health evaluation: measure whether the recovered tap is
+            // actually passing audio (not just firing empty callbacks). Delta-based
+            // because cumulative %nonSilent barely moves after a long good stretch.
+            if postRecoveryHeartbeatsRemaining > 0 {
+                let deltaCallbacks = sysCallbackCount - postRecoveryBaselineCallbacks
+                let deltaNonSilent = sysNonSilentCallbacks - postRecoveryBaselineNonSilent
+                let deltaPct = deltaCallbacks > 0
+                    ? (Double(deltaNonSilent) / Double(deltaCallbacks) * 100.0)
+                    : 0
+                let degraded = deltaCallbacks > 20
+                    && (deltaNonSilent < 5 || (normalizedInputRMS < 0.00005 && deltaPct < 5.0))
+                if degraded {
+                    postRecoveryDegradedHeartbeats += 1
+                }
+                DebugLogger.shared.log(
+                    .audio,
+                    "Post-recovery health: deltaCb=\(deltaCallbacks), deltaNonSilent=\(deltaNonSilent), deltaPct=\(String(format: "%.1f", deltaPct))%, inRMS=\(String(format: "%.5f", normalizedInputRMS)), degraded=\(degraded) (\(postRecoveryDegradedHeartbeats)/\(postRecoveryHeartbeatsRemaining))"
+                )
+                postRecoveryHeartbeatsRemaining -= 1
+
+                if postRecoveryDegradedHeartbeats >= 2 && !isEscalatingFullRestart {
+                    DebugLogger.shared.log(
+                        .audio,
+                        "Post-recovery health: degraded \(postRecoveryDegradedHeartbeats)/2 heartbeats — escalating to full capture restart"
+                    )
+                    postRecoveryHeartbeatsRemaining = 0
+                    let micWanted = expectsMicAudio
+                    let sysWanted = expectsSystemAudio
+                    Task { @MainActor [weak self] in
+                        await self?.escalateFullCaptureRestart(
+                            microphone: micWanted,
+                            systemAudio: sysWanted,
+                            reason: "post-recovery silent tap"
+                        )
+                    }
+                } else if postRecoveryHeartbeatsRemaining == 0 {
+                    DebugLogger.shared.log(
+                        .audio,
+                        "Post-recovery health: window cleared (degraded=\(postRecoveryDegradedHeartbeats)/3)"
+                    )
+                }
             }
         }
         

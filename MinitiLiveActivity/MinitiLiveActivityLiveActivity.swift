@@ -2,9 +2,16 @@ import ActivityKit
 import WidgetKit
 import SwiftUI
 
-private let recordingRed = "F85149"
-private let pausedGray = "6E7681"
-private let timerGreen = "3FB950"
+// Palette values mirrored from ColorPalette.swift. Widget extension is a separate
+// target and cannot import the main app module, so these must stay in sync by hand.
+private let recordingRed = "F85149"      // ColorPalette.Status.recording
+private let pausedGray = "6E7681"        // ColorPalette.Text.dim
+private let timerGreen = "3FB950"        // ColorPalette.Accent.greenGitHub
+private let textPrimary = "E6EDF3"       // ColorPalette.Text.primary
+private let textMuted = "C9D1D9"         // ColorPalette.Text.muted
+private let textMeta = "8B949E"          // ColorPalette.Text.meta
+private let textDisabled = "3F3F46"      // ColorPalette.Text.disabled
+private let backgroundPrimary = "0B0B0D" // ColorPalette.Background.primary
 
 struct MinitiLiveActivityLiveActivity: Widget {
     var body: some WidgetConfiguration {
@@ -32,24 +39,24 @@ struct MinitiLiveActivityLiveActivity: Widget {
                         if !context.state.meetingTitle.isEmpty {
                             Text(context.state.meetingTitle)
                                 .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(Color(hex: context.state.isRecording ? "E6EDF3" : pausedGray))
+                                .foregroundStyle(Color(hex: context.state.isRecording ? textPrimary : pausedGray))
                                 .lineLimit(1)
                         }
                         if !context.state.isRecording {
                             Text("tap to return to miniti")
                                 .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "3F3F46"))
+                                .foregroundStyle(Color(hex: textDisabled))
                         } else if !context.state.currentTranscript.isEmpty {
                             Text(context.state.currentTranscript)
                                 .font(.system(size: 12, weight: .regular))
-                                .foregroundStyle(Color(hex: "8B949E"))
+                                .foregroundStyle(Color(hex: textMeta))
                                 .lineLimit(2)
                         }
                         HStack {
                             Spacer()
                             Text("miniti")
                                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "3F3F46"))
+                                .foregroundStyle(Color(hex: textDisabled))
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -115,17 +122,17 @@ struct MinitiLiveActivityLiveActivity: Widget {
                 if !context.state.meetingTitle.isEmpty {
                     Text(context.state.meetingTitle)
                         .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color(hex: context.state.isRecording ? "C9D1D9" : pausedGray))
+                        .foregroundStyle(Color(hex: context.state.isRecording ? textMuted : pausedGray))
                         .lineLimit(1)
                 }
                 if !context.state.isRecording {
                     Text("tap to return to miniti")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "3F3F46"))
+                        .foregroundStyle(Color(hex: textDisabled))
                 } else if !context.state.currentTranscript.isEmpty {
                     Text(context.state.currentTranscript)
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(Color(hex: "8B949E"))
+                        .foregroundStyle(Color(hex: textMeta))
                         .lineLimit(2)
                         .padding(.top, 2)
                 }
@@ -137,12 +144,12 @@ struct MinitiLiveActivityLiveActivity: Widget {
                 timerView(context: context, size: 22, weight: .bold)
                 Text("miniti")
                     .font(.system(size: 9, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .foregroundStyle(Color(hex: textDisabled))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .activityBackgroundTint(Color(hex: "0D1117"))
+        .activityBackgroundTint(Color(hex: backgroundPrimary))
     }
 }
 

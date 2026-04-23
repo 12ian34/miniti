@@ -307,6 +307,7 @@ platform :mac do
     app_path = options[:app] || mac_app_path
 
     UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
+    resign_sparkle_framework(app: app_path, identity: mac_codesign_identity)
     verify_mac_signing_for_notarization(app: app_path)
 
     notarize(
@@ -331,6 +332,7 @@ platform :mac do
   desc "Build, notarize, and package the macOS app as miniti.dmg"
   lane :release do
     app_path = build_mac_release
+    resign_sparkle_framework(app: app_path, identity: mac_codesign_identity)
     verify_mac_signing_for_notarization(app: app_path)
 
     notarize(
@@ -373,6 +375,67 @@ platform :mac do
     File.join(MAC_OUTPUT_DIRECTORY, "#{MAC_OUTPUT_NAME}.app")
   end
 
+  # Xcode's archive step signs the outer app bundle with Developer ID but does
+  # NOT re-sign the nested binaries inside Sparkle.framework (Updater.app,
+  # Autoupdate, Downloader.xpc, Installer.xpc). Apple's notarytool rejects them
+  # as "not signed with a valid Developer ID certificate" and missing timestamp.
+  # Fix: walk the framework deepest-first and re-sign each nested bundle with
+  # Developer ID + hardened runtime + secure timestamp, then re-seal the app.
+  private_lane :resign_sparkle_framework do |options|
+    app_path = options[:app]
+    identity = options[:identity]
+    UI.user_error!("resign_sparkle_framework requires :app and :identity") if app_path.to_s.empty? || identity.to_s.empty?
+
+    sparkle_path = File.join(app_path, "Contents/Frameworks/Sparkle.framework")
+    unless File.exist?(sparkle_path)
+      UI.message("No Sparkle.framework at #{sparkle_path}; skipping Sparkle re-sign.")
+      next
+    end
+
+    UI.message("Re-signing Sparkle.framework nested binaries with Developer ID + hardened runtime…")
+
+    versions_dir = File.join(sparkle_path, "Versions")
+    active_version = Dir.glob(File.join(versions_dir, "*")).map { |p| File.basename(p) }.find { |name| name != "Current" } || "B"
+    version_root = File.join(versions_dir, active_version)
+
+    # Deepest-first so outer containers have valid inner signatures sealed inside.
+    # Sparkle's own nested binaries have no entitlements of their own, so re-signing
+    # without --entitlements is correct for them.
+    nested_targets = [
+      File.join(version_root, "XPCServices/Downloader.xpc"),
+      File.join(version_root, "XPCServices/Installer.xpc"),
+      File.join(version_root, "Autoupdate"),
+      File.join(version_root, "Updater.app"),
+      sparkle_path
+    ]
+
+    nested_targets.each do |target|
+      next unless File.exist?(target)
+      sh(
+        "codesign --force --options=runtime --timestamp " \
+        "--sign #{Shellwords.escape(identity)} #{Shellwords.escape(target)}",
+        log: false
+      )
+    end
+
+    # The outer app must be re-signed AFTER nested contents change (otherwise
+    # the outer code-signature hash is invalid), but it needs its entitlements
+    # preserved. Pass --entitlements explicitly — without this flag, codesign
+    # --force silently strips them, which disables sandbox at runtime and moves
+    # the app's SwiftData store to a different path (new empty container),
+    # making "my history is wiped" the user-visible symptom.
+    entitlements_path = File.join(REPO_ROOT, "Miniti", "Miniti.entitlements")
+    UI.user_error!("Entitlements file missing at #{entitlements_path}") unless File.exist?(entitlements_path)
+    sh(
+      "codesign --force --options=runtime --timestamp " \
+      "--entitlements #{Shellwords.escape(entitlements_path)} " \
+      "--sign #{Shellwords.escape(identity)} #{Shellwords.escape(app_path)}",
+      log: false
+    )
+
+    UI.success("Sparkle re-sign complete (outer app entitlements preserved).")
+  end
+
   private_lane :verify_mac_signing_for_notarization do |options|
     app_path = options[:app]
     output, status = Open3.capture2e("codesign", "-dv", "--verbose=4", app_path)
@@ -384,6 +447,23 @@ platform :mac do
 
     unless output.match?(/^Timestamp=/)
       UI.user_error!("The app at #{app_path} is signed without a secure timestamp. Rebuild with Developer ID signing and retry notarization.")
+    end
+
+    # Confirm entitlements survived signing. A stripped-entitlements build
+    # ships without the sandbox — users experience "my history is gone" because
+    # SwiftData lands in a different directory (non-sandboxed vs sandboxed).
+    ent_output, ent_status = Open3.capture2e("codesign", "-d", "--entitlements", ":-", app_path)
+    UI.user_error!("Unable to inspect entitlements for #{app_path}.\n#{ent_output}") unless ent_status.success?
+
+    unless ent_output.include?("com.apple.security.app-sandbox")
+      UI.user_error!(<<~MSG)
+        The app at #{app_path} is signed WITHOUT the app-sandbox entitlement.
+        This would ship a non-sandboxed build that reads from a fresh empty
+        SwiftData store (users see "history disappeared"). Ensure the
+        resign_sparkle_framework lane passes --entitlements when re-signing
+        the outer app, and that Miniti/Miniti.entitlements contains
+        com.apple.security.app-sandbox.
+      MSG
     end
   end
 

@@ -575,6 +575,11 @@ struct ReadyStateView_iOS: View {
                     UpdateAvailableBanner_iOS(versionInfo: update)
                 }
 
+                // Calendar integration nudge
+                if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
+                    CalendarNudgeCard_iOS()
+                }
+
                 // Auto-start banner
                 if let event = appState.pendingAutoStartEvent {
                     AutoStartBanner_iOS(event: event, countdown: appState.autoStartCountdown)
@@ -971,6 +976,109 @@ struct StatusPill: View {
                 .overlay(
                     Capsule()
                         .strokeBorder(ColorPalette.Border.subtle, lineWidth: 1)
+                )
+        )
+    }
+}
+
+// MARK: - Calendar Nudge Card (iOS)
+
+struct CalendarNudgeCard_iOS: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isConnecting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Accent.green)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("see your meetings here")
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+
+                    Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
+                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    appState.dismissCalendarNudgeForever()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(6)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    guard !isConnecting else { return }
+                    isConnecting = true
+                    appState.startCalendarConnectFromNudge()
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        isConnecting = false
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        if isConnecting {
+                            ProgressView()
+                                .tint(.black)
+                                .scaleEffect(0.7)
+                        } else {
+                            Image(systemName: "link")
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(isConnecting ? "opening..." : "connect calendar")
+                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(
+                        Capsule()
+                            .fill(ColorPalette.Accent.green)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isConnecting)
+
+                Button {
+                    appState.snoozeCalendarNudge()
+                } label: {
+                    Text("not now")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            Capsule()
+                                .fill(ColorPalette.Background.tertiary)
+                        )
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.leading, 28)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: 360, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Accent.green.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
                 )
         )
     }

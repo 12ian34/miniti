@@ -117,19 +117,19 @@ struct ColorPalette {
     /// Colors for MEDDPICC framework fields
     struct MEDDPICC {
         static let metrics = Accent.blue                 // M - Metrics
-        static let economicBuyer = Color(hex: "8B5CF6") // E - Economic Buyer
+        static let economicBuyer = Color(hex: "A78BFA") // E - Economic Buyer (WCAG AA on dark surfaces)
         static let decisionCriteria = Accent.pink       // D - Decision Criteria
         static let decisionProcess = Accent.amber        // D - Decision Process
         static let paperProcess = Color(hex: "F97316")  // P - Paper Process
         static let identifiedPain = Accent.red           // I - Identified Pain
         static let champion = Accent.green               // C - Champion
-        static let competition = Color(hex: "6366F1")    // C - Competition
-        
+        static let competition = Color(hex: "818CF8")    // C - Competition (WCAG AA on dark surfaces)
+
         /// Get color for a MEDDPICC field by letter
         static func color(for letter: String) -> String {
             switch letter.uppercased() {
             case "M": return "3B82F6"
-            case "E": return "8B5CF6"
+            case "E": return "A78BFA"
             case "D": return "EC4899"
             case "P": return "F59E0B"
             case "I": return "EF4444"

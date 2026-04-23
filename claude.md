@@ -34,6 +34,12 @@ macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + 
 
 ## Changelog
 
+### 2026-04-23 - v1.24.1
+
+- new: (macOS) in-app auto-updater
+- new: (macOS and iOS) home-screen card helps discover Google Calendar
+- improvement: (macOS) audio capture reliability improved when switching to or from bluetooth headphones
+
 ### 2026-04-21 - v1.23.1
 
 - improvement: (macOS and iOS, BYOK) Live insights stay faster and more reliable in longer meetings by updating from recent context instead of repeatedly reprocessing the full conversation.
@@ -515,22 +521,16 @@ Never modify older changelog entries after they are written. Add corrections, cl
 
 There is no `README.md` in this repo. End-user documentation lives at `https://miniti.app/docs`; the public-facing changelog lives at `https://miniti.app/changelog`.
 
-## Color Palette
+## Design system
 
-Centralized color system via `ColorPalette` struct. All colors should reference this palette instead of hardcoded hex values.
+The canonical design spec lives in [`design.md`](design.md) (Google DESIGN.md format — colors, typography, spacing, components, contrast rules, do's and don'ts). Read it before making visual changes; keep it updated when the design changes.
 
-- **Backgrounds**: `ColorPalette.Background.primary/secondary/tertiary/panel/card`
-- **Borders**: `ColorPalette.Border.primary/light/hover/subtle`
-- **Text**: `ColorPalette.Text.primary/secondary/muted/dim/disabled/placeholder/subtle/meta`
-- **Accents**: `ColorPalette.Accent.green/blue/purple/red/amber/yellow/pink/cyan/orange` (with GitHub-style variants)
-- **Status**: `ColorPalette.Status.success/error/warning/info/recording/connected/disconnected/limitReached/noApiKey`
-- **Speakers**: `ColorPalette.Speaker.mic` (green for "You") and `ColorPalette.Speaker.remote` array (blue/purple palette)
-- **MEDDPICC**: `ColorPalette.MEDDPICC.metrics/economicBuyer/decisionCriteria/...` with helper `color(for:)` method
-- **Insights**: `ColorPalette.Insights.summary/discussion/actions/topics/meddpicc`
+Code contract:
 
-The `Theme` struct in `MainWindow.swift` provides convenient aliases for common colors (e.g., `Theme.bg`, `Theme.text`) but all colors ultimately reference `ColorPalette`.
-
-`Color(hex:)` extension is defined in `ColorPalette.swift` for creating colors from hex strings when needed.
+- All colors route through `ColorPalette` in [`Miniti/Models/ColorPalette.swift`](Miniti/Models/ColorPalette.swift) — never hardcode hex literals in view code. If a value is missing from the palette, add it to `ColorPalette` and reference it, don't inline it.
+- `Theme` aliases in `MainWindow.swift` are convenience shorthand that resolve to `ColorPalette` tokens.
+- `Color(hex:)` is defined in `ColorPalette.swift`. The Live Activity widget extension is a separate target and duplicates a handful of palette values as private constants at the top of `MinitiLiveActivityLiveActivity.swift` — when a palette token used there changes, update the mirrored constants by hand.
+- Typography is monospaced throughout (SF Mono on macOS, Menlo on iOS). Dark mode only.
 
 - `AppState` is the single source of truth, injected via `@EnvironmentObject`
 - `AppMode` enum (`.byok` / `.managed`) stored in `@AppStorage("appMode")` — purely a routing toggle

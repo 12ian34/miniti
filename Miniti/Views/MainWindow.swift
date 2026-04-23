@@ -1702,14 +1702,14 @@ struct SavedMEDDPICCBlocks: View {
     
     private var fields: [(title: String, color: Color, value: String?)] {
         [
-            ("metrics", Color(hex: "3B82F6"), meeting.meddpiccMetrics),
-            ("economic buyer", Color(hex: "8B5CF6"), meeting.meddpiccEconomicBuyer),
-            ("decision criteria", Color(hex: "EC4899"), meeting.meddpiccDecisionCriteria),
-            ("decision process", Color(hex: "F59E0B"), meeting.meddpiccDecisionProcess),
-            ("paper process", Color(hex: "F97316"), meeting.meddpiccPaperProcess),
-            ("identified pain", Color(hex: "EF4444"), meeting.meddpiccIdentifiedPain),
-            ("champion", Color(hex: "22C55E"), meeting.meddpiccChampion),
-            ("competition", Color(hex: "6366F1"), meeting.meddpiccCompetition),
+            ("metrics", ColorPalette.MEDDPICC.metrics, meeting.meddpiccMetrics),
+            ("economic buyer", ColorPalette.MEDDPICC.economicBuyer, meeting.meddpiccEconomicBuyer),
+            ("decision criteria", ColorPalette.MEDDPICC.decisionCriteria, meeting.meddpiccDecisionCriteria),
+            ("decision process", ColorPalette.MEDDPICC.decisionProcess, meeting.meddpiccDecisionProcess),
+            ("paper process", ColorPalette.MEDDPICC.paperProcess, meeting.meddpiccPaperProcess),
+            ("identified pain", ColorPalette.MEDDPICC.identifiedPain, meeting.meddpiccIdentifiedPain),
+            ("champion", ColorPalette.MEDDPICC.champion, meeting.meddpiccChampion),
+            ("competition", ColorPalette.MEDDPICC.competition, meeting.meddpiccCompetition),
         ]
     }
     
@@ -2215,7 +2215,7 @@ struct AttioSendSheet: View {
 
             HStack(spacing: 10) {
                 Circle()
-                    .fill((status?.connected ?? false) ? Color(hex: "3FB950") : Color(hex: "6B7280"))
+                    .fill((status?.connected ?? false) ? ColorPalette.Status.connected : ColorPalette.Status.disconnected)
                     .frame(width: 8, height: 8)
                 Text(connectionStatusText)
                     .font(.system(size: 12, weight: .medium, design: .monospaced))
@@ -2346,7 +2346,7 @@ struct AttioSendSheet: View {
                 if results.isEmpty {
                     Text("no results yet")
                         .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundStyle(Color(hex: "6B7280"))
+                        .foregroundStyle(ColorPalette.Text.disabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 2)
                 } else {
@@ -2504,7 +2504,7 @@ struct AttioSendSheet: View {
     private func payloadLine(_ label: String, _ included: Bool, note: String? = nil) -> some View {
         HStack(spacing: 8) {
             Circle()
-                .fill(included ? Color(hex: "3FB950") : Color(hex: "6B7280"))
+                .fill(included ? ColorPalette.Status.success : ColorPalette.Text.disabled)
                 .frame(width: 6, height: 6)
             Text(label)
                 .font(.system(size: 11, weight: .medium, design: .monospaced))
