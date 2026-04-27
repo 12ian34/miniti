@@ -425,7 +425,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             if let channel = response.channel,
                let alternative = channel.alternatives.first {
                 
-                let isFinal = response.isFinal ?? false
+                let deepgramIsFinal = response.isFinal ?? false
+                let speechFinal = response.speechFinal ?? false
+                let isFinal = deepgramIsFinal || speechFinal
                 let hasTranscriptText = !alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 transcriptMessageCount += 1
                 if alternative.words.isEmpty && !hasTranscriptText {
@@ -434,6 +436,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     transcriptWordCount += alternative.words.count
                     lastTranscriptAt = CFAbsoluteTimeGetCurrent()
                     if isFinal { finalTranscriptCount += 1 }
+                }
+                if speechFinal && !deepgramIsFinal && hasTranscriptText {
+                    DebugLogger.shared.log(
+                        .deepgram,
+                        "Promoting speech_final transcript to final: words=\(alternative.words.count), text=\"\(alternative.transcript.prefix(80))\""
+                    )
                 }
                 
                 // Debug: Log speaker info from raw response

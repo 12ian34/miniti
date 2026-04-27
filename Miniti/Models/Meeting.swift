@@ -14,6 +14,8 @@ final class Meeting {
     var topics: [String]
     var discussionFlow: [String] = []
     var notes: String = ""
+    var transcriptEditedAt: Date?
+    var transcriptRevision: Int = 0
     
     var managedSessionId: String?
     var language: String = "en"
@@ -63,6 +65,8 @@ final class Meeting {
         topics: [String] = [],
         discussionFlow: [String] = [],
         notes: String = "",
+        transcriptEditedAt: Date? = nil,
+        transcriptRevision: Int = 0,
         meddpiccMetrics: String? = nil,
         meddpiccEconomicBuyer: String? = nil,
         meddpiccDecisionCriteria: String? = nil,
@@ -83,6 +87,8 @@ final class Meeting {
         self.topics = topics
         self.discussionFlow = discussionFlow
         self.notes = notes
+        self.transcriptEditedAt = transcriptEditedAt
+        self.transcriptRevision = transcriptRevision
         self.meddpiccMetrics = meddpiccMetrics
         self.meddpiccEconomicBuyer = meddpiccEconomicBuyer
         self.meddpiccDecisionCriteria = meddpiccDecisionCriteria
@@ -279,6 +285,55 @@ final class Meeting {
     
     var hasInsights: Bool {
         summaryText != nil || !actionItems.isEmpty || !keyDecisions.isEmpty
+    }
+
+    var hasGeneratedInsights: Bool {
+        let hasSummary = summaryText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let meddpiccFields = [
+            meddpiccMetrics, meddpiccEconomicBuyer, meddpiccDecisionCriteria, meddpiccDecisionProcess,
+            meddpiccPaperProcess, meddpiccIdentifiedPain, meddpiccChampion, meddpiccCompetition
+        ]
+        let hasMEDDPICCContent = meddpiccFields.contains {
+            $0?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        return hasSummary ||
+            !actionItems.isEmpty ||
+            !keyDecisions.isEmpty ||
+            !topics.isEmpty ||
+            !discussionFlow.isEmpty ||
+            hasMEDDPICCContent ||
+            hasQuestions
+    }
+
+    var needsInsightsAfterTranscriptEdit: Bool {
+        transcriptEditedAt != nil && !hasGeneratedInsights
+    }
+
+    var hasTranscriptEdits: Bool {
+        transcriptRevision > 0 || transcriptEditedAt != nil
+    }
+
+    func markTranscriptEdited(at date: Date = Date()) {
+        transcriptRevision += 1
+        transcriptEditedAt = date
+        clearGeneratedInsightsAfterTranscriptEdit()
+    }
+
+    func clearGeneratedInsightsAfterTranscriptEdit() {
+        summaryText = nil
+        actionItems = []
+        keyDecisions = []
+        topics = []
+        discussionFlow = []
+        meddpiccMetrics = nil
+        meddpiccEconomicBuyer = nil
+        meddpiccDecisionCriteria = nil
+        meddpiccDecisionProcess = nil
+        meddpiccPaperProcess = nil
+        meddpiccIdentifiedPain = nil
+        meddpiccChampion = nil
+        meddpiccCompetition = nil
+        suggestedQuestions = []
     }
     
     // MARK: - Markdown Export
@@ -515,6 +570,34 @@ final class TranscriptSegment {
         let seconds = Int(timestamp) % 60
         return String(format: "%d:%02d", minutes, seconds)
     }
+}
+
+struct TranscriptTextSelection: Equatable {
+    let segmentID: UUID
+    let lowerUTF16Offset: Int
+    let upperUTF16Offset: Int
+
+    var isEmpty: Bool {
+        lowerUTF16Offset >= upperUTF16Offset
+    }
+}
+
+struct TranscriptTrimOperation: Equatable {
+    var segmentIDsToDelete: Set<UUID> = []
+    var textSelections: [TranscriptTextSelection] = []
+
+    var isEmpty: Bool {
+        segmentIDsToDelete.isEmpty && textSelections.allSatisfy(\.isEmpty)
+    }
+}
+
+struct TranscriptSegmentSnapshot: Equatable {
+    let id: UUID
+    let speaker: Int
+    let timestamp: TimeInterval
+    let text: String
+    let isFinal: Bool
+    let confidence: Double
 }
 
 // MARK: - Meeting Search

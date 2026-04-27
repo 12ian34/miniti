@@ -340,4 +340,34 @@ final class DeepgramParsingTests: XCTestCase {
         XCTAssertEqual(segments.count, 1, "Unknown speaker with weak evidence should be absorbed")
         XCTAssertFalse(state.confirmedSpeakerIDs.contains(3))
     }
+
+    #if !IOS_TEST_TARGET && DEBUG
+    @MainActor
+    func testSourceTrackingResetRealignsDeepgramTimestampsAfterReconnect() {
+        let service = AudioCaptureService()
+
+        service.appendSourceSampleForTesting(
+            startTime: 1_200.0,
+            endTime: 1_200.1,
+            micEnergy: 1_000,
+            sysEnergy: 0
+        )
+
+        XCTAssertEqual(
+            service.dominantSource(from: 0.0, to: 0.1),
+            .unknown,
+            "A fresh Deepgram socket reports word times from zero, so stale old-session source samples should not match."
+        )
+
+        service.resetSourceTracking()
+        service.appendSourceSampleForTesting(
+            startTime: 0.0,
+            endTime: 0.1,
+            micEnergy: 1_000,
+            sysEnergy: 0
+        )
+
+        XCTAssertEqual(service.dominantSource(from: 0.0, to: 0.1), .mic)
+    }
+    #endif
 }

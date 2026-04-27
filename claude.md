@@ -53,6 +53,7 @@ There is no `README.md` in this repo — end-user documentation lives at `https:
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - google calendar integration — upcoming meetings, auto-fill title and attendees, auto Attio sync
 - meeting history browser
+- saved transcript trimming with insight regeneration
 - native menu bar controls
 - keyboard shortcuts for everything
 - in-app auto-update via Sparkle (Miniti menu → Check for Updates…)
@@ -68,6 +69,7 @@ There is no `README.md` in this repo — end-user documentation lives at `https:
 - training mode — filler words, talk ratio, pace, monologue detection, questions, clarity
 - google calendar integration — upcoming meetings on home, auto-start countdown, attendee context in insights
 - meeting history browser
+- saved transcript trimming with insight regeneration
 - Live Activity on Dynamic Island and Lock Screen (timer + live transcript)
 - dark mode terminal-style UI
 

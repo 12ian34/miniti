@@ -1,4 +1,5 @@
 import XCTest
+import SwiftData
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -247,6 +248,143 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(filename, "2026-03-15-1430.md")
     }
     #endif
+
+    // MARK: - Speaker identity recovery
+
+    @MainActor
+    func testResetSpeakerIdentityForDeepgramReconnectKeepsOnlyMicIdentity() {
+        let state = AppState()
+        let meeting = Meeting(title: "live")
+        let micKey = String(DeepgramService.micSpeakerID)
+
+        state.currentMeeting = meeting
+        state.liveSpeakerNames = [
+            "0": "Alice",
+            "2": "Bob",
+            micKey: "Ian",
+        ]
+        state.liveSpeakerOverrides = ["0", micKey]
+        state.liveSelfSpeakerIDs = [DeepgramService.micSpeakerID, 2]
+
+        state.resetSpeakerIdentityForDeepgramReconnect()
+
+        XCTAssertEqual(state.liveSpeakerNames, [micKey: "Ian"])
+        XCTAssertEqual(state.liveSpeakerOverrides, [micKey])
+        XCTAssertEqual(state.liveSelfSpeakerIDs, [DeepgramService.micSpeakerID])
+        XCTAssertEqual(meeting.speakerNames, [micKey: "Ian"])
+        XCTAssertEqual(meeting.speakerOverrides, [micKey])
+        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID])
+    }
+
+    func testTranscriptSupportedSpeakerNamesRejectsUnsupportedCandidateGuess() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "Let's review the roadmap.", speaker: 0, timestamp: 0, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Sounds good to me.", speaker: 1, timestamp: 4, isFinal: true),
+        ]
+
+        let supported = AppState.transcriptSupportedSpeakerNames(["0": "Alice"], finalSegments: segments)
+
+        XCTAssertTrue(supported.isEmpty)
+    }
+
+    func testTranscriptSupportedSpeakerNamesAcceptsSelfIntroduction() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "Hi, I'm Alice from product.", speaker: 0, timestamp: 0, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Great, thanks.", speaker: 1, timestamp: 4, isFinal: true),
+        ]
+
+        let supported = AppState.transcriptSupportedSpeakerNames(["0": "Alice"], finalSegments: segments)
+
+        XCTAssertEqual(supported, ["0": "Alice"])
+    }
+
+    func testTranscriptSupportedSpeakerNamesAcceptsAdjacentDirectAddress() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "The launch risk is mostly onboarding.", speaker: 0, timestamp: 0, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Thanks Tom, that matches what we're seeing.", speaker: 1, timestamp: 5, isFinal: true),
+        ]
+
+        let supported = AppState.transcriptSupportedSpeakerNames(["0": "Tom"], finalSegments: segments)
+
+        XCTAssertEqual(supported, ["0": "Tom"])
+    }
+
+    // MARK: - Interrupted meeting resume
+
+    @MainActor
+    func testResumeInterruptedMeetingDoesNotRestoreStaleDraft() throws {
+        let now = Date()
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        // Last segment is 120s in, startTime is 48h ago → last activity ≈ 48h ago → stale.
+        let stale = Meeting(
+            title: "yesterday",
+            startTime: now.addingTimeInterval(-48 * 60 * 60)
+        )
+        stale.segments = [
+            TranscriptSegment(text: "Old words", speaker: 0, timestamp: 120, isFinal: true),
+        ]
+        stale.speakerNames = ["0": "Alice"]
+        context.insert(stale)
+        try context.save()
+
+        let state = AppState()
+        state.modelContext = context
+        state.resumeInterruptedMeeting()
+
+        XCTAssertNil(state.currentMeeting)
+        XCTAssertEqual(state.liveSpeakerNames, [:])
+        XCTAssertEqual(stale.endTime, stale.startTime.addingTimeInterval(120))
+    }
+
+    @MainActor
+    func testResumeInterruptedMeetingStillRestoresRecentDraft() throws {
+        let now = Date()
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        let recent = Meeting(title: "recent", startTime: now.addingTimeInterval(-60 * 60))
+        recent.segments = [
+            TranscriptSegment(text: "Fresh words", speaker: 1, timestamp: 45, isFinal: true),
+        ]
+        recent.speakerNames = ["1": "Pat"]
+        context.insert(recent)
+        try context.save()
+
+        let state = AppState()
+        state.modelContext = context
+        state.resumeInterruptedMeeting()
+
+        XCTAssertEqual(state.currentMeeting?.id, recent.id)
+        XCTAssertEqual(state.liveSpeakerNames, ["1": "Pat"])
+        XCTAssertNil(recent.endTime)
+    }
+
+    @MainActor
+    func testResumeInterruptedMeetingRestoresLongRunningDraftWithRecentActivity() throws {
+        let now = Date()
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        // startTime far outside the 12h window, but the last transcript segment is only 1h in
+        // the past → last activity is recent → should still auto-resume.
+        let longRunning = Meeting(
+            title: "marathon",
+            startTime: now.addingTimeInterval(-20 * 60 * 60)
+        )
+        let recentOffset: TimeInterval = 19 * 60 * 60
+        longRunning.segments = [
+            TranscriptSegment(text: "Earlier", speaker: 0, timestamp: 60, isFinal: true),
+            TranscriptSegment(text: "Still talking", speaker: 0, timestamp: recentOffset, isFinal: true),
+        ]
+        context.insert(longRunning)
+        try context.save()
+
+        let state = AppState()
+        state.modelContext = context
+        state.resumeInterruptedMeeting()
+
+        XCTAssertEqual(state.currentMeeting?.id, longRunning.id)
+        XCTAssertNil(longRunning.endTime)
+    }
 
     // MARK: - formattedDuration
 
@@ -513,6 +651,89 @@ final class AppStateComputationTests: XCTestCase {
         state.appMode = .managed
         state.usageInfo = Self.makeUsageInfo(used: 500, limit: 500)
         XCTAssertFalse(state.canStartRecording)
+    }
+
+    // MARK: - Transcript trimming
+
+    func testTranscriptTextAfterDeletingSelectionsNormalizesWhitespace() {
+        let id = UUID()
+        let selection = TranscriptTextSelection(segmentID: id, lowerUTF16Offset: 6, upperUTF16Offset: 16)
+        let trimmed = AppState.transcriptTextAfterDeletingSelections([selection], from: "hello brave new world!")
+        XCTAssertEqual(trimmed, "hello world!")
+    }
+
+    @MainActor
+    func testMarkTranscriptEditedClearsGeneratedInsights() {
+        let meeting = Meeting(
+            title: "edited",
+            summaryText: "summary",
+            actionItems: ["follow up"],
+            keyDecisions: ["decide"],
+            topics: ["topic"],
+            discussionFlow: ["flow"],
+            meddpiccMetrics: "metric",
+            meddpiccEconomicBuyer: "buyer"
+        )
+        meeting.suggestedQuestions = [SuggestedQuestion(question: "What next?", type: "follow_up", context: "context")]
+
+        meeting.markTranscriptEdited()
+
+        XCTAssertNotNil(meeting.transcriptEditedAt)
+        XCTAssertEqual(meeting.transcriptRevision, 1)
+        XCTAssertFalse(meeting.hasGeneratedInsights)
+        XCTAssertTrue(meeting.needsInsightsAfterTranscriptEdit)
+    }
+
+    func testMergeFinalSegmentReplacesCumulativeTranscript() {
+        let originalID = UUID()
+        var segments = [
+            AppState.LiveSegment(
+                id: originalID,
+                text: "You zoom in to the level of individual particles",
+                speaker: 0,
+                timestamp: 12,
+                isFinal: true
+            )
+        ]
+        let cumulative = AppState.LiveSegment(
+            id: UUID(),
+            text: "You zoom in to the level of individual particles, then every interaction matters",
+            speaker: 0,
+            timestamp: 18,
+            isFinal: true
+        )
+
+        let result = AppState.mergeFinalSegment(cumulative, into: &segments)
+
+        XCTAssertEqual(result, .replacedSuperset)
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].id, originalID)
+        XCTAssertEqual(segments[0].timestamp, 12)
+        XCTAssertEqual(segments[0].text, cumulative.text)
+    }
+
+    func testMergeFinalSegmentSkipsContainedDuplicate() {
+        var segments = [
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "typically more ordered, to more likely states, typically a mess",
+                speaker: 0,
+                timestamp: 10,
+                isFinal: true
+            )
+        ]
+        let shorterDuplicate = AppState.LiveSegment(
+            id: UUID(),
+            text: "to more likely states",
+            speaker: 0,
+            timestamp: 14,
+            isFinal: true
+        )
+
+        let result = AppState.mergeFinalSegment(shorterDuplicate, into: &segments)
+
+        XCTAssertEqual(result, .skippedContainedDuplicate)
+        XCTAssertEqual(segments.count, 1)
     }
 
     // MARK: - AudioRecoveryState.label
@@ -796,5 +1017,11 @@ final class AppStateComputationTests: XCTestCase {
         ]
         let data = try! JSONSerialization.data(withJSONObject: json)
         return try! JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: data)
+    }
+
+    @MainActor
+    private static func makeInMemoryModelContainer() throws -> ModelContainer {
+        let config = ModelConfiguration(isStoredInMemoryOnly: true)
+        return try ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
     }
 }

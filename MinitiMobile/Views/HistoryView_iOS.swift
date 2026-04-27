@@ -212,7 +212,9 @@ struct MeetingDetail_iOS: View {
         var currentKey: String? = nil
         let names = meeting.speakerNames
         let selfIDs = meeting.selfSpeakerIDs
-        for segment in meeting.segments.sorted(by: { $0.timestamp < $1.timestamp }) {
+        for segment in meeting.segments
+            .filter({ $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+            .sorted(by: { $0.timestamp < $1.timestamp }) {
             let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: selfIDs)
             if key != currentKey {
                 currentKey = key
@@ -402,54 +404,48 @@ struct MeetingDetail_iOS: View {
     // MARK: - Transcript (per-segment with speaker turn headers)
 
     private var transcriptContent: some View {
-        ScrollView {
+        Group {
             if meeting.segments.isEmpty {
-                Text("No transcript available")
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(ColorPalette.Text.muted)
-                    .padding()
-            } else {
-                let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
-                let effectiveSelves = meeting.effectiveSelfSpeakerIDs
-                let uniqueSpeakers: [Int] = {
-                    var seen = Set<Int>()
-                    var ordered: [Int] = []
-                    for s in sortedSegments where seen.insert(s.speaker).inserted {
-                        ordered.append(s.speaker)
-                    }
-                    return ordered.sorted { a, b in
-                        let aSelf = effectiveSelves.contains(a)
-                        let bSelf = effectiveSelves.contains(b)
-                        if aSelf != bSelf { return aSelf }
-                        return a < b
-                    }
-                }()
-                VStack(alignment: .leading, spacing: 12) {
-                    SpeakerLegend(
-                        speakers: uniqueSpeakers,
-                        isRecording: false,
-                        speakerNames: meeting.speakerNames,
-                        selfIDs: meeting.selfSpeakerIDs,
-                        onRename: { renamingSpeaker = $0 }
-                    )
-                    SelectableTextView(
-                        SelectableAttributed.transcript(
-                            turns: SelectableAttributed.mergeTurns(
-                                sortedSegments.map {
-                                    .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-                                },
-                                speakerNames: meeting.speakerNames,
-                                selfIDs: meeting.selfSpeakerIDs
-                            ),
-                            speakerNames: meeting.speakerNames,
-                            selfIDs: meeting.selfSpeakerIDs
-                        )
-                    )
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 16)
+                ScrollView {
+                    Text("No transcript available")
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding()
                 }
+            } else {
+                transcriptWithPinnedTrimControls
             }
         }
+    }
+
+    private var transcriptWithPinnedTrimControls: some View {
+        let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
+        let effectiveSelves = meeting.effectiveSelfSpeakerIDs
+        let uniqueSpeakers: [Int] = {
+            var seen = Set<Int>()
+            var ordered: [Int] = []
+            for s in sortedSegments where seen.insert(s.speaker).inserted {
+                ordered.append(s.speaker)
+            }
+            return ordered.sorted { a, b in
+                let aSelf = effectiveSelves.contains(a)
+                let bSelf = effectiveSelves.contains(b)
+                if aSelf != bSelf { return aSelf }
+                return a < b
+            }
+        }()
+
+        return VStack(alignment: .leading, spacing: 12) {
+            SpeakerLegend(
+                speakers: uniqueSpeakers,
+                isRecording: false,
+                speakerNames: meeting.speakerNames,
+                selfIDs: meeting.selfSpeakerIDs,
+                onRename: { renamingSpeaker = $0 }
+            )
+            TranscriptTrimView(meeting: meeting)
+        }
+        .frame(maxHeight: .infinity)
     }
     
     // MARK: - Insights
@@ -629,7 +625,7 @@ struct MeetingDetail_iOS: View {
                 HStack(spacing: 6) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("update")
+                    Text(meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")
                         .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                         Text("meddpicc")

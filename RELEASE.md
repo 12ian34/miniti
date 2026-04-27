@@ -25,14 +25,14 @@ Edit:
 - `MinitiMobile/Info.plist` — `CFBundleShortVersionString` → `X.Y.Z`.
 - `Miniti.xcodeproj/project.pbxproj` — `MARKETING_VERSION = X.Y.Z;` (6 places) and `CURRENT_PROJECT_VERSION = N;` (10 places). `CURRENT_PROJECT_VERSION` wins over `Info.plist` at build time; keep them in sync.
 - `fastlane/metadata/en-US/release_notes.txt` — user-facing release notes for iOS. Also mirror to `en-GB/release_notes.txt`.
-- `claude.md` — prepend a new `### YYYY-MM-DD - vX.Y.Z` changelog entry.
+- `CHANGELOG.md` — prepend a new `### YYYY-MM-DD - vX.Y.Z` changelog entry.
 - `fastlane/metadata/en-US/description.txt` + `en-GB/description.txt` — only if there's a literal `vX.Y.Z` footer; bump it.
 
 Quick bulk update for MARKETING_VERSION and CURRENT_PROJECT_VERSION (adjust old→new):
 
 ```sh
-sed -i '' 's/MARKETING_VERSION = 1\.24\.1;/MARKETING_VERSION = 1.25.0;/g' Miniti.xcodeproj/project.pbxproj
-sed -i '' 's/CURRENT_PROJECT_VERSION = 92;/CURRENT_PROJECT_VERSION = 93;/g' Miniti.xcodeproj/project.pbxproj
+sed -i '' 's/MARKETING_VERSION = OLD_VERSION;/MARKETING_VERSION = NEW_VERSION;/g' Miniti.xcodeproj/project.pbxproj
+sed -i '' 's/CURRENT_PROJECT_VERSION = OLD_BUILD;/CURRENT_PROJECT_VERSION = NEW_BUILD;/g' Miniti.xcodeproj/project.pbxproj
 ```
 
 ### 2. Build, sign, notarize, package

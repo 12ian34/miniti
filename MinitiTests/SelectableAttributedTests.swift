@@ -146,6 +146,29 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertGreaterThan(attr.length, 0)
     }
 
+    func testTranscriptRenderModelMapsSelectionAcrossSegmentBodies() {
+        let firstID = UUID()
+        let secondID = UUID()
+        let renderModel = SelectableAttributed.transcriptRenderModel(
+            segments: [
+                .init(id: firstID, speaker: 1, timestamp: 0, text: "first segment"),
+                .init(id: secondID, speaker: 2, timestamp: 3, text: "second segment"),
+            ],
+            speakerNames: nil,
+            selfIDs: nil
+        )
+
+        let firstSpan = renderModel.spans[0]
+        let secondSpan = renderModel.spans[1]
+        let selectionStart = firstSpan.bodyRange.location + 6
+        let selectionEnd = secondSpan.bodyRange.location + 6
+        let selections = renderModel.textSelections(overlapping: NSRange(location: selectionStart, length: selectionEnd - selectionStart))
+
+        XCTAssertEqual(selections.count, 2)
+        XCTAssertEqual(selections[0], TranscriptTextSelection(segmentID: firstID, lowerUTF16Offset: 6, upperUTF16Offset: 13))
+        XCTAssertEqual(selections[1], TranscriptTextSelection(segmentID: secondID, lowerUTF16Offset: 0, upperUTF16Offset: 6))
+    }
+
     func testBulletListBuilderHandlesEmpty() {
         let attr = SelectableAttributed.bulletList(
             items: [],

@@ -603,6 +603,51 @@ final class AppState: ObservableObject {
             isLocalMic ? "You" : "Speaker \(speaker + 1)"
         }
     }
+
+    enum FinalSegmentMergeResult: Equatable {
+        case appended
+        case replacedSuperset
+        case skippedExactDuplicate
+        case skippedContainedDuplicate
+    }
+
+    nonisolated static func mergeFinalSegment(
+        _ newSegment: LiveSegment,
+        into segments: inout [LiveSegment],
+        duplicateSearchSuffix: Int = 3
+    ) -> FinalSegmentMergeResult {
+        let searchStart = max(0, segments.count - duplicateSearchSuffix)
+        var containedMatchIndex: Int?
+
+        for index in searchStart..<segments.count {
+            let existing = segments[index]
+            guard existing.isFinal, existing.speaker == newSegment.speaker else { continue }
+            if existing.text == newSegment.text {
+                return .skippedExactDuplicate
+            }
+            if existing.text.contains(newSegment.text) {
+                return .skippedContainedDuplicate
+            }
+            if newSegment.text.contains(existing.text) {
+                containedMatchIndex = index
+            }
+        }
+
+        if let containedMatchIndex {
+            let existing = segments[containedMatchIndex]
+            segments[containedMatchIndex] = LiveSegment(
+                id: existing.id,
+                text: newSegment.text,
+                speaker: existing.speaker,
+                timestamp: existing.timestamp,
+                isFinal: true
+            )
+            return .replacedSuperset
+        }
+
+        segments.append(newSegment)
+        return .appended
+    }
     
     init() {
         // One-time migration from legacy boolean acceptance storage.
@@ -865,6 +910,13 @@ final class AppState: ObservableObject {
                     ]
                 )
                 deepgramService.disconnect()
+                #if os(macOS)
+                if self.captureMicrophone && self.captureSystemAudio {
+                    self.audioCaptureService?.resetSourceTracking()
+                    self.resetSpeakerIdentityForDeepgramReconnect()
+                    DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
+                }
+                #endif
                 deepgramService.connect(language: self.meetingLanguage)
                 
                 // Give the socket a short window to establish before next retry.
@@ -1094,16 +1146,20 @@ final class AppState: ObservableObject {
                 isFinal: true
             )
             
-            // Check for duplicates (same speaker and very similar text)
-            let isDuplicate = updated.suffix(3).contains { existing in
-                existing.isFinal && 
-                existing.speaker == segment.speaker &&
-                (existing.text == text || existing.text.contains(text) || text.contains(existing.text))
-            }
-            
-            if !isDuplicate {
-                updated.append(liveSegment)
+            let mergeResult = Self.mergeFinalSegment(liveSegment, into: &updated)
+            switch mergeResult {
+            case .appended:
                 print("[AppState] Added segment - Speaker \(segment.speaker): \"\(text.prefix(50))...\"")
+            case .replacedSuperset:
+                DebugLogger.shared.log(
+                    .deepgram,
+                    "Merged cumulative final transcript instead of dropping suffix: speaker=\(segment.speaker), text=\"\(text.prefix(80))\""
+                )
+            case .skippedExactDuplicate, .skippedContainedDuplicate:
+                DebugLogger.shared.log(
+                    .deepgram,
+                    "Skipped duplicate final transcript: reason=\(mergeResult), speaker=\(segment.speaker), text=\"\(text.prefix(80))\""
+                )
             }
         }
         
@@ -1508,15 +1564,22 @@ final class AppState: ObservableObject {
                 return
             }
 
-            // Merge: keep existing names; never overwrite a user-overridden name.
+            let supported = Self.transcriptSupportedSpeakerNames(inferred, finalSegments: finalSegments)
+            let rejected = inferred.count - supported.count
+            guard !supported.isEmpty else {
+                DebugLogger.shared.log(.app, "Speaker-names: rejected \(inferred.count) unsupported inference(s)")
+                return
+            }
+
+            // Merge: inference can refine prior inferred names, but never overwrite a user override.
             var merged = liveSpeakerNames
             var applied = 0
-            for (key, value) in inferred where !liveSpeakerOverrides.contains(key) {
+            for (key, value) in supported where !liveSpeakerOverrides.contains(key) {
                 merged[key] = value
                 applied += 1
             }
             liveSpeakerNames = merged
-            DebugLogger.shared.log(.app, "Speaker-names applied: total=\(merged.count), added/updated=\(applied), skipped_overrides=\(inferred.count - applied)")
+            DebugLogger.shared.log(.app, "Speaker-names applied: total=\(merged.count), added/updated=\(applied), skipped_overrides=\(supported.count - applied), rejected_unsupported=\(rejected)")
         } catch {
             DebugLogger.shared.log(.app, "Speaker-names inference failed: \(error.localizedDescription)")
         }
@@ -1580,6 +1643,30 @@ final class AppState: ObservableObject {
     /// mic speaker as a default. Always non-empty.
     var effectiveLiveSelfSpeakerIDs: Set<Int> {
         liveSelfSpeakerIDs.isEmpty ? [DeepgramService.micSpeakerID] : liveSelfSpeakerIDs
+    }
+
+    func resetSpeakerIdentityForDeepgramReconnect() {
+        let micKey = String(DeepgramService.micSpeakerID)
+        let previousNameCount = liveSpeakerNames.count
+        let previousOverrideCount = liveSpeakerOverrides.count
+        let previousSelfCount = liveSelfSpeakerIDs.count
+
+        liveSpeakerNames = liveSpeakerNames.filter { $0.key == micKey }
+        liveSpeakerOverrides = liveSpeakerOverrides.filter { $0 == micKey }
+        liveSelfSpeakerIDs = liveSelfSpeakerIDs.filter { $0 == DeepgramService.micSpeakerID }
+        lastSpeakerNamesSegmentCount = 0
+        lastSpeakerNamesRequestAt = nil
+
+        if let meeting = currentMeeting {
+            meeting.speakerNames = liveSpeakerNames
+            meeting.speakerOverrides = liveSpeakerOverrides
+            meeting.selfSpeakerIDs = liveSelfSpeakerIDs
+        }
+
+        DebugLogger.shared.log(
+            .app,
+            "Speaker identity reset for Deepgram reconnect: names \(previousNameCount)->\(liveSpeakerNames.count), overrides \(previousOverrideCount)->\(liveSpeakerOverrides.count), self \(previousSelfCount)->\(liveSelfSpeakerIDs.count)"
+        )
     }
 
     // MARK: - Zoned Out catch-up
@@ -2054,6 +2141,101 @@ final class AppState: ObservableObject {
             .joined(separator: "\n")
     }
 
+    nonisolated static func transcriptSupportedSpeakerNames(
+        _ inferred: [String: String],
+        finalSegments: [LiveSegment]
+    ) -> [String: String] {
+        let sanitized = SpeakerNamesResponse.sanitize(inferred)
+        guard !sanitized.isEmpty else { return [:] }
+
+        var supported: [String: String] = [:]
+        for (key, name) in sanitized {
+            guard let speaker = Int(key),
+                  speakerNameHasTranscriptEvidence(name: name, speaker: speaker, segments: finalSegments) else {
+                continue
+            }
+            supported[key] = name
+        }
+        return supported
+    }
+
+    private nonisolated static func speakerNameHasTranscriptEvidence(
+        name: String,
+        speaker: Int,
+        segments: [LiveSegment]
+    ) -> Bool {
+        let nameTokens = speakerNameTokens(name)
+        guard let firstName = nameTokens.first else { return false }
+
+        for segment in segments where segment.speaker == speaker {
+            if textHasSelfIdentification(segment.text, firstName: firstName) {
+                return true
+            }
+        }
+
+        for index in segments.indices where segments[index].speaker != speaker {
+            guard textContainsNameToken(segments[index].text, firstName) else { continue }
+            let previousMatches = index > segments.startIndex && segments[segments.index(before: index)].speaker == speaker
+            let nextIndex = segments.index(after: index)
+            let nextMatches = nextIndex < segments.endIndex && segments[nextIndex].speaker == speaker
+            if previousMatches || nextMatches {
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private nonisolated static func textHasSelfIdentification(_ text: String, firstName: String) -> Bool {
+        let words = normalizedWordTokens(text)
+        guard !words.isEmpty else { return false }
+        let introductoryPrefixes: [[String]] = [
+            ["i", "am"],
+            ["im"],
+            ["i", "m"],
+            ["my", "name", "is"],
+            ["this", "is"],
+            ["it", "s"],
+            ["its"],
+        ]
+
+        for prefix in introductoryPrefixes where words.count > prefix.count {
+            for index in 0...(words.count - prefix.count - 1) {
+                let candidatePrefix = Array(words[index..<(index + prefix.count)])
+                if candidatePrefix == prefix, words[index + prefix.count] == firstName {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    private nonisolated static func textContainsNameToken(_ text: String, _ nameToken: String) -> Bool {
+        normalizedWordTokens(text).contains(nameToken)
+    }
+
+    private nonisolated static func speakerNameTokens(_ name: String) -> [String] {
+        normalizedWordTokens(name).filter { $0.count >= 2 }
+    }
+
+    private nonisolated static func normalizedWordTokens(_ text: String) -> [String] {
+        let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        var tokens: [String] = []
+        var current = ""
+        for scalar in folded.unicodeScalars {
+            if CharacterSet.alphanumerics.contains(scalar) {
+                current.unicodeScalars.append(scalar)
+            } else if !current.isEmpty {
+                tokens.append(current)
+                current = ""
+            }
+        }
+        if !current.isEmpty {
+            tokens.append(current)
+        }
+        return tokens
+    }
+
     nonisolated static func tailTranscriptSegments(
         from segments: [LiveSegment],
         maxChars: Int
@@ -2519,6 +2701,151 @@ final class AppState: ObservableObject {
         isGeneratingInsights = false
     }
 
+    @discardableResult
+    func applyTranscriptTrim(_ operation: TranscriptTrimOperation, to meeting: Meeting) -> Bool {
+        guard !operation.isEmpty else { return false }
+        guard let modelContext else {
+            DebugLogger.shared.log(.app, "Transcript trim skipped: no model context")
+            return false
+        }
+
+        var didChange = false
+        let deleteIDs = operation.segmentIDsToDelete
+        if !deleteIDs.isEmpty {
+            for segment in meeting.segments where deleteIDs.contains(segment.id) {
+                modelContext.delete(segment)
+            }
+            let oldCount = meeting.segments.count
+            meeting.segments.removeAll { deleteIDs.contains($0.id) }
+            didChange = didChange || oldCount != meeting.segments.count
+        }
+
+        let selectionsBySegment = Dictionary(
+            grouping: operation.textSelections.filter { selection in
+                !selection.isEmpty && !deleteIDs.contains(selection.segmentID)
+            },
+            by: \.segmentID
+        )
+
+        for (segmentID, selections) in selectionsBySegment {
+            guard let segment = meeting.segments.first(where: { $0.id == segmentID }) else { continue }
+            let trimmed = Self.transcriptTextAfterDeletingSelections(selections, from: segment.text)
+            guard trimmed != segment.text else { continue }
+            if trimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                modelContext.delete(segment)
+                meeting.segments.removeAll { $0.id == segmentID }
+            } else {
+                segment.text = trimmed
+                segment.isFinal = true
+            }
+            didChange = true
+        }
+
+        guard didChange else { return false }
+        meeting.markTranscriptEdited()
+
+        do {
+            try modelContext.save()
+        } catch {
+            DebugLogger.shared.log(.app, "Transcript trim save FAILED: \(error.localizedDescription)")
+            return false
+        }
+
+        #if os(macOS)
+        if autoExportMarkdown {
+            exportMeetingAsMarkdownFile(markdown: meeting.fullMeetingAsMarkdown(), meeting: meeting)
+        }
+        #endif
+
+        if !webhookURL.isEmpty {
+            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+        }
+
+        DebugLogger.shared.log(.app, "Transcript trim applied: meeting=\(meeting.id), revision=\(meeting.transcriptRevision)")
+        return true
+    }
+
+    @discardableResult
+    func restoreTranscriptSnapshots(_ snapshots: [TranscriptSegmentSnapshot], to meeting: Meeting) -> Bool {
+        guard !snapshots.isEmpty else { return false }
+        guard let modelContext else {
+            DebugLogger.shared.log(.app, "Transcript restore skipped: no model context")
+            return false
+        }
+
+        for segment in meeting.segments {
+            modelContext.delete(segment)
+        }
+        meeting.segments = snapshots
+            .sorted { $0.timestamp < $1.timestamp }
+            .map {
+                TranscriptSegment(
+                    id: $0.id,
+                    text: $0.text,
+                    speaker: $0.speaker,
+                    timestamp: $0.timestamp,
+                    isFinal: $0.isFinal,
+                    confidence: $0.confidence
+                )
+            }
+        meeting.markTranscriptEdited()
+
+        do {
+            try modelContext.save()
+        } catch {
+            DebugLogger.shared.log(.app, "Transcript restore save FAILED: \(error.localizedDescription)")
+            return false
+        }
+
+        #if os(macOS)
+        if autoExportMarkdown {
+            exportMeetingAsMarkdownFile(markdown: meeting.fullMeetingAsMarkdown(), meeting: meeting)
+        }
+        #endif
+
+        if !webhookURL.isEmpty {
+            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+        }
+
+        DebugLogger.shared.log(.app, "Transcript trim undone: meeting=\(meeting.id), revision=\(meeting.transcriptRevision)")
+        return true
+    }
+
+    nonisolated static func transcriptTextAfterDeletingSelections(
+        _ selections: [TranscriptTextSelection],
+        from originalText: String
+    ) -> String {
+        guard !selections.isEmpty, !originalText.isEmpty else { return originalText }
+        var text = originalText
+        let orderedSelections = selections
+            .filter { !$0.isEmpty }
+            .sorted { lhs, rhs in
+                lhs.lowerUTF16Offset > rhs.lowerUTF16Offset
+            }
+
+        for selection in orderedSelections {
+            let lower = max(0, min(selection.lowerUTF16Offset, text.utf16.count))
+            let upper = max(lower, min(selection.upperUTF16Offset, text.utf16.count))
+            guard lower < upper else { continue }
+            let utf16Lower = text.utf16.index(text.utf16.startIndex, offsetBy: lower)
+            let utf16Upper = text.utf16.index(text.utf16.startIndex, offsetBy: upper)
+            guard let lowerIndex = String.Index(utf16Lower, within: text),
+                  let upperIndex = String.Index(utf16Upper, within: text) else {
+                continue
+            }
+            text.removeSubrange(lowerIndex..<upperIndex)
+        }
+
+        return normalizeTranscriptTrimWhitespace(text)
+    }
+
+    nonisolated private static func normalizeTranscriptTrimWhitespace(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+([,.;:!?])"#, with: "$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Restore an interrupted meeting (endTime == nil) from SwiftData on launch.
     /// Sets currentMeeting and rebuilds in-memory state so the UI shows the stopped-session view.
     func resumeInterruptedMeeting() {
@@ -2527,8 +2854,16 @@ final class AppState: ObservableObject {
         
         let descriptor = FetchDescriptor<Meeting>()
         guard let meetings = try? modelContext.fetch(descriptor) else { return }
-        guard let interrupted = meetings
-            .filter({ $0.endTime == nil && !$0.segments.isEmpty })
+        let now = Date()
+        let interruptedMeetings = meetings
+            .filter { $0.endTime == nil && !$0.segments.isEmpty }
+
+        let staleInterruptedMeetings = interruptedMeetings
+            .filter { Self.isInterruptedMeetingTooOldToAutoResume($0, now: now) }
+        finalizeStaleInterruptedMeetings(staleInterruptedMeetings, now: now)
+
+        guard let interrupted = interruptedMeetings
+            .filter({ !Self.isInterruptedMeetingTooOldToAutoResume($0, now: now) })
             .max(by: { $0.startTime < $1.startTime })
         else { return }
         
@@ -2621,6 +2956,53 @@ final class AppState: ObservableObject {
         }
         
         DebugLogger.shared.log(.app, "Interrupted session restored: segments=\(liveSegments.count), duration=\(formattedDuration)")
+    }
+
+    static let interruptedMeetingAutoResumeMaxAge: TimeInterval = 12 * 60 * 60
+
+    /// Best estimate of the last moment the meeting was actively recording — the latest segment
+    /// timestamp offset from `startTime`, clamped into the range `[startTime, now]`. Used as the
+    /// reference for both the staleness check and the auto-finalised `endTime`, so a long-running
+    /// but recently-active draft isn't misclassified as stale just because `startTime` is old.
+    static func estimatedLastActivity(_ meeting: Meeting, now: Date = Date()) -> Date {
+        let latestSegmentOffset = meeting.segments.map(\.timestamp).max() ?? 0
+        let candidate = meeting.startTime.addingTimeInterval(max(0, latestSegmentOffset))
+        return min(max(candidate, meeting.startTime), now)
+    }
+
+    static func isInterruptedMeetingTooOldToAutoResume(_ meeting: Meeting, now: Date = Date()) -> Bool {
+        let lastActivity = estimatedLastActivity(meeting, now: now)
+        return now.timeIntervalSince(lastActivity) > interruptedMeetingAutoResumeMaxAge
+    }
+
+    private func finalizeStaleInterruptedMeetings(_ meetings: [Meeting], now: Date) {
+        guard !meetings.isEmpty else { return }
+
+        var pendingReports: [PendingSessionEndReport] = []
+        for meeting in meetings {
+            let endTime = Self.estimatedLastActivity(meeting, now: now)
+            meeting.endTime = endTime
+
+            if appMode == .managed, let sessionId = meeting.managedSessionId, !sessionId.isEmpty {
+                pendingReports.append(
+                    PendingSessionEndReport(
+                        deviceId: DeviceIdentifier.getOrCreateDeviceId(),
+                        sessionId: sessionId,
+                        durationMinutes: max(0, endTime.timeIntervalSince(meeting.startTime)) / 60.0,
+                        meetingId: meeting.id
+                    )
+                )
+            }
+        }
+
+        try? modelContext?.save()
+        DebugLogger.shared.log(.app, "Finalized stale interrupted meetings: count=\(meetings.count)")
+
+        for report in pendingReports {
+            Task {
+                await reportManagedSessionEnd(report, trigger: "stale interrupted resume")
+            }
+        }
     }
     
     func switchInsightsMode(to mode: InsightsMode) {
