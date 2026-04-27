@@ -272,15 +272,13 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             URLQueryItem(name: "keyterm", value: "Ahuja"),
         ]
         
-        print("[Deepgram] Using Nova-3, language: \(language)")
-        
         guard let url = components.url else {
             error = DeepgramError.invalidUrl
             return
         }
-        
-        print("[Deepgram] Connecting to: \(url.absoluteString)")
-        
+
+        DebugLogger.shared.log(.deepgram, "Connecting to Deepgram WebSocket")
+
         var request = URLRequest(url: url)
         request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
         
@@ -347,7 +345,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     guard let self, self.isConnected else { return }
                     self.consecutiveSendErrors += 1
                     DebugLogger.shared.log(.deepgram, "WS send error: \(error.localizedDescription)")
-                    print("WebSocket send error: \(error)")
                     self.error = error
                     if self.consecutiveSendErrors >= 5 {
                         self.isConnected = false
@@ -392,7 +389,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 case .failure(let error):
                     guard self.isConnected else { return }
                     DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
-                    print("WebSocket receive error: \(error)")
                     self.error = error
                     self.isConnected = false
                     self._sendConnected = false
@@ -440,26 +436,19 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 if speechFinal && !deepgramIsFinal && hasTranscriptText {
                     DebugLogger.shared.log(
                         .deepgram,
-                        "Promoting speech_final transcript to final: words=\(alternative.words.count), text=\"\(alternative.transcript.prefix(80))\""
+                        "Promoting speech_final transcript to final: words=\(alternative.words.count)"
                     )
                 }
-                
-                // Debug: Log speaker info from raw response
+
                 let speakersInResponse = alternative.words.compactMap { $0.speaker }
                 let uniqueSpeakers = Set(speakersInResponse)
                 if isFinal && !alternative.words.isEmpty {
-                    print("[Deepgram] Final result - Speakers detected: \(uniqueSpeakers), Words: \(alternative.words.count)")
-                    let preview = alternative.transcript.prefix(80)
                     DebugLogger.shared.log(
                         .deepgram,
-                        "Final transcript: words=\(alternative.words.count), speakers=\(Array(uniqueSpeakers).sorted()), text=\"\(preview)\""
+                        "Final transcript received: words=\(alternative.words.count), speakers=\(Array(uniqueSpeakers).sorted())"
                     )
-                    // Log first few words with speaker info
-                    for word in alternative.words.prefix(5) {
-                        print("  - '\(word.word)' speaker: \(word.speaker ?? -1)")
-                    }
                 }
-                
+
                 // Parse words with speaker info, overriding with source dominance
                 var micTaggedWordCount = 0
                 var unknownTaggedWordCount = 0
@@ -506,7 +495,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         info.totalDuration += word.end - word.start
                         speakerHistory[speaker] = info
                     }
-                    print("[Deepgram] Total unique speakers so far: \(speakerHistory.keys.sorted())")
                 }
                 
                 // Segment by speaker - group consecutive words by the same speaker
@@ -537,7 +525,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             if !isIgnoredType {
                 // Only log unexpected parse errors
                 DebugLogger.shared.log(.deepgram, "Parse warning: \(error.localizedDescription)")
-                print("[Deepgram] Parse warning: \(error.localizedDescription)")
             }
         }
     }

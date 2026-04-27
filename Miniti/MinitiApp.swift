@@ -129,10 +129,6 @@ struct MinitiApp: App {
             CommandGroup(replacing: .sidebar) {}
             CommandGroup(replacing: .toolbar) {}
 
-            CommandGroup(replacing: .undoRedo) {}
-            CommandGroup(replacing: .pasteboard) {}
-            CommandGroup(replacing: .textEditing) {}
-
             SettingsCommands(appState: appState)
 
             #if canImport(Sparkle)

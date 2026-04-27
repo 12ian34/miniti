@@ -297,7 +297,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
     }
 
-    /// Returns "Name (48000Hz, id:N, transport=bluetooth)". Used around recovery/stall
+    /// Returns "Name (48000Hz, id:N, uid:..., transport=bluetooth, profile=bluetooth-hfp-like)".
+    /// Used around recovery/stall
     /// events so we can tell in the debug log whether a Bluetooth/AirPlay handoff was
     /// in play.
     nonisolated static func detailedDeviceInfo(selector: AudioObjectPropertySelector) -> String {
@@ -323,9 +324,19 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let name = (nameRef as String?) ?? "unknown"
 
         let sampleRate = deviceNominalSampleRate(deviceID)
-        let transport = deviceTransportType(deviceID).map(transportTypeName) ?? "transport:?"
+        let transportType = deviceTransportType(deviceID)
+        let transport = transportType.map(transportTypeName) ?? "transport:?"
+        let uid = deviceUID(deviceID) ?? "uid:?"
+        let inputChannels = streamChannelCount(deviceID, scope: kAudioObjectPropertyScopeInput)
+        let outputChannels = streamChannelCount(deviceID, scope: kAudioObjectPropertyScopeOutput)
+        let profile = deviceProfileHint(
+            transportType: transportType,
+            sampleRate: sampleRate,
+            inputChannels: inputChannels,
+            outputChannels: outputChannels
+        )
 
-        return "\(name) (\(Int(sampleRate))Hz, id:\(deviceID), \(transport))"
+        return "\(name) (\(Int(sampleRate))Hz, id:\(deviceID), uid:\(uid), transport=\(transport), inCh=\(inputChannels), outCh=\(outputChannels), profile=\(profile))"
     }
 
     nonisolated static func detailedOutputDeviceInfo() -> String {
@@ -393,6 +404,55 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         let err = AudioObjectGetPropertyData(deviceID, &addr, 0, nil, &size, &transportType)
         return err == noErr ? transportType : nil
+    }
+
+    nonisolated private static func streamChannelCount(_ deviceID: AudioDeviceID, scope: AudioObjectPropertyScope) -> UInt32 {
+        var streamSize: UInt32 = 0
+        var streamAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: scope,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyDataSize(deviceID, &streamAddr, 0, nil, &streamSize) == noErr,
+              streamSize > 0 else { return 0 }
+
+        let streamCount = Int(streamSize) / MemoryLayout<AudioStreamID>.size
+        var streams = [AudioStreamID](repeating: 0, count: streamCount)
+        guard AudioObjectGetPropertyData(deviceID, &streamAddr, 0, nil, &streamSize, &streams) == noErr else {
+            return 0
+        }
+
+        return streams.reduce(UInt32(0)) { total, streamID in
+            total + streamPhysicalFormat(streamID).mChannelsPerFrame
+        }
+    }
+
+    nonisolated private static func streamPhysicalFormat(_ streamID: AudioStreamID) -> AudioStreamBasicDescription {
+        var format = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioStreamPropertyPhysicalFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        _ = AudioObjectGetPropertyData(streamID, &addr, 0, nil, &size, &format)
+        return format
+    }
+
+    nonisolated private static func deviceProfileHint(
+        transportType: UInt32?,
+        sampleRate: Double,
+        inputChannels: UInt32,
+        outputChannels: UInt32
+    ) -> String {
+        guard transportType == kAudioDeviceTransportTypeBluetooth ||
+              transportType == kAudioDeviceTransportTypeBluetoothLE else {
+            return "n/a"
+        }
+        if sampleRate <= 24_000 || (inputChannels > 0 && outputChannels <= 1) {
+            return "bluetooth-hfp-like"
+        }
+        return "bluetooth-a2dp-like"
     }
     
     nonisolated private static func hasOutputStreams(_ deviceID: AudioDeviceID) -> Bool {
@@ -522,7 +582,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         postRecoveryBaselineNonSilent = sysNonSilentCallbacks
         DebugLogger.shared.log(
             .audio,
-            "Post-recovery health check armed (reason=\(reason), output=\(Self.defaultOutputDeviceInfo()))"
+            "Post-recovery health check armed (reason=\(reason), output=\(Self.detailedOutputDeviceInfo()))"
         )
     }
     
@@ -546,6 +606,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         await stopCaptureAsync()
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
+        DebugLogger.shared.log(
+            .audio,
+            "Audio environment: input=\(Self.detailedInputDeviceInfo()), output=\(Self.detailedOutputDeviceInfo())"
+        )
         resetRuntimeDiagnostics()
         pendingMicRetryTask?.cancel()
         pendingMicRetryTask = nil
@@ -562,9 +626,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 try await startMicrophoneCapture()
                 capturedAny = true
                 setMicActive(true)
-                print("Microphone capture started")
             } catch {
-                print("Microphone capture failed: \(error.localizedDescription)")
                 DebugLogger.shared.log(.audio, "Mic capture FAILED: \(error.localizedDescription)")
                 setMicActive(false)
                 if !systemAudio { throw error }
@@ -576,9 +638,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 try startSystemAudioCapture(mixWithMic: microphone)
                 capturedAny = true
                 setSystemAudioActive(true)
-                print("System audio capture started")
             } catch {
-                print("System audio capture failed: \(error.localizedDescription)")
                 DebugLogger.shared.log(.audio, "System audio FAILED: \(error.localizedDescription)")
                 setSystemAudioActive(false)
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -663,7 +723,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
         }
         
-        DebugLogger.shared.log(.audio, "Default input device: \(Self.defaultInputDeviceInfo())")
+        DebugLogger.shared.log(.audio, "Default input device: \(Self.detailedInputDeviceInfo())")
         
         audioEngine = AVAudioEngine()
         guard let audioEngine else { return }
@@ -883,7 +943,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 return
             }
             
-            DebugLogger.shared.log(.audio, "Mic restart retry \(attempt)/\(self.maxMicRetryAttempts) — attempting. Input: \(Self.defaultInputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Mic restart retry \(attempt)/\(self.maxMicRetryAttempts) — attempting. Input: \(Self.detailedInputDeviceInfo())")
             
             self.stopMicrophoneCapture()
             do {
@@ -1156,12 +1216,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var tapID: AudioObjectID = kAudioObjectUnknown
         var err = AudioHardwareCreateProcessTap(tapDescription, &tapID)
         guard err == noErr else {
-            print("[SystemAudio] AudioHardwareCreateProcessTap failed: \(err)")
             DebugLogger.shared.log(.audio, "AudioHardwareCreateProcessTap FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioPermissionDenied
         }
         processTapID = tapID
-        print("[SystemAudio] Created process tap #\(tapID)")
         DebugLogger.shared.log(.audio, "System audio process tap created (#\(tapID))")
         
         // 2. Read tap's native audio format
@@ -1174,11 +1232,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         err = AudioObjectGetPropertyData(tapID, &formatAddr, 0, nil, &formatSize, &tapFormat)
         guard err == noErr else {
-            print("[SystemAudio] Failed to read tap format: \(err)")
             DebugLogger.shared.log(.audio, "Read tap format FAILED: osstatus=\(err)")
             throw AudioCaptureError.formatCreationFailed
         }
-        print("[SystemAudio] Tap format: \(tapFormat.mSampleRate)Hz, \(tapFormat.mChannelsPerFrame)ch, \(tapFormat.mBitsPerChannel)bit, Float=\(tapFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0)")
         DebugLogger.shared.log(.audio, "System tap format: \(Self.formatSummary(tapFormat))")
         
         // 3. Pick a clock source for the aggregate device.
@@ -1236,12 +1292,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var aggDeviceID: AudioObjectID = kAudioObjectUnknown
         err = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggDeviceID)
         guard err == noErr else {
-            print("[SystemAudio] Failed to create aggregate device: \(err)")
             DebugLogger.shared.log(.audio, "Create aggregate device FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
         aggregateDeviceID = aggDeviceID
-        print("[SystemAudio] Created aggregate device #\(aggDeviceID)")
+        DebugLogger.shared.log(.audio, "Aggregate device created (#\(aggDeviceID))")
         
         // 5. Determine the actual IO format for the aggregate device.
         // IMPORTANT: the aggregate device's stream format may differ from the
@@ -1256,10 +1311,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         let fmtErr = AudioObjectGetPropertyData(aggDeviceID, &ioFmtAddr, 0, nil, &ioFmtSize, &ioFormat)
         if fmtErr == noErr && ioFormat.mSampleRate > 0 {
-            print("[SystemAudio] Aggregate IO format: \(ioFormat.mSampleRate)Hz, \(ioFormat.mChannelsPerFrame)ch, Float=\(ioFormat.mFormatFlags & kAudioFormatFlagIsFloat != 0), NonInterleaved=\(ioFormat.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0)")
             DebugLogger.shared.log(.audio, "Aggregate input format: \(Self.formatSummary(ioFormat))")
         } else {
-            print("[SystemAudio] Could not read aggregate IO format (\(fmtErr)), using tap format")
             ioFormat = tapFormat
             DebugLogger.shared.log(.audio, "Aggregate format read failed (\(fmtErr)) — using tap format")
         }
@@ -1290,7 +1343,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             )
         }
         guard err == noErr else {
-            print("[SystemAudio] Failed to create IO proc: \(err)")
             DebugLogger.shared.log(.audio, "Create IO proc FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
@@ -1299,13 +1351,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         // 7. Start the aggregate device
         err = AudioDeviceStart(aggDeviceID, procID)
         guard err == noErr else {
-            print("[SystemAudio] Failed to start aggregate device: \(err)")
             DebugLogger.shared.log(.audio, "Start aggregate device FAILED: osstatus=\(err)")
             throw AudioCaptureError.systemAudioSetupFailed
         }
-        
-        print("[SystemAudio] Process tap started successfully (audio-only mode)")
-        DebugLogger.shared.log(.audio, "System audio tap started. Output device: \(Self.defaultOutputDeviceInfo())")
+
+        DebugLogger.shared.log(.audio, "System audio tap started. Output device: \(Self.detailedOutputDeviceInfo())")
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
         systemRetryAttempt = 0
@@ -1394,7 +1444,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let formatLabel = isFloatFormat ? "float\(bitsPerChannel)" : "int\(bitsPerChannel)"
             let resampleMode = canUseDecimation ? "decimate(x\(decimation))" : "linear(\(String(format: "%.3f", sampleRateRatio))x)"
             let diag = "System callback format: \(inputFormat.sampleRate)Hz, \(channels)ch, \(formatLabel), interleaved=\(isInterleaved), frames=\(framesPerChannel), mode=\(resampleMode), buffers=\(bufferList.count), bytes=\(byteCount)"
-            print("[SystemAudio] IO callback: \(inputFormat.sampleRate)Hz, \(channels)ch, \(formatLabel), interleaved=\(isInterleaved), frames=\(framesPerChannel), mode=\(resampleMode), mNumberBuffers=\(bufferList.count), mDataByteSize=\(byteCount)")
             DebugLogger.shared.log(.audio, diag)
         }
         
@@ -1442,7 +1491,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
         } else {
             if sysCallbackCount == 0 {
-                print("[SystemAudio] Unsupported tap format: bits=\(bitsPerChannel), flags=\(asbd.mFormatFlags)")
                 DebugLogger.shared.log(.audio, "Unsupported system tap format: bits=\(bitsPerChannel), flags=\(asbd.mFormatFlags)")
             }
             return
@@ -1504,15 +1552,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         vDSP_vfix16(scaled, 1, &int16Out, 1, vDSP_Length(outputFrames))
         sysOutputFrameCount += outputFrames
         
-        // Diagnostic: log first callback's output values + periodic output RMS
         sysCallbackCount += 1
         if sysCallbackCount == 1 {
             let first5 = (0..<min(5, outputFrames)).map { String(int16Out[$0]) }
-            // Also compute mono RMS at input for reference
             var monoMsq: Float = 0
             vDSP_measqv(mono, 1, &monoMsq, vDSP_Length(framesPerChannel))
-            print("[SystemAudio] First output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], monoRMS=\(String(format: "%.4f", sqrt(monoMsq)))")
-            DebugLogger.shared.log(.audio, "System first output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], inRMS=\(String(format: "%.5f", normalizedInputRMS))")
+            DebugLogger.shared.log(.audio, "System first output: frames=\(outputFrames), samples=[\(first5.joined(separator: ", "))], inRMS=\(String(format: "%.5f", normalizedInputRMS)), monoRMS=\(String(format: "%.4f", sqrt(monoMsq)))")
         }
         
         // Silence detection safety net (every 2s). With the built-in clock
@@ -1798,12 +1843,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             smoothedMicGain += (idealMicGain > smoothedMicGain ? attack : release) * (idealMicGain - smoothedMicGain)
             smoothedSysGain += (idealSysGain > smoothedSysGain ? attack : release) * (idealSysGain - smoothedSysGain)
             
-            // Debug: log mixing stats every 30s, only when system audio is active
             if now - lastMixDebugLog > 30.0 && sysRMS > 30 {
                 lastMixDebugLog = now
-                print("[AudioMix] micGain=\(String(format: "%.1f", smoothedMicGain)) sysGain=\(String(format: "%.1f", smoothedSysGain)) micRMS=\(String(format: "%.0f", micRMS)) sysRMS=\(String(format: "%.0f", sysRMS))")
+                DebugLogger.shared.log(.audio, "Audio mix: micGain=\(String(format: "%.1f", smoothedMicGain)), sysGain=\(String(format: "%.1f", smoothedSysGain)), micRMS=\(String(format: "%.0f", micRMS)), sysRMS=\(String(format: "%.0f", sysRMS))")
             }
-            
+
             // Apply gains
             var mGain = smoothedMicGain
             vDSP_vsmul(micFloat, 1, &mGain, &micFloat, 1, vDSP_Length(mixCount))

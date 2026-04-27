@@ -11,10 +11,22 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
         case app
     }
 
+    enum Level: String, CaseIterable {
+        case routine
+        case recovery
+        case warning
+        case error
+
+        var isImportant: Bool {
+            self != .routine
+        }
+    }
+
     struct Entry: Identifiable {
         let id = UUID()
         let timestamp: Date
         let category: Category
+        let level: Level
         let message: String
     }
 
@@ -35,9 +47,11 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
     }
 
     /// Thread-safe logging — callable from audio callbacks and any isolation domain.
-    nonisolated func log(_ category: Category, _ message: String) {
+    /// When `level` is omitted, the message is classified so the debug panel can hide
+    /// routine success/setup logs by default while keeping failure/recovery breadcrumbs.
+    nonisolated func log(_ category: Category, _ message: String, level: Level? = nil) {
         let cleaned = redact(message)
-        let entry = Entry(timestamp: Date(), category: category, message: cleaned)
+        let entry = Entry(timestamp: Date(), category: category, level: level ?? Self.classify(cleaned), message: cleaned)
 
         lock.lock()
         buffer.append(entry)
@@ -47,11 +61,61 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
         let snapshot = buffer
         lock.unlock()
 
-        print("[dbg:\(category.rawValue)] \(cleaned)")
-
         DispatchQueue.main.async { [weak self] in
             self?.entries = snapshot
         }
+    }
+
+    nonisolated static func format(_ entry: Entry) -> String {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss.SSS"
+        return "[\(fmt.string(from: entry.timestamp))] [\(entry.level.rawValue)] [\(entry.category.rawValue)] \(entry.message)"
+    }
+
+    nonisolated private static func classify(_ message: String) -> Level {
+        let lower = message.lowercased()
+
+        let errorTokens = [
+            "failed", " fail", "failure", "error", "denied", "invalid",
+            "unhealthy", "exhausted", "cannot connect", "can't connect",
+            "no output device", "no api key", "not available"
+        ]
+        if errorTokens.contains(where: { lower.contains($0) }) {
+            return .error
+        }
+
+        let warningTokens = [
+            "warning", "stalled", "starvation", "degraded", "dropping stale",
+            "dropped stale", "rejected", "unsupported", "near-silent",
+            "near silent", "all buffers are near-silent", "no transcript",
+            "zero transcript", "suppressed", "cooldown", "skipped",
+            "could not", "stale", "mismatch", "limit"
+        ]
+        if warningTokens.contains(where: { lower.contains($0) }) {
+            return .warning
+        }
+
+        let recoveryTokens = [
+            "route changed", "device changed", "config changed", "restart",
+            "reconnect", "recovery", "retry", "reset", "source tracking",
+            "output-change", "silent-stall", "callback-stall", "auto-retry",
+            "speaker identity reset"
+        ]
+        if recoveryTokens.contains(where: { lower.contains($0) }) {
+            return .recovery
+        }
+
+        if lower.hasPrefix("default input device changed") ||
+            lower.hasPrefix("default output device changed") ||
+            lower.hasPrefix("audio device list changed") {
+            return .recovery
+        }
+
+        if lower.hasPrefix("speaker-names applied") {
+            return .recovery
+        }
+
+        return .routine
     }
 
     nonisolated private func redact(_ message: String) -> String {
@@ -78,13 +142,9 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
     }
 
     func exportText() -> String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm:ss.SSS"
         lock.lock()
         let snap = buffer
         lock.unlock()
-        return snap.map { entry in
-            "[\(fmt.string(from: entry.timestamp))] [\(entry.category.rawValue)] \(entry.message)"
-        }.joined(separator: "\n")
+        return snap.map(Self.format).joined(separator: "\n")
     }
 }
