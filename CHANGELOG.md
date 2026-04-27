@@ -15,6 +15,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - new: (macOS and iOS) saved transcripts can be trimmed before exporting, sharing, or regenerating insights
 - improvement: (macOS) speaker labels no longer carry incorrect names across live transcription reconnects
 - improvement: (macOS and iOS) automatic speaker naming is more conservative and waits for clearer transcript evidence before applying names
+- fix: (macOS) notes editing now supports standard paste, undo, redo, cut, copy, and select-all shortcuts
 - fix: (macOS and iOS) starting a new recording no longer picks up where an old unfinished session left off
 
 ### 2026-04-23 - v1.24.1

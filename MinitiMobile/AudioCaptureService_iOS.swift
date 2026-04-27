@@ -54,7 +54,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         try await startMicrophoneCapture()
         isCapturing = true
         isMicActive = true
-        print("Microphone capture started (iOS)")
     }
     
     func stopCapture() {
@@ -85,10 +84,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         try session.setActive(true)
         
-        let route = session.currentRoute
-        let inputName = route.inputs.first?.portName ?? "none"
-        let inputType = route.inputs.first?.portType.rawValue ?? "none"
-        DebugLogger.shared.log(.audio, "iOS audio route: input=\(inputName) (\(inputType)), sampleRate=\(session.sampleRate)Hz")
+        DebugLogger.shared.log(.audio, "iOS audio session: \(sessionRouteSummary(session))")
         
         if !skipPermissionCheck {
             let granted = await requestMicrophonePermission()
@@ -175,8 +171,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             queue: .main
         ) { [weak self] notification in
             let reason = notification.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            let previousRoute = notification.userInfo?[AVAudioSessionRouteChangePreviousRouteKey] as? AVAudioSessionRouteDescription
+            let previousRouteSummary = Self.routeSummary(previousRoute)
             Task { @MainActor in
-                self?.handleRouteChange(reason: reason)
+                self?.handleRouteChange(reason: reason, previousRouteSummary: previousRouteSummary)
             }
         }
     }
@@ -185,13 +183,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         scheduleMicRestart(reason: "engine configuration changed")
     }
     
-    private func handleRouteChange(reason: UInt?) {
+    private func handleRouteChange(reason: UInt?, previousRouteSummary: String) {
         guard let reason, let changeReason = AVAudioSession.RouteChangeReason(rawValue: reason) else { return }
         
-        let route = AVAudioSession.sharedInstance().currentRoute
-        let inputName = route.inputs.first?.portName ?? "none"
-        let inputType = route.inputs.first?.portType.rawValue ?? "none"
-        DebugLogger.shared.log(.audio, "Audio route changed (\(changeReason.debugLabel)): input=\(inputName) (\(inputType))")
+        let session = AVAudioSession.sharedInstance()
+        DebugLogger.shared.log(.audio, "Audio route changed (\(changeReason.debugLabel)): previous=[\(previousRouteSummary)], current=\(sessionRouteSummary(session))")
         
         guard isCapturing, isMicActive else { return }
         let newIdentity = currentInputIdentity()
@@ -216,9 +212,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             defer { self.isRestartingMicAfterRouteChange = false }
             
             let session = AVAudioSession.sharedInstance()
-            let route = session.currentRoute
-            let inputName = route.inputs.first?.portName ?? "none"
-            DebugLogger.shared.log(.audio, "Restarting iOS mic tap (\(reason)). Input: \(inputName), \(session.sampleRate)Hz")
+            DebugLogger.shared.log(.audio, "Restarting iOS mic tap (\(reason)): \(self.sessionRouteSummary(session))")
             
             self.stopMicrophoneCapture()
             do {
@@ -237,6 +231,24 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let uid = input?.uid ?? "unknown"
         let port = input?.portType.rawValue ?? "none"
         return "\(uid)|\(port)"
+    }
+
+    private func sessionRouteSummary(_ session: AVAudioSession) -> String {
+        let inputSummary = Self.routePortSummary(session.currentRoute.inputs)
+        let outputSummary = Self.routePortSummary(session.currentRoute.outputs)
+        return "category=\(session.category.rawValue), mode=\(session.mode.rawValue), options=0x\(String(session.categoryOptions.rawValue, radix: 16)), sampleRate=\(Int(session.sampleRate))Hz, ioBuffer=\(String(format: "%.4f", session.ioBufferDuration))s, input=[\(inputSummary)], output=[\(outputSummary)]"
+    }
+
+    nonisolated private static func routePortSummary(_ ports: [AVAudioSessionPortDescription]) -> String {
+        guard !ports.isEmpty else { return "none" }
+        return ports.map { port in
+            "\(port.portName) (\(port.portType.rawValue), uid:\(port.uid), channels:\(port.channels?.count ?? 0))"
+        }.joined(separator: "; ")
+    }
+
+    nonisolated private static func routeSummary(_ route: AVAudioSessionRouteDescription?) -> String {
+        guard let route else { return "unknown" }
+        return "input=[\(routePortSummary(route.inputs))], output=[\(routePortSummary(route.outputs))]"
     }
     
     private func stopMicrophoneCapture() {

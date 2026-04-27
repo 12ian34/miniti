@@ -26,7 +26,6 @@ BUILT FOR REPEAT USE
 - Full meeting history with transcripts, insights, and coaching metrics
 - Search meetings by title, transcript, notes, insights, or any content
 - Edit titles and copy transcripts/insights as markdown
-- Auto-export meetings as markdown files for Obsidian, Claude Code, and other tools (macOS)
 - Stop and resume sessions without losing context
 
 PRICING

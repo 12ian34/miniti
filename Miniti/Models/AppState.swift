@@ -556,6 +556,7 @@ final class AppState: ObservableObject {
     private var autoStopTimer: Timer?
     private var lastTranscriptReceivedAt: CFAbsoluteTime = 0
     private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
+    private var lastTranscriptHealthDebugLogAt: CFAbsoluteTime = 0
     private var deepgramReconnectTask: Task<Void, Never>?
     private var deepgramReconnectGeneration = 0
     private var lastDeepgramReconnectScheduledAt: CFAbsoluteTime = 0
@@ -1011,8 +1012,15 @@ final class AppState: ObservableObject {
         
         let now = CFAbsoluteTimeGetCurrent()
         let speechLikely = microphoneLevel > 0.008 || (captureSystemAudio && systemAudioLevel > 0.006)
+        let transcriptGap = now - lastTranscriptReceivedAt
+        if now - lastTranscriptHealthDebugLogAt > 20.0 {
+            lastTranscriptHealthDebugLogAt = now
+            DebugLogger.shared.log(
+                .app,
+                "Transcript health: gap=\(String(format: "%.1f", transcriptGap))s, speechLikely=\(speechLikely), dg=\(deepgramService.connectionState), packets=\(deepgramService.packetsSentCount), micLevel=\(String(format: "%.4f", microphoneLevel)), sysLevel=\(String(format: "%.4f", systemAudioLevel)), micActive=\(audioCaptureService?.isMicActive ?? false), sysActive=\(audioCaptureService?.isSystemAudioActive ?? false), recovery=\(audioRecoveryState)"
+            )
+        }
         if speechLikely {
-            let transcriptGap = now - lastTranscriptReceivedAt
             if transcriptGap > 20.0,
                now - lastTranscriptStarvationRecoveryAt > 30.0,
                deepgramService.connectionState == .connected {
@@ -1149,16 +1157,16 @@ final class AppState: ObservableObject {
             let mergeResult = Self.mergeFinalSegment(liveSegment, into: &updated)
             switch mergeResult {
             case .appended:
-                print("[AppState] Added segment - Speaker \(segment.speaker): \"\(text.prefix(50))...\"")
+                break
             case .replacedSuperset:
                 DebugLogger.shared.log(
                     .deepgram,
-                    "Merged cumulative final transcript instead of dropping suffix: speaker=\(segment.speaker), text=\"\(text.prefix(80))\""
+                    "Merged cumulative final transcript instead of dropping suffix: speaker=\(segment.speaker)"
                 )
             case .skippedExactDuplicate, .skippedContainedDuplicate:
                 DebugLogger.shared.log(
                     .deepgram,
-                    "Skipped duplicate final transcript: reason=\(mergeResult), speaker=\(segment.speaker), text=\"\(text.prefix(80))\""
+                    "Skipped duplicate final transcript: reason=\(mergeResult), speaker=\(segment.speaker)"
                 )
             }
         }
@@ -1527,6 +1535,10 @@ final class AppState: ObservableObject {
 
         let candidates = speakerNameCandidates()
         let model = OpenAIModel.gpt5Mini
+        DebugLogger.shared.log(
+            .app,
+            "Speaker-names request: mode=\(appMode.rawValue), segments=\(segmentCount), speakers=\(Set(finalSegments.map(\.speaker)).sorted()), candidates=\(candidates.count), transcriptChars=\(trimmed.count)"
+        )
 
         do {
             let inferred: [String: String]
@@ -1548,6 +1560,7 @@ final class AppState: ObservableObject {
                     language: meetingLanguage
                 )
             } else {
+                DebugLogger.shared.log(.app, "Speaker-names skipped: no inference service/key available")
                 return
             }
 
@@ -1565,21 +1578,33 @@ final class AppState: ObservableObject {
             }
 
             let supported = Self.transcriptSupportedSpeakerNames(inferred, finalSegments: finalSegments)
+            let sanitized = SpeakerNamesResponse.sanitize(inferred)
             let rejected = inferred.count - supported.count
+            let rejectedIDs = Set(sanitized.keys).subtracting(supported.keys).sorted()
             guard !supported.isEmpty else {
-                DebugLogger.shared.log(.app, "Speaker-names: rejected \(inferred.count) unsupported inference(s)")
+                DebugLogger.shared.log(
+                    .app,
+                    "Speaker-names: rejected \(inferred.count) unsupported inference(s), ids=\(rejectedIDs), inferred=\(Self.speakerNameDebugSummary(sanitized))"
+                )
                 return
             }
 
             // Merge: inference can refine prior inferred names, but never overwrite a user override.
             var merged = liveSpeakerNames
             var applied = 0
+            var skippedOverrides: [String] = []
             for (key, value) in supported where !liveSpeakerOverrides.contains(key) {
                 merged[key] = value
                 applied += 1
             }
+            for key in supported.keys where liveSpeakerOverrides.contains(key) {
+                skippedOverrides.append(key)
+            }
             liveSpeakerNames = merged
-            DebugLogger.shared.log(.app, "Speaker-names applied: total=\(merged.count), added/updated=\(applied), skipped_overrides=\(supported.count - applied), rejected_unsupported=\(rejected)")
+            DebugLogger.shared.log(
+                .app,
+                "Speaker-names applied: total=\(merged.count), added/updated=\(applied), supported=\(Self.speakerNameDebugSummary(supported)), skipped_override_ids=\(skippedOverrides.sorted()), rejected_unsupported=\(rejected), rejected_ids=\(rejectedIDs), inferred=\(Self.speakerNameDebugSummary(sanitized))"
+            )
         } catch {
             DebugLogger.shared.log(.app, "Speaker-names inference failed: \(error.localizedDescription)")
         }
@@ -2157,6 +2182,17 @@ final class AppState: ObservableObject {
             supported[key] = name
         }
         return supported
+    }
+
+    private nonisolated static func speakerNameDebugSummary(_ names: [String: String]) -> String {
+        guard !names.isEmpty else { return "[]" }
+        let pairs = names
+            .sorted { $0.key.localizedStandardCompare($1.key) == .orderedAscending }
+            .prefix(8)
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ", ")
+        let suffix = names.count > 8 ? ", +\(names.count - 8) more" : ""
+        return "[\(pairs)\(suffix)]"
     }
 
     private nonisolated static func speakerNameHasTranscriptEvidence(
@@ -3291,6 +3327,7 @@ final class AppState: ObservableObject {
         lastDeepgramReconnectScheduledAt = 0
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         lastTranscriptStarvationRecoveryAt = 0
+        lastTranscriptHealthDebugLogAt = 0
         startTranscriptHealthMonitoring()
         
         // Determine which API key to use
@@ -3450,6 +3487,7 @@ final class AppState: ObservableObject {
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
         lastDeepgramReconnectScheduledAt = 0
+        lastTranscriptHealthDebugLogAt = 0
         systemAudioInactiveSince = 0
         
         // Update Live Activity to show paused state (keep it alive for resume)
@@ -3515,6 +3553,7 @@ final class AppState: ObservableObject {
         deepgramReconnectTask = nil
         deepgramReconnectGeneration += 1
         lastDeepgramReconnectScheduledAt = 0
+        lastTranscriptHealthDebugLogAt = 0
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
         isGeneratingFinalInsights = false

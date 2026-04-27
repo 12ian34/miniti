@@ -9,6 +9,7 @@ struct DebugLogView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var logger = DebugLogger.shared
     @State private var filter: DebugLogger.Category? = nil
+    @State private var includeRoutine = false
     @State private var viewMode: ViewMode = .pretty
     @State private var localEscapeMonitor: Any?
     @State private var isAutoScrollEnabled = true
@@ -17,16 +18,19 @@ struct DebugLogView: View {
     @State private var suppressAutoScrollLockUntil = Date.distantPast
 
     private var filtered: [DebugLogger.Entry] {
-        guard let filter else { return logger.entries }
-        return logger.entries.filter { $0.category == filter }
+        logger.entries.filter { entry in
+            let categoryMatches = filter.map { entry.category == $0 } ?? true
+            let priorityMatches = includeRoutine || entry.level.isImportant
+            return categoryMatches && priorityMatches
+        }
+    }
+
+    private var importantCount: Int {
+        logger.entries.filter(\.level.isImportant).count
     }
 
     private var rawFilteredText: String {
-        let fmt = DateFormatter()
-        fmt.dateFormat = "HH:mm:ss.SSS"
-        return filtered.map { entry in
-            "[\(fmt.string(from: entry.timestamp))] [\(entry.category.rawValue)] \(entry.message)"
-        }.joined(separator: "\n")
+        filtered.map(DebugLogger.format).joined(separator: "\n")
     }
 
     private func scrollToBottom(_ id: String, proxy: ScrollViewProxy) {
@@ -74,20 +78,22 @@ struct DebugLogView: View {
                 rawLogView
             }
         }
-        .background(Color.black)
+        .background(ColorPalette.Background.primary)
         .onAppear {
-            DebugLogger.shared.log(.app, "Debug log opened")
             installLocalEscapeMonitor()
         }
         .onDisappear {
             removeLocalEscapeMonitor()
-            DebugLogger.shared.log(.app, "Debug log closed")
         }
         .onChange(of: filter) { _, _ in
             isAutoScrollEnabled = true
             resetAutoScrollTracking()
         }
         .onChange(of: viewMode) { _, _ in
+            isAutoScrollEnabled = true
+            resetAutoScrollTracking()
+        }
+        .onChange(of: includeRoutine) { _, _ in
             isAutoScrollEnabled = true
             resetAutoScrollTracking()
         }
@@ -102,7 +108,11 @@ struct DebugLogView: View {
         HStack(spacing: 10) {
             Text("debug log")
                 .font(.system(.headline, design: .monospaced))
-                .foregroundStyle(.white)
+                .foregroundStyle(ColorPalette.Text.primary)
+
+            Text(includeRoutine ? "\(filtered.count)/\(logger.entries.count)" : "\(filtered.count)/\(importantCount) important")
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(ColorPalette.Text.meta)
 
             Spacer()
 
@@ -112,41 +122,48 @@ struct DebugLogView: View {
                 }
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
-                .foregroundStyle(filter == cat ? .white : .gray)
+                .foregroundStyle(filter == cat ? ColorPalette.Text.primary : ColorPalette.Text.meta)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(filter == cat ? Color.white.opacity(0.15) : Color.clear)
+                .background(filter == cat ? ColorPalette.Border.light.opacity(0.6) : Color.clear)
                 .cornerRadius(4)
             }
+
+            Button(includeRoutine ? "hide routine" : "show routine") {
+                includeRoutine.toggle()
+            }
+            .font(.system(.caption, design: .monospaced))
+            .buttonStyle(.plain)
+            .foregroundStyle(includeRoutine ? ColorPalette.Status.warning : ColorPalette.Text.meta)
 
             Button(viewMode == .pretty ? "raw" : "pretty") {
                 viewMode = (viewMode == .pretty) ? .raw : .pretty
             }
             .font(.system(.caption, design: .monospaced))
             .buttonStyle(.plain)
-            .foregroundStyle(.gray)
+            .foregroundStyle(ColorPalette.Text.meta)
 
             Button("copy") { copyLogs() }
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
-                .foregroundStyle(.gray)
+                .foregroundStyle(ColorPalette.Text.meta)
             
 #if os(macOS)
             Button("save") { saveLogsToFile() }
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
-                .foregroundStyle(.gray)
+                .foregroundStyle(ColorPalette.Text.meta)
 #endif
 
             Button("clear") { logger.clear() }
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
-                .foregroundStyle(.gray)
+                .foregroundStyle(ColorPalette.Text.meta)
 
             Button("close") { dismiss() }
                 .font(.system(.caption, design: .monospaced))
                 .buttonStyle(.plain)
-                .foregroundStyle(.gray)
+                .foregroundStyle(ColorPalette.Text.meta)
                 .keyboardShortcut(.cancelAction)
         }
         .padding(.horizontal, 12)
@@ -208,10 +225,10 @@ struct DebugLogView: View {
                         } label: {
                             Text("resume auto-scroll")
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(ColorPalette.Text.primary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color.blue.opacity(0.9))
+                                .background(ColorPalette.Accent.blue.opacity(0.9))
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -231,7 +248,7 @@ struct DebugLogView: View {
                         VStack(alignment: .leading, spacing: 0) {
                             Text(rawFilteredText.isEmpty ? "(no logs)" : rawFilteredText)
                                 .font(.system(size: 11, design: .monospaced))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(ColorPalette.Text.primary)
                                 .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, 12)
@@ -279,10 +296,10 @@ struct DebugLogView: View {
                         } label: {
                             Text("resume auto-scroll")
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(.white)
+                                .foregroundStyle(ColorPalette.Text.primary)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 6)
-                                .background(Color.blue.opacity(0.9))
+                                .background(ColorPalette.Accent.blue.opacity(0.9))
                                 .clipShape(Capsule())
                         }
                         .buttonStyle(.plain)
@@ -373,21 +390,33 @@ private struct LogEntryRow: View {
 
     private var categoryColor: Color {
         switch entry.category {
-        case .audio: return .green
-        case .deepgram: return .cyan
-        case .app: return .orange
+        case .audio: return ColorPalette.Accent.green
+        case .deepgram: return ColorPalette.Accent.cyan
+        case .app: return ColorPalette.Accent.orange
+        }
+    }
+
+    private var levelColor: Color {
+        switch entry.level {
+        case .routine: return ColorPalette.Text.meta
+        case .recovery: return ColorPalette.Status.info
+        case .warning: return ColorPalette.Status.warning
+        case .error: return ColorPalette.Status.error
         }
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 6) {
             Text(Self.fmt.string(from: entry.timestamp))
-                .foregroundStyle(.gray)
+                .foregroundStyle(ColorPalette.Text.meta)
+            Text(entry.level.rawValue)
+                .foregroundStyle(levelColor)
+                .frame(width: 58, alignment: .leading)
             Text(entry.category.rawValue)
                 .foregroundStyle(categoryColor)
                 .frame(width: 65, alignment: .leading)
             Text(entry.message)
-                .foregroundStyle(.white)
+                .foregroundStyle(entry.level == .routine ? ColorPalette.Text.muted : ColorPalette.Text.primary)
         }
         .font(.system(size: 11, design: .monospaced))
         .textSelection(.enabled)
