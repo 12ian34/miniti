@@ -81,7 +81,7 @@ final class ColorPaletteTests: XCTestCase {
 
     func testMEDDPICCColorForKnownLetters() {
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "M"), "3B82F6")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "E"), "8B5CF6")
+        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "E"), "A78BFA")
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "D"), "EC4899")
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "P"), "F59E0B")
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "I"), "EF4444")
@@ -94,6 +94,6 @@ final class ColorPaletteTests: XCTestCase {
 
     func testMEDDPICCColorCaseInsensitive() {
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "m"), "3B82F6")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "e"), "8B5CF6")
+        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "e"), "A78BFA")
     }
 }

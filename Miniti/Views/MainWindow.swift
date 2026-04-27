@@ -1151,9 +1151,7 @@ struct MeetingDetailView: View {
                             meeting.transcriptAsMarkdown()
                         })
                         
-                        ScrollView {
-                            transcriptContent
-                        }
+                        transcriptContent
                     }
                     .frame(minHeight: 400)
                     
@@ -1289,22 +1287,9 @@ struct MeetingDetailView: View {
                     onRename: { renamingSpeaker = $0 }
                 )
             }
-            SelectableTextView(
-                SelectableAttributed.transcript(
-                    turns: SelectableAttributed.mergeTurns(
-                        sortedSegments.map {
-                            .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-                        },
-                        speakerNames: meeting.speakerNames,
-                        selfIDs: meeting.selfSpeakerIDs
-                    ),
-                    speakerNames: meeting.speakerNames,
-                    selfIDs: meeting.selfSpeakerIDs
-                )
-            )
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
+            TranscriptTrimView(meeting: meeting)
         }
+        .frame(maxHeight: .infinity)
     }
     
     private func saveTitle() {
@@ -1327,7 +1312,7 @@ struct MeetingDetailView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text("update")
+                            Text(meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")
                                 .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                                 Text("meddpicc")
@@ -1367,6 +1352,12 @@ struct MeetingDetailView: View {
                     }
                     
                     Spacer()
+                }
+                if meeting.needsInsightsAfterTranscriptEdit {
+                    Text("transcript edits cleared prior insights; regenerate to analyze the trimmed transcript")
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Theme.textMuted)
+                        .padding(.horizontal, 2)
                 }
             }
 

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 #if os(macOS)
 import AppKit
@@ -11,16 +12,28 @@ import UIKit
 /// when multiple `Text` views are stacked.
 struct SelectableTextView: View {
     let attributed: NSAttributedString
+    let onSelectionChange: ((NSRange?) -> Void)?
+    let onDeleteSelection: (() -> Void)?
 
-    init(_ attributed: NSAttributedString) {
+    init(
+        _ attributed: NSAttributedString,
+        onSelectionChange: ((NSRange?) -> Void)? = nil,
+        onDeleteSelection: (() -> Void)? = nil
+    ) {
         self.attributed = attributed
+        self.onSelectionChange = onSelectionChange
+        self.onDeleteSelection = onDeleteSelection
     }
 
     var body: some View {
         #if os(macOS)
-        _SelectableTextViewMac(attributed: attributed)
+        _SelectableTextViewMac(
+            attributed: attributed,
+            onSelectionChange: onSelectionChange,
+            onDeleteSelection: onDeleteSelection
+        )
         #else
-        _SelectableTextViewIOS(attributed: attributed)
+        _SelectableTextViewIOS(attributed: attributed, onSelectionChange: onSelectionChange)
         #endif
     }
 }
@@ -28,13 +41,19 @@ struct SelectableTextView: View {
 #if os(macOS)
 private struct _SelectableTextViewMac: NSViewRepresentable {
     let attributed: NSAttributedString
+    let onSelectionChange: ((NSRange?) -> Void)?
+    let onDeleteSelection: (() -> Void)?
 
     func makeNSView(context: Context) -> _SelectableTextContainer {
-        _SelectableTextContainer(attributed: attributed)
+        _SelectableTextContainer(
+            attributed: attributed,
+            onSelectionChange: onSelectionChange,
+            onDeleteSelection: onDeleteSelection
+        )
     }
 
     func updateNSView(_ nsView: _SelectableTextContainer, context: Context) {
-        nsView.apply(attributed)
+        nsView.apply(attributed, onSelectionChange: onSelectionChange, onDeleteSelection: onDeleteSelection)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: _SelectableTextContainer, context: Context) -> CGSize? {
@@ -45,13 +64,32 @@ private struct _SelectableTextViewMac: NSViewRepresentable {
     }
 }
 
-final class _SelectableTextContainer: NSView {
-    private let textView: NSTextView
+final class _SelectableNativeTextView: NSTextView {
+    var onDeleteSelection: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let isDeleteKey = event.charactersIgnoringModifiers == "\u{7F}" ||
+            event.charactersIgnoringModifiers == "\u{8}"
+        if isDeleteKey, selectedRange().length > 0 {
+            onDeleteSelection?()
+            return
+        }
+        super.keyDown(with: event)
+    }
+}
+
+final class _SelectableTextContainer: NSView, NSTextViewDelegate {
+    private let textView: _SelectableNativeTextView
     private var lastMeasuredWidth: CGFloat = -1
     private var lastMeasuredHeight: CGFloat = 0
+    private var onSelectionChange: ((NSRange?) -> Void)?
 
-    init(attributed: NSAttributedString) {
-        let tv = NSTextView(frame: .zero)
+    init(
+        attributed: NSAttributedString,
+        onSelectionChange: ((NSRange?) -> Void)?,
+        onDeleteSelection: (() -> Void)?
+    ) {
+        let tv = _SelectableNativeTextView(frame: .zero)
         tv.isEditable = false
         tv.isSelectable = true
         tv.isRichText = true
@@ -69,8 +107,11 @@ final class _SelectableTextContainer: NSView {
         // display cycle with an NSInternalInconsistencyException.
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.textStorage?.setAttributedString(attributed)
+        tv.onDeleteSelection = onDeleteSelection
         self.textView = tv
+        self.onSelectionChange = onSelectionChange
         super.init(frame: .zero)
+        tv.delegate = self
         addSubview(tv)
         NSLayoutConstraint.activate([
             tv.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -82,7 +123,13 @@ final class _SelectableTextContainer: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func apply(_ attributed: NSAttributedString) {
+    func apply(
+        _ attributed: NSAttributedString,
+        onSelectionChange: ((NSRange?) -> Void)?,
+        onDeleteSelection: (() -> Void)?
+    ) {
+        self.onSelectionChange = onSelectionChange
+        textView.onDeleteSelection = onDeleteSelection
         guard textView.textStorage?.isEqual(to: attributed) == false else { return }
         textView.textStorage?.setAttributedString(attributed)
         lastMeasuredWidth = -1
@@ -93,6 +140,14 @@ final class _SelectableTextContainer: NSView {
         // update. Sizing is driven by our sizeThatFits(_:nsView:context:)
         // implementation, so SwiftUI re-measures automatically when the
         // representable's attributed input changes.
+    }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        let range = textView.selectedRange()
+        let selection = range.length > 0 ? range : nil
+        DispatchQueue.main.async { [onSelectionChange] in
+            onSelectionChange?(selection)
+        }
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
@@ -138,6 +193,11 @@ final class _SelectableTextContainer: NSView {
 
 private struct _SelectableTextViewIOS: UIViewRepresentable {
     let attributed: NSAttributedString
+    let onSelectionChange: ((NSRange?) -> Void)?
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelectionChange: onSelectionChange)
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -150,12 +210,14 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
         tv.dataDetectorTypes = []
         tv.adjustsFontForContentSizeCategory = false
         tv.attributedText = attributed
+        tv.delegate = context.coordinator
         tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.setContentHuggingPriority(.required, for: .vertical)
         return tv
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        context.coordinator.onSelectionChange = onSelectionChange
         if uiView.attributedText != attributed {
             uiView.attributedText = attributed
             uiView.invalidateIntrinsicContentSize()
@@ -167,6 +229,22 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
         guard width > 0 else { return nil }
         let size = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
         return CGSize(width: width, height: ceil(size.height))
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var onSelectionChange: ((NSRange?) -> Void)?
+
+        init(onSelectionChange: ((NSRange?) -> Void)?) {
+            self.onSelectionChange = onSelectionChange
+        }
+
+        func textViewDidChangeSelection(_ textView: UITextView) {
+            let range = textView.selectedRange
+            let selection = range.length > 0 ? range : nil
+            DispatchQueue.main.async { [onSelectionChange] in
+                onSelectionChange?(selection)
+            }
+        }
     }
 }
 #endif
@@ -266,6 +344,101 @@ enum SelectableAttributed {
         let text: String
     }
 
+    struct TranscriptRenderSegment {
+        let id: UUID
+        let speaker: Int
+        let timestamp: TimeInterval
+        let text: String
+    }
+
+    struct TranscriptRenderSpan: Identifiable {
+        var id: UUID { segmentID }
+        let segmentID: UUID
+        let speaker: Int
+        let timestamp: TimeInterval
+        let text: String
+        let headerRange: NSRange
+        let bodyRange: NSRange
+    }
+
+    struct TranscriptRenderModel {
+        let attributed: NSAttributedString
+        let spans: [TranscriptRenderSpan]
+
+        func textSelections(overlapping selection: NSRange?) -> [TranscriptTextSelection] {
+            guard let selection, selection.length > 0 else { return [] }
+            return spans.compactMap { span in
+                let intersection = NSIntersectionRange(selection, span.bodyRange)
+                guard intersection.length > 0 else { return nil }
+                let lower = intersection.location - span.bodyRange.location
+                return TranscriptTextSelection(
+                    segmentID: span.segmentID,
+                    lowerUTF16Offset: lower,
+                    upperUTF16Offset: lower + intersection.length
+                )
+            }
+        }
+    }
+
+    static func transcriptRenderModel(
+        segments: [TranscriptRenderSegment],
+        speakerNames: [String: String]?,
+        selfIDs: Set<Int>? = nil,
+        bodyFontSize: CGFloat = 13,
+        headerFontSize: CGFloat = 10
+    ) -> TranscriptRenderModel {
+        let result = NSMutableAttributedString()
+        let bodyFont = monoFont(size: bodyFontSize, weight: .regular)
+        let headerFont = monoFont(size: headerFontSize, weight: .semibold)
+        let bodyPara = NSMutableParagraphStyle()
+        bodyPara.paragraphSpacing = 6
+        bodyPara.lineSpacing = 2
+        let headerPara = NSMutableParagraphStyle()
+        headerPara.paragraphSpacingBefore = 10
+        headerPara.paragraphSpacing = 2
+
+        var spans: [TranscriptRenderSpan] = []
+        spans.reserveCapacity(segments.count)
+        for (index, segment) in segments.enumerated() {
+            let speakerColor = platformColor(for: speakerColor(for: segment.speaker, selfIDs: selfIDs))
+            let label = speakerLabel(for: segment.speaker, names: speakerNames, selfIDs: selfIDs)
+            let timestamp = formatTimestamp(segment.timestamp)
+            let header = "\(label) · \(timestamp)\n"
+            let headerStart = result.length
+            result.append(NSAttributedString(string: header, attributes: [
+                .font: headerFont,
+                .foregroundColor: speakerColor,
+                .paragraphStyle: index == 0 ? bodyPara : headerPara,
+            ]))
+            let headerRange = NSRange(location: headerStart, length: (header as NSString).length)
+
+            let bodyStart = result.length
+            result.append(NSAttributedString(string: segment.text, attributes: [
+                .font: bodyFont,
+                .foregroundColor: platformColor(for: ColorPalette.Text.secondary),
+                .paragraphStyle: bodyPara,
+            ]))
+            let bodyRange = NSRange(location: bodyStart, length: (segment.text as NSString).length)
+            if index != segments.count - 1 {
+                result.append(NSAttributedString(string: "\n", attributes: [
+                    .font: bodyFont,
+                    .foregroundColor: platformColor(for: ColorPalette.Text.secondary),
+                    .paragraphStyle: bodyPara,
+                ]))
+            }
+
+            spans.append(TranscriptRenderSpan(
+                segmentID: segment.id,
+                speaker: segment.speaker,
+                timestamp: segment.timestamp,
+                text: segment.text,
+                headerRange: headerRange,
+                bodyRange: bodyRange
+            ))
+        }
+        return TranscriptRenderModel(attributed: result, spans: spans)
+    }
+
     /// Merge consecutive turns that would render as the same on-screen speaker, unless
     /// the previous turn ended with a sentence terminator. Groups all self-IDs into
     /// one "you" bucket and collapses IDs that share an inferred/manual name, so
@@ -355,4 +528,176 @@ enum SelectableAttributed {
         UIColor(color)
     }
     #endif
+}
+
+struct TranscriptTrimView: View {
+    @EnvironmentObject private var appState: AppState
+    @Bindable var meeting: Meeting
+    @State private var selectedRange: NSRange?
+    @State private var undoSnapshots: [TranscriptSegmentSnapshot]?
+    @State private var pendingTrimOperation: TranscriptTrimOperation?
+    @State private var pendingTrimSnapshots: [TranscriptSegmentSnapshot] = []
+    @State private var isConfirmingTrim = false
+
+    private var sortedSegments: [TranscriptSegment] {
+        meeting.segments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+    }
+
+    private var renderModel: SelectableAttributed.TranscriptRenderModel {
+        SelectableAttributed.transcriptRenderModel(
+            segments: sortedSegments.map {
+                .init(id: $0.id, speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+            },
+            speakerNames: meeting.speakerNames,
+            selfIDs: meeting.selfSpeakerIDs
+        )
+    }
+
+    private var selectedTextSelections: [TranscriptTextSelection] {
+        renderModel.textSelections(overlapping: selectedRange)
+    }
+
+    private var hasSelectedTranscriptText: Bool {
+        !selectedTextSelections.isEmpty
+    }
+
+    private var currentSnapshots: [TranscriptSegmentSnapshot] {
+        sortedSegments.map {
+            TranscriptSegmentSnapshot(
+                id: $0.id,
+                speaker: $0.speaker,
+                timestamp: $0.timestamp,
+                text: $0.text,
+                isFinal: $0.isFinal,
+                confidence: $0.confidence
+            )
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if meeting.needsInsightsAfterTranscriptEdit {
+                transcriptEditedBanner
+            }
+
+            trimToolbar
+
+            ScrollView {
+                SelectableTextView(
+                    renderModel.attributed,
+                    onSelectionChange: { range in
+                        selectedRange = range
+                    },
+                    onDeleteSelection: {
+                        requestDeleteSelectedText()
+                    }
+                )
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
+            }
+        }
+        .alert("trim transcript?", isPresented: $isConfirmingTrim) {
+            Button("cancel", role: .cancel) {
+                pendingTrimOperation = nil
+                pendingTrimSnapshots = []
+            }
+            Button("trim", role: .destructive) {
+                applyPendingTrim()
+            }
+        } message: {
+            Text("this will clear standard, meddpicc, and questions insights. regenerate insights after trimming. undo restores transcript text only - it does not restore the old insights.")
+        }
+    }
+
+    private var trimToolbar: some View {
+        HStack(spacing: 8) {
+            Button {
+                deleteSelectedText()
+            } label: {
+                Label("delete selection", systemImage: "scissors")
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+            }
+            .buttonStyle(.plain)
+            .disabled(!hasSelectedTranscriptText)
+            .foregroundStyle(hasSelectedTranscriptText ? ColorPalette.Status.error : ColorPalette.Text.disabled)
+
+            if let undoSnapshots {
+                Button {
+                    if appState.restoreTranscriptSnapshots(undoSnapshots, to: meeting) {
+                        self.undoSnapshots = nil
+                        selectedRange = nil
+                    }
+                } label: {
+                    Label("undo trim", systemImage: "arrow.uturn.backward")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(ColorPalette.Text.muted)
+            }
+
+            if let selectedRange, selectedRange.length > 0, selectedTextSelections.isEmpty {
+                Text("selection includes only speaker labels")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.meta)
+            }
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private var transcriptEditedBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(ColorPalette.Status.warning)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("transcript edited")
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text("standard, meddpicc, and questions insights were cleared; regenerate after trimming")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.meta)
+            }
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(ColorPalette.Background.tertiary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(ColorPalette.Status.warning.opacity(0.45), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+    }
+
+    private func deleteSelectedText() {
+        let selections = selectedTextSelections
+        guard !selections.isEmpty else { return }
+        requestTrim(TranscriptTrimOperation(textSelections: selections))
+    }
+
+    private func requestDeleteSelectedText() {
+        guard hasSelectedTranscriptText else { return }
+        deleteSelectedText()
+    }
+
+    private func requestTrim(_ operation: TranscriptTrimOperation) {
+        guard !operation.isEmpty else { return }
+        pendingTrimOperation = operation
+        pendingTrimSnapshots = currentSnapshots
+        isConfirmingTrim = true
+    }
+
+    private func applyPendingTrim() {
+        guard let operation = pendingTrimOperation else { return }
+        let snapshots = pendingTrimSnapshots
+        pendingTrimOperation = nil
+        pendingTrimSnapshots = []
+        if appState.applyTranscriptTrim(operation, to: meeting) {
+            undoSnapshots = snapshots
+            selectedRange = nil
+        }
+    }
 }

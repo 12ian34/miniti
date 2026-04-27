@@ -25,6 +25,9 @@ enum WebhookService {
             let speakerCount: Int
             let speakerNames: [String: String]?
             let transcript: [TranscriptEntry]
+            let transcriptEditedAt: String?
+            let transcriptRevision: Int?
+            let insightsStale: Bool?
             let calendarEventId: String?
             let attendees: [AttendeeEntry]?
 
@@ -37,6 +40,9 @@ enum WebhookService {
                 case discussionFlow = "discussion_flow"
                 case speakerCount = "speaker_count"
                 case speakerNames = "speaker_names"
+                case transcriptEditedAt = "transcript_edited_at"
+                case transcriptRevision = "transcript_revision"
+                case insightsStale = "insights_stale"
                 case calendarEventId = "calendar_event_id"
             }
         }
@@ -218,6 +224,9 @@ enum WebhookService {
                 speakerCount: speakerCount,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
+                transcriptEditedAt: nil,
+                transcriptRevision: nil,
+                insightsStale: nil,
                 calendarEventId: calendarEventId,
                 attendees: attendeeEntries
             )
@@ -280,6 +289,9 @@ enum WebhookService {
                 speakerCount: speakers.count,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
+                transcriptEditedAt: meeting.transcriptEditedAt.map { fmt.string(from: $0) },
+                transcriptRevision: meeting.hasTranscriptEdits ? meeting.transcriptRevision : nil,
+                insightsStale: false,
                 calendarEventId: meeting.calendarEventId,
                 attendees: attendeeEntries
             )

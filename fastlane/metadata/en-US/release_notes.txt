@@ -1,2 +1,3 @@
-- new: home-screen card helps discover Google Calendar
-- improvement: audio capture reliability improved when switching to or from bluetooth headphones
+- Saved transcripts can be trimmed before exporting, sharing, or regenerating insights.
+- Automatic speaker naming is more conservative and waits for clearer transcript evidence before applying names.
+- Starting a new recording no longer picks up where an old unfinished session left off.

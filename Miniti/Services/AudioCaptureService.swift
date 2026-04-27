@@ -190,6 +190,26 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         cumulativeSamplesSent = 0
         sourceLogLock.unlock()
     }
+
+    #if DEBUG
+    nonisolated func appendSourceSampleForTesting(
+        startTime: Double,
+        endTime: Double,
+        micEnergy: Float,
+        sysEnergy: Float
+    ) {
+        sourceLogLock.lock()
+        sourceLog.append(
+            SourceSample(
+                startTime: startTime,
+                endTime: endTime,
+                micEnergy: micEnergy,
+                sysEnergy: sysEnergy
+            )
+        )
+        sourceLogLock.unlock()
+    }
+    #endif
     
     override init() {
         super.init()

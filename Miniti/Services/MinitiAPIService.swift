@@ -1357,6 +1357,9 @@ struct AttioMeetingPayload: Sendable {
     let topics: [String]
     let notes: String?
     let meddpicc: [String: String]
+    let transcriptEditedAt: Date?
+    let transcriptRevision: Int?
+    let insightsStale: Bool
 
     static func normalizedActionItems(from items: [String]) -> [String] {
         let placeholders: Set<String> = [
@@ -1447,7 +1450,10 @@ struct AttioMeetingPayload: Sendable {
             keyDecisions: meeting.keyDecisions,
             topics: meeting.topics,
             notes: notesTrimmed.isEmpty ? nil : notesTrimmed,
-            meddpicc: meddpicc
+            meddpicc: meddpicc,
+            transcriptEditedAt: meeting.transcriptEditedAt,
+            transcriptRevision: meeting.hasTranscriptEdits ? meeting.transcriptRevision : nil,
+            insightsStale: false
         )
     }
 
@@ -1465,6 +1471,13 @@ struct AttioMeetingPayload: Sendable {
         if let endedAt { result["ended_at"] = endedAt }
         if let summary { result["summary"] = summary }
         if let notes { result["notes"] = notes }
+        if let transcriptEditedAt {
+            result["transcript_edited_at"] = ISO8601DateFormatter().string(from: transcriptEditedAt)
+        }
+        if let transcriptRevision {
+            result["transcript_revision"] = transcriptRevision
+        }
+        result["insights_stale"] = insightsStale
         return result
     }
 }
