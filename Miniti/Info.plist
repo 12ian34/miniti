@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.25.0</string>
+	<string>1.25.1</string>
 	<key>CFBundleVersion</key>
-	<string>97</string>
+	<string>98</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -48,6 +48,8 @@
 	<string>https://api.miniti.app/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>PPTQN9NX3TgaZYqGLR6EcP6JRNuxlIHxTnxYnrlhliE=</string>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUScheduledCheckInterval</key>

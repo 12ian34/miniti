@@ -344,7 +344,7 @@ final class AppState: ObservableObject {
     @AppStorage("autoExportMarkdown") var autoExportMarkdown: Bool = false
     @AppStorage("markdownExportFolderPath") var markdownExportFolderPath: String = ""
     @AppStorage("markdownExportBookmark") var markdownExportBookmarkData: Data = Data()
-    @AppStorage("generateClaudeMd") var generateClaudeMd: Bool = false
+    @AppStorage("generateAgentsMd") var generateAgentsMd: Bool = false
     #endif
 
     // MARK: - Update Check
@@ -5222,12 +5222,12 @@ final class AppState: ObservableObject {
             return
         }
 
-        if generateClaudeMd {
-            updateClaudeMdIndex()
+        if generateAgentsMd {
+            updateAgentsMdIndex()
         }
     }
 
-    func updateClaudeMdIndex() {
+    func updateAgentsMdIndex() {
         guard let folderURL = resolveExportFolderURL() else { return }
         defer { folderURL.stopAccessingSecurityScopedResource() }
 
@@ -5235,7 +5235,16 @@ final class AppState: ObservableObject {
         guard let files = try? fm.contentsOfDirectory(atPath: folderURL.path) else { return }
 
         let mdFiles = files
-            .filter { $0.hasSuffix(".md") && $0 != "CLAUDE.md" }
+            .filter { file in
+                guard file.hasSuffix(".md") && file != "AGENTS.md" else { return false }
+                let name = String(file.dropLast(3))
+                let parts = name.split(separator: "-", maxSplits: 4)
+                return parts.count >= 4
+                    && parts[0].count == 4
+                    && parts[1].count == 2
+                    && parts[2].count == 2
+                    && parts[3].count == 4
+            }
             .sorted()
 
         var index = "# Miniti Meeting Notes\n\n"
@@ -5258,9 +5267,9 @@ final class AppState: ObservableObject {
             }
         }
 
-        let claudeMdURL = folderURL.appendingPathComponent("CLAUDE.md")
-        try? index.write(to: claudeMdURL, atomically: true, encoding: .utf8)
-        DebugLogger.shared.log(.app, "CLAUDE.md index updated: \(mdFiles.count) meetings")
+        let agentsMdURL = folderURL.appendingPathComponent("AGENTS.md")
+        try? index.write(to: agentsMdURL, atomically: true, encoding: .utf8)
+        DebugLogger.shared.log(.app, "AGENTS.md index updated: \(mdFiles.count) meetings")
     }
     #endif
 

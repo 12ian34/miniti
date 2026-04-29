@@ -1,6 +1,6 @@
 # Release Process
 
-Authoritative 10-step runbook for shipping Miniti. For the reasoning behind each step, see [claude.md § Distribution](claude.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
+Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/distribution.md](docs/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
 ## Before you start
 
@@ -43,7 +43,7 @@ fastlane mac release
 
 This runs build → re-sign Sparkle framework (preserving entitlements) → verify entitlements → notarize → staple → DMG. Takes ~3–5 minutes.
 
-If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped entitlements. Do not work around this — investigate. See the v1.24.0 postmortem in `claude.md`.
+If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped entitlements. Do not work around this — investigate. See the v1.24.0 postmortem in `docs/distribution.md`.
 
 ### 3. Verify and collect appcast values
 
@@ -55,13 +55,17 @@ Confirm all sanity checks are `[ok]` (DMG stapling is an expected `[warn]`, tole
 
 ### 4. Upload DMG to Netlify blobs
 
-From your marketing site repo:
+From the website repo (`../minitidotapp`):
 
 ```sh
-VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ../miniti/miniti.app/Contents/Info.plist)
+netlify blobs:set downloads miniti-X.Y.Z.dmg --input ../miniti/miniti.dmg --force
 netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
-netlify blobs:set downloads "miniti-${VERSION}.dmg" --input ../miniti/miniti.dmg --force
-echo "Published miniti-${VERSION}.dmg"
+```
+
+For v1.25.0, run:
+
+```sh
+netlify blobs:set downloads miniti-1.25.0.dmg --input ../miniti/miniti.dmg --force; netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
 ```
 
 Both keys matter: `miniti.dmg` is the "latest" for the marketing site's download button; `miniti-X.Y.Z.dmg` is what Sparkle's appcast enclosure URL points to forever for this version.
@@ -117,6 +121,8 @@ If Sparkle says "up to date" incorrectly: check `sparkle:version` in the appcast
 
 If Sparkle says "signature error": the public key in the installed app's `Info.plist` doesn't match the key that signed the DMG. Investigate; do not ship.
 
+If Sparkle downloads the update but fails when quitting/installing with `Failed copying system domain rights: -60005`, the installed app is missing Sparkle's sandboxed installer-launcher setup. This cannot be fixed server-side for that already-installed build. Ship a fixed macOS DMG that includes `SUEnableInstallerLauncherService = true` plus the `com.miniti.app-spks` / `com.miniti.app-spki` mach lookup exceptions; affected users must install that DMG manually once, then Sparkle should work going forward.
+
 ### 8. iOS: upload + submit
 
 ```sh
@@ -142,16 +148,17 @@ git push origin main vX.Y.Z
 ### 10. Cleanup (not blocking)
 
 - Delete stale/broken blobs if any: `netlify blobs:delete downloads miniti-OLD.dmg`.
-- If any release-process behavior changed during this ship, update [claude.md § Distribution](claude.md) and [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md) so future-you doesn't re-learn the same lesson.
+- If any release-process behavior changed during this ship, update [AGENTS.md](AGENTS.md), [docs/distribution.md](docs/distribution.md), and [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md) if their guidance would otherwise go stale.
 
 ## Common failures and fixes
 
 | Symptom | Fix |
 |---|---|
-| `fastlane mac release` aborts with "app-sandbox entitlement MISSING" | The Sparkle re-sign step stripped entitlements. Do NOT ship. See v1.24.0 postmortem in `claude.md` — the `resign_sparkle_framework` lane must pass `--entitlements` when re-signing the outer app. |
+| `fastlane mac release` aborts with "app-sandbox entitlement MISSING" | The Sparkle re-sign step stripped entitlements. Do NOT ship. See the v1.24.0 postmortem in `docs/distribution.md` — the `resign_sparkle_framework` lane must pass `--entitlements` when re-signing the outer app. |
 | Notarization rejects Sparkle nested binaries | Sparkle framework's Updater.app / Autoupdate / XPC services weren't signed with Developer ID + timestamp. The `resign_sparkle_framework` lane handles this; confirm it ran. |
 | Sparkle says "update improperly signed" | Public key in `Info.plist` doesn't match the signature on the DMG. Re-run `sign_update miniti.dmg`, redeploy appcast. |
 | Sparkle says "up to date" when it shouldn't | `sparkle:version` in appcast ≤ installed build's `CFBundleVersion`. Bump and redeploy. |
+| Sparkle downloads but fails install with `Failed copying system domain rights: -60005` | The installed sandboxed app lacks Sparkle's installer-launcher service setup. Server/appcast changes cannot repair that installed build. Ship a fixed DMG with `SUEnableInstallerLauncherService = true` and `com.miniti.app-spks` / `com.miniti.app-spki` mach lookup exceptions; affected users install it manually once. |
 | "My history is wiped" after update | Sandbox entitlement was stripped → app points at a fresh non-sandboxed SwiftData store. Users' data is still at `~/Library/Containers/com.miniti.app/Data/...` — intact. Ship a hotfix that preserves entitlements. |
 | `which sign_update` returns nothing | Symlink the Sparkle SPM tools — see "Before you start" above. |
 | DMG URL returns 404 | Netlify blob upload didn't happen, or the marketing site's `/dmg/*` route is misconfigured. |

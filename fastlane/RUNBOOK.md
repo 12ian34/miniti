@@ -48,7 +48,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.25.0 changelog:"..."`
+### `fastlane ios beta version:1.25.1 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -60,7 +60,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.25.0`
+### `fastlane ios release version:1.25.1`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -76,7 +76,7 @@ What it does not do:
 Note: `automatic_release` is enabled — once Apple approves the build, it goes live immediately without manual release.
 
 Release prep checklist for this lane:
-- update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `claude.md` changelog
+- update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `CHANGELOG.md`
 - if your App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder too (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`)
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
 - ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)
@@ -184,6 +184,7 @@ What it does:
 - builds `build/macos/miniti.app`
 - **re-signs Sparkle.framework's nested binaries** (XPC services, Autoupdate, Updater.app, Sparkle.framework itself, then the outer app) via the `resign_sparkle_framework` private lane. Apple notarization rejects Sparkle builds otherwise because Xcode's default embed step doesn't sign nested helpers with Developer ID + secure timestamp + hardened runtime.
 - **preserves the outer app's entitlements** via an explicit `--entitlements Miniti/Miniti.entitlements` flag when re-signing `miniti.app`. Without this, `codesign --force --sign` silently strips entitlements. A build without `com.apple.security.app-sandbox` ships at a different macOS-recognised app identity than v1.23.1+, which points SwiftData at a fresh empty store and surfaces as "my history is wiped" for every user. This exact bug shipped in v1.24.0 and was fixed in v1.24.1.
+- **requires Sparkle's sandboxed installer-launcher setup** in the shipped app: `SUEnableInstallerLauncherService = true` in `Miniti/Info.plist` and mach lookup exceptions for `com.miniti.app-spks` / `com.miniti.app-spki` in `Miniti/Miniti.entitlements`. If a shipped build is missing these, Sparkle can download and verify updates but fails to install with `Failed copying system domain rights: -60005`; affected users must install a fixed DMG manually once.
 - **verifies entitlements survived** via `verify_mac_signing_for_notarization` before submitting to notarytool. If `com.apple.security.app-sandbox` is missing from the signed binary, the lane fails fast with a clear error instead of producing a broken DMG.
 - notarizes the app
 - staples the app
@@ -221,14 +222,14 @@ Layout: `fastlane/screenshots/<locale>/<Device>.png`, e.g. `fastlane/screenshots
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.25.0 changelog:"release notes here"
+fastlane ios beta version:1.25.1 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.25.0
+fastlane ios release version:1.25.1
 ```
 
 ### macOS direct distribution
