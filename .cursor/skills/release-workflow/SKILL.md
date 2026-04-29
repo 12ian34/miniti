@@ -49,13 +49,14 @@ bash scripts/release-info.sh
 2. `fastlane mac notarize_app` — re-signs Sparkle nested binaries, preserves entitlements, verifies, submits to notarytool, staples, copies to repo root.
 3. `fastlane mac dmg` — runs `scripts/build-dmg.sh`, creates `miniti.dmg`, runs `sign_update` for the appcast signature.
 4. `bash scripts/release-info.sh` — sanity-check + print appcast values.
-5. Upload DMG to Netlify Blobs (both keys, from the marketing site repo):
+5. Upload DMG to Netlify Blobs (both keys, from the website repo `../minitidotapp`):
 
    ```bash
-   VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" ../miniti/miniti.app/Contents/Info.plist)
+   netlify blobs:set downloads miniti-X.Y.Z.dmg --input ../miniti/miniti.dmg --force
    netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
-   netlify blobs:set downloads "miniti-${VERSION}.dmg" --input ../miniti/miniti.dmg --force
    ```
+
+   For v1.25.0 specifically: `netlify blobs:set downloads miniti-1.25.0.dmg --input ../miniti/miniti.dmg --force; netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force`
 
    Versioned key is what Sparkle's appcast enclosure URL points at — never overwrite post-release.
 6. Update backend (`miniti-api`):

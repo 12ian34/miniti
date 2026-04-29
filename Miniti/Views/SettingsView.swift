@@ -810,7 +810,7 @@ struct IntegrationsSettingsView: View {
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @AppStorage("autoExportMarkdown") private var autoExportMarkdown: Bool = false
     @AppStorage("markdownExportFolderPath") private var markdownExportFolderPath: String = ""
-    @AppStorage("generateClaudeMd") private var generateClaudeMd: Bool = false
+    @AppStorage("generateAgentsMd") private var generateAgentsMd: Bool = false
     @State private var isExportingAll = false
     @State private var exportAllCount: Int?
 
@@ -830,13 +830,13 @@ struct IntegrationsSettingsView: View {
                 }
 
                 Toggle("Auto-export meetings as markdown", isOn: $autoExportMarkdown)
-                Text("Automatically saves each meeting as a markdown file. Works with Obsidian, Claude Code, and other tools.")
+                Text("Automatically saves each meeting as a markdown file. Works with Obsidian, Cursor, and other tools.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if autoExportMarkdown {
-                    Toggle("Generate CLAUDE.md index", isOn: $generateClaudeMd)
-                    Text("Maintains a CLAUDE.md file listing all exported meetings for AI agents.")
+                    Toggle("Generate AGENTS.md index", isOn: $generateAgentsMd)
+                    Text("Maintains an AGENTS.md file listing all exported meetings for AI agents.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

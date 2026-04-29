@@ -10,6 +10,11 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-04-29 - v1.25.1
+
+- improvement: (macOS) markdown export indexes now use AGENTS.md as the AI agent entry point.
+- fix: (macOS) in-app auto-updates now install correctly after downloading. Users already on the affected updater build may need to install this update manually once, then automatic updates should work again.
+
 ### 2026-04-27 - v1.25.0
 
 - new: (macOS and iOS) saved transcripts can be trimmed before exporting, sharing, or regenerating insights
@@ -85,7 +90,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### 2026-03-25 - v1.16.0
 
-- new: auto export as markdown to local folder (macOS), optional CLAUDE.md index for AI agents. includes notes, insights, MEDDPICC, training metrics, and full transcript. works with obsidian, claude code, etc.
+- new: auto export as markdown to local folder (macOS), optional AGENTS.md index for AI agents. includes notes, insights, MEDDPICC, training metrics, and full transcript. works with obsidian and other AI tools.
 - new: fast full text meeting search across titles, transcripts, notes, insights, topics, action items, MEDDPICC, and discussion flow.
 - fix: iPad layout now fills the full screen width.
 

@@ -10,5 +10,10 @@
 	<true/>
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
+	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
+	<array>
+		<string>com.miniti.app-spks</string>
+		<string>com.miniti.app-spki</string>
+	</array>
 </dict>
 </plist>

@@ -11,10 +11,10 @@ description: >-
 
 Update the changelog after every task that changes user-facing behaviour. There are two places to update:
 
-1. **`CHANGELOG.md`** at repo root — the canonical release history (moved out of the old monolithic `claude.md` during the 1.24.1 doc split).
+1. **`CHANGELOG.md`** at repo root — the canonical release history.
 2. **`fastlane/metadata/{en-US,en-GB}/release_notes.txt`** — App Store "What's New" for iOS.
 
-Neither lives in `CLAUDE.md` / `AGENTS.md` any more — those are the slim dev-facing index. Don't put changelog entries there.
+Neither lives in `AGENTS.md` — that is the slim dev-facing index. Don't put changelog entries there.
 
 ## CHANGELOG.md
 
