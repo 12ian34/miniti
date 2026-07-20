@@ -93,11 +93,118 @@ enum TranscriptionLanguage: String, CaseIterable, Codable {
     }
 }
 
+enum PersonalDictionaryPreferences {
+    static let storageKey = "personalDictionaryTerms.v1"
+    static let systemKeyterms = ["Miniti", "Lightdash", "Ahuja"]
+
+    static func currentTerms(defaults: UserDefaults = .standard) -> [String] {
+        guard let data = defaults.data(forKey: storageKey),
+              let decoded = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+
+        return normalizedTerms(decoded)
+    }
+
+    static func save(_ terms: [String], defaults: UserDefaults = .standard) {
+        let normalized = normalizedTerms(terms)
+        guard !normalized.isEmpty else {
+            defaults.removeObject(forKey: storageKey)
+            return
+        }
+
+        guard let data = try? JSONEncoder().encode(normalized) else { return }
+        defaults.set(data, forKey: storageKey)
+    }
+
+    static func normalizedTerms(_ terms: [String]) -> [String] {
+        var seen = Set<String>()
+        var normalized: [String] = []
+
+        for term in terms {
+            let compacted = term
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            guard !compacted.isEmpty else { continue }
+
+            let key = compacted.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            normalized.append(compacted)
+        }
+
+        return normalized
+    }
+
+    static func deepgramKeyterms(personalTerms: [String], sessionTerms: [String] = []) -> [String] {
+        var seen = Set<String>()
+        var keyterms: [String] = []
+
+        // Cap at Nova-3's keyterm budget; keep system + personal terms first.
+        let maxKeyterms = 100
+        for term in systemKeyterms + normalizedTerms(personalTerms) + normalizedTerms(sessionTerms) {
+            guard keyterms.count < maxKeyterms else { break }
+            let key = term.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            keyterms.append(term)
+        }
+
+        return keyterms
+    }
+
+    /// Build ephemeral Deepgram keyterms from meeting/calendar context.
+    /// Prefer attendee names and company domains; include a short meeting title when useful.
+    static func sessionKeyterms(
+        meetingTitle: String?,
+        attendees: [(displayName: String?, domain: String, isSelf: Bool)]
+    ) -> [String] {
+        var terms: [String] = []
+        let consumerDomains: Set<String> = [
+            "gmail", "googlemail", "yahoo", "hotmail", "outlook", "icloud",
+            "me", "live", "msn", "aol", "proton", "protonmail", "hey"
+        ]
+
+        if let title = meetingTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            let lowered = title.lowercased()
+            if lowered != "untitled" && lowered != "new" && title.count <= 80 {
+                terms.append(title)
+            }
+        }
+
+        for attendee in attendees where !attendee.isSelf {
+            if let name = attendee.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !name.isEmpty {
+                terms.append(name)
+            }
+            let domain = attendee.domain.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !domain.isEmpty else { continue }
+            let company = domain.split(separator: ".").first.map(String.init) ?? ""
+            guard company.count >= 3, !consumerDomains.contains(company) else { continue }
+            // Preserve a readable casing for prompting (Acme from acme.com).
+            terms.append(company.prefix(1).uppercased() + company.dropFirst())
+        }
+
+        return normalizedTerms(terms)
+    }
+}
+
+enum DeepgramAuthorizationScheme: String, Equatable {
+    case bearer = "Bearer"
+    case token = "Token"
+    
+    func authorizationHeader(credential: String) -> String {
+        "\(rawValue) \(credential)"
+    }
+}
+
 @MainActor
 final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
-    private var apiKey: String = ""
+    private var credential: String = ""
+    private var authorizationScheme: DeepgramAuthorizationScheme = .token
     private var isConnected = false
     
     // Concurrent-safe references for sendAudio (avoids main actor hop per buffer).
@@ -112,14 +219,23 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     
     // Track speakers across the session
     private var speakerHistory: [Int: SpeakerInfo] = [:]
+    private var keepAliveTimer: Timer?
     
     /// Optional callback to determine audio source for a time range.
-    /// When set, words from the microphone are assigned a dedicated speaker ID (1000)
-    /// to separate them from system audio speakers (Deepgram's own diarization).
+    /// Legacy mono-mix path only. Prefer multichannel (ch0=mic) when mic+system
+    /// are both active — then `sourceLookup` stays nil.
     var sourceLookup: ((Double, Double) -> AudioCaptureService.AudioSource)?
+    
+    /// When true, streaming audio is stereo and results arrive per-channel via
+    /// `channel_index`. Channel 0 is always the local mic ("You").
+    private var isMultichannel = false
     
     /// Reserved speaker ID for the local microphone ("You").
     nonisolated static let micSpeakerID = 1000
+    /// Deepgram channel index for local mic in multichannel mode.
+    nonisolated static let micChannelIndex = 0
+    /// Deepgram channel index for system/remote audio in multichannel mode.
+    nonisolated static let systemChannelIndex = 1
     
     enum ConnectionState {
         case disconnected
@@ -192,8 +308,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     private var confirmedSpeakerIDs: Set<Int> = []
     private var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
     
-    func configure(apiKey: String) {
-        self.apiKey = apiKey
+    /// - Parameters:
+    ///   - credential: Managed JWT or BYOK Deepgram API key.
+    ///   - authorizationScheme: `.bearer` for managed JWTs, `.token` for BYOK API keys.
+    func configure(credential: String, authorizationScheme: DeepgramAuthorizationScheme) {
+        self.credential = credential
+        self.authorizationScheme = authorizationScheme
     }
     
     nonisolated(unsafe) private var wsMessageCount: Int = 0
@@ -230,9 +350,14 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         audioPacketsSent
     }
     
-    func connect(language: String = "en") {
-        guard !apiKey.isEmpty else {
-            DebugLogger.shared.log(.deepgram, "No API key — cannot connect")
+    func connect(
+        language: String = "en",
+        personalDictionaryTerms: [String] = [],
+        sessionKeyterms: [String] = [],
+        multichannel: Bool = false
+    ) {
+        guard !credential.isEmpty else {
+            DebugLogger.shared.log(.deepgram, "No credential — cannot connect")
             error = DeepgramError.noApiKey
             return
         }
@@ -241,11 +366,20 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             disconnect()
         }
         
-        DebugLogger.shared.log(.deepgram, "Connecting with language=\(language)")
+        let keyterms = PersonalDictionaryPreferences.deepgramKeyterms(
+            personalTerms: personalDictionaryTerms,
+            sessionTerms: sessionKeyterms
+        )
+        let channelCount = multichannel ? 2 : 1
+        DebugLogger.shared.log(
+            .deepgram,
+            "Connecting with language=\(language), keyterms=\(keyterms.count), channels=\(channelCount), multichannel=\(multichannel)"
+        )
         connectionState = .connecting
         speakerHistory = [:]
         confirmedSpeakerIDs = []
         pendingSpeakerEvidence = [:]
+        isMultichannel = multichannel
         resetSessionCounters()
         isConnected = false
         _sendConnected = false
@@ -253,24 +387,26 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         error = nil
         
         var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "model", value: "nova-3"),
             URLQueryItem(name: "language", value: language),
             URLQueryItem(name: "smart_format", value: "true"),
-            URLQueryItem(name: "punctuate", value: "true"),
             URLQueryItem(name: "filler_words", value: "true"),
-            URLQueryItem(name: "diarize", value: "true"),
+            // Prefer diarize_model over deprecated diarize=true. Streaming latest = v1 today;
+            // auto-upgrades when Deepgram ships a newer streaming diarizer.
+            URLQueryItem(name: "diarize_model", value: "latest"),
             URLQueryItem(name: "interim_results", value: "true"),
             URLQueryItem(name: "utterance_end_ms", value: "1000"),
             URLQueryItem(name: "vad_events", value: "true"),
             URLQueryItem(name: "endpointing", value: "300"),
             URLQueryItem(name: "encoding", value: "linear16"),
             URLQueryItem(name: "sample_rate", value: "16000"),
-            URLQueryItem(name: "channels", value: "1"),
-            URLQueryItem(name: "keyterm", value: "Miniti"),
-            URLQueryItem(name: "keyterm", value: "Lightdash"),
-            URLQueryItem(name: "keyterm", value: "Ahuja"),
+            URLQueryItem(name: "channels", value: String(channelCount)),
         ]
+        if multichannel {
+            queryItems.append(URLQueryItem(name: "multichannel", value: "true"))
+        }
+        components.queryItems = queryItems + keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
         
         guard let url = components.url else {
             error = DeepgramError.invalidUrl
@@ -280,7 +416,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         DebugLogger.shared.log(.deepgram, "Connecting to Deepgram WebSocket")
 
         var request = URLRequest(url: url)
-        request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue(
+            authorizationScheme.authorizationHeader(credential: credential),
+            forHTTPHeaderField: "Authorization"
+        )
         
         urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
         webSocketTask = urlSession?.webSocketTask(with: request)
@@ -321,6 +460,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             .deepgram,
             "Disconnecting: ws=\(wsMessageCount), audio=\(audioPacketsSent) packets / \(String(format: "%.2f", mbSent))MB, transcript(msg=\(transcriptMessageCount), words=\(transcriptWordCount), final=\(finalTranscriptCount), empty=\(emptyTranscriptCount)), sendErrors=\(audioSendErrors)"
         )
+        stopKeepAlive()
         _sendConnected = false
         _sendTask = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -328,8 +468,36 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         urlSession?.invalidateAndCancel()
         urlSession = nil
         isConnected = false
+        isMultichannel = false
         consecutiveSendErrors = 0
         connectionState = .disconnected
+    }
+
+    /// Deepgram closes idle sockets after ~10–12s with no client messages.
+    /// KeepAlive is free (no audio billed) and protects mic/system restart gaps.
+    private func startKeepAlive() {
+        stopKeepAlive()
+        keepAliveTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.sendKeepAlive()
+            }
+        }
+    }
+
+    private func stopKeepAlive() {
+        keepAliveTimer?.invalidate()
+        keepAliveTimer = nil
+    }
+
+    private func sendKeepAlive() {
+        guard isConnected, let task = webSocketTask else { return }
+        task.send(.string(#"{"type":"KeepAlive"}"#)) { error in
+            if let error {
+                Task { @MainActor in
+                    DebugLogger.shared.log(.deepgram, "KeepAlive send error: \(error.localizedDescription)")
+                }
+            }
+        }
     }
     
     nonisolated func sendAudio(_ data: Data) {
@@ -389,6 +557,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 case .failure(let error):
                     guard self.isConnected else { return }
                     DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
+                    self.stopKeepAlive()
                     self.error = error
                     self.isConnected = false
                     self._sendConnected = false
@@ -449,16 +618,21 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     )
                 }
 
-                // Parse words with speaker info, overriding with source dominance
+                // Streaming multichannel delivers one channel per message via channel_index.
+                // Prefer that over energy-based sourceLookup when active.
+                let streamChannel = response.channelIndex?.first
+                let forceMicSpeaker = isMultichannel && streamChannel == Self.micChannelIndex
+                
                 var micTaggedWordCount = 0
                 var unknownTaggedWordCount = 0
                 let words = alternative.words.map { word in
                     var speaker = word.speaker ?? 0
                     
-                    // If source tracking is available, override speaker based on
-                    // which audio source was dominant during this word's timeframe.
-                    // Mic words → micSpeakerID ("You"), system words → keep Deepgram's ID.
-                    if let lookup = sourceLookup {
+                    if forceMicSpeaker {
+                        speaker = DeepgramService.micSpeakerID
+                        micTaggedWordCount += 1
+                    } else if let lookup = sourceLookup {
+                        // Legacy mono-mix fallback.
                         let source = lookup(word.start, word.end)
                         if source == .mic {
                             speaker = DeepgramService.micSpeakerID
@@ -466,8 +640,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         } else if source == .unknown {
                             unknownTaggedWordCount += 1
                         }
-                        // .system → keep Deepgram's speaker (for multi-speaker remote diarization)
-                        // .unknown → keep Deepgram's speaker as fallback
                     }
                     
                     return TranscriptUpdate.Word(
@@ -482,18 +654,17 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 
                 // Update speaker history for final results
                 if isFinal {
-                    if sourceLookup != nil {
+                    if isMultichannel || sourceLookup != nil {
                         DebugLogger.shared.log(
                             .deepgram,
-                            "Source tagging: mic=\(micTaggedWordCount), unknown=\(unknownTaggedWordCount), total=\(alternative.words.count)"
+                            "Speaker tagging: channel=\(streamChannel.map(String.init) ?? "n/a"), multichannel=\(isMultichannel), mic=\(micTaggedWordCount), unknown=\(unknownTaggedWordCount), total=\(alternative.words.count)"
                         )
                     }
-                    for word in alternative.words {
-                        let speaker = word.speaker ?? 0
-                        var info = speakerHistory[speaker] ?? SpeakerInfo()
+                    for word in words {
+                        var info = speakerHistory[word.speaker] ?? SpeakerInfo()
                         info.wordCount += 1
                         info.totalDuration += word.end - word.start
-                        speakerHistory[speaker] = info
+                        speakerHistory[word.speaker] = info
                     }
                 }
                 
@@ -699,6 +870,7 @@ extension DeepgramService {
             self._sendTask = webSocketTask
             self.connectionState = .connected
             self.error = nil
+            self.startKeepAlive()
             DebugLogger.shared.log(.deepgram, "WebSocket connected")
         }
     }
@@ -711,6 +883,7 @@ extension DeepgramService {
     ) {
         Task { @MainActor [weak self] in
             guard let self, webSocketTask == self.webSocketTask else { return }
+            self.stopKeepAlive()
             self.isConnected = false
             self._sendConnected = false
             if self.connectionState != .error {
@@ -732,6 +905,8 @@ extension DeepgramService {
 struct DeepgramResponse: Codable {
     let type: String?
     let channel: Channel?
+    /// Streaming multichannel: `[channelIndex, channelCount]` e.g. `[0, 2]` or `[1, 2]`.
+    let channelIndex: [Int]?
     let isFinal: Bool?
     let speechFinal: Bool?
     let start: Double?
@@ -741,6 +916,7 @@ struct DeepgramResponse: Codable {
     enum CodingKeys: String, CodingKey {
         case type
         case channel
+        case channelIndex = "channel_index"
         case isFinal = "is_final"
         case speechFinal = "speech_final"
         case start

@@ -1,3 +1,5 @@
-- Saved transcripts can be trimmed before exporting, sharing, or regenerating insights.
-- Automatic speaker naming is more conservative and waits for clearer transcript evidence before applying names.
-- Starting a new recording no longer picks up where an old unfinished session left off.
+- Settings can store a personal transcription dictionary for product names, acronyms, and other uncommon words.
+- Calendar meeting titles and attendee names help live transcription recognise people and company names more accurately.
+- Action items sent to Attio are assigned to the connected Attio user.
+- Managed-mode transcription reconnects more reliably during longer meetings.
+- Live transcription stays connected more reliably during brief audio gaps.

@@ -1,7 +1,7 @@
 import Foundation
 
 /// Communicates with the Miniti backend for managed mode.
-/// Handles usage checking, session management (temp Deepgram keys), and insights proxy.
+/// Handles usage checking, session management (Deepgram grant JWTs), and insights proxy.
 final class MinitiAPIService: @unchecked Sendable {
     
     // MARK: - Configuration
@@ -143,29 +143,75 @@ final class MinitiAPIService: @unchecked Sendable {
     }
     
     struct SessionResponse: Decodable {
-        let tempApiKey: String
+        /// Canonical Deepgram JWT from `/api/session`.
+        let accessToken: String
+        /// Always `"Bearer"` for managed grant tokens.
+        let tokenType: String
+        /// Lifetime in seconds when provided by the API (max 3600).
+        let expiresIn: Int?
         let expiresAt: Date
         let sessionId: String
         
+        /// Deprecated alias for `accessToken` (older clients / transitional responses).
+        var tempApiKey: String { accessToken }
+        
         enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token"
+            case accessTokenCamel = "accessToken"
             case tempApiKey = "temp_api_key"
-            case expiresAt = "expires_at"
-            case sessionId = "session_id"
             case tempApiKeyCamel = "tempApiKey"
+            case tokenType = "token_type"
+            case tokenTypeCamel = "tokenType"
+            case expiresIn = "expires_in"
+            case expiresInCamel = "expiresIn"
+            case expiresAt = "expires_at"
             case expiresAtCamel = "expiresAt"
+            case sessionId = "session_id"
             case sessionIdCamel = "sessionId"
         }
         
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
-            tempApiKey =
+            
+            // Prefer access_token; fall back to deprecated temp_api_key during cutover.
+            let token =
+                (try? container.decode(String.self, forKey: .accessToken)) ??
+                (try? container.decode(String.self, forKey: .accessTokenCamel)) ??
                 (try? container.decode(String.self, forKey: .tempApiKey)) ??
                 (try? container.decode(String.self, forKey: .tempApiKeyCamel)) ??
                 ""
-            expiresAt =
+            
+            tokenType =
+                (try? container.decode(String.self, forKey: .tokenType)) ??
+                (try? container.decode(String.self, forKey: .tokenTypeCamel)) ??
+                "Bearer"
+            
+            if let value = try? container.decode(Int.self, forKey: .expiresIn) {
+                expiresIn = value
+            } else if let value = try? container.decode(Int.self, forKey: .expiresInCamel) {
+                expiresIn = value
+            } else if let string =
+                        (try? container.decode(String.self, forKey: .expiresIn)) ??
+                        (try? container.decode(String.self, forKey: .expiresInCamel)),
+                      let value = Int(string) {
+                expiresIn = value
+            } else {
+                expiresIn = nil
+            }
+            
+            // expires_at is authoritative; otherwise derive from expires_in. No long default TTL.
+            if let date =
                 (try? container.decode(Date.self, forKey: .expiresAt)) ??
-                (try? container.decode(Date.self, forKey: .expiresAtCamel)) ??
-                Date().addingTimeInterval(4 * 60 * 60)
+                (try? container.decode(Date.self, forKey: .expiresAtCamel)) {
+                expiresAt = date
+            } else if let expiresIn, expiresIn > 0 {
+                expiresAt = Date().addingTimeInterval(TimeInterval(expiresIn))
+            } else {
+                throw DecodingError.dataCorrupted(
+                    .init(codingPath: container.codingPath, debugDescription: "Missing session expiry (expires_at / expires_in)")
+                )
+            }
+            
             sessionId =
                 (try? container.decode(String.self, forKey: .sessionId)) ??
                 (try? container.decode(String.self, forKey: .sessionIdCamel)) ??
@@ -179,11 +225,12 @@ final class MinitiAPIService: @unchecked Sendable {
                     return ""
                 }()
             
-            if tempApiKey.isEmpty || sessionId.isEmpty {
+            if token.isEmpty || sessionId.isEmpty {
                 throw DecodingError.dataCorrupted(
                     .init(codingPath: container.codingPath, debugDescription: "Missing session token fields")
                 )
             }
+            accessToken = token
         }
     }
     
@@ -872,8 +919,8 @@ final class MinitiAPIService: @unchecked Sendable {
         return try decode(UsageInfo.self, from: data, endpoint: "/usage")
     }
     
-    /// Request a new transcription session. Returns a temporary Deepgram API key.
-    /// The backend validates the device, checks usage limits, and issues a scoped temp key.
+    /// Request a new transcription session. Returns a short-lived Deepgram grant JWT.
+    /// The backend validates the device, checks usage limits, and mints `access_token` (Bearer).
     func requestSession(deviceId: String, model: String) async throws -> SessionResponse {
         let request = makeRequest(
             path: "/session",
@@ -1269,6 +1316,11 @@ final class MinitiAPIService: @unchecked Sendable {
             return "<non-utf8 body (\(data.count) bytes)>"
         }
         
+        text = text.replacingOccurrences(
+            of: #""access_token"\s*:\s*"[^"]+""#,
+            with: #""access_token":"<redacted>""#,
+            options: .regularExpression
+        )
         text = text.replacingOccurrences(
             of: #""temp_api_key"\s*:\s*"[^"]+""#,
             with: #""temp_api_key":"<redacted>""#,

@@ -217,6 +217,11 @@ struct LanguageSettingsView: View {
     @State private var editingIndex: Int?
     @State private var editingText = ""
     @State private var validationMessage: String?
+    @State private var dictionaryTerms: [String] = []
+    @State private var newDictionaryTerm = ""
+    @State private var editingDictionaryIndex: Int?
+    @State private var editingDictionaryText = ""
+    @State private var dictionaryValidationMessage: String?
     
     var body: some View {
         Form {
@@ -234,6 +239,62 @@ struct LanguageSettingsView: View {
                 Text("Transcription, insights, and filler detection all use this language. Changing the language updates the filler list below. Can be overridden per meeting before recording.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Personal Dictionary") {
+                Text("Add product names, customer names, acronyms, or uncommon words that Deepgram should treat as real terms. Used when a new recording connects.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(Array(dictionaryTerms.enumerated()), id: \.offset) { index, term in
+                    HStack {
+                        Text(term)
+                            .textSelection(.enabled)
+                        Spacer()
+
+                        Button {
+                            editingDictionaryIndex = index
+                            editingDictionaryText = term
+                            dictionaryValidationMessage = nil
+                        } label: {
+                            Image(systemName: "pencil")
+                        }
+                        .buttonStyle(.borderless)
+
+                        Button(role: .destructive) {
+                            removeDictionaryTerm(at: index)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+
+                HStack {
+                    TextField("Add word (example: Lightdash)", text: $newDictionaryTerm)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit {
+                            addDictionaryTerm()
+                        }
+
+                    Button("Add") {
+                        addDictionaryTerm()
+                    }
+                    .disabled(newDictionaryTerm.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+
+                if let dictionaryValidationMessage {
+                    Text(dictionaryValidationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack {
+                    Text("Personal terms")
+                    Spacer()
+                    Text("\(dictionaryTerms.count)")
+                        .foregroundStyle(.secondary)
+                }
             }
             
             Section("Filler Detection") {
@@ -304,6 +365,7 @@ struct LanguageSettingsView: View {
         .padding()
         .onAppear {
             fillers = TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage)
+            dictionaryTerms = PersonalDictionaryPreferences.currentTerms()
         }
         .alert("Edit filler phrase", isPresented: Binding(
             get: { editingIndex != nil },
@@ -323,6 +385,59 @@ struct LanguageSettingsView: View {
                 saveEditedFiller()
             }
         }
+        .alert("Edit dictionary term", isPresented: Binding(
+            get: { editingDictionaryIndex != nil },
+            set: { showing in
+                if !showing {
+                    editingDictionaryIndex = nil
+                    editingDictionaryText = ""
+                }
+            }
+        )) {
+            TextField("Term", text: $editingDictionaryText)
+            Button("Cancel", role: .cancel) {
+                editingDictionaryIndex = nil
+                editingDictionaryText = ""
+            }
+            Button("Save") {
+                saveEditedDictionaryTerm()
+            }
+        }
+    }
+
+    private func addDictionaryTerm() {
+        let trimmed = newDictionaryTerm.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        dictionaryTerms.append(trimmed)
+        newDictionaryTerm = ""
+        persistDictionaryTerms()
+        dictionaryValidationMessage = nil
+    }
+
+    private func removeDictionaryTerm(at index: Int) {
+        guard dictionaryTerms.indices.contains(index) else { return }
+        dictionaryTerms.remove(at: index)
+        persistDictionaryTerms()
+        dictionaryValidationMessage = nil
+    }
+
+    private func saveEditedDictionaryTerm() {
+        guard let editingDictionaryIndex, dictionaryTerms.indices.contains(editingDictionaryIndex) else { return }
+        let trimmed = editingDictionaryText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            dictionaryValidationMessage = "Dictionary term cannot be empty."
+            return
+        }
+        dictionaryTerms[editingDictionaryIndex] = trimmed
+        self.editingDictionaryIndex = nil
+        editingDictionaryText = ""
+        persistDictionaryTerms()
+        dictionaryValidationMessage = nil
+    }
+
+    private func persistDictionaryTerms() {
+        dictionaryTerms = PersonalDictionaryPreferences.normalizedTerms(dictionaryTerms)
+        PersonalDictionaryPreferences.save(dictionaryTerms)
     }
     
     private func addFiller() {

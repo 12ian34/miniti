@@ -116,7 +116,43 @@ final class MinitiAPIServiceTests: XCTestCase {
 
     // MARK: - SessionResponse decoding
 
-    func testSessionResponseSnakeCase() throws {
+    func testSessionResponseAccessTokenCanonical() throws {
+        let json = """
+        {
+            "access_token": "eyJhbGciOi.test",
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "expires_at": "2026-04-01T04:00:00Z",
+            "session_id": "sess_xyz"
+        }
+        """.data(using: .utf8)!
+
+        let resp = try decoder.decode(MinitiAPIService.SessionResponse.self, from: json)
+        XCTAssertEqual(resp.accessToken, "eyJhbGciOi.test")
+        XCTAssertEqual(resp.tempApiKey, "eyJhbGciOi.test")
+        XCTAssertEqual(resp.tokenType, "Bearer")
+        XCTAssertEqual(resp.expiresIn, 3600)
+        XCTAssertEqual(resp.sessionId, "sess_xyz")
+    }
+
+    func testSessionResponsePrefersAccessTokenOverTempApiKey() throws {
+        let json = """
+        {
+            "access_token": "canonical-jwt",
+            "temp_api_key": "deprecated-alias",
+            "token_type": "Bearer",
+            "expires_in": 1800,
+            "expires_at": "2026-04-01T04:00:00Z",
+            "session_id": "sess_both"
+        }
+        """.data(using: .utf8)!
+
+        let resp = try decoder.decode(MinitiAPIService.SessionResponse.self, from: json)
+        XCTAssertEqual(resp.accessToken, "canonical-jwt")
+        XCTAssertEqual(resp.tempApiKey, "canonical-jwt")
+    }
+
+    func testSessionResponseFallsBackToTempApiKey() throws {
         let json = """
         {
             "temp_api_key": "abc123",
@@ -126,14 +162,45 @@ final class MinitiAPIServiceTests: XCTestCase {
         """.data(using: .utf8)!
 
         let resp = try decoder.decode(MinitiAPIService.SessionResponse.self, from: json)
+        XCTAssertEqual(resp.accessToken, "abc123")
         XCTAssertEqual(resp.tempApiKey, "abc123")
+        XCTAssertEqual(resp.tokenType, "Bearer")
         XCTAssertEqual(resp.sessionId, "sess_xyz")
+    }
+
+    func testSessionResponseDerivesExpiresAtFromExpiresIn() throws {
+        let before = Date()
+        let json = """
+        {
+            "access_token": "jwt-no-expires-at",
+            "token_type": "Bearer",
+            "expires_in": 120,
+            "session_id": "sess_ttl"
+        }
+        """.data(using: .utf8)!
+
+        let resp = try decoder.decode(MinitiAPIService.SessionResponse.self, from: json)
+        let after = Date()
+        XCTAssertEqual(resp.expiresIn, 120)
+        XCTAssertGreaterThanOrEqual(resp.expiresAt, before.addingTimeInterval(120))
+        XCTAssertLessThanOrEqual(resp.expiresAt, after.addingTimeInterval(120))
+    }
+
+    func testSessionResponseThrowsWithoutExpiry() {
+        let json = """
+        {
+            "access_token": "jwt-no-expiry",
+            "session_id": "sess_bad"
+        }
+        """.data(using: .utf8)!
+
+        XCTAssertThrowsError(try decoder.decode(MinitiAPIService.SessionResponse.self, from: json))
     }
 
     func testSessionResponseIntSessionId() throws {
         let json = """
         {
-            "temp_api_key": "key123",
+            "access_token": "key123",
             "expires_at": "2026-04-01T04:00:00Z",
             "session_id": 42
         }
@@ -146,7 +213,7 @@ final class MinitiAPIServiceTests: XCTestCase {
     func testSessionResponseThrowsOnEmpty() {
         let json = """
         {
-            "temp_api_key": "",
+            "access_token": "",
             "expires_at": "2026-04-01T04:00:00Z",
             "session_id": ""
         }

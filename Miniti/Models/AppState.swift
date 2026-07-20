@@ -360,8 +360,31 @@ final class AppState: ObservableObject {
     @Published var hasActiveAppStoreSubscription = false
     #endif
     private var currentSessionId: String?
-    private var tempDeepgramKey: String?
+    private var managedDeepgramAccessToken: String?
+    private var managedDeepgramTokenExpiresAt: Date?
+    private var managedDeepgramTokenType: String = "Bearer"
     private var managedSessionStartRecordedDuration: TimeInterval?
+    
+    /// Refresh managed JWTs this far before `expires_at` so reconnects don't race expiry.
+    nonisolated static let managedDeepgramTokenRefreshSkew: TimeInterval = 60
+    
+    /// Whether a stored managed Deepgram JWT is still usable for a new WebSocket handshake.
+    nonisolated static func isManagedDeepgramCredentialFresh(
+        token: String?,
+        expiresAt: Date?,
+        now: Date = Date(),
+        skew: TimeInterval = managedDeepgramTokenRefreshSkew
+    ) -> Bool {
+        guard let token, !token.isEmpty, let expiresAt else { return false }
+        return now < expiresAt.addingTimeInterval(-skew)
+    }
+    
+    private var hasFreshManagedDeepgramCredential: Bool {
+        Self.isManagedDeepgramCredentialFresh(
+            token: managedDeepgramAccessToken,
+            expiresAt: managedDeepgramTokenExpiresAt
+        )
+    }
     
     /// Whether managed mode is at its limit.
     var isLimitReached: Bool {
@@ -918,7 +941,22 @@ final class AppState: ObservableObject {
                     DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
                 }
                 #endif
-                deepgramService.connect(language: self.meetingLanguage)
+                #if os(macOS)
+                let useMultichannel = self.captureMicrophone && self.captureSystemAudio
+                #else
+                let useMultichannel = false
+                #endif
+                let configured = await self.configureDeepgramCredentialForConnect()
+                guard configured else {
+                    DebugLogger.shared.log(.app, "Deepgram reconnect skipped attempt \(idx + 1): credential unavailable")
+                    continue
+                }
+                deepgramService.connect(
+                    language: self.meetingLanguage,
+                    personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
+                    sessionKeyterms: self.deepgramSessionKeyterms(),
+                    multichannel: useMultichannel
+                )
                 
                 // Give the socket a short window to establish before next retry.
                 for _ in 0..<12 {
@@ -1504,6 +1542,28 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Speaker Names Inference
+
+    /// Ephemeral Deepgram keyterms from the active meeting/calendar context
+    /// (attendee names, company domains, short meeting title).
+    private func deepgramSessionKeyterms() -> [String] {
+        if let meeting = currentMeeting {
+            return PersonalDictionaryPreferences.sessionKeyterms(
+                meetingTitle: meeting.displayTitle,
+                attendees: meeting.attendees.map {
+                    (displayName: $0.displayName, domain: $0.domain, isSelf: $0.isSelf)
+                }
+            )
+        }
+        if let event = selectedCalendarEvent {
+            return PersonalDictionaryPreferences.sessionKeyterms(
+                meetingTitle: event.title,
+                attendees: event.attendees.map {
+                    (displayName: $0.displayName, domain: $0.domain, isSelf: $0.isSelf)
+                }
+            )
+        }
+        return []
+    }
 
     /// Build the list of candidate real names to bias the LLM toward.
     /// Currently drawn from calendar attendees (excluding the local user).
@@ -3302,9 +3362,9 @@ final class AppState: ObservableObject {
         isResumingRecording = false
         currentMeeting?.endTime = nil
         
-        // In managed mode, if we don't have a temp key (e.g. resuming after stop),
-        // we must request a new one before connecting to Deepgram.
-        if appMode == .managed && tempDeepgramKey == nil {
+        // In managed mode, if the JWT is missing/expired (e.g. resuming after stop),
+        // request a fresh /api/session before connecting to Deepgram.
+        if appMode == .managed && !hasFreshManagedDeepgramCredential {
             isResumingRecording = true
             Task { await startManagedRecording() }
             return
@@ -3330,31 +3390,29 @@ final class AppState: ObservableObject {
         lastTranscriptHealthDebugLogAt = 0
         startTranscriptHealthMonitoring()
         
-        // Determine which API key to use
-        let apiKey: String
-        if appMode == .managed, let tempKey = tempDeepgramKey {
-            apiKey = tempKey
-        } else {
-            apiKey = deepgramApiKey
-        }
-        
-        deepgramService.configure(apiKey: apiKey)
+        configureDeepgramServiceCredential()
         
         #if os(macOS)
-        if captureMicrophone && captureSystemAudio {
+        let useMultichannel = captureMicrophone && captureSystemAudio
+        if useMultichannel {
+            // Multichannel attributes mic via channel 0 — no energy-based sourceLookup.
             audioCaptureService.resetSourceTracking()
-            deepgramService.sourceLookup = { [weak audioCaptureService] start, end in
-                audioCaptureService?.dominantSource(from: start, to: end) ?? .unknown
-            }
+            deepgramService.sourceLookup = nil
         } else {
             deepgramService.sourceLookup = nil
         }
         #else
+        let useMultichannel = false
         deepgramService.sourceLookup = nil
         #endif
         
-        deepgramService.connect(language: meetingLanguage)
-        
+        deepgramService.connect(
+            language: meetingLanguage,
+            personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
+            sessionKeyterms: deepgramSessionKeyterms(),
+            multichannel: useMultichannel
+        )
+
         // Configure audio capture
         audioCaptureService.onAudioBuffer = { [weak deepgramService] data in
             deepgramService?.sendAudio(data)
@@ -3402,7 +3460,7 @@ final class AppState: ObservableObject {
         #endif
     }
     
-    /// Managed mode: request a temp Deepgram key from backend, then start recording.
+    /// Managed mode: request a Deepgram JWT from backend, then start recording.
     private func startManagedRecording() async {
         guard hasAcceptedTerms else {
             isStartingMeeting = false
@@ -3410,30 +3468,88 @@ final class AppState: ObservableObject {
             return
         }
 
+        let obtained = await refreshManagedDeepgramCredential(trigger: "start")
+        guard obtained else { return }
+        
+        managedSessionStartRecordedDuration = accumulatedRecordedDuration
+        await flushPendingSessionEndReports(trigger: "session started")
+        
+        // Now start recording with the managed JWT
+        startRecording()
+    }
+    
+    /// Stores managed session fields from `/api/session`.
+    private func applyManagedSession(_ session: MinitiAPIService.SessionResponse) {
+        currentSessionId = session.sessionId
+        managedDeepgramAccessToken = session.accessToken
+        managedDeepgramTokenExpiresAt = session.expiresAt
+        managedDeepgramTokenType = session.tokenType.isEmpty ? "Bearer" : session.tokenType
+        currentMeeting?.managedSessionId = session.sessionId
+    }
+    
+    private func clearManagedDeepgramCredential() {
+        managedDeepgramAccessToken = nil
+        managedDeepgramTokenExpiresAt = nil
+        managedDeepgramTokenType = "Bearer"
+    }
+    
+    /// Configures Deepgram from the current mode's credential (no network).
+    private func configureDeepgramServiceCredential() {
+        guard let deepgramService else { return }
+        if appMode == .managed, let token = managedDeepgramAccessToken, !token.isEmpty {
+            // Managed grant tokens must use Bearer — Deepgram rejects JWT + Token.
+            deepgramService.configure(credential: token, authorizationScheme: .bearer)
+        } else {
+            deepgramService.configure(credential: deepgramApiKey, authorizationScheme: .token)
+        }
+    }
+    
+    /// Ensures managed JWT is fresh (refreshing via `/api/session` if needed), then configures Deepgram.
+    /// - Returns: `false` when managed mode cannot obtain a usable credential.
+    @discardableResult
+    private func configureDeepgramCredentialForConnect() async -> Bool {
+        if appMode == .managed {
+            let ok = await refreshManagedDeepgramCredentialIfNeeded(trigger: "reconnect")
+            guard ok else { return false }
+        }
+        configureDeepgramServiceCredential()
+        return true
+    }
+    
+    /// Refreshes `/api/session` only when the managed JWT is missing or near expiry.
+    @discardableResult
+    private func refreshManagedDeepgramCredentialIfNeeded(trigger: String) async -> Bool {
+        if hasFreshManagedDeepgramCredential { return true }
+        return await refreshManagedDeepgramCredential(trigger: trigger)
+    }
+    
+    /// Always requests a new managed session JWT from the backend.
+    @discardableResult
+    private func refreshManagedDeepgramCredential(trigger: String) async -> Bool {
+        guard appMode == .managed else { return true }
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
             isStartingMeeting = false
             isResumingRecording = false
-            return
+            return false
         }
         
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         
         do {
             let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: "nova-3")
-            currentSessionId = session.sessionId
-            tempDeepgramKey = session.tempApiKey
-            managedSessionStartRecordedDuration = accumulatedRecordedDuration
-            currentMeeting?.managedSessionId = session.sessionId
-            DebugLogger.shared.log(.app, "Managed session started: sessionId=\(session.sessionId)")
-            await flushPendingSessionEndReports(trigger: "session started")
-            
-            // Now start recording with the temp key
-            startRecording()
+            applyManagedSession(session)
+            DebugLogger.shared.log(
+                .app,
+                "Managed Deepgram credential refreshed (\(trigger)): sessionId=\(session.sessionId), expiresAt=\(session.expiresAt)"
+            )
+            return true
         } catch let error as MinitiAPIService.ServiceError {
-            managedSessionStartRecordedDuration = nil
-            isStartingMeeting = false
-            isResumingRecording = false
+            if trigger == "start" {
+                managedSessionStartRecordedDuration = nil
+                isStartingMeeting = false
+                isResumingRecording = false
+            }
             switch error {
             case .limitReached(_, _):
                 await refreshUsage()
@@ -3452,13 +3568,17 @@ final class AppState: ObservableObject {
             default:
                 managedSessionError = error.localizedDescription
             }
-            DebugLogger.shared.log(.app, "Managed session FAILED: \(error.localizedDescription)")
+            DebugLogger.shared.log(.app, "Managed session FAILED (\(trigger)): \(error.localizedDescription)")
+            return false
         } catch {
-            managedSessionStartRecordedDuration = nil
-            isStartingMeeting = false
-            isResumingRecording = false
+            if trigger == "start" {
+                managedSessionStartRecordedDuration = nil
+                isStartingMeeting = false
+                isResumingRecording = false
+            }
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
-            DebugLogger.shared.log(.app, "Managed session FAILED: \(error.localizedDescription)")
+            DebugLogger.shared.log(.app, "Managed session FAILED (\(trigger)): \(error.localizedDescription)")
+            return false
         }
     }
     
@@ -3514,7 +3634,7 @@ final class AppState: ObservableObject {
             Task {
                 await reportManagedSessionEnd(report, trigger: "stop recording")
             }
-            tempDeepgramKey = nil
+            clearManagedDeepgramCredential()
             managedSessionStartRecordedDuration = nil
         }
 
@@ -3628,7 +3748,7 @@ final class AppState: ObservableObject {
         
         // Reset managed session state
         currentSessionId = nil
-        tempDeepgramKey = nil
+        clearManagedDeepgramCredential()
         managedSessionStartRecordedDuration = nil
         managedSessionError = nil
     }
