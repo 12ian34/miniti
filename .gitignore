@@ -40,3 +40,4 @@ fastlane/*.mobileprovision
 shn.md
 
 .cursor/hooks/
+.clawpatch/
