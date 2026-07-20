@@ -12,7 +12,7 @@ Miniti is a meeting assistant that records audio, streams it to Deepgram for liv
 
 **Monetization model (for context — Android v1 ships with no paid tier):**
 - **BYOK** — user supplies own Deepgram + OpenAI keys, unlimited, no backend
-- **Managed Free** — 500 minutes/month via Miniti backend (temp Deepgram keys, OpenAI proxied)
+- **Managed Free** — 500 minutes/month via Miniti backend (Deepgram grant JWTs, OpenAI proxied)
 - **Managed Pro** — 5,000 minutes/month, $5/month. Subscription rail is platform-specific (Polar on macOS, StoreKit on iOS, Google Play Billing on Android when added in v1.1+)
 
 **Android v1 scope:** BYOK + Managed Free only. No Pro tier, no Google Play Billing. Users who hit the 500-min cap either switch to BYOK or wait for monthly reset.
@@ -233,7 +233,7 @@ Called at `startRecording()` in managed mode to get a temporary Deepgram API key
 }
 ```
 
-The temp key has ~4 hour TTL and `usage:write` scope only. Store `session_id` as `managedSessionId` in the Meeting entity and persist it so orphaned sessions can be reported on next launch.
+The grant JWT has ≤1 hour TTL (`expires_at` / `expires_in`). Store `session_id` as `managedSessionId` in the Meeting entity and persist it so orphaned sessions can be reported on next launch. Refresh via `POST /api/session` before any new Deepgram connect/reconnect if the JWT is missing or within ~60s of expiry. Connect with `Authorization: Bearer <access_token>` (not `Token`).
 
 Returns `402` if user is at limit.
 
@@ -333,8 +333,8 @@ Launch:
   GET /api/usage         (populate usage banner)
 
 Start recording:
-  POST /api/session      (get temp Deepgram key)
-  Connect WebSocket directly to wss://api.deepgram.com/... with temp key
+  POST /api/session      (get Deepgram grant JWT)
+  Connect WebSocket to wss://api.deepgram.com/... with Authorization: Bearer <access_token>
   Stream audio
 
 Every 30s during recording (plus warmup):
@@ -357,7 +357,7 @@ Deepgram WebSocket URL for BYOK:
 ```
 wss://api.deepgram.com/v1/listen?model=nova-3&language={lang}&punctuate=true&diarize=true&interim_results=true&smart_format=true&encoding=linear16&sample_rate=16000&channels=1
 ```
-Auth via `Authorization: Token {deepgram_api_key}` header.
+Auth via `Authorization: Token {deepgram_api_key}` header for BYOK. Managed mode uses `Authorization: Bearer {access_token}` from `/api/session` (never Token for JWTs).
 
 OpenAI for BYOK: `POST https://api.openai.com/v1/chat/completions` with `Authorization: Bearer {openai_api_key}`. Model: `gpt-5-mini`. System prompts must match the managed backend's prompts so output is consistent across modes. (Get the exact prompts from the `miniti-api` repo — they live in `app/api/insights/route.ts`.)
 
@@ -936,12 +936,12 @@ Roughly 2–3 weeks of focused work without billing. Each step produces a runnab
 13. `AudioCaptureService` foreground service skeleton + notification channel + ongoing notification
 14. `AudioRecord` capture on dedicated thread, 16kHz mono PCM16, RMS computation, audio levels flow
 15. `DeepgramClient` — Ktor WebSocket, BYOK URL construction, auth header, PCM streaming
-16. Managed-mode integration — fetch temp key via `POST /api/session`, connect with temp key
+16. Managed-mode integration — fetch grant JWT via `POST /api/session`, connect with `Authorization: Bearer …`; refresh before reconnect if near expiry
 17. Deepgram response parsing + speaker stabilization
 18. `AppStateViewModel` recording lifecycle: start, stop, pause, resume, return home
 19. Date-based recording timer
 20. Auto-stop on silence
-21. Reconnect + transcript starvation watchdog
+21. Reconnect + transcript starvation watchdog (managed JWT refresh on reconnect)
 22. Ongoing notification live updates (title, timer, throttled transcript line)
 23. Periodic auto-save (30s)
 24. Resume interrupted meeting on launch

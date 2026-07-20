@@ -7,6 +7,18 @@ import XCTest
 
 final class DeepgramParsingTests: XCTestCase {
 
+    // MARK: - Authorization scheme
+
+    func testAuthorizationHeaderBearerForManagedJWT() {
+        let header = DeepgramAuthorizationScheme.bearer.authorizationHeader(credential: "eyJhbGciOi.test")
+        XCTAssertEqual(header, "Bearer eyJhbGciOi.test")
+    }
+
+    func testAuthorizationHeaderTokenForBYOKKey() {
+        let header = DeepgramAuthorizationScheme.token.authorizationHeader(credential: "dg-api-key")
+        XCTAssertEqual(header, "Token dg-api-key")
+    }
+
     // MARK: - DeepgramResponse decoding
 
     func testDeepgramResponseFullDecode() throws {
@@ -23,6 +35,7 @@ final class DeepgramParsingTests: XCTestCase {
                     ]
                 }]
             },
+            "channel_index": [0, 2],
             "is_final": true,
             "speech_final": false,
             "start": 0.0,
@@ -33,6 +46,7 @@ final class DeepgramParsingTests: XCTestCase {
         let response = try JSONDecoder().decode(DeepgramResponse.self, from: json)
         XCTAssertEqual(response.type, "Results")
         XCTAssertEqual(response.isFinal, true)
+        XCTAssertEqual(response.channelIndex, [0, 2])
         XCTAssertEqual(response.channel?.alternatives.count, 1)
 
         let alt = response.channel!.alternatives[0]
@@ -192,6 +206,89 @@ final class DeepgramParsingTests: XCTestCase {
 
     func testDeepgramErrorConnectionFailed() {
         XCTAssertEqual(DeepgramError.connectionFailed.errorDescription, "Failed to connect to Deepgram.")
+    }
+
+    // MARK: - PersonalDictionaryPreferences
+
+    func testPersonalDictionaryNormalizesTerms() {
+        let result = PersonalDictionaryPreferences.normalizedTerms([
+            "  Lightdash  ",
+            "LIGHTDASH",
+            "Sales   Force",
+            "",
+            "   "
+        ])
+
+        XCTAssertEqual(result, ["Lightdash", "Sales Force"])
+    }
+
+    func testPersonalDictionarySaveAndLoad() {
+        let defaults = UserDefaults(suiteName: "test_personal_dictionary_\(UUID().uuidString)")!
+        let terms = ["lightdash", "Acme Inc"]
+
+        PersonalDictionaryPreferences.save(terms, defaults: defaults)
+
+        XCTAssertEqual(PersonalDictionaryPreferences.currentTerms(defaults: defaults), terms)
+    }
+
+    func testPersonalDictionaryEmptySaveClearsStorage() {
+        let defaults = UserDefaults(suiteName: "test_personal_dictionary_\(UUID().uuidString)")!
+        PersonalDictionaryPreferences.save(["Lightdash"], defaults: defaults)
+
+        PersonalDictionaryPreferences.save([], defaults: defaults)
+
+        XCTAssertNil(defaults.data(forKey: PersonalDictionaryPreferences.storageKey))
+        XCTAssertTrue(PersonalDictionaryPreferences.currentTerms(defaults: defaults).isEmpty)
+    }
+
+    func testDeepgramKeytermsIncludeDefaultsAndPersonalTerms() {
+        let keyterms = PersonalDictionaryPreferences.deepgramKeyterms(personalTerms: [
+            "lightdash",
+            "Acme",
+            "  Ahuja  ",
+            "MEDDPICC"
+        ])
+
+        XCTAssertEqual(keyterms, ["Miniti", "Lightdash", "Ahuja", "Acme", "MEDDPICC"])
+    }
+
+    func testDeepgramKeytermsMergeSessionTermsAndCapAt100() {
+        let personal = (0..<40).map { "Personal\($0)" }
+        let session = (0..<80).map { "Session\($0)" }
+        let keyterms = PersonalDictionaryPreferences.deepgramKeyterms(
+            personalTerms: personal,
+            sessionTerms: session
+        )
+
+        XCTAssertEqual(keyterms.count, 100)
+        XCTAssertEqual(keyterms.prefix(3), ["Miniti", "Lightdash", "Ahuja"])
+        XCTAssertTrue(keyterms.contains("Personal0"))
+        XCTAssertTrue(keyterms.contains("Session0"))
+        XCTAssertFalse(keyterms.contains("Session79"), "Session terms should fill remaining budget after system+personal")
+    }
+
+    func testSessionKeytermsFromCalendarContext() {
+        let terms = PersonalDictionaryPreferences.sessionKeyterms(
+            meetingTitle: "Acme QBR",
+            attendees: [
+                (displayName: "Sarah Chen", domain: "acme.com", isSelf: false),
+                (displayName: "Me", domain: "gmail.com", isSelf: true),
+                (displayName: nil, domain: "lightdash.com", isSelf: false),
+            ]
+        )
+
+        XCTAssertEqual(terms, ["Acme QBR", "Sarah Chen", "Acme", "Lightdash"])
+    }
+
+    func testSessionKeytermsSkipsUntitledAndConsumerDomains() {
+        let terms = PersonalDictionaryPreferences.sessionKeyterms(
+            meetingTitle: "untitled",
+            attendees: [
+                (displayName: "Bob", domain: "gmail.com", isSelf: false),
+            ]
+        )
+
+        XCTAssertEqual(terms, ["Bob"])
     }
 
     // MARK: - segmentBySpeaker (static, extracted)
@@ -368,6 +465,42 @@ final class DeepgramParsingTests: XCTestCase {
         )
 
         XCTAssertEqual(service.dominantSource(from: 0.0, to: 0.1), .mic)
+    }
+
+    func testInterleaveStereoInt16PadsSystemUnderrun() {
+        let mic: [Int16] = [100, 200, 300]
+        let sys: [Int16] = [10, 20]
+        let data = mic.withUnsafeBufferPointer { micBuf in
+            sys.withUnsafeBufferPointer { sysBuf in
+                AudioCaptureService.interleaveStereoInt16(
+                    mic: micBuf.baseAddress!,
+                    micCount: mic.count,
+                    sys: sysBuf.baseAddress!,
+                    sysCount: sys.count
+                )
+            }
+        }
+
+        XCTAssertEqual(data.count, 12) // 3 frames * 2 channels * 2 bytes
+        let samples = data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        XCTAssertEqual(samples, [100, 10, 200, 20, 300, 0])
+    }
+
+    func testInterleaveStereoInt16EqualLengths() {
+        let mic: [Int16] = [1, 2]
+        let sys: [Int16] = [3, 4]
+        let data = mic.withUnsafeBufferPointer { micBuf in
+            sys.withUnsafeBufferPointer { sysBuf in
+                AudioCaptureService.interleaveStereoInt16(
+                    mic: micBuf.baseAddress!,
+                    micCount: mic.count,
+                    sys: sysBuf.baseAddress!,
+                    sysCount: sys.count
+                )
+            }
+        }
+        let samples = data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
+        XCTAssertEqual(samples, [1, 3, 2, 4])
     }
     #endif
 }

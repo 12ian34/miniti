@@ -10,6 +10,15 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-07-20 - v1.26.0
+
+- new: (macOS and iOS) Settings can store a personal transcription dictionary for product names, acronyms, and other uncommon words
+- new: (macOS and iOS) calendar meeting titles and attendee names help live transcription recognize people and company names more accurately
+- improvement: (macOS) mic and system audio are transcribed on separate channels, so “you” vs remote speakers stays clearer during overlapping speech
+- improvement: (macOS and iOS) action items sent to Attio are assigned to the connected Attio user
+- improvement: (macOS and iOS) managed-mode transcription reconnects more reliably during longer meetings
+- improvement: (macOS and iOS) live transcription stays connected more reliably during brief audio gaps
+
 ### 2026-04-29 - v1.25.1
 
 - improvement: (macOS) markdown export indexes now use AGENTS.md as the AI agent entry point.

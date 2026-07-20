@@ -29,9 +29,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     @Published var isSystemAudioActive = false
     nonisolated(unsafe) private var isSystemAudioActiveForWatchdog = false
     
-    // MARK: - Ring Buffer for Audio Mixing
-    // System audio is buffered and mixed into the mic stream so Deepgram
-    // receives a single coherent audio stream (required for diarization).
+    // MARK: - Ring Buffer for Stereo Interleave
+    // When mic + system are both active, system PCM16 is buffered here and the
+    // mic callback interleaves stereo frames for Deepgram multichannel:
+    // ch0 = mic ("You"), ch1 = system (remote speakers via Deepgram diarization).
     // Pre-allocated Int16 ring buffer avoids Data allocations in the hot path.
     
     private let ringCapacity = 8000  // ~500ms at 16kHz mono (samples, not bytes)
@@ -41,17 +42,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var ringCount = 0  // samples currently in buffer
     private let ringLock = NSLock()
     
-    // MARK: - Adaptive Dual AGC
-    // Each source is independently normalized to a target Int16 RMS before mixing.
-    // Gain is smoothed (fast attack, slow release) to avoid pumping.
-    // A noise gate prevents boosting silence/background noise.
-    nonisolated(unsafe) private var runningMicRMS: Float = 0.01   // EMA of raw Float32 mic level (0-1), for display
-    nonisolated(unsafe) private var runningSysRMS: Float = 0.01   // EMA of raw Float32 sys level (0-1), for display
-    private let rmsAlpha: Float = 0.05  // EMA smoothing for display levels
-    
-    // Smoothed gains applied to Int16 buffers during mixing
-    nonisolated(unsafe) private var smoothedMicGain: Float = 1.0
-    nonisolated(unsafe) private var smoothedSysGain: Float = 1.0
+    // Display-level EMA only (no longer used for Deepgram AGC).
+    nonisolated(unsafe) private var runningMicRMS: Float = 0.01
+    nonisolated(unsafe) private var runningSysRMS: Float = 0.01
+    private let rmsAlpha: Float = 0.05
     
     // MARK: - Runtime Diagnostics
     
@@ -61,11 +55,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var sysSilentCallbacks: Int = 0
     nonisolated(unsafe) private var ringSamplesAppended: Int = 0
     nonisolated(unsafe) private var ringSamplesDrained: Int = 0
-    nonisolated(unsafe) private var mixWithSystemCount: Int = 0
-    nonisolated(unsafe) private var mixMicOnlyCount: Int = 0
+    nonisolated(unsafe) private var interleaveWithSystemCount: Int = 0
+    nonisolated(unsafe) private var interleaveMicPadCount: Int = 0
     nonisolated(unsafe) private var lastSystemHeartbeat: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemCallbackAt: CFAbsoluteTime = 0
-    nonisolated(unsafe) private var lastNoSystemMixWarning: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastNoSystemInterleaveWarning: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
@@ -98,10 +92,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var activeMicInputSampleRate: Double = 0
     private var activeMicInputChannels: AVAudioChannelCount = 0
     
-    // MARK: - Source Dominance Tracking
-    // Records which audio source (mic vs system) was dominant at each point in the
-    // stream. Used to override Deepgram's diarization — mic words → "You",
-    // system words → remote speaker(s). Keyed by stream time (seconds from start).
+    // MARK: - Source Dominance Tracking (legacy / debug)
+    // Previously used to override Deepgram speaker IDs on a mono mix. Dual-source
+    // capture now uses Deepgram multichannel (ch0=mic, ch1=system), so tagging is
+    // channel-based. Kept for diagnostics and existing unit tests.
     
     struct SourceSample {
         let startTime: Double    // seconds from recording start
@@ -113,12 +107,34 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     /// Rolling log of per-buffer source dominance. Accessed from mic callback thread.
     nonisolated(unsafe) private var sourceLog: [SourceSample] = []
     private let sourceLogLock = NSLock()
-    /// Cumulative samples sent to Deepgram, for computing stream time.
+    /// Cumulative frames sent to Deepgram (per channel), for stream time.
     nonisolated(unsafe) private var cumulativeSamplesSent: Int = 0
     
     /// Returns the dominant audio source for a given time range in the stream.
     /// - Returns: `.system` if system audio energy exceeded mic, `.mic` if mic was louder, `.unknown` if no data.
     enum AudioSource { case mic, system, unknown }
+
+    /// Whether Deepgram is receiving interleaved stereo (mic+system dual capture).
+    var isSendingMultichannel: Bool {
+        expectsMicAudio && expectsSystemAudio
+    }
+
+    /// Interleave mono Int16 mic (ch0) + system (ch1) into stereo PCM16.
+    /// Pads system with silence when `sysCount < micCount`.
+    nonisolated static func interleaveStereoInt16(
+        mic: UnsafePointer<Int16>,
+        micCount: Int,
+        sys: UnsafePointer<Int16>,
+        sysCount: Int
+    ) -> Data {
+        guard micCount > 0 else { return Data() }
+        var out = [Int16](repeating: 0, count: micCount * 2)
+        for i in 0..<micCount {
+            out[i * 2] = mic[i]
+            out[i * 2 + 1] = i < sysCount ? sys[i] : 0
+        }
+        return Data(bytes: out, count: micCount * MemoryLayout<Int16>.size * 2)
+    }
     
     nonisolated func dominantSource(from startTime: Double, to endTime: Double) -> AudioSource {
         sourceLogLock.lock()
@@ -555,11 +571,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         sysSilentCallbacks = 0
         ringSamplesAppended = 0
         ringSamplesDrained = 0
-        mixWithSystemCount = 0
-        mixMicOnlyCount = 0
+        interleaveWithSystemCount = 0
+        interleaveMicPadCount = 0
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
         lastSystemCallbackAt = lastSystemHeartbeat
-        lastNoSystemMixWarning = 0
+        lastNoSystemInterleaveWarning = 0
         lastSystemNonSilentAt = lastSystemHeartbeat
         lastSystemAutoRestartAt = 0
         lastSilenceCheck = 0
@@ -662,7 +678,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let ringNow = currentRingSampleCount()
             DebugLogger.shared.log(
                 .audio,
-                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
+                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), interleave(sys=\(interleaveWithSystemCount), micPad=\(interleaveMicPadCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
             )
         }
         stopMicrophoneCapture()
@@ -688,7 +704,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let ringNow = currentRingSampleCount()
             DebugLogger.shared.log(
                 .audio,
-                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
+                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), interleave(sys=\(interleaveWithSystemCount), micPad=\(interleaveMicPadCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
             )
         }
         stopMicrophoneCapture()
@@ -1704,10 +1720,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // MARK: - Audio Processing (vDSP accelerated)
     
     nonisolated(unsafe) private var lastMicLevelUpdate: CFAbsoluteTime = 0
-    nonisolated(unsafe) private var lastMixDebugLog: CFAbsoluteTime = 0
-    private let mixScratchCapacity = 4096
-    // Scratch buffer for mixing (avoids per-call allocation)
-    nonisolated(unsafe) private let mixScratch: UnsafeMutablePointer<Int16> = {
+    nonisolated(unsafe) private var lastInterleaveDebugLog: CFAbsoluteTime = 0
+    private let sysScratchCapacity = 4096
+    // Scratch buffer for draining system audio before stereo interleave.
+    nonisolated(unsafe) private let sysScratch: UnsafeMutablePointer<Int16> = {
         let ptr = UnsafeMutablePointer<Int16>.allocate(capacity: 4096)
         ptr.initialize(repeating: 0, count: 4096)
         return ptr
@@ -1759,7 +1775,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         if now - lastMicLevelUpdate > 0.05 {
             lastMicLevelUpdate = now
             let level = calculateLevelVDSP(buffer)
-            // Update running mic RMS for gain normalization
             runningMicRMS = runningMicRMS * (1 - rmsAlpha) + level * rmsAlpha
             Task { @MainActor [weak self] in
                 self?.microphoneLevel = level
@@ -1773,119 +1788,80 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let ringNow = currentRingSampleCount()
             DebugLogger.shared.log(
                 .audio,
-                "Mic heartbeat: buffers=\(micBufferCount), level=\(String(format: "%.5f", level)), frames=\(micSamples), mix(sys=\(mixWithSystemCount), micOnly=\(mixMicOnlyCount)), sys(cb=\(sysCallbackCount), nonSilent=\(sysNonSilentCallbacks)), ring=\(ringNow)/\(ringCapacity)"
+                "Mic heartbeat: buffers=\(micBufferCount), level=\(String(format: "%.5f", level)), frames=\(micSamples), interleave(sys=\(interleaveWithSystemCount), micPad=\(interleaveMicPadCount)), sys(cb=\(sysCallbackCount), nonSilent=\(sysNonSilentCallbacks)), ring=\(ringNow)/\(ringCapacity)"
             )
         }
         
-        // Mix with buffered system audio (gain-normalized)
-        if micSamples > mixScratchCapacity && now - lastNoSystemMixWarning > 5.0 {
-            lastNoSystemMixWarning = now
+        let wantsMultichannel = expectsMicAudio && expectsSystemAudio
+        if micSamples > sysScratchCapacity && now - lastNoSystemInterleaveWarning > 5.0 {
+            lastNoSystemInterleaveWarning = now
             DebugLogger.shared.log(
                 .audio,
-                "Mix warning: mic frame count (\(micSamples)) exceeds scratch capacity (\(mixScratchCapacity)); draining system audio in chunks"
+                "Interleave warning: mic frame count (\(micSamples)) exceeds scratch capacity (\(sysScratchCapacity)); draining system audio in chunks"
             )
         }
-        let drainCap = min(micSamples, mixScratchCapacity)
-        let sysDrained = drainRingBuffer(into: mixScratch, maxSamples: drainCap)
+        let drainCap = min(micSamples, sysScratchCapacity)
+        let sysDrained = wantsMultichannel
+            ? drainRingBuffer(into: sysScratch, maxSamples: drainCap)
+            : 0
         
-        if sysDrained > 0 {
-            mixWithSystemCount += 1
-            // === Adaptive dual AGC ===
-            // Measure actual Int16 RMS of each buffer, compute gain to reach
-            // target, smooth gain transitions. Works regardless of hardware
-            // levels (process tap, ScreenCaptureKit, Bluetooth, etc.).
+        if wantsMultichannel {
+            // Stereo for Deepgram multichannel: always emit ch0=mic, ch1=system.
+            // Pad system with silence on underrun so channel count stays stable.
+            if sysDrained > 0 {
+                interleaveWithSystemCount += 1
+            } else {
+                interleaveMicPadCount += 1
+                if sysCallbackCount > 0 && now - lastNoSystemInterleaveWarning > 5.0 {
+                    lastNoSystemInterleaveWarning = now
+                    DebugLogger.shared.log(
+                        .audio,
+                        "Interleave warning: no system samples drained (ring empty). sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks)"
+                    )
+                }
+            }
             
-            let mixCount = min(micSamples, sysDrained)
-            var micFloat = [Float](repeating: 0, count: mixCount)
-            var sysFloat = [Float](repeating: 0, count: mixCount)
-            var mixedFloat = [Float](repeating: 0, count: mixCount)
-            
-            // Int16 -> Float32
-            vDSP_vflt16(micPtr, 1, &micFloat, 1, vDSP_Length(mixCount))
-            vDSP_vflt16(mixScratch, 1, &sysFloat, 1, vDSP_Length(mixCount))
-            
-            // Measure RMS of each buffer (Int16 scale: 0–32767)
+            let energyCount = min(micSamples, max(sysDrained, 1))
+            var micFloat = [Float](repeating: 0, count: energyCount)
+            vDSP_vflt16(micPtr, 1, &micFloat, 1, vDSP_Length(energyCount))
             var micMsq: Float = 0
-            vDSP_measqv(micFloat, 1, &micMsq, vDSP_Length(mixCount))
+            vDSP_measqv(micFloat, 1, &micMsq, vDSP_Length(energyCount))
             let micRMS = sqrt(micMsq)
             
-            var sysMsq: Float = 0
-            vDSP_measqv(sysFloat, 1, &sysMsq, vDSP_Length(mixCount))
-            let sysRMS = sqrt(sysMsq)
+            var sysRMS: Float = 0
+            if sysDrained > 0 {
+                var sysFloat = [Float](repeating: 0, count: sysDrained)
+                vDSP_vflt16(sysScratch, 1, &sysFloat, 1, vDSP_Length(sysDrained))
+                var sysMsq: Float = 0
+                vDSP_measqv(sysFloat, 1, &sysMsq, vDSP_Length(sysDrained))
+                sysRMS = sqrt(sysMsq)
+            }
             
-            // Record source dominance for this buffer interval (raw energy, before AGC).
             let bufferStartTime = Double(cumulativeSamplesSent) / 16000.0
             let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
             sourceLog.append(SourceSample(startTime: bufferStartTime, endTime: bufferEndTime, micEnergy: micRMS, sysEnergy: sysRMS))
-            // Trim entries to bound memory (~25 minutes at current callback cadence).
             if sourceLog.count > 6000 { sourceLog.removeFirst(sourceLog.count - 6000) }
             sourceLogLock.unlock()
             
-            // Target RMS in Int16 scale. Mic slightly louder for diarization.
-            // ~3000 = ~9% of full scale — comfortable speech level for Deepgram.
-            let micTargetRMS: Float = 3000
-            let sysTargetRMS: Float = 2000
-            let noiseFloor: Float = 30      // Don't boost below this (pure noise/silence)
-            let maxGain: Float = 25.0        // Safety cap
-            
-            // Compute ideal gain for this buffer
-            let idealMicGain = micRMS > noiseFloor
-                ? min(maxGain, max(1.0, micTargetRMS / micRMS))
-                : 1.0
-            let idealSysGain = sysRMS > noiseFloor
-                ? min(maxGain, max(1.0, sysTargetRMS / sysRMS))
-                : 1.0
-            
-            // Smooth gain: fast attack (0.15), slow release (0.02) to avoid pumping
-            let attack: Float = 0.15
-            let release: Float = 0.02
-            smoothedMicGain += (idealMicGain > smoothedMicGain ? attack : release) * (idealMicGain - smoothedMicGain)
-            smoothedSysGain += (idealSysGain > smoothedSysGain ? attack : release) * (idealSysGain - smoothedSysGain)
-            
-            if now - lastMixDebugLog > 30.0 && sysRMS > 30 {
-                lastMixDebugLog = now
-                DebugLogger.shared.log(.audio, "Audio mix: micGain=\(String(format: "%.1f", smoothedMicGain)), sysGain=\(String(format: "%.1f", smoothedSysGain)), micRMS=\(String(format: "%.0f", micRMS)), sysRMS=\(String(format: "%.0f", sysRMS))")
-            }
-
-            // Apply gains
-            var mGain = smoothedMicGain
-            vDSP_vsmul(micFloat, 1, &mGain, &micFloat, 1, vDSP_Length(mixCount))
-            var sGain = smoothedSysGain
-            vDSP_vsmul(sysFloat, 1, &sGain, &sysFloat, 1, vDSP_Length(mixCount))
-            
-            // Add
-            vDSP_vadd(micFloat, 1, sysFloat, 1, &mixedFloat, 1, vDSP_Length(mixCount))
-            
-            // Clamp to Int16 range
-            var lo: Float = -32768
-            var hi: Float = 32767
-            vDSP_vclip(mixedFloat, 1, &lo, &hi, &mixedFloat, 1, vDSP_Length(mixCount))
-            
-            // Float32 -> Int16
-            var mixedInt16 = [Int16](repeating: 0, count: micSamples)
-            vDSP_vfix16(mixedFloat, 1, &mixedInt16, 1, vDSP_Length(mixCount))
-            
-            // Copy remaining unmixed mic samples if mic is longer
-            if micSamples > mixCount {
-                for i in mixCount..<micSamples {
-                    mixedInt16[i] = micPtr[i]
-                }
+            if now - lastInterleaveDebugLog > 30.0 && (micRMS > 30 || sysRMS > 30) {
+                lastInterleaveDebugLog = now
+                DebugLogger.shared.log(
+                    .audio,
+                    "Audio interleave: frames=\(micSamples), sysDrained=\(sysDrained), micRMS=\(String(format: "%.0f", micRMS)), sysRMS=\(String(format: "%.0f", sysRMS))"
+                )
             }
             
             cumulativeSamplesSent += micSamples
-            let data = Data(bytes: mixedInt16, count: micSamples * 2)
+            let data = Self.interleaveStereoInt16(
+                mic: micPtr,
+                micCount: micSamples,
+                sys: sysScratch,
+                sysCount: sysDrained
+            )
             callback?(data)
         } else {
-            mixMicOnlyCount += 1
-            if sysCallbackCount > 0 && now - lastNoSystemMixWarning > 5.0 {
-                lastNoSystemMixWarning = now
-                DebugLogger.shared.log(
-                    .audio,
-                    "Mix warning: no system samples drained (ring empty). sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks)"
-                )
-            }
-            // No system audio buffered — mic only. Log as mic-dominant.
+            // Mic-only mono path (system-only uses the direct system callback).
             let bufferStartTime = Double(cumulativeSamplesSent) / 16000.0
             let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
@@ -1894,7 +1870,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             sourceLogLock.unlock()
             
             cumulativeSamplesSent += micSamples
-            let data = Data(bytes: micPtr, count: micSamples * 2)
+            let data = Data(bytes: micPtr, count: micSamples * MemoryLayout<Int16>.size)
             callback?(data)
         }
     }

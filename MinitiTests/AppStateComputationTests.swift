@@ -8,6 +8,52 @@ import SwiftData
 
 final class AppStateComputationTests: XCTestCase {
 
+    // MARK: - Managed Deepgram credential freshness
+
+    func testManagedDeepgramCredentialFreshBeforeSkew() {
+        let now = Date()
+        let expiresAt = now.addingTimeInterval(120)
+        XCTAssertTrue(
+            AppState.isManagedDeepgramCredentialFresh(
+                token: "jwt",
+                expiresAt: expiresAt,
+                now: now,
+                skew: 60
+            )
+        )
+    }
+
+    func testManagedDeepgramCredentialStaleWithinSkew() {
+        let now = Date()
+        let expiresAt = now.addingTimeInterval(30)
+        XCTAssertFalse(
+            AppState.isManagedDeepgramCredentialFresh(
+                token: "jwt",
+                expiresAt: expiresAt,
+                now: now,
+                skew: 60
+            )
+        )
+    }
+
+    func testManagedDeepgramCredentialStaleWhenExpired() {
+        let now = Date()
+        XCTAssertFalse(
+            AppState.isManagedDeepgramCredentialFresh(
+                token: "jwt",
+                expiresAt: now.addingTimeInterval(-1),
+                now: now,
+                skew: 60
+            )
+        )
+    }
+
+    func testManagedDeepgramCredentialStaleWhenMissing() {
+        XCTAssertFalse(AppState.isManagedDeepgramCredentialFresh(token: nil, expiresAt: Date()))
+        XCTAssertFalse(AppState.isManagedDeepgramCredentialFresh(token: "", expiresAt: Date()))
+        XCTAssertFalse(AppState.isManagedDeepgramCredentialFresh(token: "jwt", expiresAt: nil))
+    }
+
     // MARK: - isNewer (semver comparison)
 
     func testIsNewerMajorBump() {
