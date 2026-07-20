@@ -313,7 +313,6 @@ platform :mac do
     notarize(
       package: app_path,
       api_key: api_key,
-      use_notarytool: true,
       print_log: true
     )
 
@@ -338,7 +337,6 @@ platform :mac do
     notarize(
       package: app_path,
       api_key: load_app_store_connect_api_key,
-      use_notarytool: true,
       print_log: true
     )
 
