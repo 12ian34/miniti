@@ -434,6 +434,8 @@ struct SettingsView_iOS: View {
                         .foregroundStyle(.secondary)
                 }
 
+                DocsMCPSettingsSection_iOS()
+
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                     Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
@@ -869,6 +871,64 @@ struct APIKeyRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+    }
+}
+
+private struct DocsMCPSettingsSection_iOS: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isTesting = false
+    @State private var testMessage: String?
+    @State private var testSucceeded = false
+
+    var body: some View {
+        Section("Docs MCP") {
+            TextField("Docs MCP URL", text: $appState.docsMCPURL)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            if !appState.docsMCPURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if appState.validatedDocsMCPURL != nil {
+                    Label("valid https URL", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Accent.green)
+                } else {
+                    Label("invalid URL — https only, no localhost/private hosts", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Status.error)
+                }
+            }
+            Button(isTesting ? "testing…" : "Test Connection") {
+                Task { await testConnection() }
+            }
+            .disabled(isTesting || appState.validatedDocsMCPURL == nil)
+            if let testMessage {
+                Text(testMessage)
+                    .font(.caption)
+                    .foregroundStyle(testSucceeded ? ColorPalette.Accent.green : ColorPalette.Status.error)
+            }
+            Text("HTTPS Streamable HTTP MCP server for product docs. In the Docs insights tab, tap look up when you want answers with citations. Example: https://docs.lightdash.com/mcp")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Looking up docs sends recent transcript text from the meeting to this docs host to search for relevant pages.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @MainActor
+    private func testConnection() async {
+        guard let url = appState.validatedDocsMCPURL else { return }
+        isTesting = true
+        testMessage = nil
+        defer { isTesting = false }
+        do {
+            let tool = try await DocsMCPService.probe(mcpURL: url)
+            testSucceeded = true
+            testMessage = "found search tool: \(tool.name)"
+        } catch {
+            testSucceeded = false
+            testMessage = error.localizedDescription
         }
     }
 }

@@ -70,17 +70,26 @@ final class MinitiAPIService: @unchecked Sendable {
         let resetsAt: Date
         let tier: String
         let subscriptionStatus: String?
-        
+        /// Docs lookups consumed this period, metered server-side on the same rail
+        /// as minutes. Nil until the backend reports it (older deployments).
+        let docsLookupsUsed: Int?
+        /// Monthly docs-lookup allowance. Nil = backend hasn't reported a cap yet.
+        let docsLookupsLimit: Int?
+
         enum CodingKeys: String, CodingKey {
             case minutesUsed = "minutes_used"
             case minutesLimit = "minutes_limit"
             case resetsAt = "resets_at"
             case tier
             case subscriptionStatus = "subscription_status"
+            case docsLookupsUsed = "docs_lookups_used"
+            case docsLookupsLimit = "docs_lookups_limit"
             case minutesUsedCamel = "minutesUsed"
             case minutesLimitCamel = "minutesLimit"
             case resetsAtCamel = "resetsAt"
             case subscriptionStatusCamel = "subscriptionStatus"
+            case docsLookupsUsedCamel = "docsLookupsUsed"
+            case docsLookupsLimitCamel = "docsLookupsLimit"
         }
         
         /// Custom decoder: Vercel KV (Redis) may return numbers as strings.
@@ -114,9 +123,18 @@ final class MinitiAPIService: @unchecked Sendable {
                     (try? container.decode(String.self, forKey: .minutesLimitCamel))
                 minutesLimit = str.flatMap(Double.init) ?? 500
             }
+            docsLookupsUsed = MinitiAPIService.decodeOptionalInt(container, .docsLookupsUsed, .docsLookupsUsedCamel)
+            docsLookupsLimit = MinitiAPIService.decodeOptionalInt(container, .docsLookupsLimit, .docsLookupsLimitCamel)
         }
-        
+
         var isPro: Bool { tier == "pro" }
+
+        /// Remaining docs lookups this period, or nil if the backend hasn't
+        /// reported a cap (in which case the client shouldn't gate on it).
+        var docsLookupsRemaining: Int? {
+            guard let limit = docsLookupsLimit else { return nil }
+            return max(0, limit - (docsLookupsUsed ?? 0))
+        }
         
         var minutesRemaining: Double {
             max(0, minutesLimit - minutesUsed)
@@ -869,6 +887,24 @@ final class MinitiAPIService: @unchecked Sendable {
         let startOfMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) ?? now
         return calendar.date(byAdding: .month, value: 1, to: startOfMonth) ?? now.addingTimeInterval(30 * 24 * 60 * 60)
     }
+
+    /// Decode an optional integer that Vercel KV may return as an Int or a String,
+    /// under either a snake_case or camelCase key.
+    fileprivate static func decodeOptionalInt<K: CodingKey>(
+        _ container: KeyedDecodingContainer<K>,
+        _ key: K,
+        _ camelKey: K
+    ) -> Int? {
+        if let val = try? container.decode(Int.self, forKey: key) { return val }
+        if let val = try? container.decode(Int.self, forKey: camelKey) { return val }
+        if let val = try? container.decode(Double.self, forKey: key) { return Int(val) }
+        if let val = try? container.decode(Double.self, forKey: camelKey) { return Int(val) }
+        if let str = (try? container.decode(String.self, forKey: key)) ??
+            (try? container.decode(String.self, forKey: camelKey)) {
+            return Int(str)
+        }
+        return nil
+    }
     
     // MARK: - Version Check
     
@@ -1028,6 +1064,83 @@ final class MinitiAPIService: @unchecked Sendable {
             "API insights response: mode=\(mode), duration=\(String(format: "%.2fs", duration)), summaryChars=\(decoded.summary.count), actionItems=\(decoded.actionItems.count), topics=\(decoded.topics.count), meddpiccFields=\(meddpiccFieldCount)"
         )
         return decoded
+    }
+
+    /// Managed-mode docs playbook: backend retrieves from user MCP URL then grounds answers.
+    /// Managed docs lookup for a single topic. The backend uses `topic` as the MCP
+    /// search query (falling back to the transcript for older deployments) and
+    /// grounds an answer. This request counts against the docs-lookup quota.
+    func generateDocsPlaybook(
+        deviceId: String,
+        transcript: String,
+        docsMcpURL: String,
+        model: String,
+        topic: String? = nil,
+        requestSeq: Int? = nil,
+        language: String = "en"
+    ) async throws -> ManagedDocsPlaybookResponse {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var body: [String: Any] = [
+            "transcript": transcript,
+            "mode": "docs",
+            "model": model,
+            "language": language,
+            "docs_mcp_url": docsMcpURL,
+        ]
+        if let topic, !topic.isEmpty { body["topic"] = topic }
+        if let requestSeq { body["request_seq"] = requestSeq }
+
+        let request = makeRequest(
+            path: "/insights",
+            method: "POST",
+            deviceId: deviceId,
+            body: body
+        )
+        DebugLogger.shared.log(
+            .app,
+            "API docs playbook request: transcriptChars=\(transcript.count), topic=\(topic ?? "-"), mcpURL=\(docsMcpURL)"
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(ManagedDocsPlaybookResponse.self, from: data, endpoint: "/insights docs")
+        let duration = CFAbsoluteTimeGetCurrent() - startedAt
+        DebugLogger.shared.log(
+            .app,
+            "API docs playbook response: duration=\(String(format: "%.2fs", duration)), cards=\(decoded.docs.count), degraded=\(decoded.meta?.degraded ?? false)"
+        )
+        return decoded
+    }
+
+    /// Managed extraction of lookup-worthy docs topics (`mode: "docs_topics"`).
+    /// Topic extraction is free — it does not count against the docs-lookup quota.
+    /// Older backend deployments that don't know this mode decode to empty topics
+    /// and the caller no-ops gracefully.
+    func extractDocsTopics(
+        deviceId: String,
+        transcript: String,
+        docsMcpURL: String,
+        model: String,
+        language: String = "en"
+    ) async throws -> ManagedDocsTopicsResponse {
+        let body: [String: Any] = [
+            "transcript": transcript,
+            "mode": "docs_topics",
+            "model": model,
+            "language": language,
+            "docs_mcp_url": docsMcpURL,
+        ]
+
+        let request = makeRequest(
+            path: "/insights",
+            method: "POST",
+            deviceId: deviceId,
+            body: body
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(ManagedDocsTopicsResponse.self, from: data, endpoint: "/insights docs_topics")
     }
 
     /// Managed-mode proxy for the "i zoned out" catch-up feature.
@@ -1572,6 +1685,7 @@ struct ManagedInsightsResponse: Codable {
     let champion: String?
     let competition: String?
     let questions: [SuggestedQuestion]
+    let docs: [DocPlaybookCard]
     let meta: ManagedInsightsMeta?
 
     enum CodingKeys: String, CodingKey {
@@ -1589,6 +1703,7 @@ struct ManagedInsightsResponse: Codable {
         case champion
         case competition
         case questions
+        case docs
         case meta
     }
 
@@ -1608,6 +1723,7 @@ struct ManagedInsightsResponse: Codable {
         champion = try container.decodeIfPresent(String.self, forKey: .champion)
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
         questions = try container.decodeIfPresent([SuggestedQuestion].self, forKey: .questions) ?? []
+        docs = try container.decodeIfPresent([DocPlaybookCard].self, forKey: .docs) ?? []
         meta = try container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)
     }
     
@@ -1626,8 +1742,48 @@ struct ManagedInsightsResponse: Codable {
             identifiedPain: identifiedPain,
             champion: champion,
             competition: competition,
-            questions: questions
+            questions: questions,
+            docs: docs
         )
+    }
+}
+
+/// Backend response for `mode: "docs"` on `/api/insights`.
+struct ManagedDocsPlaybookResponse: Codable {
+    let docs: [DocPlaybookCard]
+    let meta: ManagedInsightsMeta?
+
+    enum CodingKeys: String, CodingKey {
+        case docs
+        case meta
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        docs = try container.decodeIfPresent([DocPlaybookCard].self, forKey: .docs) ?? []
+        meta = try container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)
+    }
+}
+
+/// Backend response for `mode: "docs_topics"`. Older deployments that don't know
+/// this mode return no `topics` and decode to an empty list.
+struct ManagedDocsTopicsResponse: Codable {
+    let topics: [String]
+    let meta: ManagedInsightsMeta?
+
+    enum CodingKeys: String, CodingKey {
+        case topics
+        case meta
+    }
+
+    init(from decoder: Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            topics = []
+            meta = nil
+            return
+        }
+        topics = (try? container.decodeIfPresent([String].self, forKey: .topics)) ?? nil ?? []
+        meta = (try? container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)) ?? nil
     }
 }
 

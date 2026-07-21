@@ -268,6 +268,14 @@ struct MainWindow: View {
                 appState.switchInsightsMode(to: .questions)
             }
         }
+
+        keyboardService.onDocsMode = { [self] in
+            if selectedMeeting != nil {
+                appState.insightsMode = .docs
+            } else {
+                appState.switchInsightsMode(to: .docs)
+            }
+        }
     }
     
     private func navigateHistory(direction: Int) {
@@ -1302,7 +1310,7 @@ struct MeetingDetailView: View {
     
     private var insightsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !meeting.segments.isEmpty && appState.insightsMode != .training {
+            if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
                 HStack(spacing: 8) {
                     Button {
                         Task {
@@ -1447,6 +1455,22 @@ struct MeetingDetailView: View {
                 } else {
                     QuestionsEmptyState(variant: .noQuestions)
                 }
+            } else if appState.insightsMode == .docs {
+                DocsTabContent(
+                    topics: meeting.docTopics,
+                    isExtracting: appState.isExtractingDocsTopics,
+                    hasMCPURL: appState.validatedDocsMCPURL != nil,
+                    autoLookup: appState.canAutoLookupDocs,
+                    lookupsRemaining: appState.docsLookupsRemaining,
+                    canRefresh: !meeting.segments.isEmpty,
+                    errorMessage: appState.docsLookupError,
+                    onRefresh: {
+                        Task { await appState.refreshDocsTopics(for: meeting) }
+                    },
+                    onLookup: { topicID in
+                        Task { await appState.lookupDocTopic(id: topicID, for: meeting) }
+                    }
+                )
             } else if appState.insightsMode == .meddpicc {
                 if meeting.hasMEDDPICC {
                     SavedMEDDPICCBlocks(meeting: meeting)

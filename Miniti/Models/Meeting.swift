@@ -36,6 +36,9 @@ final class Meeting {
     // Suggested questions (JSON-encoded [SuggestedQuestion])
     var suggestedQuestionsJSON: String?
 
+    // Docs topics + their resolved lookup cards (JSON-encoded [DocTopic])
+    var docTopicsJSON: String?
+
     // Inferred speaker names (JSON-encoded [String: String] where key is speaker ID as string)
     var speakerNamesJSON: String?
 
@@ -111,6 +114,25 @@ final class Meeting {
     
     var hasQuestions: Bool {
         !suggestedQuestions.isEmpty
+    }
+
+    var docTopics: [DocTopic] {
+        get {
+            guard let json = docTopicsJSON, let data = json.data(using: .utf8) else { return [] }
+            return (try? JSONDecoder().decode([DocTopic].self, from: data)) ?? []
+        }
+        set {
+            docTopicsJSON = newValue.isEmpty ? nil : (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8))
+        }
+    }
+
+    /// Resolved answer cards from answered topics — used for markdown/webhook export.
+    var docsPlaybook: [DocPlaybookCard] {
+        docTopics.compactMap { $0.card }
+    }
+
+    var hasDocs: Bool {
+        !docTopics.isEmpty
     }
 
     var speakerNames: [String: String] {
@@ -302,7 +324,8 @@ final class Meeting {
             !topics.isEmpty ||
             !discussionFlow.isEmpty ||
             hasMEDDPICCContent ||
-            hasQuestions
+            hasQuestions ||
+            hasDocs
     }
 
     var needsInsightsAfterTranscriptEdit: Bool {
@@ -334,6 +357,7 @@ final class Meeting {
         meddpiccChampion = nil
         meddpiccCompetition = nil
         suggestedQuestions = []
+        docTopics = []
     }
     
     // MARK: - Markdown Export
@@ -402,6 +426,21 @@ final class Meeting {
             md += "### Suggested Questions\n\n"
             for q in suggestedQuestions {
                 md += "- **\(q.question)**\n  _\(q.context)_\n"
+            }
+            md += "\n"
+        }
+
+        if hasDocs {
+            md += "### Docs\n\n"
+            for card in docsPlaybook {
+                md += "- **\(card.topic)**\n  \(card.answer)\n"
+                for citation in card.citations {
+                    if let url = citation.url, !url.isEmpty {
+                        md += "  - [\(citation.title)](\(url))\n"
+                    } else {
+                        md += "  - \(citation.title)\n"
+                    }
+                }
             }
             md += "\n"
         }

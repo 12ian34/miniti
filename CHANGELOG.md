@@ -10,6 +10,11 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-07-21 - v1.27.0
+
+- new: (macOS and iOS) Docs insights tab keeps an updating list of topics from the conversation; each one looks up an answer grounded in your docs, with source links (auto for Pro and BYOK, manual with a monthly free allowance otherwise)
+- new: (macOS and iOS) Settings lets you connect any docs MCP URL (for example a public product docs site)
+
 ### 2026-07-20 - v1.26.0
 
 - new: (macOS and iOS) Settings can store a personal transcription dictionary for product names, acronyms, and other uncommon words

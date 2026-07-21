@@ -1,5 +1,3 @@
-- Settings can store a personal transcription dictionary for product names, acronyms, and other uncommon words.
-- Calendar meeting titles and attendee names help live transcription recognise people and company names more accurately.
-- Action items sent to Attio are assigned to the connected Attio user.
-- Managed-mode transcription reconnects more reliably during longer meetings.
-- Live transcription stays connected more reliably during brief audio gaps.
+- Docs insights tab now keeps an updating list of topics from your conversation, and looks up an answer for each one from your docs, with source links.
+- Auto-lookup on Pro and BYOK; a monthly free allowance otherwise.
+- Settings lets you connect any docs MCP URL (for example a public product docs site).

@@ -22,6 +22,7 @@ enum WebhookService {
             let meddpicc: MEDDPICCData?
             let training: TrainingData?
             let questions: [QuestionEntry]?
+            let docs: [DocEntry]?
             let speakerCount: Int
             let speakerNames: [String: String]?
             let transcript: [TranscriptEntry]
@@ -32,7 +33,7 @@ enum WebhookService {
             let attendees: [AttendeeEntry]?
 
             enum CodingKeys: String, CodingKey {
-                case id, title, date, summary, notes, topics, meddpicc, training, questions, transcript, language, attendees
+                case id, title, date, summary, notes, topics, meddpicc, training, questions, docs, transcript, language, attendees
                 case endTime = "end_time"
                 case durationSeconds = "duration_seconds"
                 case actionItems = "action_items"
@@ -67,6 +68,19 @@ enum WebhookService {
             let question: String
             let type: String
             let context: String
+        }
+
+        struct DocCitationEntry: Encodable {
+            let title: String
+            let url: String?
+            let snippet: String?
+        }
+
+        struct DocEntry: Encodable {
+            let topic: String
+            let answer: String
+            let citations: [DocCitationEntry]
+            let priority: String?
         }
 
         struct MEDDPICCData: Encodable {
@@ -188,6 +202,7 @@ enum WebhookService {
         transcript: [MeetingPayload.TranscriptEntry],
         training: MeetingPayload.TrainingData?,
         questions: [SuggestedQuestion] = [],
+        docs: [DocPlaybookCard] = [],
         calendarEventId: String? = nil,
         attendees: [MeetingAttendee] = []
     ) -> MeetingPayload {
@@ -220,6 +235,16 @@ enum WebhookService {
                 training: training,
                 questions: questions.isEmpty ? nil : questions.map {
                     MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
+                },
+                docs: docs.isEmpty ? nil : docs.map {
+                    MeetingPayload.DocEntry(
+                        topic: $0.topic,
+                        answer: $0.answer,
+                        citations: $0.citations.map {
+                            MeetingPayload.DocCitationEntry(title: $0.title, url: $0.url, snippet: $0.snippet)
+                        },
+                        priority: $0.priority
+                    )
                 },
                 speakerCount: speakerCount,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
@@ -285,6 +310,16 @@ enum WebhookService {
                 training: training,
                 questions: meeting.suggestedQuestions.isEmpty ? nil : meeting.suggestedQuestions.map {
                     MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
+                },
+                docs: meeting.docsPlaybook.isEmpty ? nil : meeting.docsPlaybook.map {
+                    MeetingPayload.DocEntry(
+                        topic: $0.topic,
+                        answer: $0.answer,
+                        citations: $0.citations.map {
+                            MeetingPayload.DocCitationEntry(title: $0.title, url: $0.url, snippet: $0.snippet)
+                        },
+                        priority: $0.priority
+                    )
                 },
                 speakerCount: speakers.count,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,

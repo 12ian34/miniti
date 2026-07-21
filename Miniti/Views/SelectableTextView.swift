@@ -607,7 +607,7 @@ struct TranscriptTrimView: View {
                 applyPendingTrim()
             }
         } message: {
-            Text("this will clear standard, meddpicc, and questions insights. regenerate insights after trimming. undo restores transcript text only - it does not restore the old insights.")
+            Text("this will clear standard, meddpicc, questions, and docs insights. regenerate insights after trimming. undo restores transcript text only - it does not restore the old insights.")
         }
     }
 
@@ -655,7 +655,7 @@ struct TranscriptTrimView: View {
                 Text("transcript edited")
                     .font(.system(size: 11, weight: .semibold, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.primary)
-                Text("standard, meddpicc, and questions insights were cleared; regenerate after trimming")
+                Text("standard, meddpicc, questions, and docs insights were cleared; regenerate after trimming")
                     .font(.system(size: 10, weight: .regular, design: .monospaced))
                     .foregroundStyle(ColorPalette.Text.meta)
             }

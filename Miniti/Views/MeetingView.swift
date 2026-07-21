@@ -1391,7 +1391,7 @@ struct LiveInsightsPanel: View {
     }
     
     private var showsUpdateButton: Bool {
-        appState.insightsMode != .training
+        appState.insightsMode != .training && appState.insightsMode != .docs
     }
     
     private var hasMEDDPICCContent: Bool {
@@ -1462,6 +1462,23 @@ struct LiveInsightsPanel: View {
                     } else if appState.liveQuestions.isEmpty {
                         QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
                     }
+                } else if appState.insightsMode == .docs {
+                    DocsTabContent(
+                        topics: appState.liveDocTopics,
+                        isExtracting: appState.isExtractingDocsTopics,
+                        hasMCPURL: appState.validatedDocsMCPURL != nil,
+                        autoLookup: appState.canAutoLookupDocs,
+                        lookupsRemaining: appState.docsLookupsRemaining,
+                        canRefresh: appState.canLookupDocs,
+                        errorMessage: appState.docsLookupError,
+                        onRefresh: {
+                            Task { @MainActor in await appState.refreshDocsTopics() }
+                        },
+                        onLookup: { topicID in
+                            Task { @MainActor in await appState.lookupDocTopic(id: topicID) }
+                        }
+                    )
+                    .padding(.horizontal, 16)
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isGeneratingInsights {
                         HStack(spacing: 8) {
@@ -1634,6 +1651,7 @@ private struct LiveInsightsEmptyState: View {
         case .meddpicc: return "◇"
         case .training: return "◇"
         case .questions: return "?"
+        case .docs: return "◇"
         }
     }
 
@@ -1643,6 +1661,7 @@ private struct LiveInsightsEmptyState: View {
         case .meddpicc: return "listening..."
         case .training: return "waiting for speech..."
         case .questions: return "listening..."
+        case .docs: return "finding topics..."
         }
     }
 
@@ -1652,6 +1671,7 @@ private struct LiveInsightsEmptyState: View {
         case .meddpicc: return "MEDDPICC analysis appears\nonce there's enough context"
         case .training: return "speech metrics update\nas you speak"
         case .questions: return "questions appear once there's\nenough to find gaps"
+        case .docs: return "topics appear as you talk,\ngrounded in your docs"
         }
     }
 }

@@ -496,4 +496,43 @@ final class WebhookPayloadTests: XCTestCase {
         )
         XCTAssertNil(payload.meeting.questions)
     }
+
+    func testPayloadFromLiveStateWithDocs() {
+        let docs = [
+            DocPlaybookCard(
+                topic: "SSO",
+                answer: "Use Okta SAML.",
+                citations: [DocCitation(title: "SSO setup", url: "https://docs.lightdash.com/sso", snippet: "Okta")],
+                priority: "high"
+            )
+        ]
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Test",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 120,
+            summary: "Test",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil,
+            economicBuyer: nil,
+            decisionCriteria: nil,
+            decisionProcess: nil,
+            paperProcess: nil,
+            identifiedPain: nil,
+            champion: nil,
+            competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil,
+            docs: docs
+        )
+        XCTAssertEqual(payload.meeting.docs?.count, 1)
+        XCTAssertEqual(payload.meeting.docs?[0].topic, "SSO")
+        XCTAssertEqual(payload.meeting.docs?[0].citations.first?.url, "https://docs.lightdash.com/sso")
+    }
 }
