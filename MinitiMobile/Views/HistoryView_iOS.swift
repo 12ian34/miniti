@@ -455,7 +455,7 @@ struct MeetingDetail_iOS: View {
             VStack(alignment: .leading, spacing: 16) {
                 historicalInsightsModePicker
                 
-                if !meeting.segments.isEmpty && appState.insightsMode != .training {
+                if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
                     historicalInsightsGenerateButton
                 }
                 
@@ -468,6 +468,8 @@ struct MeetingDetail_iOS: View {
                     historicalTrainingContent
                 case .questions:
                     historicalQuestionsContent
+                case .docs:
+                    historicalDocsContent
                 }
             }
             .padding()
@@ -567,6 +569,24 @@ struct MeetingDetail_iOS: View {
                 QuestionsEmptyState(variant: .noQuestions)
             }
         }
+    }
+
+    private var historicalDocsContent: some View {
+        DocsTabContent(
+            topics: meeting.docTopics,
+            isExtracting: appState.isExtractingDocsTopics,
+            hasMCPURL: appState.validatedDocsMCPURL != nil,
+            autoLookup: appState.canAutoLookupDocs,
+            lookupsRemaining: appState.docsLookupsRemaining,
+            canRefresh: !meeting.segments.isEmpty,
+            errorMessage: appState.docsLookupError,
+            onRefresh: {
+                Task { await appState.refreshDocsTopics(for: meeting) }
+            },
+            onLookup: { topicID in
+                Task { await appState.lookupDocTopic(id: topicID, for: meeting) }
+            }
+        )
     }
     
     private var historicalTrainingContent: some View {

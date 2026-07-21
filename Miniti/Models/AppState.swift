@@ -145,6 +145,7 @@ final class AppState: ObservableObject {
         let meddpiccChampion: String?
         let meddpiccCompetition: String?
         let suggestedQuestions: [SuggestedQuestion]
+        let docTopics: [DocTopic]
         let speakerNames: [String: String]
         let speakerOverrides: Set<String>
         let selfSpeakerIDs: Set<Int>
@@ -229,6 +230,14 @@ final class AppState: ObservableObject {
     @Published var liveCompetition: String? = nil
     // Questions
     @Published var liveQuestions: [SuggestedQuestion] = []
+    // Docs topics: an updating list of lookup-worthy subjects extracted from the
+    // transcript. Each topic is looked up independently (auto for Pro/BYOK,
+    // manual for managed-free), rather than one bulk fetch of the transcript.
+    @Published var liveDocTopics: [DocTopic] = []
+    // True while the docs-topic extraction pass is running.
+    @Published var isExtractingDocsTopics = false
+    // User-facing message when topic extraction or a lookup failed (nil = no error).
+    @Published var docsLookupError: String? = nil
     // Inferred speaker names: [speakerID as string: name]
     @Published var liveSpeakerNames: [String: String] = [:]
     // Speaker IDs the user has manually named. Inference will not overwrite these.
@@ -301,6 +310,19 @@ final class AppState: ObservableObject {
     private var standardSuccessCount = 0
     private var meddpiccSuccessCount = 0
     private var questionsSuccessCount = 0
+    private var docsSuccessCount = 0
+    private var docsRequestSeq = 0
+    // Docs-topic extraction throttle (cadence-driven while docs tab is active).
+    private var lastDocsTopicsRequestAt: Date?
+    private var docsTopicsLastFiredSegmentCount = 0
+    private let docsTopicsMinInterval: TimeInterval = 20
+    // Skip topic extraction below this transcript length: too little to extract
+    // anything useful, and the managed backend rejects tiny transcripts with 400.
+    // Matches the BYOK `InsightsService.extractDocsTopics` guard.
+    private let docsMinTranscriptChars = 40
+    // Topic ids with an in-flight lookup, to bound auto-lookup concurrency.
+    private var docsLookupInFlight: Set<String> = []
+    private let maxConcurrentDocsLookups = 2
     private var standardCadenceAnchor: Date?
     private var meddpiccCadenceAnchor: Date?
     private var questionsCadenceAnchor: Date?
@@ -412,6 +434,39 @@ final class AppState: ObservableObject {
     /// True after first non-degraded MEDDPICC insights response (for warmup placeholder).
     var hasReceivedMeddpiccInsights: Bool { meddpiccSuccessCount > 0 }
     var hasReceivedQuestionsInsights: Bool { questionsSuccessCount > 0 }
+    var hasReceivedDocsInsights: Bool { docsSuccessCount > 0 }
+    /// Docs topics can be looked up from live segments or the persisted transcript,
+    /// so a stopped meeting with no live segments can still be looked up.
+    var canLookupDocs: Bool {
+        guard let meeting = currentMeeting else { return false }
+        return !liveSegments.isEmpty || !meeting.fullTranscript.isEmpty
+    }
+
+    /// Whether topics should be auto-looked-up as they appear. BYOK pays its own
+    /// MCP + LLM (and never hits our backend), so it gets auto alongside Pro;
+    /// managed-free looks topics up manually against a metered monthly quota.
+    var canAutoLookupDocs: Bool {
+        validatedDocsMCPURL != nil && (isPro || appMode == .byok)
+    }
+
+    /// Remaining metered docs lookups this period for managed-free users, or nil
+    /// when unmetered (Pro, BYOK, or backend hasn't reported a cap yet).
+    var docsLookupsRemaining: Int? {
+        guard appMode == .managed, !isPro else { return nil }
+        return usageInfo?.docsLookupsRemaining
+    }
+
+    /// True when a managed-free user has exhausted their monthly docs lookups.
+    var docsLookupQuotaReached: Bool {
+        (docsLookupsRemaining ?? Int.max) <= 0
+    }
+
+    /// Trimmed docs MCP URL when valid https; otherwise nil (feature off).
+    var validatedDocsMCPURL: String? {
+        let trimmed = docsMCPURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return (try? DocsMCPService.validateMCPURL(trimmed))?.absoluteString
+    }
 
     /// Whether managed subscription state is still being resolved.
     var shouldShowManagedSubscriptionPlaceholder: Bool {
@@ -506,6 +561,7 @@ final class AppState: ObservableObject {
         }
     }
     @AppStorage("webhookURL") var webhookURL: String = ""
+    @AppStorage("docsMCPURL") var docsMCPURL: String = ""
     @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
     @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
@@ -1241,7 +1297,7 @@ final class AppState: ObservableObject {
 
     private var isGeneratingMeddpiccInsights = false
     private var isGeneratingQuestionsInsights = false
-    
+
     private func startInsightsCadenceTask() {
         insightsCadenceTask?.cancel()
         insightsCadenceTask = Task { @MainActor [weak self] in
@@ -1298,6 +1354,19 @@ final class AppState: ObservableObject {
                             segmentCount: finalCount,
                             meetingID: meetingID
                         )
+                    }
+                }
+                // Docs topics: only while the docs tab is active and an MCP URL is
+                // configured. Low cadence, own throttle. Extraction merges new
+                // topics and (for Pro/BYOK) auto-looks-them-up.
+                if insightsMode == .docs, validatedDocsMCPURL != nil, !isExtractingDocsTopics {
+                    let meetsTime = lastDocsTopicsRequestAt.map {
+                        now.timeIntervalSince($0) >= docsTopicsMinInterval
+                    } ?? true
+                    if meetsTime, finalCount > docsTopicsLastFiredSegmentCount {
+                        lastDocsTopicsRequestAt = now
+                        docsTopicsLastFiredSegmentCount = finalCount
+                        await refreshDocsTopics()
                     }
                 }
                 // Speaker names: low-cadence, best-effort. Rely on its own throttle.
@@ -1438,6 +1507,7 @@ final class AppState: ObservableObject {
                 )
             }
         }
+
     }
     
     private func updateMeddpiccInBackground(
@@ -1539,6 +1609,343 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Questions insights degraded — not advancing cursor")
             }
         }
+    }
+
+    // MARK: - Docs Topics
+
+    /// Outcome of grounding a single docs topic against the MCP docs.
+    private enum DocCardOutcome {
+        case answered(DocPlaybookCard)
+        case noMatch
+        case transient(String)  // docs service busy / timed out — clearly retryable
+        case failure(String)
+        case quotaReached
+    }
+
+    private let docsQuotaReachedMessage =
+        "You've used all your docs lookups this month. Upgrade to Pro for unlimited lookups."
+
+    /// Best transcript available for the current meeting (live segments, or the
+    /// persisted transcript for a stopped meeting).
+    private func currentDocsTranscript() -> String? {
+        guard let meeting = currentMeeting else { return nil }
+        let liveFinalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        let liveTranscript = transcriptText(from: liveFinalSegments)
+        let persisted = meeting.fullTranscript
+        let transcript = liveTranscript.count > persisted.count ? liveTranscript : persisted
+        return transcript.isEmpty ? nil : transcript
+    }
+
+    /// Merge freshly extracted topic labels into an existing list, preserving each
+    /// existing topic's resolved state and appending new ones as `.pending`.
+    static func mergeDocTopics(existing: [DocTopic], newLabels: [String]) -> [DocTopic] {
+        var result = existing
+        let existingSlugs = Set(existing.map { $0.id })
+        for label in newLabels {
+            let slug = DocTopic.slug(label)
+            guard !slug.isEmpty, !existingSlugs.contains(slug) else { continue }
+            result.append(DocTopic(label: label))
+        }
+        return result
+    }
+
+    /// Refresh the docs-topic list for the current live/stopped meeting.
+    func refreshDocsTopics() async {
+        guard validatedDocsMCPURL != nil else {
+            docsLookupError = "Add a docs MCP URL in Settings → Docs MCP."
+            return
+        }
+        guard let transcript = currentDocsTranscript(), transcript.count >= docsMinTranscriptChars else { return }
+        guard !isExtractingDocsTopics else { return }
+        isExtractingDocsTopics = true
+        defer { isExtractingDocsTopics = false }
+
+        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: meetingLanguage) else {
+            return // failure already surfaced via docsLookupError
+        }
+        let merged = Self.mergeDocTopics(existing: liveDocTopics, newLabels: labels)
+        liveDocTopics = merged
+        currentMeeting?.docTopics = merged
+        if !merged.isEmpty { docsSuccessCount += 1 }
+        saveCurrentMeetingIfNeeded()
+        autoLookupPendingDocTopicsIfEligible()
+    }
+
+    /// Refresh the docs-topic list for a saved history meeting.
+    func refreshDocsTopics(for meeting: Meeting) async {
+        guard validatedDocsMCPURL != nil else {
+            docsLookupError = "Add a docs MCP URL in Settings → Docs MCP."
+            return
+        }
+        let transcript = meeting.fullTranscript
+        guard transcript.count >= docsMinTranscriptChars, !isExtractingDocsTopics else { return }
+        isExtractingDocsTopics = true
+        defer { isExtractingDocsTopics = false }
+
+        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: meeting.language) else {
+            return
+        }
+        let merged = Self.mergeDocTopics(existing: meeting.docTopics, newLabels: labels)
+        meeting.docTopics = merged
+        if currentMeeting?.id == meeting.id { liveDocTopics = merged }
+        if !merged.isEmpty { docsSuccessCount += 1 }
+        try? modelContext?.save()
+
+        if canAutoLookupDocs {
+            for topic in merged where topic.lookupState == .pending {
+                await lookupDocTopic(id: topic.id, for: meeting)
+            }
+        }
+    }
+
+    /// Extract topic labels via the managed backend or BYOK. Returns nil on
+    /// failure (message surfaced through `docsLookupError`).
+    private func extractDocsTopicLabels(transcript: String, language: String) async -> [String]? {
+        guard let mcpURL = validatedDocsMCPURL else { return nil }
+        do {
+            if appMode == .managed, let minitiAPIService {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await minitiAPIService.extractDocsTopics(
+                    deviceId: deviceId,
+                    transcript: transcript,
+                    docsMcpURL: mcpURL,
+                    model: OpenAIModel.gpt5Mini.rawValue,
+                    language: language
+                )
+                docsLookupError = nil
+                return response.topics
+            }
+            guard let insightsService, !openaiApiKey.isEmpty else {
+                docsLookupError = "Add your OpenAI API key in Settings to look up docs."
+                return nil
+            }
+            let topics = try await insightsService.extractDocsTopics(
+                transcript: transcript,
+                apiKey: openaiApiKey,
+                language: language
+            )
+            docsLookupError = nil
+            return topics
+        } catch {
+            DebugLogger.shared.log(.app, "Docs topic extraction FAILED: \(error.localizedDescription)")
+            docsLookupError = (error as? DocsMCPService.MCPError)?.errorDescription
+                ?? "Couldn't refresh docs topics. Check the MCP URL and your connection."
+            return nil
+        }
+    }
+
+    /// Ground a single topic against the docs (managed or BYOK). Shared by the
+    /// live and history lookup paths.
+    private func resolveDocCard(topic: String, transcript: String, language: String) async -> DocCardOutcome {
+        guard let mcpURL = validatedDocsMCPURL else {
+            return .failure("Add a docs MCP URL in Settings → Docs MCP.")
+        }
+        do {
+            if appMode == .managed, let minitiAPIService {
+                if docsLookupQuotaReached { return .quotaReached }
+                docsRequestSeq += 1
+                let seq = docsRequestSeq
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let response = try await minitiAPIService.generateDocsPlaybook(
+                    deviceId: deviceId,
+                    transcript: transcript,
+                    docsMcpURL: mcpURL,
+                    model: OpenAIModel.gpt5Mini.rawValue,
+                    topic: topic,
+                    requestSeq: seq,
+                    language: language
+                )
+                if response.meta?.degraded == true {
+                    return .transient("Docs service is busy — tap to try again.")
+                }
+                if let card = response.docs.first(where: { !$0.citations.isEmpty }) {
+                    return .answered(card)
+                }
+                return .noMatch
+            }
+
+            guard let insightsService, !openaiApiKey.isEmpty else {
+                return .failure("Add your OpenAI API key in Settings to look up docs.")
+            }
+            let retrieved = try await DocsMCPService.retrieveChunks(mcpURL: mcpURL, query: topic)
+            if let card = try await insightsService.generateDocsCard(
+                topic: topic,
+                chunks: retrieved.chunks,
+                transcript: transcript,
+                apiKey: openaiApiKey,
+                language: language
+            ) {
+                return .answered(card)
+            }
+            return .noMatch
+        } catch {
+            // A 402 (docs quota exhausted) surfaces as ServiceError.limitReached —
+            // route it to the upgrade prompt, not a generic lookup failure. This is
+            // the backstop for when the client's cached usage is stale.
+            if let serviceError = error as? MinitiAPIService.ServiceError,
+               case .limitReached = serviceError {
+                return .quotaReached
+            }
+            // Timeouts (MCP or backend) are transient — present them as retryable
+            // "busy", not a hard error.
+            if let mcpError = error as? DocsMCPService.MCPError, case .timeout = mcpError {
+                return .transient("Docs lookup timed out — tap to try again.")
+            }
+            if let serviceError = error as? MinitiAPIService.ServiceError, case .rateLimited = serviceError {
+                return .transient("Docs service is busy — tap to try again.")
+            }
+            DebugLogger.shared.log(.app, "Docs topic lookup FAILED: \(error.localizedDescription)")
+            enqueueDiagnosticEvent(
+                "insights_live_failed",
+                category: .insights,
+                level: .warning,
+                details: ["mode": "docs", "error": error.localizedDescription]
+            )
+            let message = (error as? DocsMCPService.MCPError)?.errorDescription
+                ?? "Docs lookup failed. Check the MCP URL and your connection."
+            return .failure(message)
+        }
+    }
+
+    /// Auto-look-up pending topics (Pro/BYOK only), bounded by a small concurrency
+    /// cap. Slots are reserved synchronously so a burst can't exceed the cap.
+    private func autoLookupPendingDocTopicsIfEligible() {
+        guard canAutoLookupDocs else { return }
+        for topic in liveDocTopics where topic.lookupState == .pending {
+            guard docsLookupInFlight.count < maxConcurrentDocsLookups else { break }
+            guard !docsLookupInFlight.contains(topic.id) else { continue }
+            docsLookupInFlight.insert(topic.id)
+            setLiveDocTopicState(id: topic.id, state: .lookingUp)
+            let topicID = topic.id
+            Task { @MainActor in await self.runLiveDocTopicLookup(id: topicID) }
+        }
+    }
+
+    /// Manually look up a single topic for the current meeting.
+    func lookupDocTopic(id: String) async {
+        guard !docsLookupInFlight.contains(id) else { return }
+        if !canAutoLookupDocs, docsLookupQuotaReached {
+            docsLookupError = docsQuotaReachedMessage
+            return
+        }
+        docsLookupInFlight.insert(id)
+        setLiveDocTopicState(id: id, state: .lookingUp)
+        await runLiveDocTopicLookup(id: id)
+    }
+
+    /// Runs one live-meeting topic lookup assuming its slot is reserved and its
+    /// state is already `.lookingUp`.
+    private func runLiveDocTopicLookup(id: String) async {
+        defer { docsLookupInFlight.remove(id) }
+        guard let topic = liveDocTopics.first(where: { $0.id == id }) else { return }
+        guard let transcript = currentDocsTranscript() else {
+            setLiveDocTopicState(id: id, state: .failed, errorMessage: "No transcript to look up yet.")
+            return
+        }
+        let outcome = await resolveDocCard(topic: topic.label, transcript: transcript, language: meetingLanguage)
+        applyLiveDocOutcome(outcome, toTopicID: id)
+        saveCurrentMeetingIfNeeded()
+        autoLookupPendingDocTopicsIfEligible()
+    }
+
+    private func setLiveDocTopicState(id: String, state: DocTopic.LookupState, errorMessage: String? = nil) {
+        guard let idx = liveDocTopics.firstIndex(where: { $0.id == id }) else { return }
+        liveDocTopics[idx].lookupState = state
+        liveDocTopics[idx].errorMessage = errorMessage
+        currentMeeting?.docTopics = liveDocTopics
+    }
+
+    private func applyLiveDocOutcome(_ outcome: DocCardOutcome, toTopicID id: String) {
+        guard let idx = liveDocTopics.firstIndex(where: { $0.id == id }) else { return }
+        var topic = liveDocTopics[idx]
+        switch outcome {
+        case .answered(let card):
+            topic.card = card
+            topic.lookupState = .answered
+            topic.errorMessage = nil
+            docsSuccessCount += 1
+            docsLookupError = nil
+        case .noMatch:
+            topic.card = nil
+            topic.lookupState = .noMatch
+            topic.errorMessage = nil
+        case .transient(let message):
+            // Keep any prior card; a busy blip shouldn't wipe an earlier answer.
+            topic.lookupState = .busy
+            topic.errorMessage = message
+            docsLookupError = message
+        case .failure(let message):
+            topic.lookupState = .failed
+            topic.errorMessage = message
+            docsLookupError = message
+        case .quotaReached:
+            topic.lookupState = .pending
+            docsLookupError = docsQuotaReachedMessage
+        }
+        liveDocTopics[idx] = topic
+        currentMeeting?.docTopics = liveDocTopics
+    }
+
+    /// Manually look up a single topic for a saved history meeting.
+    func lookupDocTopic(id: String, for meeting: Meeting) async {
+        guard let topic = meeting.docTopics.first(where: { $0.id == id }) else { return }
+        if !canAutoLookupDocs, docsLookupQuotaReached {
+            docsLookupError = docsQuotaReachedMessage
+            return
+        }
+        updateHistoryDocTopic(id: id, in: meeting) { t in
+            t.lookupState = .lookingUp
+            t.errorMessage = nil
+        }
+        let outcome = await resolveDocCard(topic: topic.label, transcript: meeting.fullTranscript, language: meeting.language)
+        updateHistoryDocTopic(id: id, in: meeting) { t in
+            switch outcome {
+            case .answered(let card):
+                t.card = card
+                t.lookupState = .answered
+                t.errorMessage = nil
+            case .noMatch:
+                t.card = nil
+                t.lookupState = .noMatch
+                t.errorMessage = nil
+            case .transient(let message):
+                t.lookupState = .busy
+                t.errorMessage = message
+                self.docsLookupError = message
+            case .failure(let message):
+                t.lookupState = .failed
+                t.errorMessage = message
+                self.docsLookupError = message
+            case .quotaReached:
+                t.lookupState = .pending
+                self.docsLookupError = self.docsQuotaReachedMessage
+            }
+        }
+        try? modelContext?.save()
+
+        if case .answered = outcome {
+            docsSuccessCount += 1
+            docsLookupError = nil
+            #if os(macOS)
+            if autoExportMarkdown {
+                let markdown = meeting.fullMeetingAsMarkdown()
+                exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+            }
+            #endif
+            if !webhookURL.isEmpty {
+                WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+            }
+        }
+    }
+
+    private func updateHistoryDocTopic(id: String, in meeting: Meeting, _ mutate: (inout DocTopic) -> Void) {
+        var topics = meeting.docTopics
+        guard let idx = topics.firstIndex(where: { $0.id == id }) else { return }
+        mutate(&topics[idx])
+        meeting.docTopics = topics
+        if currentMeeting?.id == meeting.id { liveDocTopics = topics }
     }
 
     // MARK: - Speaker Names Inference
@@ -1957,7 +2364,7 @@ final class AppState: ObservableObject {
                     questionsRequestSeq += 1
                     seq = questionsRequestSeq
                     lastApplied = lastAppliedQuestionsSeq
-                case .training:
+                case .training, .docs:
                     seq = 0
                     lastApplied = -1
                 }
@@ -2055,7 +2462,7 @@ final class AppState: ObservableObject {
             case .standard: return standardSuccessCount
             case .meddpicc: return meddpiccSuccessCount
             case .questions: return questionsSuccessCount
-            case .training: return 0
+            case .training, .docs: return 0
             }
         }()
         if successCount < 2 {
@@ -2071,7 +2478,7 @@ final class AppState: ObservableObject {
             case .standard: return min(managedStandardAckedSegmentCount, finalSegments.count)
             case .meddpicc: return min(managedMeddpiccAckedSegmentCount, finalSegments.count)
             case .questions: return min(managedQuestionsAckedSegmentCount, finalSegments.count)
-            case .training: return 0
+            case .training, .docs: return 0
             }
         }()
         let deltaSegments = Array(finalSegments.dropFirst(ackedSegmentCount))
@@ -2098,7 +2505,7 @@ final class AppState: ObservableObject {
                 return !lastMeddpiccSummaryContext.isEmpty || hasMeddpiccFields
             case .questions:
                 return !liveQuestions.isEmpty
-            case .training:
+            case .training, .docs:
                 return false
             }
         }()
@@ -2182,7 +2589,7 @@ final class AppState: ObservableObject {
                     )
                 }
             )
-        case .training:
+        case .training, .docs:
             return ManagedInsightsRequestPlan(
                 transcriptForRequest: fullTranscript,
                 incrementalPayload: nil,
@@ -2372,7 +2779,7 @@ final class AppState: ObservableObject {
             managedMeddpiccAckedSegmentCount = max(managedMeddpiccAckedSegmentCount, segmentCount)
         case .questions:
             managedQuestionsAckedSegmentCount = max(managedQuestionsAckedSegmentCount, segmentCount)
-        case .training:
+        case .training, .docs:
             return
         }
 
@@ -2388,12 +2795,14 @@ final class AppState: ObservableObject {
         standardRequestSeq = 0
         meddpiccRequestSeq = 0
         questionsRequestSeq = 0
+        docsRequestSeq = 0
         lastAppliedStandardSeq = -1
         lastAppliedMeddpiccSeq = -1
         lastAppliedQuestionsSeq = -1
         standardSuccessCount = 0
         meddpiccSuccessCount = 0
         questionsSuccessCount = 0
+        docsSuccessCount = 0
     }
 
     private func restoreManagedIncrementalTracking(finalCount: Int) {
@@ -2509,6 +2918,7 @@ final class AppState: ObservableObject {
         liveChampion = nil
         liveCompetition = nil
         liveQuestions = []
+        liveDocTopics = []
         liveSpeakerNames = [:]
         liveSpeakerOverrides = []
         liveSelfSpeakerIDs = []
@@ -2623,6 +3033,7 @@ final class AppState: ObservableObject {
                 transcript: transcriptEntries,
                 training: training,
                 questions: liveQuestions,
+                docs: liveDocTopics.compactMap { $0.card },
                 calendarEventId: meeting.calendarEventId,
                 attendees: meeting.attendees
             )
@@ -2677,6 +3088,10 @@ final class AppState: ObservableObject {
     /// Generate standard + MEDDPICC insights for a saved meeting (used from history detail)
     func generateInsightsForMeeting(_ meeting: Meeting) async {
         if insightsMode == .training {
+            return
+        }
+        if insightsMode == .docs {
+            await refreshDocsTopics(for: meeting)
             return
         }
 
@@ -2777,7 +3192,7 @@ final class AppState: ObservableObject {
         } catch {
             DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
         }
-        
+
         try? modelContext?.save()
 
         // Re-export markdown with updated insights
@@ -2998,6 +3413,7 @@ final class AppState: ObservableObject {
         liveChampion = interrupted.meddpiccChampion
         liveCompetition = interrupted.meddpiccCompetition
         liveQuestions = interrupted.suggestedQuestions
+        liveDocTopics = interrupted.docTopics
         liveSpeakerNames = interrupted.speakerNames
         liveSpeakerOverrides = interrupted.speakerOverrides
         liveSelfSpeakerIDs = interrupted.selfSpeakerIDs
@@ -3103,9 +3519,15 @@ final class AppState: ObservableObject {
     
     func switchInsightsMode(to mode: InsightsMode) {
         insightsMode = mode
-        
+
         if mode == .training {
             recomputeTrainingMetrics()
+        }
+        // Populate the docs-topic list on first visit to the tab so it's ready
+        // without waiting for the next cadence tick. Auto-lookup (Pro/BYOK) then
+        // follows from the merge inside refreshDocsTopics.
+        if mode == .docs, validatedDocsMCPURL != nil, liveDocTopics.isEmpty, currentDocsTranscript() != nil {
+            Task { @MainActor in await refreshDocsTopics() }
         }
     }
     
@@ -3166,6 +3588,7 @@ final class AppState: ObservableObject {
             meddpiccChampion: liveChampion,
             meddpiccCompetition: liveCompetition,
             suggestedQuestions: liveQuestions,
+            docTopics: liveDocTopics,
             speakerNames: liveSpeakerNames,
             speakerOverrides: liveSpeakerOverrides,
             selfSpeakerIDs: liveSelfSpeakerIDs
@@ -3236,6 +3659,7 @@ final class AppState: ObservableObject {
         payload.meeting.meddpiccChampion = payload.meddpiccChampion
         payload.meeting.meddpiccCompetition = payload.meddpiccCompetition
         payload.meeting.suggestedQuestions = payload.suggestedQuestions
+        payload.meeting.docTopics = payload.docTopics
         payload.meeting.speakerNames = payload.speakerNames
         payload.meeting.speakerOverrides = payload.speakerOverrides
         payload.meeting.selfSpeakerIDs = payload.selfSpeakerIDs
@@ -3731,6 +4155,16 @@ final class AppState: ObservableObject {
         questionsCadenceAnchor = nil
         questionsLastFiredSegmentCount = 0
 
+        // Reset docs topics
+        liveDocTopics = []
+        docsSuccessCount = 0
+        docsRequestSeq = 0
+        docsLookupError = nil
+        isExtractingDocsTopics = false
+        docsLookupInFlight = []
+        lastDocsTopicsRequestAt = nil
+        docsTopicsLastFiredSegmentCount = 0
+
         // Reset speaker names
         liveSpeakerNames = [:]
         liveSpeakerOverrides = []
@@ -3944,7 +4378,7 @@ final class AppState: ObservableObject {
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
         }
-        
+
         saveCurrentMeetingIfNeeded()
     }
     
@@ -3953,6 +4387,11 @@ final class AppState: ObservableObject {
 
         if insightsMode == .training {
             recomputeTrainingMetrics()
+            return
+        }
+
+        if insightsMode == .docs {
+            await refreshDocsTopics()
             return
         }
 
@@ -4012,7 +4451,7 @@ final class AppState: ObservableObject {
         do {
             let requestedMode: InsightsMode = (insightsMode == .training) ? .standard : insightsMode
             let model = OpenAIModel.gpt5Mini
-            
+
             if requestedMode == .questions {
                 let questionsInsights: InsightsService.LiveInsights
                 

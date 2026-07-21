@@ -260,6 +260,7 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.meddpicc.displayName, "MEDDPICC")
         XCTAssertEqual(InsightsMode.training.displayName, "training")
         XCTAssertEqual(InsightsMode.questions.displayName, "questions")
+        XCTAssertEqual(InsightsMode.docs.displayName, "docs")
     }
 
     func testInsightsModeDescriptions() {
@@ -267,6 +268,7 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.meddpicc.description, "Sales qualification framework")
         XCTAssertEqual(InsightsMode.training.description, "Speech pattern analysis")
         XCTAssertEqual(InsightsMode.questions.description, "Suggested questions to ask")
+        XCTAssertEqual(InsightsMode.docs.description, "Docs-grounded sales playbook")
     }
 
     func testInsightsModeRawValues() {
@@ -274,10 +276,114 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.meddpicc.rawValue, "meddpicc")
         XCTAssertEqual(InsightsMode.training.rawValue, "training")
         XCTAssertEqual(InsightsMode.questions.rawValue, "questions")
+        XCTAssertEqual(InsightsMode.docs.rawValue, "docs")
     }
 
     func testInsightsModeAllCases() {
-        XCTAssertEqual(InsightsMode.allCases.count, 4)
+        XCTAssertEqual(InsightsMode.allCases.count, 5)
+    }
+
+    func testDocsPlaybookCardDecoding() throws {
+        let json = """
+        {
+          "docs": [
+            {
+              "topic": "SSO with Okta",
+              "answer": "Use Okta SAML.",
+              "citations": [
+                { "title": "SSO setup", "url": "https://docs.lightdash.com/sso", "snippet": "Okta" }
+              ],
+              "priority": "high"
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(DocsPlaybookResponse.self, from: json)
+        XCTAssertEqual(decoded.docs.count, 1)
+        XCTAssertEqual(decoded.docs[0].topic, "SSO with Okta")
+        XCTAssertTrue(decoded.docs[0].isHighPriority)
+        XCTAssertEqual(decoded.docs[0].citations.first?.url, "https://docs.lightdash.com/sso")
+    }
+
+    func testDocsTopicsResponseCleaning() throws {
+        let json = """
+        { "topics": ["  SSO / SAML  ", "sso / saml", "Data retention", "", "x", "Rate limits", "Webhooks", "Audit logs", "Extra topic"] }
+        """.data(using: .utf8)!
+        let decoded = try JSONDecoder().decode(DocsTopicsResponse.self, from: json)
+        // Dedups by slug ("SSO / SAML" == "sso / saml"), drops empty/too-short, caps at 6.
+        XCTAssertEqual(decoded.cleanedTopics.count, 6)
+        XCTAssertEqual(decoded.cleanedTopics.first, "SSO / SAML")
+        XCTAssertFalse(decoded.cleanedTopics.contains("x"))
+    }
+
+    func testDocTopicSlugIdentityAndCodable() throws {
+        XCTAssertEqual(DocTopic.slug("  SSO / SAML  "), DocTopic.slug("sso / saml"))
+        let card = DocPlaybookCard(topic: "SSO", answer: "Use SAML.", citations: [])
+        let topic = DocTopic(label: "SSO Support", lookupState: .answered, card: card)
+        let data = try JSONEncoder().encode(topic)
+        let decoded = try JSONDecoder().decode(DocTopic.self, from: data)
+        XCTAssertEqual(decoded.id, topic.id)
+        XCTAssertEqual(decoded.label, "SSO Support")
+        XCTAssertEqual(decoded.lookupState, .answered)
+        XCTAssertEqual(decoded.card?.answer, "Use SAML.")
+    }
+
+    @MainActor
+    func testMergeDocTopicsPreservesStateAndDedups() {
+        let answered = DocTopic(
+            label: "SSO",
+            lookupState: .answered,
+            card: DocPlaybookCard(topic: "SSO", answer: "SAML.", citations: [])
+        )
+        let merged = AppState.mergeDocTopics(
+            existing: [answered],
+            newLabels: ["sso", "Data retention", "Rate limits"]
+        )
+        // "sso" collides with existing "SSO" and must not duplicate or reset it.
+        XCTAssertEqual(merged.count, 3)
+        XCTAssertEqual(merged[0].lookupState, .answered)
+        XCTAssertEqual(merged[0].card?.answer, "SAML.")
+        XCTAssertEqual(merged[1].label, "Data retention")
+        XCTAssertEqual(merged[1].lookupState, .pending)
+    }
+
+    func testDocsMCPURLValidation() {
+        XCTAssertNoThrow(try DocsMCPService.validateMCPURL("https://docs.lightdash.com/mcp"))
+        XCTAssertThrowsError(try DocsMCPService.validateMCPURL("http://docs.lightdash.com/mcp"))
+        XCTAssertThrowsError(try DocsMCPService.validateMCPURL("https://localhost/mcp"))
+        XCTAssertThrowsError(try DocsMCPService.validateMCPURL("https://127.0.0.1/mcp"))
+    }
+
+    func testDocsMCPURLAllowsHostnamesStartingWithFCorFD() {
+        // Hostnames like "fd7.example.com" are not IPv6 unique-local addresses.
+        XCTAssertNoThrow(try DocsMCPService.validateMCPURL("https://fd7.example.com/mcp"))
+        XCTAssertNoThrow(try DocsMCPService.validateMCPURL("https://fcdocs.acme.com/mcp"))
+        XCTAssertFalse(DocsMCPService.isBlockedIPv6("fd7.example.com"))
+        XCTAssertFalse(DocsMCPService.isBlockedIPv6("fcdocs.acme.com"))
+        // Genuine IPv6 unique-local / link-local literals stay blocked.
+        XCTAssertTrue(DocsMCPService.isBlockedIPv6("fd00::1"))
+        XCTAssertTrue(DocsMCPService.isBlockedIPv6("fe80::1"))
+        XCTAssertTrue(DocsMCPService.isBlockedIPv6("::1"))
+    }
+
+    func testDiscoverSearchToolPrefersSearch() {
+        let searchSchema: [String: Any] = [
+            "type": "object",
+            "properties": ["query": ["type": "string"] as [String: Any]],
+            "required": ["query"],
+        ]
+        let feedbackSchema: [String: Any] = [
+            "type": "object",
+            "properties": ["feedback": ["type": "string"] as [String: Any]],
+            "required": ["feedback"],
+        ]
+        let tools: [DocsMCPService.Tool] = [
+            DocsMCPService.Tool(name: "search_lightdash", inputSchema: searchSchema),
+            DocsMCPService.Tool(name: "submit_feedback", inputSchema: feedbackSchema),
+        ]
+        let found = DocsMCPService.discoverSearchTool(tools)
+        XCTAssertEqual(found?.name, "search_lightdash")
+        XCTAssertEqual(found?.queryArgument, "query")
     }
 
     // MARK: - InsightsError

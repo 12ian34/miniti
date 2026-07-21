@@ -112,6 +112,22 @@ struct LiveInsightsContent: View {
                     } else {
                         QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
                     }
+                } else if appState.insightsMode == .docs {
+                    DocsTabContent(
+                        topics: appState.liveDocTopics,
+                        isExtracting: appState.isExtractingDocsTopics,
+                        hasMCPURL: appState.validatedDocsMCPURL != nil,
+                        autoLookup: appState.canAutoLookupDocs,
+                        lookupsRemaining: appState.docsLookupsRemaining,
+                        canRefresh: appState.canLookupDocs,
+                        errorMessage: appState.docsLookupError,
+                        onRefresh: {
+                            Task { @MainActor in await appState.refreshDocsTopics() }
+                        },
+                        onLookup: { topicID in
+                            Task { @MainActor in await appState.lookupDocTopic(id: topicID) }
+                        }
+                    )
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
                         Text("no meddpicc yet...")
@@ -209,6 +225,22 @@ private struct LiveInsightsContent_iOSPlain: View {
                     } else {
                         QuestionsEmptyState(variant: appState.isRecording ? .needsMore : .noQuestions)
                     }
+                } else if appState.insightsMode == .docs {
+                    DocsTabContent(
+                        topics: appState.liveDocTopics,
+                        isExtracting: appState.isExtractingDocsTopics,
+                        hasMCPURL: appState.validatedDocsMCPURL != nil,
+                        autoLookup: appState.canAutoLookupDocs,
+                        lookupsRemaining: appState.docsLookupsRemaining,
+                        canRefresh: appState.canLookupDocs,
+                        errorMessage: appState.docsLookupError,
+                        onRefresh: {
+                            Task { @MainActor in await appState.refreshDocsTopics() }
+                        },
+                        onLookup: { topicID in
+                            Task { @MainActor in await appState.lookupDocTopic(id: topicID) }
+                        }
+                    )
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
                         Text("no meddpicc yet...")
@@ -663,6 +695,426 @@ private struct QuestionCard: View {
                 .padding(.leading, 12)
         }
     }
+}
+
+// MARK: - Docs Topics Content
+
+struct DocsEmptyState: View {
+    enum Variant {
+        case needsSetup
+        case idle(auto: Bool)
+        case extracting
+        case error(String)
+    }
+
+    let variant: Variant
+
+    #if os(macOS)
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+    #endif
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Text("◇")
+                .font(.system(size: 20, weight: .light, design: .monospaced))
+                .foregroundStyle(Color(hex: "484F58"))
+            switch variant {
+            case .needsSetup:
+                Text("add a docs MCP URL")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                #if os(macOS)
+                Button {
+                    appState.selectedSettingsTab = "integrations"
+                    openSettings()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("open Settings → Docs MCP")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    }
+                    .foregroundStyle(Color(hex: "D4D4D8"))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: "18181B")))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: "27272A"), lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 2)
+                #else
+                Text("Settings → Integrations → Docs MCP")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                    .multilineTextAlignment(.center)
+                #endif
+                Text("e.g. https://docs.lightdash.com/mcp")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .multilineTextAlignment(.center)
+            case .idle(let auto):
+                Text("topics will appear as you talk")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                Text(auto ? "each one looks itself up in your docs" : "tap a topic to look it up in your docs")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .multilineTextAlignment(.center)
+            case .extracting:
+                ProgressView()
+                    .controlSize(.small)
+                Text("finding topics...")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+            case .error(let message):
+                Text("docs unavailable")
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "8B949E"))
+                Text(message)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .multilineTextAlignment(.center)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 30)
+    }
+}
+
+struct DocsTabContent: View {
+    let topics: [DocTopic]
+    let isExtracting: Bool
+    let hasMCPURL: Bool
+    let autoLookup: Bool
+    let lookupsRemaining: Int?
+    let canRefresh: Bool
+    let errorMessage: String?
+    let onRefresh: () -> Void
+    let onLookup: (String) -> Void
+
+    init(
+        topics: [DocTopic],
+        isExtracting: Bool,
+        hasMCPURL: Bool,
+        autoLookup: Bool,
+        lookupsRemaining: Int? = nil,
+        canRefresh: Bool = true,
+        errorMessage: String? = nil,
+        onRefresh: @escaping () -> Void,
+        onLookup: @escaping (String) -> Void
+    ) {
+        self.topics = topics
+        self.isExtracting = isExtracting
+        self.hasMCPURL = hasMCPURL
+        self.autoLookup = autoLookup
+        self.lookupsRemaining = lookupsRemaining
+        self.canRefresh = canRefresh
+        self.errorMessage = errorMessage
+        self.onRefresh = onRefresh
+        self.onLookup = onLookup
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if hasMCPURL {
+                header
+            }
+
+            if !hasMCPURL {
+                DocsEmptyState(variant: .needsSetup)
+            } else if topics.isEmpty {
+                if isExtracting {
+                    DocsEmptyState(variant: .extracting)
+                } else if let errorMessage {
+                    DocsEmptyState(variant: .error(errorMessage))
+                } else {
+                    DocsEmptyState(variant: .idle(auto: autoLookup))
+                }
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(topics) { topic in
+                        DocTopicRow(
+                            topic: topic,
+                            autoLookup: autoLookup,
+                            onLookup: { onLookup(topic.id) }
+                        )
+                    }
+                }
+                if let errorMessage {
+                    Text(errorMessage)
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .foregroundStyle(Color(hex: "F85149"))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button(action: onRefresh) {
+                HStack(spacing: 6) {
+                    if isExtracting {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    Text(isExtracting ? "finding topics…" : (topics.isEmpty ? "find topics" : "refresh"))
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                }
+                .foregroundStyle(Color(hex: "D4D4D8"))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 6).fill(Color(hex: "18181B")))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: "27272A"), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
+            .disabled(!canRefresh || isExtracting)
+            .opacity((!canRefresh || isExtracting) ? 0.5 : 1.0)
+
+            Spacer()
+
+            quotaBadge
+        }
+    }
+
+    @ViewBuilder
+    private var quotaBadge: some View {
+        if autoLookup {
+            Text("auto")
+                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .foregroundStyle(Color(hex: "3FB950"))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "14251A")))
+        } else if let remaining = lookupsRemaining {
+            Text("\(remaining) lookup\(remaining == 1 ? "" : "s") left")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(remaining <= 0 ? Color(hex: "F85149") : Color(hex: "8B949E"))
+        }
+    }
+}
+
+/// One topic in the docs tab: shows its lookup state, expands to the grounded
+/// answer when resolved, and is tappable to look up / retry when it isn't.
+private struct DocTopicRow: View {
+    let topic: DocTopic
+    let autoLookup: Bool
+    let onLookup: () -> Void
+    @State private var expanded = true
+
+    private var accentColor: Color {
+        (topic.card?.isHighPriority ?? false) ? Color(hex: "F85149") : Color(hex: "58A6FF")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: rowTapped) {
+                HStack(spacing: 8) {
+                    stateIndicator
+                    Text(topic.label)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(topic.lookupState == .answered ? accentColor : Color(hex: "C9D1D9"))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Spacer(minLength: 6)
+                    trailingControl
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(topic.lookupState == .lookingUp)
+
+            if topic.lookupState == .answered, let card = topic.card, expanded {
+                DocAnswerBody(card: card)
+                    .padding(.leading, 20)
+            } else if topic.lookupState == .busy {
+                // Transient: keep any prior answer visible, and make the retry clear.
+                if let card = topic.card {
+                    DocAnswerBody(card: card)
+                        .padding(.leading, 20)
+                }
+                Text(topic.errorMessage ?? "Docs service is busy — tap to try again.")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Color(hex: "D29922"))
+                    .padding(.leading, 20)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if topic.lookupState == .failed, let message = topic.errorMessage {
+                Text(message)
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "F85149"))
+                    .padding(.leading, 20)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if topic.lookupState == .noMatch {
+                Text("no docs match this topic")
+                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "484F58"))
+                    .padding(.leading, 20)
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color(hex: "0F0F11")))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+    }
+
+    private func rowTapped() {
+        switch topic.lookupState {
+        case .answered:
+            withAnimation(.easeInOut(duration: 0.15)) { expanded.toggle() }
+        case .pending, .noMatch, .failed, .busy:
+            onLookup()
+        case .lookingUp:
+            break
+        }
+    }
+
+    @ViewBuilder
+    private var stateIndicator: some View {
+        switch topic.lookupState {
+        case .pending:
+            Image(systemName: "circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(hex: "484F58"))
+        case .lookingUp:
+            ProgressView().controlSize(.small)
+        case .answered:
+            Image(systemName: "circle.fill")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(accentColor)
+        case .noMatch:
+            Image(systemName: "minus.circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(hex: "484F58"))
+        case .busy:
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(hex: "D29922"))
+        case .failed:
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(hex: "F85149"))
+        }
+    }
+
+    @ViewBuilder
+    private var trailingControl: some View {
+        switch topic.lookupState {
+        case .answered:
+            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(Color(hex: "52525B"))
+        case .pending:
+            chip(autoLookup ? "queued" : "look up")
+        case .busy:
+            chip("try again")
+        case .noMatch, .failed:
+            chip("retry")
+        case .lookingUp:
+            Text("looking up…")
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(Color(hex: "8B949E"))
+        }
+    }
+
+    private func chip(_ label: String) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .foregroundStyle(Color(hex: "D4D4D8"))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F")))
+    }
+}
+
+/// The grounded answer + citations for a resolved topic (no topic header — the
+/// row already shows the label).
+private struct DocAnswerBody: View {
+    let card: DocPlaybookCard
+    @State private var showCopied = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 6) {
+                Text(card.answer)
+                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .foregroundStyle(Color(hex: "E6EDF3"))
+                    .lineSpacing(4)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button(action: copyAnswer) {
+                    HStack(spacing: 4) {
+                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
+                            .font(.system(size: 9, weight: .medium))
+                        Text(showCopied ? "copied" : "copy")
+                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    }
+                    .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F")))
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+
+            if !card.citations.isEmpty {
+                Rectangle()
+                    .fill(Color(hex: "1C1C1F"))
+                    .frame(height: 1)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(card.citations) { citation in
+                        if let urlString = citation.url, let url = docsCitationLinkURL(urlString) {
+                            Link(destination: url) {
+                                Text(citation.title)
+                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .foregroundStyle(Color(hex: "58A6FF"))
+                                    .underline()
+                            }
+                        } else {
+                            Text(citation.title)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(Color(hex: "8B949E"))
+                        }
+                        if let snippet = citation.snippet, !snippet.isEmpty {
+                            Text(snippet)
+                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .foregroundStyle(Color(hex: "484F58"))
+                                .lineLimit(2)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func copyAnswer() {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(card.answer, forType: .string)
+        #else
+        UIPasteboard.general.string = card.answer
+        #endif
+        withAnimation(.easeInOut(duration: 0.2)) { showCopied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+            withAnimation(.easeInOut(duration: 0.2)) { showCopied = false }
+        }
+    }
+}
+
+/// Only render citation links for http/https URLs. Citation URLs originate in
+/// third-party docs echoed through the LLM, so other schemes (javascript:,
+/// file:, data:, …) must not be handed to `openURL`.
+private func docsCitationLinkURL(_ raw: String) -> URL? {
+    guard let url = URL(string: raw),
+          let scheme = url.scheme?.lowercased(),
+          scheme == "http" || scheme == "https" else {
+        return nil
+    }
+    return url
 }
 
 // MARK: - MEDDPICC Content

@@ -37,6 +37,8 @@
 		AC0000010000000000000003 /* TermsAcceptanceView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000010000000000000001 /* TermsAcceptanceView.swift */; };
 		AD0000010000000000000002 /* WebhookService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000010000000000000001 /* WebhookService.swift */; };
 		AD0000010000000000000003 /* WebhookService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000010000000000000001 /* WebhookService.swift */; };
+		AD0000010000000000000012 /* DocsMCPService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000010000000000000011 /* DocsMCPService.swift */; };
+		AD0000010000000000000013 /* DocsMCPService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000010000000000000011 /* DocsMCPService.swift */; };
 		AE0000010000000000000002 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AE0000010000000000000003 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AF0000010000000000000001 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
@@ -153,6 +155,7 @@
 		AB0000010000000000000002 /* DebugLogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogView.swift; sourceTree = "<group>"; };
 		AC0000010000000000000001 /* TermsAcceptanceView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TermsAcceptanceView.swift; sourceTree = "<group>"; };
 		AD0000010000000000000001 /* WebhookService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookService.swift; sourceTree = "<group>"; };
+		AD0000010000000000000011 /* DocsMCPService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsMCPService.swift; sourceTree = "<group>"; };
 		AE0000010000000000000001 /* ForceUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceUpdateView.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
@@ -302,6 +305,7 @@
 				A20000010000000000000018 /* DeviceIdentifier.swift */,
 				A20000010000000000000019 /* MinitiAPIService.swift */,
 				AD0000010000000000000001 /* WebhookService.swift */,
+				AD0000010000000000000011 /* DocsMCPService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -588,6 +592,7 @@
 				AC0000010000000000000002 /* TermsAcceptanceView.swift in Sources */,
 				AE0000010000000000000002 /* ForceUpdateView.swift in Sources */,
 				AD0000010000000000000002 /* WebhookService.swift in Sources */,
+				AD0000010000000000000012 /* DocsMCPService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -621,6 +626,7 @@
 				AC0000010000000000000003 /* TermsAcceptanceView.swift in Sources */,
 				AE0000010000000000000003 /* ForceUpdateView.swift in Sources */,
 				AD0000010000000000000003 /* WebhookService.swift in Sources */,
+				AD0000010000000000000013 /* DocsMCPService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -820,7 +826,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -838,7 +844,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -856,7 +862,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -874,7 +880,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -890,7 +896,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -908,7 +914,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -929,7 +935,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -947,7 +953,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -966,7 +972,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -977,7 +983,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -993,7 +999,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1004,7 +1010,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.26.0;
+				MARKETING_VERSION = 1.27.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1022,7 +1028,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1040,7 +1046,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1058,7 +1064,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
@@ -1079,7 +1085,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 100;
+				CURRENT_PROJECT_VERSION = 101;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;

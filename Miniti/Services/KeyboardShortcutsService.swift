@@ -17,6 +17,7 @@ final class KeyboardShortcutsService: ObservableObject {
     var onMeddpiccMode: (() -> Void)?
     var onTrainingMode: (() -> Void)?
     var onQuestionsMode: (() -> Void)?
+    var onDocsMode: (() -> Void)?
     var onZonedOut: (() -> Void)?
     var onToggleHelp: (() -> Void)?
     var onToggleSidebarCollapse: (() -> Void)?
@@ -128,6 +129,12 @@ final class KeyboardShortcutsService: ObservableObject {
         // ⌘4 - Questions mode
         if modifiers == .command && event.keyCode == kVK_ANSI_4 {
             onQuestionsMode?()
+            return nil
+        }
+
+        // ⌘5 - Docs mode
+        if modifiers == .command && event.keyCode == kVK_ANSI_5 {
+            onDocsMode?()
             return nil
         }
         
@@ -291,6 +298,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "⌘2", description: "MEDDPICC mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘3", description: "Training mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘4", description: "Questions mode", category: "Insights"),
+    KeyboardShortcut(keys: "⌘5", description: "Docs mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out — catch me up", category: "Insights"),
     

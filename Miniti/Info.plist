@@ -2,10 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>miniti needs microphone access to transcribe your voice during meetings.</string>
-	<key>NSAudioCaptureUsageDescription</key>
-	<string>miniti needs to capture system audio to transcribe video calls and other meeting applications.</string>
 	<key>CFBundleDisplayName</key>
 	<string>miniti</string>
 	<key>CFBundleIdentifier</key>
@@ -15,9 +11,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.26.0</string>
-	<key>CFBundleVersion</key>
-	<string>100</string>
+	<string>1.27.0</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -37,21 +31,24 @@
 			</array>
 		</dict>
 	</array>
+	<key>CFBundleVersion</key>
+	<string>101</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.2</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>miniti needs to capture system audio to transcribe video calls and other meeting applications.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright © 2026. All rights reserved.</string>
-	<!-- Sparkle auto-update. Set SUPublicEDKey to the base64 public key printed
-	     by `generate_keys` (Sparkle's tool) and keep the private key in Keychain.
-	     The appcast is served by the miniti-api backend. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>miniti needs microphone access to transcribe your voice during meetings.</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUEnableInstallerLauncherService</key>
+	<true/>
 	<key>SUFeedURL</key>
 	<string>https://api.miniti.app/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>PPTQN9NX3TgaZYqGLR6EcP6JRNuxlIHxTnxYnrlhliE=</string>
-	<key>SUEnableInstallerLauncherService</key>
-	<true/>
-	<key>SUEnableAutomaticChecks</key>
-	<true/>
 	<key>SUScheduledCheckInterval</key>
 	<integer>86400</integer>
 </dict>

@@ -13,6 +13,7 @@ enum InsightsMode: String, CaseIterable, Codable {
     case meddpicc = "meddpicc"
     case training = "training"
     case questions = "questions"
+    case docs = "docs"
     
     var displayName: String {
         switch self {
@@ -20,6 +21,7 @@ enum InsightsMode: String, CaseIterable, Codable {
         case .meddpicc: return "MEDDPICC"
         case .training: return "training"
         case .questions: return "questions"
+        case .docs: return "docs"
         }
     }
     
@@ -29,7 +31,127 @@ enum InsightsMode: String, CaseIterable, Codable {
         case .meddpicc: return "Sales qualification framework"
         case .training: return "Speech pattern analysis"
         case .questions: return "Suggested questions to ask"
+        case .docs: return "Docs-grounded sales playbook"
         }
+    }
+}
+
+struct DocCitation: Codable, Equatable, Identifiable {
+    var id: String { "\(title)|\(url ?? "")|\(snippet ?? "")" }
+    let title: String
+    let url: String?
+    let snippet: String?
+
+    enum CodingKeys: String, CodingKey {
+        case title
+        case url
+        case snippet
+    }
+
+    init(title: String, url: String? = nil, snippet: String? = nil) {
+        self.title = title
+        self.url = url
+        self.snippet = snippet
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? "Documentation"
+        url = try c.decodeIfPresent(String.self, forKey: .url)
+        snippet = try c.decodeIfPresent(String.self, forKey: .snippet)
+    }
+}
+
+struct DocPlaybookCard: Codable, Identifiable, Equatable {
+    var id: String { topic }
+    let topic: String
+    let answer: String
+    let citations: [DocCitation]
+    let priority: String?
+
+    var isHighPriority: Bool {
+        priority?.lowercased() == "high"
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case topic
+        case answer
+        case citations
+        case priority
+    }
+
+    init(topic: String, answer: String, citations: [DocCitation], priority: String? = nil) {
+        self.topic = topic
+        self.answer = answer
+        self.citations = citations
+        self.priority = priority
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        topic = try c.decode(String.self, forKey: .topic)
+        answer = try c.decode(String.self, forKey: .answer)
+        citations = try c.decodeIfPresent([DocCitation].self, forKey: .citations) ?? []
+        priority = try c.decodeIfPresent(String.self, forKey: .priority)
+    }
+}
+
+/// A discussion topic extracted from the transcript that the user can look up in
+/// docs. Each topic owns its own lookup lifecycle so it resolves independently of
+/// the others — the docs tab keeps an updating list of topics, and a lookup
+/// grounds one topic at a time (rather than one bulk fetch of the whole transcript).
+struct DocTopic: Codable, Equatable, Identifiable {
+    /// Stable identity derived from the label — used to dedup/merge across
+    /// extraction passes and preserve a topic's resolved state.
+    let id: String
+    let label: String
+    var lookupState: LookupState
+    /// Grounded answer + citations, populated once looked up (nil until then, or
+    /// when the docs had no match).
+    var card: DocPlaybookCard?
+    var errorMessage: String?
+
+    enum LookupState: String, Codable {
+        case pending      // surfaced but not yet looked up
+        case lookingUp
+        case answered     // `card` populated
+        case noMatch      // looked up, docs had nothing relevant
+        case busy         // transient failure (docs service busy / timed out) — retry
+        case failed       // hard error; `errorMessage` set
+    }
+
+    init(
+        label: String,
+        lookupState: LookupState = .pending,
+        card: DocPlaybookCard? = nil,
+        errorMessage: String? = nil
+    ) {
+        self.id = DocTopic.slug(label)
+        self.label = label
+        self.lookupState = lookupState
+        self.card = card
+        self.errorMessage = errorMessage
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, label, lookupState, card, errorMessage
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedLabel = try c.decode(String.self, forKey: .label)
+        label = decodedLabel
+        id = (try? c.decode(String.self, forKey: .id)) ?? DocTopic.slug(decodedLabel)
+        lookupState = (try? c.decode(LookupState.self, forKey: .lookupState)) ?? .pending
+        card = try c.decodeIfPresent(DocPlaybookCard.self, forKey: .card)
+        errorMessage = try c.decodeIfPresent(String.self, forKey: .errorMessage)
+    }
+
+    /// Normalized key for dedup: lowercased, whitespace-collapsed.
+    static func slug(_ raw: String) -> String {
+        raw.lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
     }
 }
 
@@ -402,6 +524,42 @@ final class InsightsService: Sendable {
         let competition: String?
         // Questions (optional, only populated in questions mode)
         let questions: [SuggestedQuestion]
+        // Docs playbook (optional, only populated in docs mode)
+        let docs: [DocPlaybookCard]
+
+        init(
+            summary: String,
+            actionItems: [String],
+            topics: [String],
+            discussionFlow: [String],
+            suggestedTitle: String?,
+            metrics: String?,
+            economicBuyer: String?,
+            decisionCriteria: String?,
+            decisionProcess: String?,
+            paperProcess: String?,
+            identifiedPain: String?,
+            champion: String?,
+            competition: String?,
+            questions: [SuggestedQuestion],
+            docs: [DocPlaybookCard] = []
+        ) {
+            self.summary = summary
+            self.actionItems = actionItems
+            self.topics = topics
+            self.discussionFlow = discussionFlow
+            self.suggestedTitle = suggestedTitle
+            self.metrics = metrics
+            self.economicBuyer = economicBuyer
+            self.decisionCriteria = decisionCriteria
+            self.decisionProcess = decisionProcess
+            self.paperProcess = paperProcess
+            self.identifiedPain = identifiedPain
+            self.champion = champion
+            self.competition = competition
+            self.questions = questions
+            self.docs = docs
+        }
     }
     
     /// Generate real-time insights during a meeting (faster, more concise)
@@ -699,6 +857,10 @@ final class InsightsService: Sendable {
                 \(transcript)
                 """
             }
+
+        case .docs:
+            // Docs mode uses generateDocsPlaybook(chunks:) — not this path.
+            throw InsightsError.invalidResponse
         }
         
         let requestBody = OpenAIRequest(
@@ -771,8 +933,157 @@ final class InsightsService: Sendable {
             identifiedPain: insightsResponse.identifiedPain,
             champion: insightsResponse.champion,
             competition: insightsResponse.competition,
-            questions: insightsResponse.questions
+            questions: insightsResponse.questions,
+            docs: insightsResponse.docs
         )
+    }
+
+    /// Extract lookup-worthy docs topics from the transcript (BYOK).
+    /// Returns short subject/question labels the user might want grounded in docs.
+    func extractDocsTopics(
+        transcript: String,
+        apiKey: String,
+        language: String = "en",
+        model: OpenAIModel = .gpt5Mini
+    ) async throws -> [String] {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 40 else { return [] }
+
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "IMPORTANT: topic strings MUST be in \(langName). JSON keys remain in English.\n\n"
+            : ""
+        let recent = String(trimmed.suffix(9_000))
+
+        let systemPrompt =
+            "You extract concrete, lookup-worthy product topics from a live sales conversation. A good topic is a specific subject or question the prospect raised that product documentation could answer (e.g. 'SSO / SAML support', 'data retention limits', 'API rate limits'). Never invent topics that are not grounded in the transcript."
+        let userPrompt = """
+        \(languageInstruction)From the transcript below, list the specific product topics or questions worth looking up in the docs.
+
+        Hard rules:
+        - Return ONLY one valid JSON object. No markdown fences.
+        - Each topic is a short noun phrase or question (2-6 words), specific enough to search docs.
+        - Prefer things the prospect asked about or that need a factual product answer. Skip smalltalk, pricing negotiation, and scheduling.
+        - Max 6 topics, most important first. Empty array if nothing is lookup-worthy yet.
+
+        Respond in JSON:
+        { "topics": ["topic one", "topic two"] }
+
+        Transcript:
+        \(recent)
+        """
+
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            messages: [
+                Message(role: "system", content: systemPrompt),
+                Message(role: "user", content: userPrompt)
+            ],
+            maxCompletionTokens: 500,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+
+        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "docs topics")
+        let decoded = try JSONDecoder().decode(DocsTopicsResponse.self, from: jsonData)
+        return decoded.cleanedTopics
+    }
+
+    /// Ground a single docs topic from MCP-retrieved chunks (BYOK). Returns nil if
+    /// the docs don't cover the topic.
+    func generateDocsCard(
+        topic: String,
+        chunks: [DocsMCPService.DocChunk],
+        transcript: String,
+        apiKey: String,
+        language: String = "en",
+        model: OpenAIModel = .gpt5Mini
+    ) async throws -> DocPlaybookCard? {
+        guard !chunks.isEmpty else { return nil }
+
+        let langName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let languageInstruction = language != "en"
+            ? "IMPORTANT: The transcript is in \(langName). topic/answer/snippet strings MUST be in \(langName). JSON keys remain in English.\n\n"
+            : ""
+
+        let chunkBlock = chunks.enumerated().map { index, chunk in
+            let urlLine = chunk.url.map { "\nURL: \($0)" } ?? ""
+            return "[chunk_\(index + 1)] Title: \(chunk.title)\(urlLine)\n\(chunk.text)"
+        }.joined(separator: "\n\n")
+
+        let recent = String(transcript.suffix(6_000))
+        let systemPrompt =
+            "You are a technical sales engineer copilot. Answer only from the provided documentation chunks. Never invent product facts. The card must include citations drawn from those chunks."
+        let userPrompt = """
+        \(languageInstruction)Task: answer this specific topic for a sales rep, grounded ONLY in the documentation chunks below.
+
+        Topic to answer: "\(topic)"
+
+        Hard rules:
+        - Return ONLY one valid JSON object. No markdown fences.
+        - Use ONLY the documentation chunks below. If the chunks do not cover this topic, return {"docs": []}.
+        - The card MUST have at least one citation with title and url copied from a chunk (url may be null only if the chunk has no URL).
+        - The card's "topic" MUST echo the topic above.
+        - Answer: 2-4 sentences, concrete, speakable on a call. Priority "high" only if the prospect clearly asked this.
+
+        Respond in JSON:
+        {
+          "docs": [
+            {
+              "topic": "\(topic)",
+              "answer": "grounded answer",
+              "citations": [{ "title": "...", "url": "https://..." or null, "snippet": "short quote" }],
+              "priority": "high" | "normal"
+            }
+          ]
+        }
+
+        Documentation chunks:
+        \(chunkBlock)
+
+        Recent transcript (context only):
+        \(recent)
+        """
+
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            messages: [
+                Message(role: "system", content: systemPrompt),
+                Message(role: "user", content: userPrompt)
+            ],
+            maxCompletionTokens: 1500,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+
+        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "docs card")
+        let decoded = try JSONDecoder().decode(DocsPlaybookResponse.self, from: jsonData)
+        return decoded.docs.first { !$0.citations.isEmpty }
+    }
+
+    /// Shared OpenAI chat-completions POST returning the assistant's JSON content.
+    private func postOpenAIJSON(_ requestBody: OpenAIRequest, apiKey: String, label: String) async throws -> Data {
+        let url = URL(string: "https://api.openai.com/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(requestBody)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            DebugLogger.shared.log(.app, "BYOK \(label) response error: status=\(statusCode)")
+            if let errorResponse = try? JSONDecoder().decode(OpenAIErrorResponse.self, from: data) {
+                throw InsightsError.apiError(errorResponse.error.message)
+            }
+            throw InsightsError.invalidResponse
+        }
+
+        let openAIResponse = try JSONDecoder().decode(OpenAIResponse.self, from: data)
+        guard let content = openAIResponse.choices.first?.message.content,
+              let jsonData = content.data(using: .utf8) else {
+            throw InsightsError.noContent
+        }
+        return jsonData
     }
 
     private static func prettyJSONString(from object: Any) -> String? {
@@ -1209,6 +1520,8 @@ struct LiveInsightsResponse: Codable {
     let competition: String?
     // Questions
     let questions: [SuggestedQuestion]
+    // Docs playbook
+    let docs: [DocPlaybookCard]
     
     enum CodingKeys: String, CodingKey {
         case summary
@@ -1225,6 +1538,7 @@ struct LiveInsightsResponse: Codable {
         case champion
         case competition
         case questions
+        case docs
     }
     
     init(from decoder: Decoder) throws {
@@ -1243,6 +1557,49 @@ struct LiveInsightsResponse: Codable {
         champion = try container.decodeIfPresent(String.self, forKey: .champion)
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
         questions = try container.decodeIfPresent([SuggestedQuestion].self, forKey: .questions) ?? []
+        docs = try container.decodeIfPresent([DocPlaybookCard].self, forKey: .docs) ?? []
+    }
+}
+
+struct DocsPlaybookResponse: Codable {
+    let docs: [DocPlaybookCard]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        docs = try container.decodeIfPresent([DocPlaybookCard].self, forKey: .docs) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case docs
+    }
+}
+
+struct DocsTopicsResponse: Codable {
+    let topics: [String]
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case topics
+    }
+
+    /// Trimmed, non-empty, de-duplicated (by slug) topic labels, capped at 6.
+    var cleanedTopics: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for raw in topics {
+            let label = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard label.count >= 2 else { continue }
+            let key = DocTopic.slug(label)
+            guard !key.isEmpty, !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(label)
+            if result.count >= 6 { break }
+        }
+        return result
     }
 }
 
