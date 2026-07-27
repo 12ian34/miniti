@@ -27,10 +27,10 @@ No separate `fastlane/.env` is needed.
 What it does:
 - builds the `MinitiMobile` scheme (Debug)
 - runs all tests in the `MinitiMobileTests` target on the iOS Simulator (default device name `iPhone 17`)
-- picks OS from `xcodebuild -showsdks -json` so Fastlane scan avoids a known Xcode 26.x crash when simulator SDK `sdkVersion` and `simctl runtime match` disagree on the patch segment ([fastlane#29974](https://github.com/fastlane/fastlane/issues/29974))
+- resolves that simulator's UDID from `xcrun simctl list devices available --json` (newest installed iOS runtime first) and passes `destination: platform=iOS Simulator,id=<udid>`, bypassing scan's own simulator picker — it compares SDK and runtime versions with exact string equality ([fastlane#29974](https://github.com/fastlane/fastlane/issues/29974)), so an SDK that is a point release ahead of the runtime (26.5.1 vs 26.5) produces a destination matching no device, and the lane dies on `-showBuildSettings timed out`. A UDID also disambiguates duplicate device names.
 - reports pass/fail count
 
-Optional: set `MINITI_IOS_TEST_DEVICE_NAME` if your default simulator is not `iPhone 17` (must match an installed simulator name).
+Optional: set `MINITI_IOS_TEST_DEVICE_NAME` if your default simulator is not `iPhone 17` (must match an installed simulator name; the lane falls back to any available iPhone and warns).
 
 ```sh
 fastlane ios test
@@ -48,7 +48,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:1.26.0 changelog:"..."`
+### `fastlane ios beta version:1.27.1 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -60,7 +60,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:1.26.0`
+### `fastlane ios release version:1.27.1`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -74,6 +74,17 @@ What it does not do:
 - no App Review submission (attach build and submit manually in App Store Connect)
 
 Note: `automatic_release` is enabled — once Apple approves the build, it goes live immediately without manual release.
+
+Pass `build:` explicitly when macOS shipped first in the same cycle. Both platforms read the same `CURRENT_PROJECT_VERSION`, so letting this lane auto-increment leaves the repo one ahead of the build number baked into the macOS DMG and its appcast entry.
+
+**iOS distribution signing requires a one-time setup per machine.** Archiving works with any signing identity, but `-exportArchive` needs an *Apple Distribution* certificate plus an Xcode account to fetch profiles, and neither survives a Migration Assistant transfer — the private key stays behind and Xcode's account list arrives empty. The failure is at export, after a successful archive:
+
+```
+error: exportArchive No Accounts
+error: exportArchive No signing certificate "iOS Distribution" found
+```
+
+`security find-identity -v -p codesigning` on a working machine lists an `Apple Distribution:` identity; if you only see `Apple Development` and `Developer ID Application`, that's this. Fix by signing into Xcode → Settings → Accounts with the team Apple ID and letting it create the distribution certificate (interactive: needs the password and 2FA, and App Store Connect must be up — check [system status](https://developer.apple.com/system-status/)). The macOS lane is unaffected because Developer ID signing uses a different certificate.
 
 Release prep checklist for this lane:
 - update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `CHANGELOG.md`
@@ -222,14 +233,14 @@ Layout: `fastlane/screenshots/<locale>/<Device>.png`, e.g. `fastlane/screenshots
 
 ```sh
 fastlane ios build
-fastlane ios beta version:1.26.0 changelog:"release notes here"
+fastlane ios beta version:1.27.1 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:1.26.0
+fastlane ios release version:1.27.1
 ```
 
 ### macOS direct distribution

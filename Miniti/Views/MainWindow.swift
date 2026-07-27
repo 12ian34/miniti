@@ -303,6 +303,7 @@ struct MainWindow: View {
             selectedMeetingID = nil
         }
         // Delete from context
+        appState.noteMeetingDeleted(meeting)
         modelContext.delete(meeting)
         try? modelContext.save()
         refreshMeetings()

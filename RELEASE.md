@@ -93,6 +93,10 @@ Tell the backend agent (or edit `miniti-api` directly):
 Deploy.
 ```
 
+Only bump a platform's `*_LATEST_VERSION` once that platform's build is actually installable. The two ship independently — macOS goes live the moment the appcast is deployed, while iOS waits on App Review — so if only one platform shipped, leave the other on its previous version or you'll advertise an update nobody can install.
+
+`app/api/version/route.test.ts` asserts the version strings and release notes as literals, so it fails until you update it alongside the constants. That's deliberate: it catches a half-finished bump. Run `npm test` in `miniti-api` before pushing, since a push to `main` is a production deploy.
+
 Sanity-check once deployed:
 
 ```sh
@@ -161,6 +165,8 @@ git push origin main vX.Y.Z
 | Sparkle downloads but fails install with `Failed copying system domain rights: -60005` | The installed sandboxed app lacks Sparkle's installer-launcher service setup. Server/appcast changes cannot repair that installed build. Ship a fixed DMG with `SUEnableInstallerLauncherService = true` and `com.miniti.app-spks` / `com.miniti.app-spki` mach lookup exceptions; affected users install it manually once. |
 | "My history is wiped" after update | Sandbox entitlement was stripped → app points at a fresh non-sandboxed SwiftData store. Users' data is still at `~/Library/Containers/com.miniti.app/Data/...` — intact. Ship a hotfix that preserves entitlements. |
 | `which sign_update` returns nothing | Symlink the Sparkle SPM tools — see "Before you start" above. |
+| iOS `exportArchive No Accounts` / `No signing certificate "iOS Distribution" found` | The machine has no Apple Distribution certificate or Xcode account (both are lost in a Migration Assistant transfer). Sign into Xcode → Settings → Accounts and let it create the certificate. See `fastlane/RUNBOOK.md` § `fastlane ios release`. macOS releases are unaffected. |
+| iOS build number ends up one ahead of the shipped macOS DMG | Both targets share `CURRENT_PROJECT_VERSION`, and the iOS lanes auto-increment it unless `build:N` is passed. Pass it explicitly when macOS shipped first. |
 | DMG URL returns 404 | Netlify blob upload didn't happen, or the marketing site's `/dmg/*` route is misconfigured. |
 | Build number in built app differs from `Info.plist` | `CURRENT_PROJECT_VERSION` in pbxproj wins. Update both in sync. |
 

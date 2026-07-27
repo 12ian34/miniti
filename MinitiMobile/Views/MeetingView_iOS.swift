@@ -135,10 +135,11 @@ struct MeetingView_iOS: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             if appState.wasAutoStopped && isStopped {
+                let reason = appState.autoStopReason ?? .silence
                 HStack(spacing: 6) {
-                    Image(systemName: "moon.zzz.fill")
+                    Image(systemName: reason.icon)
                         .font(.system(size: 10, weight: .semibold))
-                    Text("auto-stopped — no speech detected")
+                    Text(reason.label)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)
