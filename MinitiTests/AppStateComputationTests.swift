@@ -817,6 +817,263 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(state.autoStartCountdown, 0)
     }
 
+    // MARK: - evaluateAutoStop
+
+    func testAutoStopFiresAfterSilenceWindow() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 300, audioGap: .infinity, autoStopMinutes: 5, calendarEventEnded: false),
+            .silence
+        )
+    }
+
+    func testAutoStopHoldsBeforeSilenceWindow() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 299, audioGap: .infinity, autoStopMinutes: 5, calendarEventEnded: false),
+            .keepRecording
+        )
+    }
+
+    func testAutoStopHoldsWhileAudioStillFlowing() {
+        // The regression: transcript pipeline stalled mid-meeting while people kept talking.
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 600, audioGap: 2, autoStopMinutes: 5, calendarEventEnded: false),
+            .keepRecording
+        )
+    }
+
+    func testAutoStopGivesUpOnPermanentlyStalledPipeline() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 900, audioGap: 2, autoStopMinutes: 5, calendarEventEnded: false),
+            .stalledPipeline
+        )
+    }
+
+    func testAutoStopTreatsStaleAudioAsSilence() {
+        // Audio last seen longer ago than the activity window — the room really is quiet.
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 300, audioGap: 61, autoStopMinutes: 5, calendarEventEnded: false),
+            .silence
+        )
+    }
+
+    func testAutoStopDisabledWhenMinutesZero() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 100_000, audioGap: .infinity, autoStopMinutes: 0, calendarEventEnded: false),
+            .keepRecording
+        )
+    }
+
+    func testAutoStopUsesTwoMinuteWindowAfterCalendarEventEnds() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 120, audioGap: .infinity, autoStopMinutes: 5, calendarEventEnded: true),
+            .calendarSilence
+        )
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 119, audioGap: .infinity, autoStopMinutes: 5, calendarEventEnded: true),
+            .keepRecording
+        )
+    }
+
+    func testAutoStopCalendarWindowAppliesWithAutoStopDisabled() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 120, audioGap: .infinity, autoStopMinutes: 0, calendarEventEnded: true),
+            .calendarSilence
+        )
+    }
+
+    func testAutoStopKeepsShorterConfiguredWindowAfterCalendarEventEnds() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 60, audioGap: .infinity, autoStopMinutes: 1, calendarEventEnded: true),
+            .calendarSilence
+        )
+    }
+
+    func testAutoStopCalendarPathStillBacksOffWhileAudioFlows() {
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 300, audioGap: 5, autoStopMinutes: 5, calendarEventEnded: true),
+            .keepRecording
+        )
+        XCTAssertEqual(
+            AppState.evaluateAutoStop(transcriptGap: 360, audioGap: 5, autoStopMinutes: 5, calendarEventEnded: true),
+            .stalledPipeline
+        )
+    }
+
+    // MARK: - evaluateTranscriptHealth
+
+    private func transcriptHealth(
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        sinceLastRecoveryAttempt: TimeInterval = .infinity,
+        consecutiveRecoveries: Int = 0,
+        isConnected: Bool = true,
+        isConnecting: Bool = false,
+        hasPendingReconnect: Bool = false
+    ) -> AppState.TranscriptHealthAction {
+        AppState.evaluateTranscriptHealth(
+            transcriptGap: transcriptGap,
+            audioGap: audioGap,
+            sinceLastRecoveryAttempt: sinceLastRecoveryAttempt,
+            consecutiveRecoveries: consecutiveRecoveries,
+            isConnected: isConnected,
+            isConnecting: isConnecting,
+            hasPendingReconnect: hasPendingReconnect
+        )
+    }
+
+    func testTranscriptHealthReconnectsWhenWordsStopButAudioContinues() {
+        XCTAssertEqual(transcriptHealth(transcriptGap: 25, audioGap: 1), .reconnectStarvation)
+    }
+
+    func testTranscriptHealthIgnoresPauseBetweenWords() {
+        // The regression: judging by an instantaneous level sample meant a tick landing in a pause
+        // between words looked identical to a dead pipeline. A quiet *moment* is not a quiet room.
+        XCTAssertEqual(transcriptHealth(transcriptGap: 25, audioGap: 3), .reconnectStarvation)
+    }
+
+    func testTranscriptHealthHoldsWhenSpeechStoppedBeforeTheLastTranscript() {
+        // Someone finished talking and the words came back — the gap is a lull, not a stall, so
+        // reconnecting here would drop a healthy socket mid-meeting.
+        XCTAssertEqual(transcriptHealth(transcriptGap: 24, audioGap: 25), .none)
+        XCTAssertEqual(transcriptHealth(transcriptGap: 25, audioGap: 22), .none)
+    }
+
+    func testTranscriptHealthHoldsWhenRoomIsGenuinelyQuiet() {
+        XCTAssertEqual(transcriptHealth(transcriptGap: 300, audioGap: 90), .none)
+        XCTAssertEqual(transcriptHealth(transcriptGap: 300, audioGap: .infinity), .none)
+    }
+
+    func testTranscriptHealthReconnectsWhenSpeechContinuedPastTheLastTranscript() {
+        // Talking carried on for a while after the last words came back, then stopped.
+        XCTAssertEqual(transcriptHealth(transcriptGap: 40, audioGap: 15), .reconnectStarvation)
+    }
+
+    func testTranscriptHealthHoldsBeforeStarvationGap() {
+        XCTAssertEqual(transcriptHealth(transcriptGap: 20, audioGap: 1), .none)
+    }
+
+    func testTranscriptHealthRespectsStarvationCooldown() {
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 25, audioGap: 1, sinceLastRecoveryAttempt: 29),
+            .none
+        )
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 25, audioGap: 1, sinceLastRecoveryAttempt: 31),
+            .reconnectStarvation
+        )
+    }
+
+    func testTranscriptHealthDoesNotStackOnPendingReconnect() {
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 60, audioGap: 1, hasPendingReconnect: true),
+            .none
+        )
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 60, audioGap: 1, isConnected: false, isConnecting: true),
+            .none
+        )
+    }
+
+    func testTranscriptHealthRetriesAfterReconnectLadderExhausted() {
+        // Reconnects are otherwise only triggered by a connection-state transition, so a socket
+        // left in .error after the last backoff attempt would stay dead for the whole meeting.
+        XCTAssertEqual(
+            transcriptHealth(
+                transcriptGap: 120,
+                audioGap: 1,
+                sinceLastRecoveryAttempt: 90,
+                isConnected: false
+            ),
+            .reconnectAfterExhaustion
+        )
+    }
+
+    func testTranscriptHealthBacksOffWhenReconnectsKeepNotHelping() {
+        // A room whose ambient noise clears the speech threshold looks like a permanent stall.
+        // Reconnecting isn't free, so repeated no-op recoveries must stretch the cooldown.
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 60, audioGap: 1, sinceLastRecoveryAttempt: 45, consecutiveRecoveries: 3),
+            .none
+        )
+        XCTAssertEqual(
+            transcriptHealth(transcriptGap: 60, audioGap: 1, sinceLastRecoveryAttempt: 300, consecutiveRecoveries: 3),
+            .reconnectStarvation
+        )
+    }
+
+    func testTranscriptRecoveryCooldownGrowsAndCaps() {
+        XCTAssertEqual(AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 0), 30)
+        XCTAssertEqual(AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 2), 120)
+        XCTAssertEqual(
+            AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 99),
+            AppState.transcriptRecoveryMaxCooldown
+        )
+    }
+
+    func testTranscriptHealthUsesLongerCooldownAfterExhaustion() {
+        XCTAssertEqual(
+            transcriptHealth(
+                transcriptGap: 120,
+                audioGap: 1,
+                sinceLastRecoveryAttempt: 45,
+                isConnected: false
+            ),
+            .none
+        )
+    }
+
+    // MARK: - Auto-stop reason copy
+
+    func testAutoStopReasonLabelsDistinguishSilenceFromStall() {
+        XCTAssertEqual(AppState.AutoStopReason.silence.label, "auto-stopped — no speech detected")
+        XCTAssertNotEqual(
+            AppState.AutoStopReason.stalledPipeline.label,
+            AppState.AutoStopReason.silence.label
+        )
+    }
+
+    // MARK: - Deleted-meeting guard
+
+    @MainActor
+    func testNoteMeetingDeletedMarksMeetingForInFlightWork() throws {
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        let meeting = Meeting(title: "history entry")
+        context.insert(meeting)
+        try context.save()
+        let meetingID = meeting.id
+
+        let state = AppState()
+        state.modelContext = context
+        XCTAssertFalse(state.isMeetingDeleted(meetingID))
+
+        // History delete records the ID first so regeneration that resumes after its network
+        // awaits can't write the row back.
+        state.noteMeetingDeleted(meeting)
+        context.delete(meeting)
+        try context.save()
+
+        XCTAssertTrue(state.isMeetingDeleted(meetingID))
+    }
+
+    @MainActor
+    func testDiscardCurrentMeetingMarksMeetingDeleted() throws {
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        let meeting = Meeting(title: "discarded")
+        context.insert(meeting)
+        try context.save()
+        let meetingID = meeting.id
+
+        let state = AppState()
+        state.modelContext = context
+        state.currentMeeting = meeting
+        state.discardCurrentMeeting()
+
+        XCTAssertTrue(state.isMeetingDeleted(meetingID))
+        XCTAssertNil(state.currentMeeting)
+    }
+
     // MARK: - recoverySeverity
 
     func testRecoverySeverityHealthy() {

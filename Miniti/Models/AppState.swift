@@ -63,6 +63,27 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    /// Why a recording stopped itself. Kept distinct from the banner flag so the stopped-state
+    /// copy can be honest: a stalled transcript pipeline is not the same as a quiet room.
+    enum AutoStopReason: String {
+        case silence
+        case stalledPipeline
+
+        var label: String {
+            switch self {
+            case .silence: return "auto-stopped — no speech detected"
+            case .stalledPipeline: return "auto-stopped — live transcription stopped responding"
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .silence: return "moon.zzz.fill"
+            case .stalledPipeline: return "wifi.exclamationmark"
+            }
+        }
+    }
     
     private struct PendingSessionEndReport: Codable, Identifiable, Equatable {
         let id: UUID
@@ -627,6 +648,7 @@ final class AppState: ObservableObject {
     private var dismissedAutoStartEventIDs: Set<String> = []
     
     @Published var wasAutoStopped = false
+    @Published var autoStopReason: AutoStopReason?
     @Published var selectedSettingsTab: String = "general"
     
     private var recordingTimer: Timer?
@@ -635,7 +657,15 @@ final class AppState: ObservableObject {
     private var autoStopTimer: Timer?
     private var lastTranscriptReceivedAt: CFAbsoluteTime = 0
     private var lastTranscriptStarvationRecoveryAt: CFAbsoluteTime = 0
+    /// Reconnects since the last time words actually came back. Drives the recovery backoff.
+    private var consecutiveTranscriptRecoveries = 0
     private var lastTranscriptHealthDebugLogAt: CFAbsoluteTime = 0
+    /// Last time audio was loud enough to plausibly be speech. Tracked continuously from the
+    /// level stream rather than sampled inside the 30s auto-stop tick, which would be just as
+    /// likely to land in a pause between words as on someone actually talking.
+    private var lastAudioActivityAt: CFAbsoluteTime = 0
+    static let speechMicLevelThreshold: Float = 0.008
+    static let speechSystemLevelThreshold: Float = 0.006
     private var deepgramReconnectTask: Task<Void, Never>?
     private var deepgramReconnectGeneration = 0
     private var lastDeepgramReconnectScheduledAt: CFAbsoluteTime = 0
@@ -654,6 +684,9 @@ final class AppState: ObservableObject {
     private var accumulatedRecordedDuration: TimeInterval = 0
     private var activeMeetingSaveTask: Task<Void, Never>?
     private var queuedMeetingSavePayload: MeetingSavePayload?
+    /// Meetings the user discarded or deleted from history. Async work that was already in flight
+    /// must never write one back.
+    private var deletedMeetingIDs: Set<UUID> = []
     private var cancellables = Set<AnyCancellable>()
     
     #if os(iOS)
@@ -856,7 +889,12 @@ final class AppState: ObservableObject {
                 .combineLatest(audioService.$systemAudioLevel)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] micLevel, sysLevel in
-                    self?.audioLevel = max(micLevel, sysLevel)
+                    guard let self else { return }
+                    self.audioLevel = max(micLevel, sysLevel)
+                    if micLevel > Self.speechMicLevelThreshold
+                        || (self.captureSystemAudio && sysLevel > Self.speechSystemLevelThreshold) {
+                        self.lastAudioActivityAt = CFAbsoluteTimeGetCurrent()
+                    }
                 }
                 .store(in: &cancellables)
             
@@ -1067,37 +1105,167 @@ final class AppState: ObservableObject {
         autoStopTimer = nil
     }
     
+    enum AutoStopDecision: Equatable {
+        case keepRecording
+        /// Silence for the configured auto-stop window.
+        case silence
+        /// Silence for the shorter window that applies once the calendar event has ended.
+        case calendarSilence
+        /// Audio kept flowing but no transcript came back for far longer than the silence
+        /// window — the pipeline is dead rather than the room being quiet.
+        case stalledPipeline
+    }
+
+    /// How recently audio must have been loud enough to count as "still an active meeting".
+    /// Two auto-stop ticks, so a single quiet sample can't flip the decision.
+    static let autoStopAudioActivityWindow: TimeInterval = 60
+    /// Multiple of the silence window we tolerate before giving up on a stalled pipeline.
+    static let autoStopStalledPipelineMultiplier: Double = 3
+
+    /// Pure auto-stop decision. `audioGap` is seconds since audio was last loud enough to be
+    /// speech (`.infinity` if never), `transcriptGap` is seconds since the last transcript.
+    nonisolated static func evaluateAutoStop(
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        autoStopMinutes: Int,
+        calendarEventEnded: Bool
+    ) -> AutoStopDecision {
+        let configuredWindow = autoStopMinutes > 0 ? Double(autoStopMinutes) * 60.0 : 0
+        let silenceWindow: TimeInterval
+        if calendarEventEnded {
+            silenceWindow = configuredWindow > 0 ? min(configuredWindow, 120) : 120
+        } else {
+            guard configuredWindow > 0 else { return .keepRecording }
+            silenceWindow = configuredWindow
+        }
+
+        // Audio still arriving means the transcript pipeline stalled (Deepgram dropped, system
+        // audio not captured) rather than the meeting going quiet. Stopping here would kill a
+        // live meeting under a misleading "no speech detected" label, so hold off and let
+        // checkTranscriptHealth() reconnect — but still give up eventually so a permanently
+        // dead pipeline can't record forever.
+        if audioGap < autoStopAudioActivityWindow {
+            return transcriptGap >= silenceWindow * autoStopStalledPipelineMultiplier
+                ? .stalledPipeline
+                : .keepRecording
+        }
+
+        guard transcriptGap >= silenceWindow else { return .keepRecording }
+        return calendarEventEnded ? .calendarSilence : .silence
+    }
+
+    enum TranscriptHealthAction: Equatable {
+        case none
+        /// The socket claims to be connected but no words are coming back.
+        case reconnectStarvation
+        /// Reconnect attempts already gave up and the socket is still down while audio flows.
+        case reconnectAfterExhaustion
+    }
+
+    /// Outer bound on how stale audio activity can be before a transcript gap is just a quiet room.
+    static let transcriptHealthAudioActivityWindow: TimeInterval = 60
+    /// Slack for the delay between someone speaking and Deepgram finalizing those words, so normal
+    /// end-of-turn latency never reads as a stall.
+    static let transcriptFinalizeLatencyMargin: TimeInterval = 5
+    /// Transcript gap that counts as starvation while audio is still arriving.
+    static let transcriptStarvationGap: TimeInterval = 20
+    static let transcriptStarvationCooldown: TimeInterval = 30
+    /// Longer cooldown for retrying after the backoff ladder gave up, so a genuinely dead network
+    /// isn't hammered every health tick.
+    static let transcriptExhaustedRetryCooldown: TimeInterval = 60
+    static let transcriptRecoveryMaxCooldown: TimeInterval = 600
+
+    /// Cooldown after `consecutiveRecoveries` reconnects that produced no transcript. Reconnecting
+    /// isn't free (it drops the socket and resets macOS multichannel speaker identity), so when it
+    /// keeps not helping — a room whose ambient noise clears the speech threshold, say — back off
+    /// instead of churning every 30s for the rest of the meeting.
+    nonisolated static func transcriptRecoveryCooldown(
+        base: TimeInterval,
+        consecutiveRecoveries: Int
+    ) -> TimeInterval {
+        let factor = pow(2.0, Double(min(max(consecutiveRecoveries, 0), 5)))
+        return min(base * factor, transcriptRecoveryMaxCooldown)
+    }
+
+    /// Pure transcript-health decision. Gaps are in seconds, `.infinity` when the corresponding
+    /// event has never happened.
+    nonisolated static func evaluateTranscriptHealth(
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        sinceLastRecoveryAttempt: TimeInterval,
+        consecutiveRecoveries: Int = 0,
+        isConnected: Bool,
+        isConnecting: Bool,
+        hasPendingReconnect: Bool
+    ) -> TranscriptHealthAction {
+        // Judge audio from the level stream's timestamp, never from an instantaneous sample, which
+        // is as likely to land in a pause between words as on speech. The signal for a stall is
+        // relative rather than absolute: someone spoke *after* the last words came back. Comparing
+        // against a fixed recency window instead would reconnect during any ordinary pause that
+        // outlasts the starvation gap.
+        guard audioGap < transcriptHealthAudioActivityWindow else { return .none }
+        guard transcriptGap > transcriptStarvationGap else { return .none }
+        guard audioGap + transcriptFinalizeLatencyMargin < transcriptGap else { return .none }
+        guard !hasPendingReconnect, !isConnecting else { return .none }
+
+        let base = isConnected ? transcriptStarvationCooldown : transcriptExhaustedRetryCooldown
+        let cooldown = transcriptRecoveryCooldown(base: base, consecutiveRecoveries: consecutiveRecoveries)
+        guard sinceLastRecoveryAttempt > cooldown else { return .none }
+
+        // Connected but starving means a zombie socket. Not connected with nothing retrying means
+        // the backoff ladder has already been exhausted — reconnects are otherwise only triggered
+        // by a connection-state *transition*, so without this the transcript stays dead for the
+        // rest of the meeting.
+        return isConnected ? .reconnectStarvation : .reconnectAfterExhaustion
+    }
+
+    /// Seconds since audio was last loud enough to plausibly be speech (`.infinity` if never).
+    private func audioActivityGap(at now: CFAbsoluteTime) -> TimeInterval {
+        lastAudioActivityAt > 0 ? now - lastAudioActivityAt : .infinity
+    }
+
     private func checkAutoStop() {
         guard isRecording, lastTranscriptReceivedAt > 0 else { return }
-        
+
         let now = CFAbsoluteTimeGetCurrent()
-        let gap = now - lastTranscriptReceivedAt
-        
-        // Calendar-aware auto-stop: after event end time, use 2-min silence threshold
+        let transcriptGap = now - lastTranscriptReceivedAt
+        let audioGap = audioActivityGap(at: now)
+
+        var calendarEventEnded = false
         if autoStopFromCalendar,
            let event = selectedCalendarEvent,
            let endDate = event.endDate,
            Date() > endDate {
+            calendarEventEnded = true
             if !calendarEventEndedWhileRecording {
                 calendarEventEndedWhileRecording = true
                 DebugLogger.shared.log(.app, "Calendar event ended — using 2-min silence threshold")
             }
-            if gap >= 120 {
-                DebugLogger.shared.log(.app, "Auto-stop: calendar event ended + 2 min silence")
-                wasAutoStopped = true
-                stopRecording()
-                return
-            }
         }
-        
-        // Normal silence-based auto-stop
-        guard autoStopMinutes > 0 else { return }
-        let threshold = Double(autoStopMinutes) * 60.0
-        if gap >= threshold {
+
+        let decision = Self.evaluateAutoStop(
+            transcriptGap: transcriptGap,
+            audioGap: audioGap,
+            autoStopMinutes: autoStopMinutes,
+            calendarEventEnded: calendarEventEnded
+        )
+
+        switch decision {
+        case .keepRecording:
+            return
+        case .silence:
             DebugLogger.shared.log(.app, "Auto-stop: no transcript activity for \(autoStopMinutes) min")
-            wasAutoStopped = true
-            stopRecording()
+            autoStopReason = .silence
+        case .calendarSilence:
+            DebugLogger.shared.log(.app, "Auto-stop: calendar event ended + 2 min silence")
+            autoStopReason = .silence
+        case .stalledPipeline:
+            DebugLogger.shared.log(.app, "Auto-stop: transcript pipeline stalled for \(Int(transcriptGap / 60)) min despite active audio")
+            autoStopReason = .stalledPipeline
         }
+
+        wasAutoStopped = true
+        stopRecording()
     }
     
     private func checkTranscriptHealth() {
@@ -1105,36 +1273,57 @@ final class AppState: ObservableObject {
         guard let deepgramService else { return }
         
         let now = CFAbsoluteTimeGetCurrent()
-        let speechLikely = microphoneLevel > 0.008 || (captureSystemAudio && systemAudioLevel > 0.006)
         let transcriptGap = now - lastTranscriptReceivedAt
+        let audioGap = audioActivityGap(at: now)
         if now - lastTranscriptHealthDebugLogAt > 20.0 {
             lastTranscriptHealthDebugLogAt = now
             DebugLogger.shared.log(
                 .app,
-                "Transcript health: gap=\(String(format: "%.1f", transcriptGap))s, speechLikely=\(speechLikely), dg=\(deepgramService.connectionState), packets=\(deepgramService.packetsSentCount), micLevel=\(String(format: "%.4f", microphoneLevel)), sysLevel=\(String(format: "%.4f", systemAudioLevel)), micActive=\(audioCaptureService?.isMicActive ?? false), sysActive=\(audioCaptureService?.isSystemAudioActive ?? false), recovery=\(audioRecoveryState)"
+                "Transcript health: gap=\(String(format: "%.1f", transcriptGap))s, audioGap=\(String(format: "%.1f", audioGap))s, dg=\(deepgramService.connectionState), packets=\(deepgramService.packetsSentCount), micLevel=\(String(format: "%.4f", microphoneLevel)), sysLevel=\(String(format: "%.4f", systemAudioLevel)), micActive=\(audioCaptureService?.isMicActive ?? false), sysActive=\(audioCaptureService?.isSystemAudioActive ?? false), recovery=\(audioRecoveryState)"
             )
         }
-        if speechLikely {
-            if transcriptGap > 20.0,
-               now - lastTranscriptStarvationRecoveryAt > 30.0,
-               deepgramService.connectionState == .connected {
-                lastTranscriptStarvationRecoveryAt = now
-                DebugLogger.shared.log(
-                    .app,
-                    "Transcript starvation detected (\(String(format: "%.1f", transcriptGap))s gap with active audio) — reconnecting Deepgram"
-                )
-                enqueueDiagnosticEvent(
-                    "transcript_starvation_detected",
-                    category: .deepgram,
-                    level: .warning,
-                    details: [
-                        "gap_seconds": String(format: "%.1f", transcriptGap),
-                        "mic_level": String(format: "%.4f", microphoneLevel),
-                        "system_level": String(format: "%.4f", systemAudioLevel)
-                    ]
-                )
-                scheduleDeepgramReconnect(reason: "transcript starvation")
-            }
+
+        // Words are flowing again — whatever we last did worked, so start the backoff over.
+        if transcriptGap < Self.transcriptStarvationGap {
+            consecutiveTranscriptRecoveries = 0
+        }
+
+        let action = Self.evaluateTranscriptHealth(
+            transcriptGap: transcriptGap,
+            audioGap: audioGap,
+            sinceLastRecoveryAttempt: lastTranscriptStarvationRecoveryAt > 0
+                ? now - lastTranscriptStarvationRecoveryAt
+                : .infinity,
+            consecutiveRecoveries: consecutiveTranscriptRecoveries,
+            isConnected: deepgramService.connectionState == .connected,
+            isConnecting: deepgramService.connectionState == .connecting,
+            hasPendingReconnect: deepgramReconnectTask != nil
+        )
+
+        if action != .none {
+            lastTranscriptStarvationRecoveryAt = now
+            consecutiveTranscriptRecoveries += 1
+            let reason = action == .reconnectStarvation
+                ? "transcript starvation"
+                : "transcript still dead after reconnect gave up"
+            DebugLogger.shared.log(
+                .app,
+                "Transcript stall detected (\(String(format: "%.1f", transcriptGap))s gap with active audio, dg=\(deepgramService.connectionState)) — reconnecting Deepgram: \(reason)"
+            )
+            enqueueDiagnosticEvent(
+                action == .reconnectStarvation
+                    ? "transcript_starvation_detected"
+                    : "transcript_reconnect_reattempt",
+                category: .deepgram,
+                level: .warning,
+                details: [
+                    "gap_seconds": String(format: "%.1f", transcriptGap),
+                    "audio_gap_seconds": String(format: "%.1f", audioGap),
+                    "mic_level": String(format: "%.4f", microphoneLevel),
+                    "system_level": String(format: "%.4f", systemAudioLevel)
+                ]
+            )
+            scheduleDeepgramReconnect(reason: reason)
         }
         
         updateAudioRecoveryState()
@@ -1230,11 +1419,13 @@ final class AppState: ObservableObject {
         // AttributeGraph to see intermediate states and corrupt weak references
         // during ForEach diffing (EXC_BAD_ACCESS in AGGraphGetWeakValue).
         var updated = liveSegments.filter { $0.isFinal } // Strip interims once
+        var receivedTranscriptContent = false
         
         for segment in finalSegments {
             // Skip empty segments
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
+            receivedTranscriptContent = true
             
             // Track this speaker
             detectedSpeakers.insert(segment.speaker)
@@ -1263,6 +1454,12 @@ final class AppState: ObservableObject {
                     "Skipped duplicate final transcript: reason=\(mergeResult), speaker=\(segment.speaker)"
                 )
             }
+        }
+        
+        // Words landing here mean the pipeline is alive, even when the sibling transcript update
+        // carried no text of its own and so never stamped the timestamp.
+        if receivedTranscriptContent {
+            lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         }
         
         // Single atomic mutation — one @Published change instead of N
@@ -1679,22 +1876,27 @@ final class AppState: ObservableObject {
             docsLookupError = "Add a docs MCP URL in Settings → Docs MCP."
             return
         }
+        let meetingID = meeting.id
         let transcript = meeting.fullTranscript
+        let language = meeting.language
         guard transcript.count >= docsMinTranscriptChars, !isExtractingDocsTopics else { return }
         isExtractingDocsTopics = true
         defer { isExtractingDocsTopics = false }
 
-        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: meeting.language) else {
+        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: language) else {
             return
         }
+        // The meeting can be deleted from history while extraction is in flight.
+        guard !isMeetingDeleted(meetingID) else { return }
         let merged = Self.mergeDocTopics(existing: meeting.docTopics, newLabels: labels)
         meeting.docTopics = merged
-        if currentMeeting?.id == meeting.id { liveDocTopics = merged }
+        if currentMeeting?.id == meetingID { liveDocTopics = merged }
         if !merged.isEmpty { docsSuccessCount += 1 }
         try? modelContext?.save()
 
         if canAutoLookupDocs {
             for topic in merged where topic.lookupState == .pending {
+                guard !isMeetingDeleted(meetingID) else { return }
                 await lookupDocTopic(id: topic.id, for: meeting)
             }
         }
@@ -1895,11 +2097,16 @@ final class AppState: ObservableObject {
             docsLookupError = docsQuotaReachedMessage
             return
         }
+        let meetingID = meeting.id
+        let transcript = meeting.fullTranscript
+        let language = meeting.language
         updateHistoryDocTopic(id: id, in: meeting) { t in
             t.lookupState = .lookingUp
             t.errorMessage = nil
         }
-        let outcome = await resolveDocCard(topic: topic.label, transcript: meeting.fullTranscript, language: meeting.language)
+        let outcome = await resolveDocCard(topic: topic.label, transcript: transcript, language: language)
+        // The meeting can be deleted from history while the lookup is in flight.
+        guard !isMeetingDeleted(meetingID) else { return }
         updateHistoryDocTopic(id: id, in: meeting) { t in
             switch outcome {
             case .answered(let card):
@@ -2879,6 +3086,7 @@ final class AppState: ObservableObject {
         
         isStartingMeeting = true
         wasAutoStopped = false
+        autoStopReason = nil
         calendarEventEndedWhileRecording = false
         
         // Save previous meeting if exists and has content
@@ -2958,6 +3166,7 @@ final class AppState: ObservableObject {
     /// Go back to home screen (clears current session after saving)
     func goHome() {
         wasAutoStopped = false
+        autoStopReason = nil
         calendarEventEndedWhileRecording = false
         
         // End Live Activity
@@ -3077,12 +3286,32 @@ final class AppState: ObservableObject {
         queuedMeetingSavePayload = nil
         
         if let meeting = currentMeeting, let modelContext {
+            deletedMeetingIDs.insert(meeting.id)
             modelContext.delete(meeting)
             try? modelContext.save()
         }
         
         clearCurrentSession()
         insightsMode = .standard
+    }
+
+    /// Record that a saved meeting is about to be deleted from history. Insight, docs, and save
+    /// work already in flight holds a strong reference to the model and writes into it after its
+    /// awaits resolve, which would resurrect the row the user just deleted. Call this *before*
+    /// `modelContext.delete(_:)`.
+    func noteMeetingDeleted(_ meeting: Meeting) {
+        deletedMeetingIDs.insert(meeting.id)
+        if currentMeeting?.id == meeting.id {
+            activeMeetingSaveTask?.cancel()
+            activeMeetingSaveTask = nil
+            queuedMeetingSavePayload = nil
+        }
+    }
+
+    /// Whether a meeting was discarded or deleted during this app run. Async work that resumes
+    /// after a suspension point must check this before touching the model again.
+    func isMeetingDeleted(_ id: UUID) -> Bool {
+        deletedMeetingIDs.contains(id)
     }
     
     /// Generate standard + MEDDPICC insights for a saved meeting (used from history detail)
@@ -3102,9 +3331,18 @@ final class AppState: ObservableObject {
             canGenerate = insightsService != nil && !openaiApiKey.isEmpty
         }
         guard canGenerate else { return }
-        guard !meeting.fullTranscript.isEmpty else { return }
+
+        // Snapshot everything read across the awaits below: the user can delete this meeting from
+        // history mid-generation, after which touching the model is unsafe and writing to it
+        // resurrects the row.
+        let meetingID = meeting.id
+        let transcript = meeting.fullTranscript
+        let language = meeting.language
+        var summaryForContext = meeting.summaryText
+        guard !transcript.isEmpty else { return }
         
         isGeneratingInsights = true
+        defer { isGeneratingInsights = false }
         let model = OpenAIModel.gpt5Mini
         
         // Generate standard insights
@@ -3112,25 +3350,29 @@ final class AppState: ObservableObject {
             if appMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
-                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: nil,
                     mode: InsightsMode.standard.rawValue, model: model.rawValue,
-                    language: meeting.language
+                    language: language
                 )
+                guard !isMeetingDeleted(meetingID) else { return }
                 let insights = response.toLiveInsights()
                 meeting.summaryText = insights.summary
                 meeting.actionItems = insights.actionItems
                 meeting.topics = insights.topics
                 meeting.discussionFlow = insights.discussionFlow
+                summaryForContext = insights.summary
             } else {
                 let insights = try await insightsService!.generateInsights(
-                    transcript: meeting.fullTranscript,
-                    model: model, apiKey: openaiApiKey, language: meeting.language
+                    transcript: transcript,
+                    model: model, apiKey: openaiApiKey, language: language
                 )
+                guard !isMeetingDeleted(meetingID) else { return }
                 meeting.summaryText = insights.summary
                 meeting.actionItems = insights.actionItems
                 meeting.keyDecisions = insights.decisions
                 meeting.topics = insights.topics
+                summaryForContext = insights.summary
             }
         } catch {
             DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
@@ -3143,19 +3385,20 @@ final class AppState: ObservableObject {
             if appMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId, transcript: meeting.fullTranscript,
-                    existingSummary: meeting.summaryText, existingTitle: nil,
+                    deviceId: deviceId, transcript: transcript,
+                    existingSummary: summaryForContext, existingTitle: nil,
                     mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
-                    language: meeting.language
+                    language: language
                 )
                 meddpiccInsights = response.toLiveInsights()
             } else {
                 meddpiccInsights = try await insightsService!.generateLiveInsights(
-                    transcript: meeting.fullTranscript, existingSummary: meeting.summaryText,
+                    transcript: transcript, existingSummary: summaryForContext,
                     existingTitle: nil, mode: .meddpicc,
-                    model: model, apiKey: openaiApiKey, language: meeting.language
+                    model: model, apiKey: openaiApiKey, language: language
                 )
             }
+            guard !isMeetingDeleted(meetingID) else { return }
             meeting.meddpiccMetrics = meddpiccInsights.metrics
             meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
             meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
@@ -3175,24 +3418,26 @@ final class AppState: ObservableObject {
             if appMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId, transcript: meeting.fullTranscript,
+                    deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: nil,
                     mode: InsightsMode.questions.rawValue, model: model.rawValue,
-                    language: meeting.language
+                    language: language
                 )
                 questionsInsights = response.toLiveInsights()
             } else {
                 questionsInsights = try await insightsService!.generateLiveInsights(
-                    transcript: meeting.fullTranscript, existingSummary: nil,
+                    transcript: transcript, existingSummary: nil,
                     existingTitle: nil, mode: .questions,
-                    model: model, apiKey: openaiApiKey, language: meeting.language
+                    model: model, apiKey: openaiApiKey, language: language
                 )
             }
+            guard !isMeetingDeleted(meetingID) else { return }
             meeting.suggestedQuestions = questionsInsights.questions
         } catch {
             DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
         }
 
+        guard !isMeetingDeleted(meetingID) else { return }
         try? modelContext?.save()
 
         // Re-export markdown with updated insights
@@ -3208,8 +3453,6 @@ final class AppState: ObservableObject {
             let payload = WebhookService.payloadFromMeeting(meeting)
             WebhookService.send(payload: payload, to: webhookURL)
         }
-
-        isGeneratingInsights = false
     }
 
     @discardableResult
@@ -3623,6 +3866,9 @@ final class AppState: ObservableObject {
             return
         }
 
+        // Read before the suspension point below: after it, the meeting may have been deleted,
+        // and reading any property of a dead model traps.
+        let meetingID = payload.meeting.id
         let existingSnapshots = payload.meeting.segments.map {
             PersistedSegmentSnapshot(
                 id: $0.id,
@@ -3639,6 +3885,11 @@ final class AppState: ObservableObject {
                 existingSegments: existingSnapshots
             )
         }.value
+
+        // The off-main diff above is a suspension point, so the meeting can be discarded while we
+        // are suspended. Re-check before writing: the insert below would otherwise resurrect a
+        // meeting the user already deleted.
+        guard !Task.isCancelled, !isMeetingDeleted(meetingID) else { return }
 
         applySegmentSyncPlan(syncPlan, to: payload.meeting, modelContext: modelContext)
 
@@ -3764,6 +4015,7 @@ final class AppState: ObservableObject {
         microphoneLevel = 0
         systemAudioLevel = 0
         audioLevel = 0
+        lastAudioActivityAt = 0
     }
     
     /// Restart monitoring after toggling an audio source
@@ -3811,7 +4063,9 @@ final class AppState: ObservableObject {
         lastDeepgramReconnectScheduledAt = 0
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         lastTranscriptStarvationRecoveryAt = 0
+        consecutiveTranscriptRecoveries = 0
         lastTranscriptHealthDebugLogAt = 0
+        lastAudioActivityAt = 0
         startTranscriptHealthMonitoring()
         
         configureDeepgramServiceCredential()
@@ -3858,6 +4112,7 @@ final class AppState: ObservableObject {
         // Exclude paused time by anchoring to the already-recorded active duration.
         recordingStartDate = Date().addingTimeInterval(-accumulatedRecordedDuration)
         let startDate = recordingStartDate!
+        recordingTimer?.invalidate()
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.recordingDuration = Date().timeIntervalSince(startDate)
@@ -5385,9 +5640,14 @@ final class AppState: ObservableObject {
     
     #if os(iOS)
     private func startLiveActivity() {
+        guard let meeting = currentMeeting else { return }
+        let meetingID = meeting.id.uuidString
+        let meetingTitle = meeting.displayTitle
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.replaceLiveActivity(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
                 isRecording: true,
                 transcript: "",
                 elapsedSeconds: nil,
@@ -5457,9 +5717,14 @@ final class AppState: ObservableObject {
     }
     
     private func restorePausedLiveActivity() {
+        guard let meeting = currentMeeting else { return }
+        let meetingID = meeting.id.uuidString
+        let meetingTitle = meeting.displayTitle
         Task { @MainActor [weak self] in
             guard let self, self.currentMeeting != nil else { return }
             await self.replaceLiveActivity(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
                 isRecording: false,
                 transcript: self.currentTranscriptLine,
                 elapsedSeconds: Int(self.recordingDuration),
@@ -5480,7 +5745,12 @@ final class AppState: ObservableObject {
         return resolved
     }
     
+    /// Takes the meeting's ID and title as plain values rather than reading them off
+    /// `currentMeeting`: callers hop through a `Task` to get here, and the meeting can be deleted
+    /// (or its context torn down) in the meantime, which makes any SwiftData property access trap.
     private func replaceLiveActivity(
+        meetingID: String,
+        meetingTitle: String,
         isRecording: Bool,
         transcript: String,
         elapsedSeconds: Int?,
@@ -5491,13 +5761,13 @@ final class AppState: ObservableObject {
             DebugLogger.shared.log(.app, "Live Activities not enabled")
             return
         }
-        guard let meeting = currentMeeting else {
+        guard currentMeeting != nil else {
             await endAllLiveActivities(finalState: nil)
             return
         }
         
         let state = RecordingActivityAttributes.ContentState(
-            meetingTitle: meeting.displayTitle,
+            meetingTitle: meetingTitle,
             isRecording: isRecording,
             currentTranscript: transcript,
             elapsedSeconds: elapsedSeconds
@@ -5505,7 +5775,7 @@ final class AppState: ObservableObject {
         await endAllLiveActivities(finalState: nil)
         
         let attributes = RecordingActivityAttributes(
-            meetingID: meeting.id.uuidString,
+            meetingID: meetingID,
             startTime: recordingStartDate ?? Date()
         )
         

@@ -108,7 +108,15 @@ final class Meeting {
             return (try? JSONDecoder().decode([SuggestedQuestion].self, from: data)) ?? []
         }
         set {
-            suggestedQuestionsJSON = newValue.isEmpty ? nil : (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8))
+            if newValue.isEmpty {
+                suggestedQuestionsJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it to nil.
+            if let data = try? JSONEncoder().encode(newValue),
+               let str = String(data: data, encoding: .utf8) {
+                suggestedQuestionsJSON = str
+            }
         }
     }
     
@@ -122,7 +130,15 @@ final class Meeting {
             return (try? JSONDecoder().decode([DocTopic].self, from: data)) ?? []
         }
         set {
-            docTopicsJSON = newValue.isEmpty ? nil : (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8))
+            if newValue.isEmpty {
+                docTopicsJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it to nil.
+            if let data = try? JSONEncoder().encode(newValue),
+               let str = String(data: data, encoding: .utf8) {
+                docTopicsJSON = str
+            }
         }
     }
 
@@ -517,7 +533,15 @@ final class Meeting {
             return (try? JSONDecoder().decode([MeetingAttendee].self, from: data)) ?? []
         }
         set {
-            attendeesJSON = (try? String(data: JSONEncoder().encode(newValue), encoding: .utf8)) ?? nil
+            if newValue.isEmpty {
+                attendeesJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it to nil.
+            if let data = try? JSONEncoder().encode(newValue),
+               let str = String(data: data, encoding: .utf8) {
+                attendeesJSON = str
+            }
         }
     }
     

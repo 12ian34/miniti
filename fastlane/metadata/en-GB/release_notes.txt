@@ -1,3 +1,8 @@
-- Docs insights tab now keeps an updating list of topics from your conversation, and looks up an answer for each one from your docs, with source links.
-- Auto-lookup on Pro and BYOK; a monthly free allowance otherwise.
-- Settings lets you connect any docs MCP URL (for example a public product docs site).
+- Live transcription now recovers on its own when it stops returning words mid-meeting, and keeps trying instead of giving up after the first few attempts.
+- Recording recovers automatically after a phone call, Siri, or an alarm interrupts it, and after a failed switch between headphones and the built-in mic.
+- Meetings no longer stop themselves with "no speech detected" when live transcription drops while people are still talking.
+- A meeting that stopped because live transcription failed now says so, instead of reporting a silent room.
+- A meeting you discard no longer reappears in your history, and deleting a meeting while its insights are being regenerated no longer brings it back.
+- Training mode now counts "mhmm" as a filler word, and the default filler list no longer offers hesitations that could never be detected.
+- The Lock Screen and Dynamic Island recording activity no longer risks crashing the app when its meeting is discarded.
+- Suggested questions, docs topics, and calendar attendees can no longer be lost from a saved meeting.

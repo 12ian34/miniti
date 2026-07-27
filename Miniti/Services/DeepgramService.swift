@@ -67,7 +67,9 @@ enum TranscriptionLanguage: String, CaseIterable, Codable {
     var defaultFillers: [String] {
         switch self {
         case .english:
-            return ["um", "uh", "hmm", "hm", "er", "ah", "like", "basically", "literally",
+            // Hesitation entries must match Deepgram's filler vocabulary verbatim
+            // (uh, um, mhmm, uh-huh, ...) — it never emits "hmm", "hm" or "er".
+            return ["um", "uh", "mhmm", "mhm", "ah", "like", "basically", "literally",
                     "actually", "honestly", "uh huh", "you know", "i mean", "kind of", "sort of"]
         case .spanish:
             return ["eh", "este", "bueno", "o sea", "pues", "es que", "digamos", "entonces", "a ver"]

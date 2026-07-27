@@ -9,7 +9,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var audioEngine: AVAudioEngine?
     private var engineConfigObserver: Any?
     private var routeChangeObserver: Any?
+    private var interruptionObserver: Any?
     private var pendingMicRestartTask: Task<Void, Never>?
+    private var pendingMicRetryTask: Task<Void, Never>?
+    private var micRetryAttempt = 0
+    private let maxMicRetryAttempts = 3
     private var isRestartingMicAfterRouteChange = false
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeInputIdentity: String = ""
@@ -57,6 +61,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     func stopCapture() {
+        cancelPendingMicRecovery()
         stopMicrophoneCapture()
         isCapturing = false
         isMicActive = false
@@ -64,10 +69,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func stopCaptureAsync() async {
+        cancelPendingMicRecovery()
         stopMicrophoneCapture()
         isCapturing = false
         isMicActive = false
         isSystemAudioActive = false
+    }
+    
+    private func cancelPendingMicRecovery() {
+        pendingMicRetryTask?.cancel()
+        pendingMicRetryTask = nil
+        micRetryAttempt = 0
     }
     
     // MARK: - Microphone Capture
@@ -177,10 +189,43 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self?.handleRouteChange(reason: reason, previousRouteSummary: previousRouteSummary)
             }
         }
+        
+        if let observer = interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        interruptionObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.interruptionNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let type = notification.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+            Task { @MainActor in
+                self?.handleInterruption(type: type)
+            }
+        }
     }
     
     private func handleEngineConfigurationChange() {
         scheduleMicRestart(reason: "engine configuration changed")
+    }
+    
+    /// Phone calls, FaceTime, Siri, and alarms suspend the engine. Nothing restarts it for us, so
+    /// without this the rest of the meeting records silence.
+    private func handleInterruption(type: UInt?) {
+        guard let type, let interruption = AVAudioSession.InterruptionType(rawValue: type) else { return }
+        switch interruption {
+        case .began:
+            DebugLogger.shared.log(.audio, "iOS audio session interrupted — mic suspended")
+            isMicActive = false
+        case .ended:
+            guard isCapturing else { return }
+            DebugLogger.shared.log(.audio, "iOS audio session interruption ended — restarting mic")
+            // Restart regardless of `shouldResume`: that hint is advisory, and a recorder that
+            // never comes back is worse than one that retries and fails loudly.
+            scheduleMicRestart(reason: "interruption ended")
+        @unknown default:
+            break
+        }
     }
     
     private func handleRouteChange(reason: UInt?, previousRouteSummary: String) {
@@ -189,7 +234,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let session = AVAudioSession.sharedInstance()
         DebugLogger.shared.log(.audio, "Audio route changed (\(changeReason.debugLabel)): previous=[\(previousRouteSummary)], current=\(sessionRouteSummary(session))")
         
-        guard isCapturing, isMicActive else { return }
+        guard isCapturing else { return }
+        // A dead mic still needs recovering, so don't gate on `isMicActive` here.
+        guard isMicActive else {
+            scheduleMicRestart(reason: "route changed while mic inactive")
+            return
+        }
         let newIdentity = currentInputIdentity()
         guard !newIdentity.isEmpty, newIdentity != activeInputIdentity else { return }
         activeInputIdentity = newIdentity
@@ -197,31 +247,80 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func scheduleMicRestart(reason: String) {
-        guard isCapturing, isMicActive else { return }
+        guard isCapturing else { return }
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = Task { @MainActor [weak self] in
             guard let self else { return }
             defer { self.pendingMicRestartTask = nil }
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard self.isCapturing, self.isMicActive else { return }
+            guard self.isCapturing else { return }
             guard !self.isRestartingMicAfterRouteChange else { return }
             let now = CFAbsoluteTimeGetCurrent()
             guard now - self.lastMicRestartAt > 0.5 else { return }
             self.lastMicRestartAt = now
-            self.isRestartingMicAfterRouteChange = true
-            defer { self.isRestartingMicAfterRouteChange = false }
-            
-            let session = AVAudioSession.sharedInstance()
-            DebugLogger.shared.log(.audio, "Restarting iOS mic tap (\(reason)): \(self.sessionRouteSummary(session))")
-            
-            self.stopMicrophoneCapture()
-            do {
-                try await self.startMicrophoneCapture(skipPermissionCheck: true)
-                DebugLogger.shared.log(.audio, "iOS mic capture restart complete")
-            } catch {
-                self.isMicActive = false
-                DebugLogger.shared.log(.audio, "iOS mic capture restart FAILED: \(error.localizedDescription)")
+            // A fresh trigger (interruption ended, route changed, engine reconfigured) earns a
+            // fresh ladder — otherwise an exhausted counter from an earlier failure would make
+            // `scheduleMicRestartRetry` give up immediately and leave the mic dead.
+            self.pendingMicRetryTask?.cancel()
+            self.pendingMicRetryTask = nil
+            self.micRetryAttempt = 0
+            await self.restartMicrophone(reason: reason)
+        }
+    }
+    
+    /// Tear down and re-arm the mic tap. On failure, hands off to the bounded retry ladder —
+    /// otherwise a single failed restart leaves the mic dead for the rest of the meeting.
+    private func restartMicrophone(reason: String) async {
+        guard !isRestartingMicAfterRouteChange else { return }
+        isRestartingMicAfterRouteChange = true
+        defer { isRestartingMicAfterRouteChange = false }
+        
+        let session = AVAudioSession.sharedInstance()
+        DebugLogger.shared.log(.audio, "Restarting iOS mic tap (\(reason)): \(sessionRouteSummary(session))")
+        
+        stopMicrophoneCapture()
+        do {
+            try await startMicrophoneCapture(skipPermissionCheck: true)
+            isMicActive = true
+            micRetryAttempt = 0
+            DebugLogger.shared.log(.audio, "iOS mic capture restart complete")
+        } catch {
+            isMicActive = false
+            DebugLogger.shared.log(.audio, "iOS mic capture restart FAILED: \(error.localizedDescription)")
+            scheduleMicRestartRetry(reason: "restart failed (\(reason))")
+        }
+    }
+    
+    private func scheduleMicRestartRetry(reason: String) {
+        guard isCapturing else { return }
+        guard pendingMicRetryTask == nil else { return }
+        guard micRetryAttempt < maxMicRetryAttempts else {
+            DebugLogger.shared.log(
+                .audio,
+                "iOS mic auto-retry exhausted (\(micRetryAttempt) attempts), reason=\(reason)"
+            )
+            return
+        }
+        
+        micRetryAttempt += 1
+        let attempt = micRetryAttempt
+        let delayNanos: UInt64 = [500_000_000, 1_500_000_000, 3_000_000_000][min(attempt - 1, 2)]
+        DebugLogger.shared.log(
+            .audio,
+            "Scheduling iOS mic restart retry \(attempt)/\(maxMicRetryAttempts) in \(String(format: "%.1f", Double(delayNanos) / 1_000_000_000))s (\(reason))"
+        )
+        
+        pendingMicRetryTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: delayNanos)
+            self.pendingMicRetryTask = nil
+            guard !Task.isCancelled, self.isCapturing else { return }
+            guard !self.isMicActive else {
+                self.micRetryAttempt = 0
+                return
             }
+            self.lastMicRestartAt = CFAbsoluteTimeGetCurrent()
+            await self.restartMicrophone(reason: "retry \(attempt)/\(self.maxMicRetryAttempts)")
         }
     }
     
@@ -259,6 +358,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         if let observer = routeChangeObserver {
             NotificationCenter.default.removeObserver(observer)
             routeChangeObserver = nil
+        }
+        if let observer = interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+            interruptionObserver = nil
         }
         pendingMicRestartTask?.cancel()
         pendingMicRestartTask = nil

@@ -729,6 +729,79 @@ final class MeetingModelTests: XCTestCase {
         XCTAssertFalse(meeting.hasSpeakerNames)
     }
 
+    // MARK: - Guarded JSON setters (round-trip + empty clears)
+
+    @MainActor
+    func testMeetingSuggestedQuestionsRoundtrip() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        let questions = [
+            SuggestedQuestion(question: "What's the timeline?", type: "clarify", context: "unstated"),
+            SuggestedQuestion(question: "Who signs off?", type: "deeper", context: "decision")
+        ]
+        meeting.suggestedQuestions = questions
+        XCTAssertEqual(meeting.suggestedQuestions, questions)
+        XCTAssertTrue(meeting.hasQuestions)
+        XCTAssertNotNil(meeting.suggestedQuestionsJSON)
+    }
+
+    @MainActor
+    func testMeetingSuggestedQuestionsEmptyClearsJSON() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.suggestedQuestions = [SuggestedQuestion(question: "Q?", type: "clarify", context: "c")]
+        XCTAssertNotNil(meeting.suggestedQuestionsJSON)
+        meeting.suggestedQuestions = []
+        XCTAssertNil(meeting.suggestedQuestionsJSON)
+        XCTAssertFalse(meeting.hasQuestions)
+    }
+
+    @MainActor
+    func testMeetingDocTopicsRoundtrip() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        let topics = [DocTopic(label: "Rate limits"), DocTopic(label: "Webhooks")]
+        meeting.docTopics = topics
+        XCTAssertEqual(meeting.docTopics, topics)
+        XCTAssertTrue(meeting.hasDocs)
+        XCTAssertNotNil(meeting.docTopicsJSON)
+    }
+
+    @MainActor
+    func testMeetingDocTopicsEmptyClearsJSON() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.docTopics = [DocTopic(label: "Rate limits")]
+        XCTAssertNotNil(meeting.docTopicsJSON)
+        meeting.docTopics = []
+        XCTAssertNil(meeting.docTopicsJSON)
+        XCTAssertFalse(meeting.hasDocs)
+    }
+
+    @MainActor
+    func testMeetingAttendeesRoundtrip() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        let attendees = [
+            MeetingAttendee(email: "a@acme.com", displayName: "Alice", domain: "acme.com", responseStatus: "accepted", isOrganizer: true, isSelf: false),
+            MeetingAttendee(email: "me@corp.com", displayName: nil, domain: "corp.com", responseStatus: "accepted", isOrganizer: false, isSelf: true)
+        ]
+        meeting.attendees = attendees
+        XCTAssertEqual(meeting.attendees.map(\.email), attendees.map(\.email))
+        XCTAssertNotNil(meeting.attendeesJSON)
+    }
+
+    @MainActor
+    func testMeetingAttendeesEmptyClearsJSON() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.attendees = [MeetingAttendee(email: "a@acme.com", displayName: "Alice", domain: "acme.com", responseStatus: "accepted", isOrganizer: true, isSelf: false)]
+        XCTAssertNotNil(meeting.attendeesJSON)
+        meeting.attendees = []
+        XCTAssertNil(meeting.attendeesJSON)
+        XCTAssertTrue(meeting.attendees.isEmpty)
+    }
+
     @MainActor
     func testMeetingFullTranscriptUsesResolvedNames() {
         let meeting = Meeting(title: "test")

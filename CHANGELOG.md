@@ -10,6 +10,18 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-07-26 - v1.27.1
+
+- improvement: (macOS and iOS) live transcription recovers on its own when it stops returning words mid-meeting, and keeps trying instead of giving up after the first few attempts
+- fix: (macOS and iOS) meetings no longer auto-stop with "no speech detected" when live transcription drops while people are still talking
+- fix: (macOS and iOS) a discarded meeting no longer reappears in history
+- fix: (macOS and iOS) training mode counts "mhmm" as a filler word, and the default filler list no longer offers hesitations that could never be detected
+- fix: (iOS) the Lock Screen and Dynamic Island recording activity no longer risks crashing the app when its meeting is discarded
+- fix: (macOS and iOS) suggested questions, docs topics, and calendar attendees can no longer be lost from a saved meeting
+- fix: (macOS and iOS) a meeting that stopped because live transcription failed now says so, instead of reporting a silent room
+- fix: (macOS and iOS) deleting a meeting from history while its insights are being regenerated no longer brings it back
+- fix: (iOS) recording recovers automatically after a phone call, Siri, or an alarm interrupts it, and after a failed switch between headphones and the built-in mic
+
 ### 2026-07-21 - v1.27.0
 
 - new: (macOS and iOS) Docs insights tab keeps an updating list of topics from the conversation; each one looks up an answer grounded in your docs, with source links (auto for Pro and BYOK, manual with a monthly free allowance otherwise)

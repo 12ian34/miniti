@@ -3,6 +3,7 @@ import SwiftData
 
 struct HistoryView_iOS: View {
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject private var appState: AppState
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var searchText = ""
     
@@ -92,6 +93,7 @@ struct HistoryView_iOS: View {
     private func deleteMeetings(at offsets: IndexSet) {
         for index in offsets {
             let meeting = filteredMeetings[index]
+            appState.noteMeetingDeleted(meeting)
             modelContext.delete(meeting)
         }
         try? modelContext.save()

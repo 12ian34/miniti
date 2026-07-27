@@ -232,6 +232,31 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertEqual(loaded, TranscriptionLanguage.french.defaultFillers)
     }
 
+    func testEnglishFillersMatchDeepgramHesitationVocabulary() {
+        let fillers = TranscriptionLanguage.english.defaultFillers
+        // Deepgram emits these verbatim when filler_words=true; anything it never
+        // emits is dead weight in the list users see in Settings.
+        XCTAssertTrue(fillers.contains("um"))
+        XCTAssertTrue(fillers.contains("uh"))
+        XCTAssertTrue(fillers.contains("mhmm"))
+        XCTAssertFalse(fillers.contains("hmm"))
+        XCTAssertFalse(fillers.contains("hm"))
+        XCTAssertFalse(fillers.contains("er"))
+    }
+
+    /// Deliberately avoids `compute`, which reads the user's saved filler list from
+    /// `UserDefaults.standard` and so would depend on the host machine's prefs.
+    func testDefaultEnglishFillersMatchDeepgramHesitationsInTranscriptText() {
+        let tokens = TrainingMetrics.tokenize("Mhmm, that makes sense. Um, so, uh, Mhmm.")
+        let counts = TranscriptionLanguage.english.defaultFillers.reduce(into: [String: Int]()) { acc, phrase in
+            let n = TrainingMetrics.countPhraseOccurrences(of: TrainingMetrics.tokenize(phrase), in: tokens)
+            if n > 0 { acc[phrase] = n }
+        }
+        XCTAssertEqual(counts["mhmm"], 2)
+        XCTAssertEqual(counts["um"], 1)
+        XCTAssertEqual(counts["uh"], 1)
+    }
+
     func testComputeWithSpanishFillers() {
         let segments = [
             TrainingMetrics.Segment(text: "bueno o sea el proyecto va bien", speaker: 1000, isFinal: true, timestamp: 0),

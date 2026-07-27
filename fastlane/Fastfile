@@ -61,41 +61,48 @@ def read_optional_text_file(path)
   contents
 end
 
-# Scan's default simulator picker calls `default_os_version`, which compares
-# `xcodebuild -showsdks` sdkVersion (e.g. "26.4") to `simctl runtime match list -j`
-# (e.g. "26.4.1") with exact string equality and crashes on Xcode 26.4.x — see fastlane#29974.
-# Passing an explicit `device: "Name (major.minor)"` uses the versioned match path and avoids that code.
+# Scan's default simulator picker compares `xcodebuild -showsdks` versions against `simctl`
+# runtime versions with exact string equality (fastlane#29974), so it breaks whenever the SDK is a
+# point release ahead of the installed runtime — SDK productVersion 26.5.1 against runtime 26.5
+# yields `OS=26.5.1`, which matches no device, and xcodebuild then stalls until scan's
+# `-showBuildSettings` retries time out. Resolve a real simulator and pass its UDID instead: that
+# reads the version from the runtime that actually exists, and is unambiguous when several
+# simulators share a name (there are usually two "iPhone 17 Pro"s, which `name=` can't tell apart).
 def ios_unit_test_simulator_name
   name = ENV["MINITI_IOS_TEST_DEVICE_NAME"].to_s.strip
   name.empty? ? "iPhone 17" : name
 end
 
-def ios_unit_test_sdk_row
-  sdks_json, status = Open3.capture2("xcodebuild", "-showsdks", "-json")
-  UI.user_error!("xcodebuild -showsdks -json failed (status #{status.exitstatus}):\n#{sdks_json}") unless status.success?
+def ios_unit_test_simulator
+  devices_json, status = Open3.capture2("xcrun", "simctl", "list", "devices", "available", "--json")
+  UI.user_error!("xcrun simctl list devices failed (status #{status.exitstatus}):\n#{devices_json}") unless status.success?
 
-  sdks = JSON.parse(sdks_json)
-  sim_sdk = sdks.find { |e| e["platform"] == "iphonesimulator" }
-  UI.user_error!("No iphonesimulator SDK in xcodebuild -showsdks output") unless sim_sdk
+  by_runtime = JSON.parse(devices_json).fetch("devices", {}).select do |runtime, devices|
+    runtime.include?("SimRuntime.iOS-") && !devices.empty?
+  end
 
-  sim_sdk
-end
+  # Newest runtime first, so a stale older runtime never wins.
+  candidates = by_runtime
+    .sort_by { |runtime, _| runtime[/iOS-([\d-]+)/, 1].to_s.split("-").map(&:to_i) }
+    .reverse
+    .flat_map { |_, devices| devices }
+    .select { |device| device["isAvailable"] }
 
-def ios_unit_test_device_spec
-  sdk = ios_unit_test_sdk_row
-  v = sdk["sdkVersion"].to_s
-  UI.user_error!("iphonesimulator sdkVersion missing from -showsdks") if v.empty?
+  if candidates.empty?
+    UI.user_error!("No available iOS simulators. Install an iOS runtime via Xcode > Settings > Components.")
+  end
 
-  "#{ios_unit_test_simulator_name} (#{v})"
+  preferred = ios_unit_test_simulator_name
+  match = candidates.find { |device| device["name"] == preferred }
+  UI.important("Simulator '#{preferred}' not available — falling back.") if match.nil?
+  match ||= candidates.find { |device| device["name"].start_with?("iPhone") } || candidates.first
+
+  UI.message("Using iOS simulator #{match['name']} (#{match['udid']})")
+  match
 end
 
 def ios_unit_test_destination
-  sdk = ios_unit_test_sdk_row
-  os = sdk["productVersion"].to_s
-  os = sdk["sdkVersion"].to_s if os.empty?
-  UI.user_error!("Could not infer simulator OS from -showsdks") if os.empty?
-
-  "platform=iOS Simulator,name=#{ios_unit_test_simulator_name},OS=#{os}"
+  "platform=iOS Simulator,id=#{ios_unit_test_simulator['udid']}"
 end
 
 def ios_app_review_information_from_metadata
@@ -158,7 +165,6 @@ platform :ios do
     run_tests(
       project: PROJECT_PATH,
       scheme: IOS_SCHEME,
-      device: ios_unit_test_device_spec,
       destination: ios_unit_test_destination,
       derived_data_path: IOS_DERIVED_DATA_PATH,
       only_testing: ["MinitiMobileTests"],
