@@ -288,6 +288,13 @@ struct ColorPalette {
         static let cyan = Color(hex: "06B6D4")          // Cyan
         static let orange = Color(hex: "D29922")       // Orange
     }
+
+    // MARK: - Integration Colors
+    struct Integrations {
+        static let attio = Color(hex: "F97316")
+        static let attioLight = Color(hex: "FB923C")
+        static let attioPale = Color(hex: "FDBA74")
+    }
     
     // MARK: - Status Colors
     struct Status {

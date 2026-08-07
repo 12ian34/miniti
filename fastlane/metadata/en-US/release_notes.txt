@@ -3,21 +3,28 @@ NEW
 - Pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups.
 - Import your Granola meeting history from its CSV export, with duplicate protection and clear source labels.
 - Choose a Compact, Standard, or Large interface scale in Settings.
-- Choose whether live transcript text appears on the Lock Screen and Dynamic Island, and tap the activity to return to your active meeting.
+- Choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tap the activity to return to your active meeting.
 
 IMPROVED
 
 - When several people are grouped as “Others” in Coaching, expand the filler section to see each person’s totals and filler-word detail.
-- On iPad, regular-width layouts now use sidebar navigation while iPhone keeps its compact tab bar.
-- Summary, Questions, and Coaching stay prominent, while optional Sales and Playbook views live in a specialist menu. Sales analysis only runs after you enable it.
-- Settings now opens into searchable, task-based categories, and first-run setup is shorter with a live microphone check.
-- Start meeting always begins a fresh meeting; calendar meetings remain explicit choices in the upcoming list.
+- Clearer system typography and roomier transcript lines make meetings easier to read.
+- On iPad, regular-width layouts use adaptive sidebar navigation while iPhone keeps its compact tab bar.
+- Navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface.
+- Reduce Motion now applies consistently across app transitions and animated status elements.
+- Starting, stopping, recovery, and post-meeting review explain what is happening and offer clear next actions.
+- First-run setup is shorter, adapts to small screens, and includes a live microphone check.
+- Insights use one descriptive mode menu with update timing, and Settings opens into searchable task-based categories.
+- Summary, Questions, and Coaching stay prominent while optional Sales and Playbook views live in a specialist menu; Sales only runs after you enable it.
+- Start meeting always begins a fresh meeting, while calendar meetings remain explicit choices in the upcoming list.
 - Return to meetings and start another recording while final insights finish safely in the background.
-- Clearer system typography, roomier transcript lines, and merged same-speaker turns make meetings easier to read.
-- Transcript trims and speaker edits now work with the system Undo command, while confirmations stay inline.
-- Reduce Motion now applies consistently across transitions and animated status elements.
-- Longer meetings stay more responsive, autosaves skip unchanged meetings, and managed Questions updates reuse prior context.
-- Starting, stopping, recovery, and post-meeting review now explain what is happening and show actions only when they are available.
+- Transcript trims and speaker edits work with the system Undo command, while save, copy, and export confirmations stay inline.
+- Consecutive transcript chunks from the same speaker appear as one clean turn with a single speaker label and timestamp.
+- Meeting finalization is shown as non-interactive progress, with completion guidance only when its action is available.
+- Longer meetings stay more responsive as transcription, coaching, rendering, and audio meters do less work on the interface thread.
+- Saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details.
+- Recovery autosaves run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately.
+- Managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows.
 
 FIXED
 
