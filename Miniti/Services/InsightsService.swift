@@ -229,6 +229,14 @@ struct TrainingMetrics: Sendable {
         let questionsAsked: Int
         let avgWordsPerTurn: Double
     }
+
+    struct SpeakerPresentation: Identifiable, Sendable {
+        let id: String
+        let summary: SpeakerStats
+        let details: [SpeakerStats]
+
+        var hasMultipleDetails: Bool { details.count > 1 }
+    }
     
     let speakers: [SpeakerStats]
     let talkRatioYou: Double
@@ -357,6 +365,103 @@ struct TrainingMetrics: Sendable {
             speakers: speakerStatsList,
             talkRatioYou: ratio,
             durationMinutes: durationMinutes
+        )
+    }
+
+    /// Presentation groups for training UI. Deepgram can assign several IDs to
+    /// one person during a long meeting; IDs that resolve to the same displayed
+    /// name are merged first. If multiple genuinely distinct external speakers
+    /// remain, the compact UI shows an "Others" summary with drill-down details.
+    func speakerPresentations() -> [SpeakerPresentation] {
+        let localSpeakers = speakers.filter(\.isLocalMic)
+        let externalSpeakers = speakers.filter { !$0.isLocalMic }
+
+        let localPresentations = localSpeakers.enumerated().map { index, speaker in
+            SpeakerPresentation(
+                id: "self:\(index):\(speaker.speakerLabel.lowercased())",
+                summary: speaker,
+                details: [speaker]
+            )
+        }
+
+        var externalOrder: [String] = []
+        var externalGroups: [String: [SpeakerStats]] = [:]
+        for speaker in externalSpeakers {
+            let key = speaker.speakerLabel
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if externalGroups[key] == nil {
+                externalOrder.append(key)
+            }
+            externalGroups[key, default: []].append(speaker)
+        }
+
+        let mergedExternal = externalOrder.compactMap { key -> SpeakerStats? in
+            guard let grouped = externalGroups[key], let first = grouped.first else { return nil }
+            return Self.mergeSpeakerStats(
+                grouped,
+                label: first.speakerLabel,
+                durationMinutes: durationMinutes
+            )
+        }
+
+        guard !localSpeakers.isEmpty, mergedExternal.count > 1 else {
+            return localPresentations + mergedExternal.enumerated().map { index, speaker in
+                SpeakerPresentation(
+                    id: "other:\(index):\(speaker.speakerLabel.lowercased())",
+                    summary: speaker,
+                    details: [speaker]
+                )
+            }
+        }
+
+        let others = Self.mergeSpeakerStats(
+            mergedExternal,
+            label: "Others",
+            durationMinutes: durationMinutes
+        )
+        return localPresentations + [SpeakerPresentation(
+            id: "others",
+            summary: others,
+            details: mergedExternal
+        )]
+    }
+
+    static func mergeSpeakerStats(
+        _ stats: [SpeakerStats],
+        label: String,
+        durationMinutes: Double
+    ) -> SpeakerStats {
+        var fillerCounts: [String: Int] = [:]
+        for speaker in stats {
+            for filler in speaker.fillers {
+                fillerCounts[filler.word, default: 0] += filler.count
+            }
+        }
+
+        let fillers = fillerCounts
+            .map { FillerEntry(word: $0.key, count: $0.value) }
+            .sorted {
+                if $0.count == $1.count { return $0.word < $1.word }
+                return $0.count > $1.count
+            }
+        let wordCount = stats.reduce(0) { $0 + $1.wordCount }
+        let segmentCount = stats.reduce(0) { $0 + $1.segmentCount }
+        let totalFillers = stats.reduce(0) { $0 + $1.totalFillers }
+        let safeDuration = max(durationMinutes, 0.01)
+
+        return SpeakerStats(
+            speakerLabel: label,
+            isLocalMic: stats.allSatisfy(\.isLocalMic),
+            wordCount: wordCount,
+            segmentCount: segmentCount,
+            fillers: fillers,
+            totalFillers: totalFillers,
+            fillersPerMinute: Double(totalFillers) / safeDuration,
+            wordsPerMinute: Double(wordCount) / safeDuration,
+            longestMonologueWords: stats.map(\.longestMonologueWords).max() ?? 0,
+            questionsAsked: stats.reduce(0) { $0 + $1.questionsAsked },
+            avgWordsPerTurn: segmentCount > 0 ? Double(wordCount) / Double(segmentCount) : 0
         )
     }
     

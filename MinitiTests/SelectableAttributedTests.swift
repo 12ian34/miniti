@@ -313,4 +313,57 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(liveParagraph.lineSpacing, savedParagraph.lineSpacing)
         XCTAssertEqual(liveParagraph.lineSpacing, 5)
     }
+
+    #if os(macOS)
+    @MainActor
+    func testLongTranscriptHeightStaysAccurateAcrossIncrementalTailUpdates() {
+        var turns: [Turn] = []
+        var document = SelectableAttributed.transcriptDocument(
+            turns: turns,
+            speakerNames: nil
+        )
+        let container = _SelectableTextContainer(
+            attributed: document.attributed,
+            mutation: nil,
+            onSelectionChange: nil,
+            onDeleteSelection: nil
+        )
+
+        for index in 0..<320 {
+            turns.append(Turn(
+                speaker: (index / 4) % 2,
+                timestamp: TimeInterval(index * 3),
+                text: "Finalized transcript sentence \(index) with enough words to wrap naturally."
+            ))
+            let next = SelectableAttributed.transcriptDocument(
+                turns: turns,
+                speakerNames: nil
+            )
+            container.apply(
+                next.attributed,
+                mutation: SelectableTextMutation(
+                    revision: UInt64(index + 1),
+                    range: NSRange(location: 0, length: document.attributed.length),
+                    replacement: next.attributed
+                ),
+                onSelectionChange: nil,
+                onDeleteSelection: nil
+            )
+            document = next
+            _ = container.measuredHeight(for: 420)
+        }
+
+        let freshContainer = _SelectableTextContainer(
+            attributed: document.attributed,
+            mutation: nil,
+            onSelectionChange: nil,
+            onDeleteSelection: nil
+        )
+        let incrementalHeight = container.measuredHeight(for: 420)
+        let freshHeight = freshContainer.measuredHeight(for: 420)
+
+        XCTAssertEqual(incrementalHeight, freshHeight, accuracy: 1)
+        XCTAssertLessThan(incrementalHeight, 30_000)
+    }
+    #endif
 }

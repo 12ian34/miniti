@@ -42,12 +42,14 @@ struct SelectableTextView: View {
             onSelectionChange: onSelectionChange,
             onDeleteSelection: onDeleteSelection
         )
+        .frame(maxWidth: .infinity, alignment: .leading)
         #else
         _SelectableTextViewIOS(
             attributed: attributed,
             mutation: mutation,
             onSelectionChange: onSelectionChange
         )
+        .frame(maxWidth: .infinity, alignment: .leading)
         #endif
     }
 }
@@ -78,8 +80,13 @@ private struct _SelectableTextViewMac: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: _SelectableTextContainer, context: Context) -> CGSize? {
-        let width = proposal.width ?? nsView.bounds.width
-        guard width > 0 else { return nil }
+        // A vertical ScrollView can briefly issue an unspecified or near-zero
+        // fitting proposal while it is reconciling a growing child. Measuring a
+        // long transcript at that width creates a huge phantom height which then
+        // leaves the interim row thousands of points below the rendered text.
+        // The enclosing frame asks for the available width, so wait for that
+        // concrete proposal instead of falling back to transient AppKit bounds.
+        guard let width = proposal.width, width >= 2 else { return nil }
         let height = nsView.measuredHeight(for: width)
         return CGSize(width: width, height: height)
     }
@@ -100,12 +107,17 @@ final class _SelectableNativeTextView: NSTextView {
 }
 
 final class _SelectableTextContainer: NSView, NSTextViewDelegate {
+    private static let measurementResetInterval = 64
+
     private let textView: _SelectableNativeTextView
     private let measurementStorage: NSTextStorage
-    private let measurementLayoutManager: NSLayoutManager
-    private let measurementContainer: NSTextContainer
+    private var measurementLayoutManager: NSLayoutManager
+    private var measurementContainer: NSTextContainer
     private var lastMeasuredWidth: CGFloat = -1
     private var lastMeasuredHeight: CGFloat = 0
+    private var measurementMutationCount = 0
+    private var measurementNeedsReset = false
+    private var measurementContentChanged = true
     private var lastAppliedRevision: UInt64
     private var lastAttributedInput: NSAttributedString
     private var onSelectionChange: ((NSRange?) -> Void)?
@@ -185,6 +197,19 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
            NSMaxRange(mutation.range) <= measurementStorage.length {
             displayStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
             measurementStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
+            let invalidatedRange = NSRange(
+                location: mutation.range.location,
+                length: max(0, measurementStorage.length - mutation.range.location)
+            )
+            measurementLayoutManager.invalidateLayout(
+                forCharacterRange: invalidatedRange,
+                actualCharacterRange: nil
+            )
+            measurementMutationCount += 1
+            if measurementMutationCount >= Self.measurementResetInterval {
+                measurementNeedsReset = true
+            }
+            measurementContentChanged = true
             lastAppliedRevision = mutation.revision
             lastAttributedInput = attributed
             appliedIncrementally = true
@@ -201,9 +226,10 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
             guard displayStorage.isEqual(to: attributed) == false else { return }
             displayStorage.setAttributedString(attributed)
             measurementStorage.setAttributedString(attributed)
+            measurementNeedsReset = true
+            measurementContentChanged = true
             if let mutation { lastAppliedRevision = mutation.revision }
         }
-        lastMeasuredWidth = -1
         // Do NOT call invalidateIntrinsicContentSize() or needsLayout = true here.
         // updateNSView can run inside an in-progress SwiftUI/AppKit layout pass,
         // and either call would propagate setNeedsUpdateConstraints up the host
@@ -222,11 +248,23 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     }
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
-        if abs(width - lastMeasuredWidth) < 0.5 { return lastMeasuredHeight }
-        measurementContainer.containerSize = NSSize(
-            width: width,
-            height: CGFloat.greatestFiniteMagnitude
-        )
+        let widthChanged = abs(width - lastMeasuredWidth) >= 0.5
+        if !widthChanged,
+           !measurementNeedsReset,
+           !measurementContentChanged,
+           lastMeasuredWidth >= 0 {
+            return lastMeasuredHeight
+        }
+
+        // TextKit can retain stale line fragments after many tail replacements
+        // or after a narrow transient layout pass. Periodically rebuilding only
+        // the measurement layout manager keeps the displayed text incremental
+        // while preventing that stale usedRect from becoming permanent blank
+        // space in both live and finalized transcripts.
+        if widthChanged || measurementNeedsReset {
+            rebuildMeasurementLayout(for: width)
+        }
+
         // The dedicated measurement stack persists across updates, so TextKit
         // can reuse glyph/layout work before an appended or replaced tail.
         _ = measurementLayoutManager.glyphRange(for: measurementContainer)
@@ -235,7 +273,31 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
 
         lastMeasuredWidth = width
         lastMeasuredHeight = ceil(rect.height)
+        measurementContentChanged = false
         return lastMeasuredHeight
+    }
+
+    private func rebuildMeasurementLayout(for width: CGFloat) {
+        measurementStorage.removeLayoutManager(measurementLayoutManager)
+
+        let layoutManager = NSLayoutManager()
+        layoutManager.allowsNonContiguousLayout = false
+        let container = NSTextContainer(
+            size: NSSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        )
+        container.lineFragmentPadding = textView.textContainer?.lineFragmentPadding ?? 0
+        container.widthTracksTextView = false
+        container.heightTracksTextView = false
+        layoutManager.addTextContainer(container)
+        measurementStorage.addLayoutManager(layoutManager)
+
+        measurementLayoutManager = layoutManager
+        measurementContainer = container
+        measurementMutationCount = 0
+        measurementNeedsReset = false
+        measurementContentChanged = true
+        lastMeasuredWidth = -1
+        lastMeasuredHeight = 0
     }
 }
 

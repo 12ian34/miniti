@@ -196,6 +196,7 @@ What it does:
 - **re-signs Sparkle.framework's nested binaries** (XPC services, Autoupdate, Updater.app, Sparkle.framework itself, then the outer app) via the `resign_sparkle_framework` private lane. Apple notarization rejects Sparkle builds otherwise because Xcode's default embed step doesn't sign nested helpers with Developer ID + secure timestamp + hardened runtime.
 - **preserves the outer app's entitlements** via an explicit `--entitlements Miniti/Miniti.entitlements` flag when re-signing `miniti.app`. Without this, `codesign --force --sign` silently strips entitlements. A build without `com.apple.security.app-sandbox` ships at a different macOS-recognised app identity than v1.23.1+, which points SwiftData at a fresh empty store and surfaces as "my history is wiped" for every user. This exact bug shipped in v1.24.0 and was fixed in v1.24.1.
 - **requires Sparkle's sandboxed installer-launcher setup** in the shipped app: `SUEnableInstallerLauncherService = true` in `Miniti/Info.plist` and mach lookup exceptions for `com.miniti.app-spks` / `com.miniti.app-spki` in `Miniti/Miniti.entitlements`. If a shipped build is missing these, Sparkle can download and verify updates but fails to install with `Failed copying system domain rights: -60005`; affected users must install a fixed DMG manually once.
+- **requires Sparkle 2.9.3+ and currently pins 2.9.5** because Miniti's bundle ID ends in `.app`. Sparkle 2.9.1 could make macOS mistake its cache directory for an app bundle, producing a first-attempt “prevented from modifying apps” warning; the next attempt usually worked. A user installing the first fixed Miniti build is still running the older updater for that one transition and may need to retry once.
 - **verifies entitlements survived** via `verify_mac_signing_for_notarization` before submitting to notarytool. If `com.apple.security.app-sandbox` is missing from the signed binary, the lane fails fast with a clear error instead of producing a broken DMG.
 - notarizes the app
 - staples the app
@@ -269,6 +270,8 @@ Then (in the marketing site repo) upload both Netlify blob keys:
 netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
 netlify blobs:set downloads "miniti-${VERSION}.dmg" --input ../miniti/miniti.dmg --force
 ```
+
+Re-run `bash scripts/release-info.sh` and confirm the public versioned URL serves the exact local byte count. The website's DMG functions must use streamed modern responses; base64-buffered Netlify functions fail once a binary grows beyond roughly 4.5 MB.
 
 Then hand the five appcast values to the backend (or edit `miniti-api/public/appcast.xml` + `app/api/version/route.ts` directly) and deploy. Users on the previous version will get the Sparkle update prompt within 24h (or immediately via Miniti menu → Check for Updates…).
 
