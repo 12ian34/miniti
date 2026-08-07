@@ -583,11 +583,6 @@ struct ReadyStateView_iOS: View {
                     BYOKStatusPills()
                 }
 
-                // Update available banner
-                if let update = appState.availableUpdate {
-                    UpdateAvailableBanner_iOS(versionInfo: update)
-                }
-
                 // Calendar integration nudge
                 if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
                     CalendarNudgeCard_iOS()
@@ -1280,97 +1275,6 @@ struct CalendarNudgeCard_iOS: View {
                 )
         )
         .minitiAdaptiveUtilitySurface(tint: ColorPalette.Accent.green.opacity(0.12))
-    }
-}
-
-// MARK: - Update Available Banner (iOS)
-
-struct UpdateAvailableBanner_iOS: View {
-    let versionInfo: MinitiAPIService.VersionInfo
-    @Environment(\.openURL) private var openURL
-    @State private var isShowingFullNotes = false
-    
-    private var updateURL: URL? {
-        URL(string: versionInfo.downloadUrl)
-    }
-    
-    private var releaseNotes: String? {
-        guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !notes.isEmpty else { return nil }
-        return notes
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 14))
-                Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 14, weight: .semibold, design: .default))
-                
-                Spacer()
-                
-                Button {
-                    if let url = updateURL {
-                        openURL(url)
-                    }
-                } label: {
-                    HStack(spacing: 5) {
-                        Image(systemName: "arrow.down.to.line")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("update")
-                            .font(.system(size: 13, weight: .semibold, design: .default))
-                    }
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(ColorPalette.Accent.blue.opacity(0.15))
-                    )
-                }
-                .buttonStyle(.plain)
-            }
-            .foregroundStyle(ColorPalette.Accent.blue)
-            
-            if releaseNotes != nil {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isShowingFullNotes.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
-                        Text(isShowingFullNotes ? "hide release notes" : "show release notes")
-                            .font(.system(size: 12, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            
-            if let notes = releaseNotes, isShowingFullNotes {
-                Text(notes)
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 13)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 360, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.Accent.blue.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(ColorPalette.Accent.blue.opacity(0.25), lineWidth: 1)
-                )
-        )
     }
 }
 

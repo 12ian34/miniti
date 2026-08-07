@@ -120,7 +120,6 @@ app/
         TrainingContent.kt
         QuestionsContent.kt
         SourceWaveform.kt
-        UpdateAvailableBanner.kt
         UsageBanner.kt
         LimitReachedView.kt
     MainActivity.kt
@@ -195,8 +194,8 @@ Called once at launch, fire-and-forget. Does not block on failure.
 ```
 
 **Behavior:**
-- If `latest_version > current`, set `availableUpdate` and show blue `UpdateAvailableBanner` on home screen with expandable release notes and a link that opens `download_url` in a browser.
 - If `min_version > current`, set `requiresForceUpdate = true` and show the non-dismissable `ForceUpdateScreen` above all other gates.
+- Otherwise, continue without showing an update banner. Normal Android updates should use the Play Store's update surfaces; `/api/version` is only the minimum-version force gate. Supported clients may receive their own version as `latest_version` with empty `release_notes`.
 - `min_version` is per-platform on the backend (`ANDROID_MIN_VERSION` env var, defaults to `"1.0.0"`). Bumping it instantly forces all older clients to update on next launch.
 
 #### `GET /api/usage`

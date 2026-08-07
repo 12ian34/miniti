@@ -11,6 +11,12 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v2.0.4
+
+#### Experience and workflow improvements
+
+- improvement: (macOS and iOS) normal update notices no longer take over the home screen with large release notes; macOS continues updating through Sparkle and iOS through the App Store
+
 ### 2026-08-07 - v2.0.3 (macOS; iOS pending App Store release)
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.2.

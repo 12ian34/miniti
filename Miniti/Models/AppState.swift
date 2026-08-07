@@ -6309,9 +6309,10 @@ final class AppState: ObservableObject {
                 requiresForceUpdate = true
                 availableUpdate = versionInfo
                 DebugLogger.shared.log(.app, "Force update required: min=\(minVersion), current=\(currentVersion)")
-            } else if Self.isNewer(remote: versionInfo.latestVersion, than: currentVersion) {
-                availableUpdate = versionInfo
-                DebugLogger.shared.log(.app, "Update available: latest=\(versionInfo.latestVersion), current=\(currentVersion)")
+            } else {
+                requiresForceUpdate = false
+                availableUpdate = nil
+                DebugLogger.shared.log(.app, "Version supported: current=\(currentVersion)")
             }
         } catch {
             // Silent failure — update check is non-critical
