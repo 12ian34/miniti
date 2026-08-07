@@ -58,6 +58,84 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     @MainActor
+    func testTranscriptRuntimeStatePublishesTextAndSpeakerAtomically() {
+        let state = TranscriptRuntimeState()
+        var snapshots: [TranscriptRuntimeState.Snapshot] = []
+        let cancellable = state.$snapshot.dropFirst().sink { snapshots.append($0) }
+
+        state.update(interimText: "hello", currentSpeaker: 2, interimSpeaker: 2)
+
+        XCTAssertEqual(snapshots.count, 1)
+        XCTAssertEqual(snapshots[0].interimText, "hello")
+        XCTAssertEqual(snapshots[0].currentSpeaker, 2)
+        XCTAssertEqual(snapshots[0].interimSpeaker, 2)
+        XCTAssertEqual(snapshots[0].revision, 1)
+        _ = cancellable
+    }
+
+    func testLiveInsightCadenceRequiresMeaningfulDeltaAtMinimumInterval() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = AppState.LiveInsightCadencePolicy(
+            minimumInterval: 60,
+            minimumSegmentDelta: 4,
+            maximumInterval: 120
+        )
+
+        XCTAssertFalse(AppState.shouldFireLiveInsightCadence(
+            now: now,
+            lastSuccessAt: now.addingTimeInterval(-60),
+            lastAttemptAt: now.addingTimeInterval(-60),
+            lastSuccessfulSegmentCount: 10,
+            currentSegmentCount: 13,
+            policy: policy
+        ))
+        XCTAssertTrue(AppState.shouldFireLiveInsightCadence(
+            now: now,
+            lastSuccessAt: now.addingTimeInterval(-60),
+            lastAttemptAt: now.addingTimeInterval(-60),
+            lastSuccessfulSegmentCount: 10,
+            currentSegmentCount: 14,
+            policy: policy
+        ))
+    }
+
+    func testLiveInsightCadenceMaximumIntervalPreventsQuietMeetingStarvation() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = AppState.LiveInsightCadencePolicy(
+            minimumInterval: 60,
+            minimumSegmentDelta: 6,
+            maximumInterval: 120
+        )
+
+        XCTAssertTrue(AppState.shouldFireLiveInsightCadence(
+            now: now,
+            lastSuccessAt: now.addingTimeInterval(-120),
+            lastAttemptAt: now.addingTimeInterval(-60),
+            lastSuccessfulSegmentCount: 10,
+            currentSegmentCount: 11,
+            policy: policy
+        ))
+    }
+
+    func testLiveInsightCadenceAttemptCooldownPreventsFailureRetryStorm() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let policy = AppState.LiveInsightCadencePolicy(
+            minimumInterval: 60,
+            minimumSegmentDelta: 4,
+            maximumInterval: 120
+        )
+
+        XCTAssertFalse(AppState.shouldFireLiveInsightCadence(
+            now: now,
+            lastSuccessAt: now.addingTimeInterval(-300),
+            lastAttemptAt: now.addingTimeInterval(-5),
+            lastSuccessfulSegmentCount: 10,
+            currentSegmentCount: 20,
+            policy: policy
+        ))
+    }
+
+    @MainActor
     func testSpecialistInsightModeRequiresOptInAndFallsBackWhenDisabled() {
         let defaults = UserDefaults.standard
         let previousSalesValue = defaults.object(forKey: "salesInsightsEnabled")

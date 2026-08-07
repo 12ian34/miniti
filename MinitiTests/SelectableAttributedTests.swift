@@ -330,25 +330,43 @@ final class SelectableAttributedTests: XCTestCase {
         )
 
         for index in 0..<320 {
-            turns.append(Turn(
+            let appendedTurn = Turn(
                 speaker: (index / 4) % 2,
                 timestamp: TimeInterval(index * 3),
                 text: "Finalized transcript sentence \(index) with enough words to wrap naturally."
-            ))
+            )
+            let mergedTurns = SelectableAttributed.mergeTurns(
+                turns + [appendedTurn],
+                speakerNames: nil,
+                selfIDs: nil
+            )
+            let replacementTurnIndex = max(0, document.turns.count - 1)
+            let replacementStart = document.turnStartOffsets.indices.contains(replacementTurnIndex)
+                ? document.turnStartOffsets[replacementTurnIndex]
+                : 0
+            let replacementDocument = SelectableAttributed.transcriptDocument(
+                turns: Array(mergedTurns.dropFirst(replacementTurnIndex)),
+                speakerNames: nil,
+                startsAtDocumentBeginning: replacementTurnIndex == 0
+            )
             let next = SelectableAttributed.transcriptDocument(
-                turns: turns,
+                turns: turns + [appendedTurn],
                 speakerNames: nil
             )
             container.apply(
                 next.attributed,
                 mutation: SelectableTextMutation(
                     revision: UInt64(index + 1),
-                    range: NSRange(location: 0, length: document.attributed.length),
-                    replacement: next.attributed
+                    range: NSRange(
+                        location: replacementStart,
+                        length: document.attributed.length - replacementStart
+                    ),
+                    replacement: replacementDocument.attributed
                 ),
                 onSelectionChange: nil,
                 onDeleteSelection: nil
             )
+            turns.append(appendedTurn)
             document = next
             _ = container.measuredHeight(for: 420)
         }
@@ -364,6 +382,8 @@ final class SelectableAttributedTests: XCTestCase {
 
         XCTAssertEqual(incrementalHeight, freshHeight, accuracy: 1)
         XCTAssertLessThan(incrementalHeight, 30_000)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: 1), 420)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: nil), 420)
     }
     #endif
 }

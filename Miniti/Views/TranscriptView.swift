@@ -1,8 +1,16 @@
 import SwiftUI
+import Combine
+import os
+
+private let transcriptViewPerformanceLog = OSLog(
+    subsystem: "com.miniti.app",
+    category: .pointsOfInterest
+)
 
 struct TranscriptView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isAutoScrollEnabled = true
     @State private var previousBottomDistance: CGFloat = 0
     @State private var hasCapturedInitialBottomDistance = false
@@ -17,10 +25,13 @@ struct TranscriptView: View {
     @State private var cachedTranscriptRevision: UInt64 = 0
     @State private var cachedLastDisplaySpeaker: Int?
     @State private var cachedUniqueSpeakers: [Int] = []
-    @State private var interimText: String = ""
-    @State private var currentSpeaker: Int = 0
-    @State private var interimSpeaker: Int? = nil
+    @State private var runtimeSnapshot = TranscriptRuntimeState.Snapshot.zero
+    @State private var pendingAutoScrollTask: Task<Void, Never>?
     @State private var renamingSpeaker: Int? = nil
+
+    private var interimText: String { runtimeSnapshot.interimText }
+    private var currentSpeaker: Int { runtimeSnapshot.currentSpeaker }
+    private var interimSpeaker: Int? { runtimeSnapshot.interimSpeaker }
 
     private var hasInterimText: Bool {
         !interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -31,6 +42,28 @@ struct TranscriptView: View {
         detectedSpeakers: Set<Int>,
         forceFullRebuild: Bool = false
     ) {
+        let signpostID = OSSignpostID(log: transcriptViewPerformanceLog)
+        os_signpost(
+            .begin,
+            log: transcriptViewPerformanceLog,
+            name: "TranscriptViewCacheUpdate",
+            signpostID: signpostID,
+            "segments=%{public}d full=%{public}d",
+            liveSegments.count,
+            forceFullRebuild ? 1 : 0
+        )
+        defer {
+            os_signpost(
+                .end,
+                log: transcriptViewPerformanceLog,
+                name: "TranscriptViewCacheUpdate",
+                signpostID: signpostID,
+                "visible=%{public}d turns=%{public}d",
+                cachedVisibleSegmentCount,
+                cachedDisplayTurns.count
+            )
+        }
+
         let names = appState.liveSpeakerNames
         let selfIDs = appState.liveSelfSpeakerIDs
         let canAppend = !forceFullRebuild
@@ -147,17 +180,32 @@ struct TranscriptView: View {
     }
 
     private func syncRuntimeSnapshot() {
-        let runtime = appState.transcriptRuntime
-        interimText = runtime.interimText
-        currentSpeaker = runtime.currentSpeaker
-        interimSpeaker = runtime.interimSpeaker
+        applyRuntimeSnapshot(appState.transcriptRuntime.snapshot)
     }
-    
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
-            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+
+    private func applyRuntimeSnapshot(_ snapshot: TranscriptRuntimeState.Snapshot) {
+        guard snapshot.revision >= runtimeSnapshot.revision else { return }
+        runtimeSnapshot = snapshot
+    }
+
+    private func cancelPendingAutoScroll() {
+        pendingAutoScrollTask?.cancel()
+        pendingAutoScrollTask = nil
+    }
+
+    private func scrollToBottom(proxy: ScrollViewProxy, delay: Duration = .milliseconds(20)) {
+        cancelPendingAutoScroll()
+        pendingAutoScrollTask = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled, isAutoScrollEnabled else { return }
+            if accessibilityReduceMotion {
                 proxy.scrollTo("bottom", anchor: .bottom)
+            } else {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                    proxy.scrollTo("bottom", anchor: .bottom)
+                }
             }
+            pendingAutoScrollTask = nil
         }
     }
 
@@ -311,6 +359,7 @@ struct TranscriptView: View {
                                                 if isAutoScrollEnabled,
                                                    Date() >= suppressAutoScrollLockUntil {
                                                     isAutoScrollEnabled = false
+                                                    cancelPendingAutoScroll()
                                                 }
                                             }
                                         )
@@ -324,6 +373,7 @@ struct TranscriptView: View {
                                         .onChanged { _ in
                                             if isAutoScrollEnabled {
                                                 isAutoScrollEnabled = false
+                                                cancelPendingAutoScroll()
                                             }
                                         }
                                 )
@@ -345,7 +395,7 @@ struct TranscriptView: View {
                                 .onChange(of: interimText) { _, _ in
                                     guard isAutoScrollEnabled else { return }
                                     suppressAutoScrollLockBriefly()
-                                    scrollToBottom(proxy: proxy)
+                                    scrollToBottom(proxy: proxy, delay: .milliseconds(80))
                                 }
                                 .onChange(of: appState.isRecording) { _, isRecording in
                                     if isRecording {
@@ -388,6 +438,9 @@ struct TranscriptView: View {
             syncRuntimeSnapshot()
         }
         .onChange(of: appState.liveSegments) { _, newSegments in
+            // Finals must clear any pending interim immediately. The revision guard also
+            // prevents an older throttled fragment from reappearing after this snapshot.
+            syncRuntimeSnapshot()
             rebuildSegmentCaches(
                 liveSegments: newSegments,
                 detectedSpeakers: appState.detectedSpeakers
@@ -417,14 +470,22 @@ struct TranscriptView: View {
                 forceFullRebuild: true
             )
         }
-        .onReceive(appState.transcriptRuntime.$interimText) { value in
-            interimText = value
+        .onReceive(
+            appState.transcriptRuntime.$snapshot
+                .filter { $0.interimText.isEmpty }
+        ) { snapshot in
+            // Clears are never throttled: finalized text must replace the interim row now.
+            applyRuntimeSnapshot(snapshot)
         }
-        .onReceive(appState.transcriptRuntime.$currentSpeaker) { value in
-            currentSpeaker = value
+        .onReceive(
+            appState.transcriptRuntime.$snapshot
+                .filter { !$0.interimText.isEmpty }
+                .throttle(for: .milliseconds(125), scheduler: RunLoop.main, latest: true)
+        ) { snapshot in
+            applyRuntimeSnapshot(snapshot)
         }
-        .onReceive(appState.transcriptRuntime.$interimSpeaker) { value in
-            interimSpeaker = value
+        .onDisappear {
+            cancelPendingAutoScroll()
         }
         .background(Color(hex: "09090B")) // GitHub dark background
     }
