@@ -6,17 +6,18 @@ import SwiftData
 @testable import miniti
 #endif
 
-final class WebhookPayloadTests: XCTestCase {
+final class WebhookPayloadTests: XCTestCase, @unchecked Sendable {
 
     private var container: ModelContainer!
     private var context: ModelContext!
 
-    @MainActor
     override func setUp() {
         super.setUp()
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        container = try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
-        context = container.mainContext
+        MainActor.assumeIsolated {
+            let config = ModelConfiguration(isStoredInMemoryOnly: true)
+            container = try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
+            context = container.mainContext
+        }
     }
 
     override func tearDown() {

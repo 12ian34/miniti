@@ -20,17 +20,17 @@ struct LimitReachedView: View {
             
             // Icon
             Text("⬢")
-                .font(.system(size: 40, weight: .bold, design: .monospaced))
+                .font(.system(size: 40, weight: .bold, design: .default))
                 .foregroundStyle(Color(hex: "F85149").opacity(0.6))
             
             // Message
             VStack(spacing: 8) {
                 Text("limit reached")
-                    .font(.system(size: 20, weight: .bold, design: .monospaced))
+                    .font(.system(size: 20, weight: .bold, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 
                 Text("You've used all \(Int(appState.usageInfo?.minutesLimit ?? 500)) minutes this month.")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                     .multilineTextAlignment(.center)
             }
@@ -39,11 +39,11 @@ struct LimitReachedView: View {
             if let resetsAt {
                 VStack(spacing: 4) {
                     Text("resets in \(daysUntilReset) day\(daysUntilReset == 1 ? "" : "s")")
-                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 14, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F59E0B"))
                     
                     Text(resetsAt.formatted(date: .abbreviated, time: .omitted))
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "71717A"))
                 }
                 .padding(.horizontal, 20)
@@ -69,7 +69,7 @@ struct LimitReachedView: View {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 11))
                             Text("upgrade to pro — 5,000 min/mo")
-                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 12, weight: .semibold, design: .default))
                         }
                         .foregroundStyle(Color(hex: "A78BFA"))
                         .padding(.horizontal, 20)
@@ -87,7 +87,7 @@ struct LimitReachedView: View {
                     .focusable(false)
                     
                     Text("$5/month")
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "52525B"))
                 }
             }
@@ -101,7 +101,7 @@ struct LimitReachedView: View {
             // BYOK option
             VStack(spacing: 12) {
                 Text("or use your own API keys for unlimited access")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                     .multilineTextAlignment(.center)
                 
@@ -114,7 +114,7 @@ struct LimitReachedView: View {
                         Image(systemName: "key.fill")
                             .font(.system(size: 11))
                         Text("switch to BYOK")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "58A6FF"))
                     .padding(.horizontal, 20)
@@ -131,7 +131,7 @@ struct LimitReachedView: View {
                 .buttonStyle(.plain)
                 
                 Text("You'll need Deepgram & OpenAI API keys")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "52525B"))
             }
             
@@ -153,7 +153,7 @@ struct LimitWarningBanner: View {
                 .foregroundStyle(Color(hex: "F59E0B"))
             
             Text("\(Int(minutesRemaining)) min remaining this month")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "F59E0B"))
         }
         .padding(.horizontal, 12)

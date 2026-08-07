@@ -1,17 +1,25 @@
 import Foundation
 import Security
 
-/// Manages a persistent device UUID stored in the macOS Keychain.
+/// Manages a persistent device UUID stored in the Apple Keychain.
 /// Survives app reinstalls (unlike UserDefaults), used as the "account" ID for managed mode.
 enum DeviceIdentifier {
     private static let service = "com.miniti.device-id"
     private static let account = "device-uuid"
     private static let fallbackDefaultsKey = "device-uuid-fallback"
+    private static let keychainLock = NSLock()
+    // Every access is serialized by keychainLock. Cache the successful resolution
+    // so routine API calls do not repeatedly cross into Security.framework.
+    nonisolated(unsafe) private static var cachedDeviceId: String?
     
     /// Returns existing device ID or creates and persists a new one.
     static func getOrCreateDeviceId() -> String {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        if let cachedDeviceId { return cachedDeviceId }
         if let existing = getFromKeychain() {
             clearFallbackFromDefaults()
+            cachedDeviceId = existing
             return existing
         }
         if let fallback = getFromDefaultsFallback() {
@@ -20,6 +28,7 @@ enum DeviceIdentifier {
             } else {
                 DebugLogger.shared.log(.app, "Using fallback device ID because keychain persistence is unavailable")
             }
+            cachedDeviceId = fallback
             return fallback
         }
         let newId = UUID().uuidString
@@ -30,12 +39,18 @@ enum DeviceIdentifier {
             DebugLogger.shared.log(.app, "Persisted fallback device ID in UserDefaults because keychain save failed")
         }
         DebugLogger.shared.log(.app, "Created new device ID (\(newId.prefix(8))...)")
+        cachedDeviceId = newId
         return newId
     }
     
     /// Read the device ID without creating one (returns nil if not yet registered).
     static func existingDeviceId() -> String? {
-        getFromKeychain() ?? getFromDefaultsFallback()
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        if let cachedDeviceId { return cachedDeviceId }
+        let existing = getFromKeychain() ?? getFromDefaultsFallback()
+        cachedDeviceId = existing
+        return existing
     }
     
     // MARK: - Keychain Operations

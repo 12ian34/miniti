@@ -26,7 +26,7 @@ struct MinitiLiveActivityLiveActivity: Widget {
                             .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                             .frame(width: 7, height: 7)
                         Text(context.state.isRecording ? "REC" : "STOPPED")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .font(.system(size: 11, weight: .bold, design: .default))
                             .foregroundStyle(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                     }
                 }
@@ -44,7 +44,7 @@ struct MinitiLiveActivityLiveActivity: Widget {
                         }
                         if !context.state.isRecording {
                             Text("tap to return to miniti")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: textDisabled))
                         } else if !context.state.currentTranscript.isEmpty {
                             Text(context.state.currentTranscript)
@@ -55,7 +55,7 @@ struct MinitiLiveActivityLiveActivity: Widget {
                         HStack {
                             Spacer()
                             Text("miniti")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
                                 .foregroundStyle(Color(hex: textDisabled))
                         }
                     }
@@ -76,6 +76,7 @@ struct MinitiLiveActivityLiveActivity: Widget {
                     .fill(Color(hex: context.state.isRecording ? recordingRed : pausedGray))
                     .frame(width: 8, height: 8)
             }
+            .widgetURL(activeMeetingURL(context))
         }
     }
 
@@ -86,15 +87,18 @@ struct MinitiLiveActivityLiveActivity: Widget {
     private func timerView(context: ActivityViewContext<RecordingActivityAttributes>, size: CGFloat, weight: Font.Weight) -> some View {
         if context.state.isRecording {
             Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
-                .font(.system(size: size, weight: weight, design: .monospaced))
+                .font(.system(size: size, weight: weight, design: .default))
+                .monospacedDigit()
                 .foregroundStyle(Color(hex: timerGreen))
         } else if let elapsed = context.state.elapsedSeconds {
             Text(formatDuration(elapsed))
-                .font(.system(size: size, weight: weight, design: .monospaced))
+                .font(.system(size: size, weight: weight, design: .default))
+                .monospacedDigit()
                 .foregroundStyle(Color(hex: pausedGray))
         } else {
             Text(timerInterval: context.attributes.startTime...Date.distantFuture, countsDown: false)
-                .font(.system(size: size, weight: weight, design: .monospaced))
+                .font(.system(size: size, weight: weight, design: .default))
+                .monospacedDigit()
                 .foregroundStyle(Color(hex: pausedGray))
         }
     }
@@ -127,7 +131,7 @@ struct MinitiLiveActivityLiveActivity: Widget {
                 }
                 if !context.state.isRecording {
                     Text("tap to return to miniti")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: textDisabled))
                 } else if !context.state.currentTranscript.isEmpty {
                     Text(context.state.currentTranscript)
@@ -143,13 +147,18 @@ struct MinitiLiveActivityLiveActivity: Widget {
             VStack(alignment: .trailing, spacing: 2) {
                 timerView(context: context, size: 22, weight: .bold)
                 Text("miniti")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
                     .foregroundStyle(Color(hex: textDisabled))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .activityBackgroundTint(Color(hex: backgroundPrimary))
+        .widgetURL(activeMeetingURL(context))
+    }
+
+    private func activeMeetingURL(_ context: ActivityViewContext<RecordingActivityAttributes>) -> URL? {
+        URL(string: "miniti://meeting/\(context.attributes.meetingID)")
     }
 }
 

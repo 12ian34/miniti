@@ -256,19 +256,27 @@ final class InsightsParsingTests: XCTestCase {
     }
 
     func testInsightsModeDisplayNames() {
-        XCTAssertEqual(InsightsMode.standard.displayName, "standard")
-        XCTAssertEqual(InsightsMode.meddpicc.displayName, "MEDDPICC")
-        XCTAssertEqual(InsightsMode.training.displayName, "training")
-        XCTAssertEqual(InsightsMode.questions.displayName, "questions")
-        XCTAssertEqual(InsightsMode.docs.displayName, "docs")
+        XCTAssertEqual(InsightsMode.standard.displayName, "Summary")
+        XCTAssertEqual(InsightsMode.meddpicc.displayName, "Sales")
+        XCTAssertEqual(InsightsMode.training.displayName, "Coaching")
+        XCTAssertEqual(InsightsMode.questions.displayName, "Questions")
+        XCTAssertEqual(InsightsMode.docs.displayName, "Playbook")
     }
 
     func testInsightsModeDescriptions() {
-        XCTAssertEqual(InsightsMode.standard.description, "General meeting insights")
-        XCTAssertEqual(InsightsMode.meddpicc.description, "Sales qualification framework")
-        XCTAssertEqual(InsightsMode.training.description, "Speech pattern analysis")
+        XCTAssertEqual(InsightsMode.standard.description, "Notes, decisions, and action items")
+        XCTAssertEqual(InsightsMode.meddpicc.description, "MEDDPICC qualification")
+        XCTAssertEqual(InsightsMode.training.description, "Talk ratio, pace, and speech patterns")
         XCTAssertEqual(InsightsMode.questions.description, "Suggested questions to ask")
-        XCTAssertEqual(InsightsMode.docs.description, "Docs-grounded sales playbook")
+        XCTAssertEqual(InsightsMode.docs.description, "Answers from connected docs")
+    }
+
+    func testInsightsModeProgressiveDisclosureGroups() {
+        XCTAssertEqual(InsightsMode.coreModes, [.standard, .questions, .training])
+        XCTAssertEqual(InsightsMode.specialistModes, [.meddpicc, .docs])
+        XCTAssertFalse(InsightsMode.standard.isSpecialist)
+        XCTAssertTrue(InsightsMode.meddpicc.isSpecialist)
+        XCTAssertTrue(InsightsMode.docs.isSpecialist)
     }
 
     func testInsightsModeRawValues() {

@@ -313,11 +313,16 @@ final class DeepgramParsingTests: XCTestCase {
             makeWord("how", speaker: 0, start: 1.0, end: 1.3),
         ]
         let segments = DeepgramService.segmentBySpeaker(
-            words: words, isFinal: true, confidence: 0.9, state: &state
+            words: words,
+            isFinal: true,
+            confidence: 0.9,
+            channelIndex: DeepgramService.systemChannelIndex,
+            state: &state
         )
         XCTAssertEqual(segments.count, 1)
         XCTAssertEqual(segments[0].speaker, 0)
         XCTAssertEqual(segments[0].text, "hello world how")
+        XCTAssertEqual(segments[0].channelIndex, DeepgramService.systemChannelIndex)
     }
 
     func testSegmentBySpeakerEmpty() {
@@ -465,6 +470,37 @@ final class DeepgramParsingTests: XCTestCase {
         )
 
         XCTAssertEqual(service.dominantSource(from: 0.0, to: 0.1), .mic)
+    }
+
+    @MainActor
+    func testSourceTrackingRingOverwritesOldestSamplesWithoutLosingLatest() {
+        let service = AudioCaptureService()
+        service.appendSourceSampleForTesting(
+            startTime: 0,
+            endTime: 0.1,
+            micEnergy: 1_000,
+            sysEnergy: 0
+        )
+        for index in 0..<6_000 {
+            let start = 10.0 + Double(index)
+            service.appendSourceSampleForTesting(
+                startTime: start,
+                endTime: start + 0.1,
+                micEnergy: 0,
+                sysEnergy: 1_000
+            )
+        }
+
+        XCTAssertEqual(service.dominantSource(from: 0, to: 0.1), .unknown)
+        XCTAssertEqual(service.dominantSource(from: 6_009, to: 6_009.1), .system)
+    }
+
+    func testInt16RMSUsesEntireBuffer() {
+        let samples: [Int16] = [3, 4, 0, 0]
+        let rms = samples.withUnsafeBufferPointer {
+            AudioCaptureService.rmsInt16($0.baseAddress!, count: $0.count)
+        }
+        XCTAssertEqual(rms, sqrt(6.25), accuracy: 0.0001)
     }
 
     func testInterleaveStereoInt16PadsSystemUnderrun() {

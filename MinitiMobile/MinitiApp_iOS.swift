@@ -4,7 +4,13 @@ import SwiftData
 @main
 struct MinitiMobileApp: App {
     @StateObject private var appState = AppState()
+    @AppStorage(InterfaceScale.storageKey) private var interfaceScaleRaw = InterfaceScale.standard.rawValue
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
+
+    private var interfaceScale: InterfaceScale {
+        InterfaceScale(rawValue: interfaceScaleRaw) ?? .standard
+    }
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -34,11 +40,20 @@ struct MinitiMobileApp: App {
                 }
             }
             .environmentObject(appState)
+            .environment(\.interfaceScale, interfaceScale)
+            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+            .minitiReduceMotionAware()
             .preferredColorScheme(.dark)
             .onOpenURL { url in
-                guard url.scheme?.lowercased() == "miniti-google" else { return }
-                Task { @MainActor in
-                    await appState.handleGoogleOAuthCallback(url)
+                switch url.scheme?.lowercased() {
+                case "miniti-google":
+                    Task { @MainActor in
+                        await appState.handleGoogleOAuthCallback(url)
+                    }
+                case "miniti" where url.host?.lowercased() == "meeting":
+                    NotificationCenter.default.post(name: .minitiOpenActiveMeeting, object: nil)
+                default:
+                    break
                 }
             }
         }

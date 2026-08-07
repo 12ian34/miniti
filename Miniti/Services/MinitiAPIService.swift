@@ -42,9 +42,13 @@ final class MinitiAPIService: @unchecked Sendable {
         path: String,
         method: String = "GET",
         deviceId: String,
-        body: [String: Any]? = nil
+        body: [String: Any]? = nil,
+        timeoutInterval: TimeInterval? = nil
     ) -> URLRequest {
         var request = URLRequest(url: URL(string: "\(Self.baseURL)\(path)")!)
+        if let timeoutInterval {
+            request.timeoutInterval = timeoutInterval
+        }
         request.httpMethod = method
         request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
@@ -1355,7 +1359,8 @@ final class MinitiAPIService: @unchecked Sendable {
             path: "/attio/connect/start",
             method: "POST",
             deviceId: deviceId,
-            body: ["callback_scheme": callbackScheme]
+            body: ["callback_scheme": callbackScheme],
+            timeoutInterval: 15
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
@@ -1363,7 +1368,7 @@ final class MinitiAPIService: @unchecked Sendable {
     }
 
     func attioStatus(deviceId: String) async throws -> AttioStatusResponse {
-        let request = makeRequest(path: "/attio/status", deviceId: deviceId)
+        let request = makeRequest(path: "/attio/status", deviceId: deviceId, timeoutInterval: 10)
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         return try decode(AttioStatusResponse.self, from: data, endpoint: "/attio/status")
@@ -1374,7 +1379,8 @@ final class MinitiAPIService: @unchecked Sendable {
             path: "/attio/search",
             method: "POST",
             deviceId: deviceId,
-            body: ["query": query, "objects": objects]
+            body: ["query": query, "objects": objects],
+            timeoutInterval: 15
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
@@ -1397,7 +1403,8 @@ final class MinitiAPIService: @unchecked Sendable {
                 "target_record_id": targetRecordID,
                 "meeting": meetingPayload.dictionary,
                 "create_tasks_from_action_items": createTasksFromActionItems
-            ]
+            ],
+            timeoutInterval: 30
         )
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)

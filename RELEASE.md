@@ -25,8 +25,10 @@ Edit:
 - `MinitiMobile/Info.plist` — `CFBundleShortVersionString` → `X.Y.Z`.
 - `Miniti.xcodeproj/project.pbxproj` — `MARKETING_VERSION = X.Y.Z;` (6 places) and `CURRENT_PROJECT_VERSION = N;` (10 places). `CURRENT_PROJECT_VERSION` wins over `Info.plist` at build time; keep them in sync.
 - `fastlane/metadata/en-US/release_notes.txt` — user-facing release notes for iOS. Also mirror to `en-GB/release_notes.txt`.
-- `CHANGELOG.md` — prepend a new `### YYYY-MM-DD - vX.Y.Z` changelog entry.
+- `CHANGELOG.md` — use `### Unreleased - vX.Y.Z` while preparing the release, then replace `Unreleased` with `YYYY-MM-DD` immediately before shipping.
 - `fastlane/metadata/en-US/description.txt` + `en-GB/description.txt` — only if there's a literal `vX.Y.Z` footer; bump it.
+- `../minitidotapp/changelog/index.html` — add the same release, grouped for the public website. Keep it marked unreleased until shipping.
+- `../minitidotapp` marketing/LLM/legal copy and `../miniti-docs` — update every affected product fact. App Store release notes stay iOS/iPad-only; do not copy macOS-only bullets into them.
 
 Quick bulk update for MARKETING_VERSION and CURRENT_PROJECT_VERSION (adjust old→new):
 
@@ -86,8 +88,8 @@ Tell the backend agent (or edit `miniti-api` directly):
 - app/api/version/route.ts:
     MACOS_LATEST_VERSION → X.Y.Z
     IOS_LATEST_VERSION   → X.Y.Z
-    MACOS_RELEASE_NOTES  → (copy from fastlane/metadata/en-US/release_notes.txt)
-    IOS_RELEASE_NOTES    → same
+    MACOS_RELEASE_NOTES  → macOS-applicable bullets from the top CHANGELOG.md entry, including shared bullets
+    IOS_RELEASE_NOTES    → fastlane/metadata/en-US/release_notes.txt (iPhone/iPad only)
   Do not touch MACOS_MIN_VERSION / IOS_MIN_VERSION unless you're intentionally force-updating.
 
 Deploy.
@@ -130,7 +132,7 @@ If Sparkle downloads the update but fails when quitting/installing with `Failed 
 ### 8. iOS: upload + submit
 
 ```sh
-fastlane ios release version:X.Y.Z
+fastlane ios release version:X.Y.Z build:N
 ```
 
 Uploads to App Store Connect with metadata. Then manually in App Store Connect:
@@ -140,7 +142,24 @@ Uploads to App Store Connect with metadata. Then manually in App Store Connect:
 3. Complete review info + screenshots (screenshots are managed manually in ASC, not via Fastlane).
 4. Submit for review.
 
-### 9. Commit + tag + push
+### 9. Publish customer-facing sources, commit + tag + push
+
+Immediately before a platform becomes public, replace `Unreleased` with the ship date in `CHANGELOG.md` and update the website entry's status/current marker. If one platform is still waiting for App Review, do not describe it as already available without an explicit pending label.
+
+Validate the documentation and website before pushing:
+
+```sh
+cd ../miniti-docs
+mint validate
+mint broken-links
+
+cd ../minitidotapp
+git diff --check
+```
+
+Push `../minitidotapp` main to deploy Netlify and `../miniti-docs` main to deploy Mintlify. Site and docs changes should go live alongside the release they describe, not while the matching platform build is unavailable.
+
+Then commit, tag, and push the app release:
 
 ```sh
 git add -A

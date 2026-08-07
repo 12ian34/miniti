@@ -6,23 +6,47 @@ import SwiftData
 @testable import miniti
 #endif
 
-final class MeetingModelTests: XCTestCase {
+final class MeetingModelTests: XCTestCase, @unchecked Sendable {
 
     private var container: ModelContainer!
     private var context: ModelContext!
 
-    @MainActor
     override func setUp() {
         super.setUp()
-        let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        container = try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
-        context = container.mainContext
+        MainActor.assumeIsolated {
+            let config = ModelConfiguration(isStoredInMemoryOnly: true)
+            container = try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
+            context = container.mainContext
+        }
     }
 
     override func tearDown() {
         container = nil
         context = nil
         super.tearDown()
+    }
+
+    // MARK: - History metadata
+
+    @MainActor
+    func testHistoryMetadataDefaultsAreNonDisruptive() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+
+        XCTAssertFalse(meeting.isPinned)
+        XCTAssertNil(meeting.insightsUpdatedAt)
+    }
+
+    @MainActor
+    func testHistoryMetadataPersists() throws {
+        let updatedAt = Date(timeIntervalSince1970: 1_800_000_000)
+        let meeting = Meeting(title: "important", isPinned: true, insightsUpdatedAt: updatedAt)
+        context.insert(meeting)
+        try context.save()
+
+        let fetched = try XCTUnwrap(context.fetch(FetchDescriptor<Meeting>()).first)
+        XCTAssertTrue(fetched.isPinned)
+        XCTAssertEqual(fetched.insightsUpdatedAt, updatedAt)
     }
 
     // MARK: - TranscriptSegment
@@ -818,5 +842,90 @@ final class MeetingModelTests: XCTestCase {
         XCTAssertTrue(transcript.contains("Bob"))
         XCTAssertFalse(transcript.contains("Speaker 1"))
         XCTAssertFalse(transcript.contains("You"))
+    }
+
+    // MARK: - Granola CSV import
+
+    @MainActor
+    func testGranolaCSVParsesQuotedJSONTranscriptAndImportsProvenance() throws {
+        let transcriptJSON = #"[{"speaker":{"source":"microphone","attribution":"me"},"text":"Hello, team","start_time":"2026-08-07T09:00:00Z"},{"speaker":{"source":"speaker","name":"Alice Smith"},"text":"Hi there","start_time":"2026-08-07T09:00:05Z"}]"#
+        let attendeesJSON = #"[{"name":"Ian","email":"ian@example.com"},{"name":"Alice Smith","email":"alice@acme.com"}]"#
+        let csv = """
+        Note ID,Title,Created At,Updated At,Summary Text,Transcript,Attendees,Owner Email,Organizer Email,Web URL
+        not_12345678901234,Weekly sync,2026-08-07T09:00:00Z,2026-08-07T09:30:00Z,Discussed launch,"\(csvEscaped(transcriptJSON))","\(csvEscaped(attendeesJSON))",ian@example.com,alice@acme.com,https://notes.granola.ai/d/example
+        """
+
+        let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
+        XCTAssertEqual(parsed.meetings.count, 1)
+        XCTAssertEqual(parsed.meetings[0].transcript.count, 2)
+        XCTAssertEqual(parsed.meetings[0].attendees.count, 2)
+
+        let result = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+        XCTAssertEqual(result.imported, 1)
+        XCTAssertEqual(result.duplicates, 0)
+
+        let meetings = try context.fetch(FetchDescriptor<Meeting>())
+        let meeting = try XCTUnwrap(meetings.first)
+        XCTAssertEqual(meeting.externalSource, "granola")
+        XCTAssertEqual(meeting.externalID, "not_12345678901234")
+        XCTAssertEqual(meeting.provenanceDisplayName, "Granola")
+        XCTAssertEqual(meeting.segments.count, 2)
+        XCTAssertTrue(meeting.selfSpeakerIDs.contains(DeepgramService.micSpeakerID))
+        XCTAssertEqual(meeting.speakerNames["0"], "Alice Smith")
+        XCTAssertEqual(meeting.attendees.first(where: { $0.email == "ian@example.com" })?.isSelf, true)
+        XCTAssertEqual(meeting.attendees.first(where: { $0.email == "alice@acme.com" })?.isOrganizer, true)
+    }
+
+    @MainActor
+    func testGranolaCSVReimportSkipsDuplicateExternalID() throws {
+        let csv = """
+        ID,Title,Date,Transcript
+        granola-1,Customer call,2026-08-07T09:00:00Z,"[00:00] Me: Hello
+        [00:05] Pat Lee: Hi"
+        """
+        let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
+
+        let first = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+        let second = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+
+        XCTAssertEqual(first.imported, 1)
+        XCTAssertEqual(second.imported, 0)
+        XCTAssertEqual(second.duplicates, 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Meeting>()), 1)
+    }
+
+    @MainActor
+    func testGranolaCSVImportsSummaryOnlyExport() throws {
+        let csv = """
+        id,title,created_at,summary_text,owner_email
+        granola-2,Planning review,2026-08-07T09:00:00Z,"### Decisions
+        - Ship on Friday",ian@example.com
+        """
+
+        let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
+        let result = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+
+        XCTAssertEqual(result.imported, 1)
+        let meeting = try XCTUnwrap(try context.fetch(FetchDescriptor<Meeting>()).first)
+        XCTAssertEqual(meeting.summaryText, "### Decisions\n- Ship on Friday")
+        XCTAssertTrue(meeting.segments.isEmpty)
+        XCTAssertEqual(meeting.externalSource, "granola")
+    }
+
+    @MainActor
+    func testGranolaCSVSkipsRowsWithoutMeetingDate() throws {
+        let csv = """
+        ID,Title,Date,Transcript
+        missing-date,No date,,Me: Hello
+        valid,Has date,2026-08-07T09:00:00Z,Me: Hello
+        """
+
+        let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
+        XCTAssertEqual(parsed.meetings.count, 1)
+        XCTAssertEqual(parsed.skippedRows, 1)
+    }
+
+    private func csvEscaped(_ value: String) -> String {
+        value.replacingOccurrences(of: "\"", with: "\"\"")
     }
 }

@@ -1,4 +1,9 @@
 import XCTest
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -21,22 +26,24 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(merged[0].text, "Hello there how are you")
     }
 
-    func testMergeTurnsKeepsTurnsWhenPreviousEndsSentence() {
+    func testMergeTurnsKeepsCompletedSentencesInOneSpeakerTurn() {
         let turns = [
             Turn(speaker: 0, timestamp: 0, text: "Hello there."),
             Turn(speaker: 0, timestamp: 1, text: "How are you"),
         ]
         let merged = SelectableAttributed.mergeTurns(turns, speakerNames: nil, selfIDs: nil)
-        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].text, "Hello there. How are you")
     }
 
-    func testMergeTurnsTreatsClosingQuoteBeforeTerminatorAsSentenceEnd() {
+    func testMergeTurnsKeepsQuotedSentenceInOneSpeakerTurn() {
         let turns = [
             Turn(speaker: 0, timestamp: 0, text: "He said \"hi.\""),
             Turn(speaker: 0, timestamp: 1, text: "Then he left"),
         ]
         let merged = SelectableAttributed.mergeTurns(turns, speakerNames: nil, selfIDs: nil)
-        XCTAssertEqual(merged.count, 2)
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].text, "He said \"hi.\" Then he left")
     }
 
     func testMergeTurnsGroupsAllSelfIDs() {
@@ -146,6 +153,50 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertGreaterThan(attr.length, 0)
     }
 
+    func testTranscriptTailReplacementMatchesFullRebuild() {
+        let initialTurns = [
+            Turn(speaker: 1, timestamp: 0, text: "First speaker."),
+            Turn(speaker: 2, timestamp: 4, text: "Second speaker begins"),
+        ]
+        let appendedTurns = [
+            Turn(speaker: 2, timestamp: 7, text: ", and continues."),
+            Turn(speaker: 3, timestamp: 10, text: "Third speaker."),
+        ]
+        let initial = SelectableAttributed.transcriptDocument(
+            turns: initialTurns,
+            speakerNames: nil,
+            selfIDs: nil
+        )
+        let allTurns = SelectableAttributed.mergeTurns(
+            initialTurns + appendedTurns,
+            speakerNames: nil,
+            selfIDs: nil
+        )
+        let tailStartIndex = initial.turns.count - 1
+        let tail = SelectableAttributed.transcriptDocument(
+            turns: Array(allTurns[tailStartIndex...]),
+            speakerNames: nil,
+            selfIDs: nil,
+            startsAtDocumentBeginning: false
+        )
+        let incrementallyUpdated = NSMutableAttributedString(attributedString: initial.attributed)
+        let replacementStart = initial.turnStartOffsets[tailStartIndex]
+        incrementallyUpdated.replaceCharacters(
+            in: NSRange(
+                location: replacementStart,
+                length: incrementallyUpdated.length - replacementStart
+            ),
+            with: tail.attributed
+        )
+        let fullyRebuilt = SelectableAttributed.transcript(
+            turns: initialTurns + appendedTurns,
+            speakerNames: nil,
+            selfIDs: nil
+        )
+
+        XCTAssertTrue(incrementallyUpdated.isEqual(to: fullyRebuilt))
+    }
+
     func testTranscriptRenderModelMapsSelectionAcrossSegmentBodies() {
         let firstID = UUID()
         let secondID = UUID()
@@ -169,6 +220,23 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(selections[1], TranscriptTextSelection(segmentID: secondID, lowerUTF16Offset: 0, upperUTF16Offset: 6))
     }
 
+    func testTranscriptRenderModelShowsOneHeaderForConsecutiveSpeakerSegments() {
+        let renderModel = SelectableAttributed.transcriptRenderModel(
+            segments: [
+                .init(id: UUID(), speaker: 1, timestamp: 0, text: "First sentence."),
+                .init(id: UUID(), speaker: 1, timestamp: 2, text: "Second sentence."),
+                .init(id: UUID(), speaker: 2, timestamp: 4, text: "Different speaker."),
+            ],
+            speakerNames: nil,
+            selfIDs: nil
+        )
+
+        XCTAssertGreaterThan(renderModel.spans[0].headerRange.length, 0)
+        XCTAssertEqual(renderModel.spans[1].headerRange.length, 0)
+        XCTAssertGreaterThan(renderModel.spans[2].headerRange.length, 0)
+        XCTAssertTrue(renderModel.attributed.string.contains("First sentence. Second sentence."))
+    }
+
     func testBulletListBuilderHandlesEmpty() {
         let attr = SelectableAttributed.bulletList(
             items: [],
@@ -181,5 +249,68 @@ final class SelectableAttributedTests: XCTestCase {
     func testBodyBuilderHandlesEmptyString() {
         let attr = SelectableAttributed.body("")
         XCTAssertEqual(attr.length, 0)
+    }
+
+    func testBodyBuilderUsesReadableProportionalSystemFont() {
+        let attr = SelectableAttributed.body("Readable meeting notes")
+        #if os(macOS)
+        let font = attr.attribute(.font, at: 0, effectiveRange: nil) as? NSFont
+        XCTAssertFalse(font?.fontDescriptor.symbolicTraits.contains(.monoSpace) ?? true)
+        #else
+        let font = attr.attribute(.font, at: 0, effectiveRange: nil) as? UIFont
+        XCTAssertFalse(font?.fontDescriptor.symbolicTraits.contains(.traitMonoSpace) ?? true)
+        #endif
+    }
+
+    func testCompactInterfaceScalePreservesOriginalTranscriptMetrics() {
+        XCTAssertEqual(InterfaceScale.compact.transcriptBodySize, 13)
+        XCTAssertEqual(InterfaceScale.compact.transcriptHeaderSize, 10)
+        XCTAssertEqual(InterfaceScale.compact.transcriptLineSpacing, 2)
+        XCTAssertEqual(InterfaceScale.compact.dynamicTypeSize(from: .accessibility2), .accessibility2)
+        XCTAssertEqual(InterfaceScale.standard.dynamicTypeSize(from: .large), .xLarge)
+        XCTAssertEqual(InterfaceScale.large.dynamicTypeSize(from: .large), .xxLarge)
+
+        #if os(macOS)
+        XCTAssertEqual(InterfaceScale.standard.transcriptBodySize, 14)
+        #else
+        XCTAssertEqual(InterfaceScale.standard.transcriptBodySize, 15)
+        #endif
+    }
+
+    func testLiveAndSavedTranscriptBuildersUseMatchingTypographyMetrics() throws {
+        let live = SelectableAttributed.transcript(
+            turns: [Turn(speaker: 1, timestamp: 0, text: "Matching transcript body")],
+            speakerNames: nil,
+            bodyFontSize: 15,
+            headerFontSize: 11,
+            lineSpacing: 5
+        )
+        let saved = SelectableAttributed.transcriptRenderModel(
+            segments: [.init(id: UUID(), speaker: 1, timestamp: 0, text: "Matching transcript body")],
+            speakerNames: nil,
+            bodyFontSize: 15,
+            headerFontSize: 11,
+            lineSpacing: 5
+        ).attributed
+
+        let liveBodyIndex = try XCTUnwrap(live.string.range(of: "Matching transcript body"))
+        let savedBodyIndex = try XCTUnwrap(saved.string.range(of: "Matching transcript body"))
+        let liveOffset = live.string.utf16.distance(from: live.string.utf16.startIndex, to: liveBodyIndex.lowerBound.samePosition(in: live.string.utf16)!)
+        let savedOffset = saved.string.utf16.distance(from: saved.string.utf16.startIndex, to: savedBodyIndex.lowerBound.samePosition(in: saved.string.utf16)!)
+
+        #if os(macOS)
+        let liveFont = try XCTUnwrap(live.attribute(.font, at: liveOffset, effectiveRange: nil) as? NSFont)
+        let savedFont = try XCTUnwrap(saved.attribute(.font, at: savedOffset, effectiveRange: nil) as? NSFont)
+        #else
+        let liveFont = try XCTUnwrap(live.attribute(.font, at: liveOffset, effectiveRange: nil) as? UIFont)
+        let savedFont = try XCTUnwrap(saved.attribute(.font, at: savedOffset, effectiveRange: nil) as? UIFont)
+        #endif
+        let liveParagraph = try XCTUnwrap(live.attribute(.paragraphStyle, at: liveOffset, effectiveRange: nil) as? NSParagraphStyle)
+        let savedParagraph = try XCTUnwrap(saved.attribute(.paragraphStyle, at: savedOffset, effectiveRange: nil) as? NSParagraphStyle)
+
+        XCTAssertEqual(liveFont.pointSize, savedFont.pointSize)
+        XCTAssertEqual(liveFont.pointSize, 15)
+        XCTAssertEqual(liveParagraph.lineSpacing, savedParagraph.lineSpacing)
+        XCTAssertEqual(liveParagraph.lineSpacing, 5)
     }
 }

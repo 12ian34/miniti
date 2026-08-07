@@ -21,7 +21,7 @@ struct MeetingView_iOS: View {
     }
     
     private var showsLiveInsightsUpdateButton: Bool {
-        appState.insightsMode != .training
+        appState.insightsMode != .training && appState.insightsMode != .docs
     }
 
     private var isStopped: Bool {
@@ -102,15 +102,26 @@ struct MeetingView_iOS: View {
     
     private var activeSessionView: some View {
         VStack(spacing: 0) {
+            if let error = appState.recordingErrorMessage {
+                RecordingIssueBanner_iOS(message: error)
+            }
+
             if appState.audioRecoveryState != .healthy {
                 HStack(spacing: 8) {
                     Circle()
                         .fill(recoveryAccent)
                         .frame(width: 6, height: 6)
                     Text(appState.audioRecoveryState.label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(recoveryAccent)
                     Spacer(minLength: 0)
+                    if appState.audioRecoveryState == .degraded {
+                        Button("Retry") {
+                            appState.retryRecordingHealth()
+                        }
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(recoveryAccent)
+                    }
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -118,6 +129,10 @@ struct MeetingView_iOS: View {
                 .overlay(RoundedRectangle(cornerRadius: 4).stroke(recoveryAccent.opacity(0.24), lineWidth: 1))
                 .padding(.horizontal, 12)
                 .padding(.top, 4)
+            }
+
+            if isStopped {
+                PostMeetingReviewCard_iOS()
             }
 
             sectionPicker
@@ -140,7 +155,7 @@ struct MeetingView_iOS: View {
                     Image(systemName: reason.icon)
                         .font(.system(size: 10, weight: .semibold))
                     Text(reason.label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)
                 .padding(.horizontal, 10)
@@ -171,7 +186,8 @@ struct MeetingView_iOS: View {
                         .fill(isStopped ? ColorPalette.Text.disabled : Color(hex: "F85149"))
                         .frame(width: 8, height: 8)
                     Text(appState.formattedDuration)
-                        .font(.system(size: 14, weight: .medium, design: .monospaced))
+                        .font(.system(size: 14, weight: .medium, design: .default))
+                        .monospacedDigit()
                         .foregroundStyle(isStopped ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
                     if appState.isRecording {
                         CompactWaveform_iOS(level: appState.audioLevels.microphoneLevel, color: ColorPalette.Speaker.mic)
@@ -219,7 +235,7 @@ struct MeetingView_iOS: View {
         .overlay {
             if showSavedOverlay {
                 Text("saved")
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 14, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Accent.green)
                     .padding(.horizontal, 20)
                     .padding(.vertical, 12)
@@ -267,7 +283,7 @@ struct MeetingView_iOS: View {
     private var controlBar: some View {
         Group {
             if isStopped {
-                // Stopped: discard | resume | save — equal width, no overlap
+                // Stopped: discard | resume | done — equal width, no overlap
                 HStack(spacing: 8) {
                     flexButton(icon: "trash", label: "discard", color: Color(hex: "F85149"), bgColor: Color(hex: "F85149").opacity(0.12), borderColor: Color(hex: "F85149").opacity(0.3)) {
                         showDiscardConfirmation = true
@@ -275,12 +291,15 @@ struct MeetingView_iOS: View {
 
                     flexResumeButton
 
-                    flexButton(icon: "checkmark", label: "save", color: Color(hex: "58A6FF"), bgColor: Color(hex: "58A6FF").opacity(0.12), borderColor: Color(hex: "58A6FF").opacity(0.3)) {
-                        withAnimation(.easeIn(duration: 0.2)) {
-                            showSavedOverlay = true
-                        }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                    if appState.isFinalizingMeeting {
+                        flexFinalizingStatus
+                    } else if appState.isCurrentMeetingGeneratingFinalInsights {
+                        flexButton(icon: "rectangle.stack", label: "meetings", color: ColorPalette.Accent.blueGitHub, bgColor: ColorPalette.Accent.blueGitHub.opacity(0.12), borderColor: ColorPalette.Accent.blueGitHub.opacity(0.3)) {
                             appState.goHome()
+                        }
+                    } else {
+                        flexButton(icon: "checkmark", label: "done", color: ColorPalette.Accent.blueGitHub, bgColor: ColorPalette.Accent.blueGitHub.opacity(0.12), borderColor: ColorPalette.Accent.blueGitHub.opacity(0.3)) {
+                            appState.saveAndOpenCurrentMeeting()
                         }
                     }
                 }
@@ -304,11 +323,11 @@ struct MeetingView_iOS: View {
                 Image(systemName: "stop.fill")
                     .font(.system(size: 11, weight: .semibold))
                 Text("stop")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
             }
             .foregroundStyle(Color(hex: "F85149"))
             .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .frame(minHeight: 44)
             .frame(width: 128)
             .background(
                 RoundedRectangle(cornerRadius: 4)
@@ -337,12 +356,12 @@ struct MeetingView_iOS: View {
                     Image(systemName: "record.circle")
                         .font(.system(size: 11, weight: .semibold))
                 }
-                Text(isResumePending ? "starting..." : "start")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                Text(isResumePending ? "starting..." : "resume")
+                    .font(.system(size: 12, weight: .semibold, design: .default))
                     .lineLimit(1)
             }
             .foregroundStyle(Color(hex: "3FB950"))
-            .padding(.vertical, 8)
+            .frame(minHeight: 44)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
@@ -353,7 +372,7 @@ struct MeetingView_iOS: View {
                     .stroke(Color(hex: "3FB950").opacity(0.3), lineWidth: 1)
             )
         }
-        .disabled(isResumePending)
+        .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights)
     }
 
     private func flexButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
@@ -362,10 +381,10 @@ struct MeetingView_iOS: View {
                 Image(systemName: icon)
                     .font(.system(size: 11, weight: .semibold))
                 Text(label)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
             }
             .foregroundStyle(color)
-            .padding(.vertical, 8)
+            .frame(minHeight: 44)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
@@ -377,6 +396,28 @@ struct MeetingView_iOS: View {
             )
         }
     }
+
+    private var flexFinalizingStatus: some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(.small)
+            Text("finishing")
+                .font(.system(size: 12, weight: .medium, design: .default))
+        }
+        .foregroundStyle(ColorPalette.Text.muted)
+        .frame(minHeight: 44)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(ColorPalette.Background.tertiary)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(ColorPalette.Border.subtle, lineWidth: 1)
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(appState.finalizationStatusText)
+    }
     
     // MARK: - Section Picker
     
@@ -387,10 +428,10 @@ struct MeetingView_iOS: View {
                     activeSection = section
                 } label: {
                     Text(section.rawValue)
-                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .default))
                         .foregroundStyle(activeSection == section ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                        .frame(minHeight: 44)
                         .background(
                             activeSection == section
                                 ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
@@ -418,7 +459,12 @@ struct MeetingView_iOS: View {
     private var liveInsightsContent: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
-                insightsModePicker
+                InsightsModeMenu_iOS(
+                    selection: appState.insightsMode,
+                    updatedAt: appState.lastInsightsUpdatedAt[appState.insightsMode],
+                    onSelect: appState.switchInsightsMode
+                )
+                .padding(.horizontal)
                 
                 if showsLiveInsightsUpdateButton {
                     HStack(spacing: 8) {
@@ -431,7 +477,7 @@ struct MeetingView_iOS: View {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 10, weight: .semibold))
                                 Text("update")
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 11, weight: .semibold, design: .default))
                             }
                             .foregroundStyle(ColorPalette.Text.primary)
                             .padding(.horizontal, 10)
@@ -454,7 +500,7 @@ struct MeetingView_iOS: View {
                                 ProgressView()
                                     .scaleEffect(0.6)
                                 Text("updating...")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "8B949E"))
                             }
                         }
@@ -471,46 +517,12 @@ struct MeetingView_iOS: View {
         }
     }
     
-    private var insightsModePicker: some View {
-        HStack(spacing: 0) {
-            ForEach(InsightsMode.allCases, id: \.self) { mode in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        appState.switchInsightsMode(to: mode)
-                    }
-                } label: {
-                    Text(mode.displayName)
-                        .font(.system(size: 12, weight: appState.insightsMode == mode ? .bold : .medium, design: .monospaced))
-                        .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(
-                            appState.insightsMode == mode
-                                ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
-                                : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
-                        )
-                }
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "09090B"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                )
-        )
-        .frame(maxWidth: 500)
-        .padding(.horizontal)
-    }
-
     // MARK: - Notes Editor
     
     private var notesEditor: some View {
         VStack(spacing: 0) {
             TextEditor(text: $appState.liveNotes)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.system(size: 14, design: .default))
                 .scrollContentBackground(.hidden)
                 .background(ColorPalette.Background.primary)
                 .padding()
@@ -530,7 +542,7 @@ struct ReadyStateView_iOS: View {
     @State private var isMicTesting = false
     @State private var isPurchasingPro = false
     @State private var subscriptionMessage: String?
-    
+
     var body: some View {
         VStack(spacing: 0) {
             if isMicTesting && appState.isMonitoring {
@@ -590,17 +602,17 @@ struct ReadyStateView_iOS: View {
                 if appState.isDeviceDisabled {
                     VStack(spacing: 8) {
                         Text("account disabled")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.system(size: 14, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Status.limitReached)
 
                         Text("contact support for help")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
                 } else if appState.isLimitReached {
                     VStack(spacing: 10) {
                         Text("Monthly limit reached")
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
+                            .font(.system(size: 14, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Status.limitReached)
 
                         Button {
@@ -627,7 +639,7 @@ struct ReadyStateView_iOS: View {
                                     Text("Upgrade to Pro — $4.99/month")
                                 }
                             }
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
@@ -637,7 +649,7 @@ struct ReadyStateView_iOS: View {
 
                         VStack(spacing: 4) {
                             Text("Miniti Pro Monthly · $4.99/month · auto-renewable")
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 10, weight: .semibold, design: .default))
                                 .foregroundStyle(ColorPalette.Text.muted)
                                 .multilineTextAlignment(.center)
 
@@ -646,12 +658,12 @@ struct ReadyStateView_iOS: View {
                                 Text("•").foregroundStyle(ColorPalette.Text.disabled)
                                 Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
                             }
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                         }
 
                         if let subscriptionMessage {
                             Text(subscriptionMessage)
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(ColorPalette.Text.muted)
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 20)
@@ -660,7 +672,7 @@ struct ReadyStateView_iOS: View {
                         Button("Switch to BYOK") {
                             appState.appMode = .byok
                         }
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 12, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Accent.blue)
                     }
                 } else {
@@ -675,13 +687,14 @@ struct ReadyStateView_iOS: View {
                                     .tint(.black)
                                     .scaleEffect(0.8)
                                 Text("starting...")
-                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 16, weight: .semibold, design: .default))
                                     .lineLimit(1)
                             } else {
                                 Image(systemName: "record.circle")
                                     .font(.system(size: 18))
-                                Text("start")
-                                    .font(.system(size: 16, weight: .semibold, design: .monospaced))
+                                Text("Start meeting")
+                                    .font(.system(size: 16, weight: .semibold, design: .default))
+                                    .lineLimit(1)
                             }
                         }
                         .foregroundStyle(.black)
@@ -699,6 +712,12 @@ struct ReadyStateView_iOS: View {
                     .disabled(!appState.canStartRecording || appState.isStartingMeeting)
 
                     MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
+
+                    Text(captureSummary)
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .accessibilityLabel("Recording setup: \(captureSummary)")
+
                 }
 
                 // Upcoming calendar events
@@ -745,7 +764,7 @@ struct ReadyStateView_iOS: View {
                         Image(systemName: isMicTesting ? "mic.fill" : "mic")
                             .font(.system(size: 12))
                         Text(isMicTesting ? "stop" : "test")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                     }
                     .foregroundStyle(isMicTesting ? ColorPalette.Speaker.mic : ColorPalette.Text.muted)
                 }
@@ -761,8 +780,186 @@ struct ReadyStateView_iOS: View {
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
+                .accessibilityLabel("Settings")
             }
         }
+    }
+
+    private var captureSummary: String {
+        let language = TranscriptionLanguage(rawValue: appState.meetingLanguage)?.displayName ?? "English"
+        return "Microphone • \(language)"
+    }
+}
+
+struct InsightsModeMenu_iOS: View {
+    @EnvironmentObject private var appState: AppState
+    let selection: InsightsMode
+    let updatedAt: Date?
+    let onSelect: (InsightsMode) -> Void
+
+    var body: some View {
+        Menu {
+            Section("Core views") {
+                ForEach(InsightsMode.coreModes, id: \.self) { mode in
+                    modeButton(mode)
+                }
+            }
+
+            Section("Specialist views") {
+                modeButton(.meddpicc)
+
+                if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
+                    modeButton(.docs)
+                } else {
+                    Button {
+                        appState.showSettings = true
+                    } label: {
+                        Label("Set Up Playbook…", systemImage: "gearshape")
+                    }
+                }
+            }
+
+            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
+                Section("Enabled specialist views") {
+                    if appState.salesInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.meddpicc, enabled: false)
+                        } label: {
+                            Label("Turn Off Sales Insights", systemImage: "eye.slash")
+                        }
+                    }
+
+                    if appState.playbookInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.docs, enabled: false)
+                        } label: {
+                            Label("Hide Playbook", systemImage: "eye.slash")
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: selection.systemImage)
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(selection.displayName)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text(freshnessText)
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+                Spacer()
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(ColorPalette.Text.muted)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 12)
+            .frame(minHeight: 50)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(ColorPalette.Background.secondary)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+            )
+        }
+        .accessibilityLabel("Insight mode: \(selection.displayName)")
+        .accessibilityHint("Choose another insight view")
+    }
+
+    private var freshnessText: String {
+        guard let updatedAt else { return selection.description }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Updated \(formatter.localizedString(for: updatedAt, relativeTo: Date()))"
+    }
+
+    private func modeButton(_ mode: InsightsMode) -> some View {
+        Button {
+            onSelect(mode)
+        } label: {
+            Label {
+                Text("\(mode.displayName) — \(mode.description)")
+            } icon: {
+                Image(systemName: mode == selection ? "checkmark.circle.fill" : mode.systemImage)
+            }
+        }
+    }
+}
+
+private struct RecordingIssueBanner_iOS: View {
+    @EnvironmentObject private var appState: AppState
+    let message: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(message, systemImage: "exclamationmark.triangle.fill")
+                .font(.footnote)
+                .foregroundStyle(ColorPalette.Text.primary)
+            HStack {
+                Button(appState.isRecording ? "Retry capture" : "Resume recording") {
+                    if appState.isRecording {
+                        appState.retryRecordingHealth()
+                    } else {
+                        appState.startRecording()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.amber)
+                Button("Dismiss") { appState.dismissRecordingError() }
+                    .buttonStyle(.bordered)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(ColorPalette.Accent.amber.opacity(0.1))
+    }
+}
+
+private struct PostMeetingReviewCard_iOS: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 10) {
+            if appState.isFinalizingMeeting {
+                ProgressView().controlSize(.small)
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(ColorPalette.Accent.green)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(statusTitle)
+                    .font(.footnote.weight(.semibold))
+                Text(statusDetail)
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.muted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Background.secondary)
+    }
+
+    private var statusTitle: String {
+        if appState.isFinalizingMeeting { return appState.finalizationStatusText }
+        if appState.isCurrentMeetingGeneratingFinalInsights { return "Generating final insights…" }
+        return "Saved automatically"
+    }
+
+    private var statusDetail: String {
+        if appState.isFinalizingMeeting {
+            return "You can keep reviewing while Miniti finishes and saves automatically."
+        }
+        if appState.isCurrentMeetingGeneratingFinalInsights {
+            return "You can return to meetings now; insights will finish in History."
+        }
+        return "Review, resume, or choose Done to open this meeting in History."
     }
 }
 
@@ -789,14 +986,14 @@ private struct FlashingTagline_iOS: View {
     
     private var baseText: some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .font(.system(size: 12, weight: .medium, design: .default))
             .foregroundStyle(ColorPalette.Text.muted)
             .tracking(2)
     }
     
     private func highlightedText(motion: FlashMotion_iOS) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .font(.system(size: 12, weight: .medium, design: .default))
             .foregroundStyle(ColorPalette.Accent.green)
             .tracking(2)
             .opacity(0.72 + (0.20 * motion.spark))
@@ -882,15 +1079,15 @@ struct ManagedStatusPill: View {
                         .frame(width: 5, height: 5)
                     
                     Text(appState.isPro ? "miniti pro" : "miniti free")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                     
                     Text("•")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.disabled)
                     
                     Text("\(Int(appState.displayMinutesRemaining.rounded())) min left")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(accentColor)
                 }
                 
@@ -924,15 +1121,15 @@ private struct ManagedStatusInline_iOS: View {
     var body: some View {
         if appState.shouldShowManagedSubscriptionPlaceholder {
             Text("checking plan...")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "52525B"))
         } else if let usage = appState.usageInfo {
             HStack(spacing: 6) {
                 Text(appState.isPro ? "miniti pro" : "miniti free")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "52525B"))
                 Text("\(Int(usage.minutesUsed.rounded()))/\(Int(appState.displayMinutesLimit)) min")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(accent)
             }
         }
@@ -966,7 +1163,7 @@ struct StatusPill: View {
                 .fill(isSet ? ColorPalette.Status.success : ColorPalette.Status.noApiKey)
                 .frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.muted)
         }
         .padding(.horizontal, 10)
@@ -998,11 +1195,11 @@ struct CalendarNudgeCard_iOS: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("see your meetings here")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
 
                     Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1041,7 +1238,7 @@ struct CalendarNudgeCard_iOS: View {
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         Text(isConnecting ? "opening..." : "connect calendar")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(.black)
                     .padding(.horizontal, 14)
@@ -1058,7 +1255,7 @@ struct CalendarNudgeCard_iOS: View {
                     appState.snoozeCalendarNudge()
                 } label: {
                     Text("not now")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
@@ -1082,6 +1279,7 @@ struct CalendarNudgeCard_iOS: View {
                         .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
                 )
         )
+        .minitiAdaptiveUtilitySurface(tint: ColorPalette.Accent.green.opacity(0.12))
     }
 }
 
@@ -1108,7 +1306,7 @@ struct UpdateAvailableBanner_iOS: View {
                 Image(systemName: "arrow.down.circle.fill")
                     .font(.system(size: 14))
                 Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 14, weight: .semibold, design: .default))
                 
                 Spacer()
                 
@@ -1121,7 +1319,7 @@ struct UpdateAvailableBanner_iOS: View {
                         Image(systemName: "arrow.down.to.line")
                             .font(.system(size: 10, weight: .semibold))
                         Text("update")
-                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 13, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(ColorPalette.Accent.blue)
                     .padding(.horizontal, 12)
@@ -1146,7 +1344,7 @@ struct UpdateAvailableBanner_iOS: View {
                             .font(.system(size: 9, weight: .bold))
                             .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
                         Text(isShowingFullNotes ? "hide release notes" : "show release notes")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.system(size: 12, weight: .medium, design: .default))
                     }
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
                     .contentShape(Rectangle())
@@ -1156,7 +1354,7 @@ struct UpdateAvailableBanner_iOS: View {
             
             if let notes = releaseNotes, isShowingFullNotes {
                 Text(notes)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 13)
@@ -1237,6 +1435,7 @@ struct SourceWaveform_iOS: View {
 }
 
 struct CompactWaveform_iOS: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let level: Float
     let color: Color
     let bandCount: Int
@@ -1253,8 +1452,9 @@ struct CompactWaveform_iOS: View {
 
     @State private var bands: [CGFloat] = []
     @State private var previousLevel: CGFloat = 0
+    @State private var idleTick = false
 
-    let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 1.0 / 16.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         HStack(spacing: 2) {
@@ -1269,8 +1469,14 @@ struct CompactWaveform_iOS: View {
         }
         .onReceive(timer) { _ in
             guard bands.count == bandCount else { return }
-            withAnimation(.linear(duration: 0.04)) {
-                let rawLevel = CGFloat(max(level, 0))
+            let rawLevel = CGFloat(max(level, 0))
+            if rawLevel < 0.001 {
+                idleTick.toggle()
+                guard idleTick else { return }
+            }
+            var transaction = Transaction()
+            transaction.animation = reduceMotion ? nil : .linear(duration: 1.0 / 16.0)
+            withTransaction(transaction) {
                 let gated = rawLevel < 0.001 ? 0.0 : rawLevel
                 let amplified = gated > 0 ? min(1.0, pow(gated, 0.2)) : 0.0
                 let delta = amplified - previousLevel
@@ -1317,9 +1523,9 @@ struct MeetingLanguagePicker_iOS: View {
         } label: {
             HStack(spacing: 6) {
                 Text(selectedLang.rawValue.uppercased())
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .default))
                 Text(selectedLang.displayName)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .font(.system(size: 13, weight: .medium, design: .default))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
             }
@@ -1355,13 +1561,13 @@ private struct AutoStartBanner_iOS: View {
                     .animation(.easeInOut(duration: 0.5), value: countdown)
 
                 Text(event.title)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(1)
             }
 
             Text("starting in \(countdown)s")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Accent.green)
 
             HStack(spacing: 12) {
@@ -1369,7 +1575,7 @@ private struct AutoStartBanner_iOS: View {
                     appState.startMeetingFromEvent(event)
                 } label: {
                     Text("start now")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(Color.black)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
@@ -1384,7 +1590,7 @@ private struct AutoStartBanner_iOS: View {
                     appState.dismissAutoStart()
                 } label: {
                     Text("dismiss")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
@@ -1419,7 +1625,7 @@ private struct UpcomingEventsPanel_iOS: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("today")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(ColorPalette.Text.dim)
                 .padding(.horizontal, 8)
 
@@ -1443,12 +1649,12 @@ private struct CompactEventRow_iOS: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(formattedTime)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
                 .frame(width: 44, alignment: .leading)
 
             Text(event.title)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -1461,7 +1667,7 @@ private struct CompactEventRow_iOS: View {
                         .font(.system(size: 8))
                     let ext = event.externalAttendees.count
                     Text("\(ext > 0 ? ext : event.attendees.count)")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                 }
                 .foregroundStyle(ColorPalette.Text.dim)
             }
@@ -1522,16 +1728,16 @@ struct ZonedOutSheet_iOS: View {
                                 .font(.system(size: 22))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("catch me up")
-                                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 14, weight: .semibold, design: .default))
                                     .foregroundStyle(accent)
                                 Text("covers the last ~3 minutes")
-                                    .font(.system(size: 10, design: .monospaced))
+                                    .font(.system(size: 10, design: .default))
                                     .foregroundStyle(ColorPalette.Text.muted)
                             }
                             Spacer(minLength: 0)
                             if let label = generatedLabel {
                                 Text(label)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(ColorPalette.Text.muted)
                             }
                         }
@@ -1540,7 +1746,7 @@ struct ZonedOutSheet_iOS: View {
                             if !catchUp.currentTopic.isEmpty {
                                 ZonedOutSection_iOS(title: "current topic", accent: accent) {
                                     Text(catchUp.currentTopic)
-                                        .font(.system(size: 13, design: .monospaced))
+                                        .font(.system(size: 13, design: .default))
                                         .foregroundStyle(ColorPalette.Text.primary)
                                         .fixedSize(horizontal: false, vertical: true)
                                 }
@@ -1552,10 +1758,10 @@ struct ZonedOutSheet_iOS: View {
                                         ForEach(catchUp.questionsForYou, id: \.self) { q in
                                             HStack(alignment: .top, spacing: 8) {
                                                 Text("?")
-                                                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                                                    .font(.system(size: 13, weight: .bold, design: .default))
                                                     .foregroundStyle(Color(hex: "FFA657"))
                                                 Text(q)
-                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .font(.system(size: 13, design: .default))
                                                     .foregroundStyle(ColorPalette.Text.primary)
                                                     .fixedSize(horizontal: false, vertical: true)
                                             }
@@ -1570,10 +1776,10 @@ struct ZonedOutSheet_iOS: View {
                                         ForEach(catchUp.recentDiscussion, id: \.self) { line in
                                             HStack(alignment: .top, spacing: 8) {
                                                 Text("›")
-                                                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                                    .font(.system(size: 12, weight: .semibold, design: .default))
                                                     .foregroundStyle(ColorPalette.Text.muted)
                                                 Text(line)
-                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .font(.system(size: 13, design: .default))
                                                     .foregroundStyle(ColorPalette.Text.secondary)
                                                     .fixedSize(horizontal: false, vertical: true)
                                             }
@@ -1592,7 +1798,7 @@ struct ZonedOutSheet_iOS: View {
                                                     .foregroundStyle(ColorPalette.Accent.green)
                                                     .padding(.top, 3)
                                                 Text(line)
-                                                    .font(.system(size: 13, design: .monospaced))
+                                                    .font(.system(size: 13, design: .default))
                                                     .foregroundStyle(ColorPalette.Text.primary)
                                                     .fixedSize(horizontal: false, vertical: true)
                                             }
@@ -1604,7 +1810,7 @@ struct ZonedOutSheet_iOS: View {
                             HStack(spacing: 10) {
                                 ProgressView().tint(accent)
                                 Text("catching you up…")
-                                    .font(.system(size: 13, design: .monospaced))
+                                    .font(.system(size: 13, design: .default))
                                     .foregroundStyle(ColorPalette.Text.muted)
                             }
                             .padding(.vertical, 20)
@@ -1617,7 +1823,7 @@ struct ZonedOutSheet_iOS: View {
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(ColorPalette.Accent.amber)
                                 Text(err)
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 12, design: .default))
                                     .foregroundStyle(ColorPalette.Accent.amber)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -1640,7 +1846,7 @@ struct ZonedOutSheet_iOS: View {
                         appState.dismissZonedOutCatchUp()
                     } label: {
                         Text("done")
-                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 14, weight: .semibold, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
                 }
@@ -1656,7 +1862,7 @@ struct ZonedOutSheet_iOS: View {
                                     .font(.system(size: 12, weight: .semibold))
                             }
                             Text(appState.isGeneratingCatchUp ? "thinking" : "refresh")
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                .font(.system(size: 12, weight: .medium, design: .default))
                         }
                         .foregroundStyle(accent)
                     }
@@ -1677,7 +1883,7 @@ private struct ZonedOutSection_iOS<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(accent)
             content()
         }

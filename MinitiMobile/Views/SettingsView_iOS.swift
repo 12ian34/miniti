@@ -1,20 +1,110 @@
 import SwiftUI
 import AVFoundation
+import SwiftData
+import UniformTypeIdentifiers
+
+private enum SettingsCategory_iOS: String, CaseIterable, Identifiable {
+    case account
+    case recording
+    case appearanceLanguage
+    case integrations
+    case privacySupport
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .account: return "Account & plan"
+        case .recording: return "Recording"
+        case .appearanceLanguage: return "Appearance & language"
+        case .integrations: return "Integrations & import"
+        case .privacySupport: return "Privacy & support"
+        }
+    }
+    var subtitle: String {
+        switch self {
+        case .account: return "Subscription, usage, API mode, and device"
+        case .recording: return "Permissions, auto-stop, Live Activity, and nudges"
+        case .appearanceLanguage: return "Interface scale, languages, fillers, and vocabulary"
+        case .integrations: return "Calendar, docs, webhooks, and Granola"
+        case .privacySupport: return "Diagnostics, model information, and help"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .account: return "person.crop.circle"
+        case .recording: return "waveform"
+        case .appearanceLanguage: return "textformat"
+        case .integrations: return "puzzlepiece.extension"
+        case .privacySupport: return "hand.raised"
+        }
+    }
+}
 
 struct SettingsView_iOS: View {
+    @State private var searchText = ""
+
+    private var categories: [SettingsCategory_iOS] {
+        guard !searchText.isEmpty else { return SettingsCategory_iOS.allCases }
+        return SettingsCategory_iOS.allCases.filter {
+            $0.title.localizedCaseInsensitiveContains(searchText) ||
+            $0.subtitle.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        List(categories) { category in
+            NavigationLink {
+                SettingsDetailView_iOS(category: category)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: category.icon)
+                        .font(.title3)
+                        .foregroundStyle(ColorPalette.Accent.green)
+                        .frame(width: 30)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(category.title).font(.headline)
+                        Text(category.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .navigationTitle("Settings")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, prompt: "Search settings")
+        .scrollContentBackground(.hidden)
+        .background(ColorPalette.Background.primary)
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct SettingsDetailView_iOS: View {
+    let category: SettingsCategory_iOS
     @EnvironmentObject var appState: AppState
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
     @AppStorage(PersonalDictionaryPreferences.storageKey) private var personalDictionaryTermsData: Data = Data()
+    @AppStorage(LiveActivityPreferences.showTranscriptKey) private var showTranscriptInLiveActivity = true
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
     @State private var showDebugLog = false
     @State private var isPurchasing = false
     @State private var isRestoringPurchases = false
     @State private var subscriptionMessage: String?
+    @State private var isGranolaImporterPresented = false
+    @State private var isImportingGranola = false
+    @State private var granolaImportMessage: String?
+    @State private var granolaImportFailed = false
     
     var body: some View {
-        NavigationStack {
             Form {
+                if category == .appearanceLanguage {
+                Section("Appearance") {
+                    InterfaceScaleSlider()
+                }
+
                 Section("Language") {
                     Picker("Default Language", selection: $appState.defaultLanguage) {
                         ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
@@ -46,7 +136,9 @@ struct SettingsView_iOS: View {
                         }
                     }
                 }
+                }
                 
+                if category == .account {
                 if appState.appMode == .managed {
                     Section("Subscription") {
                         HStack {
@@ -240,8 +332,10 @@ struct SettingsView_iOS: View {
                         )
                     }
                 }
+                }
                 
                 // Audio
+                if category == .recording {
                 Section("Audio") {
                     HStack {
                         Text("Microphone")
@@ -255,8 +349,10 @@ struct SettingsView_iOS: View {
                         }
                     }
                 }
+                }
                 
                 // Models (read-only)
+                if category == .privacySupport {
                 Section("Models") {
                     HStack {
                         Text("Transcription")
@@ -272,20 +368,24 @@ struct SettingsView_iOS: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                }
                 
                 // Device
+                if category == .account {
                 Section("Device") {
                     HStack {
                         Text("Device ID")
                         Spacer()
                         Text(DeviceIdentifier.getOrCreateDeviceId())
                             .foregroundStyle(.secondary)
-                            .font(.system(.caption2, design: .monospaced))
+                            .font(.system(.caption2, design: .default))
                             .lineLimit(1)
                             .textSelection(.enabled)
                     }
                 }
+                }
 
+                if category == .recording {
                 Section("Recording") {
                     Picker("Auto-stop after silence", selection: $appState.autoStopMinutes) {
                         Text("Off").tag(0)
@@ -300,6 +400,16 @@ struct SettingsView_iOS: View {
 
                     Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
                     Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Live Activity") {
+                    Toggle("Show transcript on Lock Screen", isOn: $showTranscriptInLiveActivity)
+                        .onChange(of: showTranscriptInLiveActivity) { _, _ in
+                            appState.refreshLiveActivityPrivacySetting()
+                        }
+                    Text("Shows the latest transcript line in the Lock Screen and expanded Dynamic Island while recording. Turn this off to keep transcript text private; the timer and recording status remain visible.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -349,6 +459,47 @@ struct SettingsView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                }
+
+                if category == .integrations {
+                Section("Import from Granola") {
+                    Link(destination: GranolaCSVImporter.exportURL) {
+                        HStack {
+                            Label("Export meetings in Granola", systemImage: "arrow.up.right.square")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Button {
+                        isGranolaImporterPresented = true
+                    } label: {
+                        if isImportingGranola {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                Text("Importing…")
+                            }
+                        } else {
+                            Label("Import Granola CSV", systemImage: "tray.and.arrow.down")
+                        }
+                    }
+                    .disabled(isImportingGranola)
+
+                    if let granolaImportMessage {
+                        Label(
+                            granolaImportMessage,
+                            systemImage: granolaImportFailed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                        )
+                        .font(.caption)
+                        .foregroundStyle(granolaImportFailed ? ColorPalette.Status.error : ColorPalette.Accent.green)
+                    }
+
+                    Text("Granola opens Profile → Account management. Generate the CSV, then select the emailed download here. Re-importing skips meetings already brought into Miniti.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Section("Google Calendar") {
                     Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
@@ -365,17 +516,17 @@ struct SettingsView_iOS: View {
                             if appState.isGoogleCalendarConnected {
                                 if let email = appState.googleCalendarEmail {
                                     Text(email)
-                                        .font(.system(size: 12, design: .monospaced))
+                                        .font(.system(size: 12, design: .default))
                                         .lineLimit(1)
                                         .truncationMode(.middle)
                                 } else {
                                     Text("connected")
-                                        .font(.system(size: 12, design: .monospaced))
+                                        .font(.system(size: 12, design: .default))
                                         .foregroundStyle(.secondary)
                                 }
                             } else {
                                 Text("not connected")
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 12, design: .default))
                                     .foregroundStyle(.secondary)
                             }
 
@@ -435,7 +586,9 @@ struct SettingsView_iOS: View {
                 }
 
                 DocsMCPSettingsSection_iOS()
+                }
 
+                if category == .privacySupport {
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                     Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
@@ -521,16 +674,49 @@ struct SettingsView_iOS: View {
                         }
                     }
                 }
+                }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(category.title)
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
             .sheet(isPresented: $showDebugLog) {
                 DebugLogView()
             }
-        }
+            .fileImporter(
+                isPresented: $isGranolaImporterPresented,
+                allowedContentTypes: [.commaSeparatedText, .plainText]
+            ) { result in
+                if case .success(let url) = result {
+                    importGranolaCSV(from: url)
+                } else if case .failure(let error) = result {
+                    granolaImportFailed = true
+                    granolaImportMessage = error.localizedDescription
+                }
+            }
         .preferredColorScheme(.dark)
+    }
+
+    private func importGranolaCSV(from url: URL) {
+        isImportingGranola = true
+        granolaImportMessage = nil
+        granolaImportFailed = false
+        Task {
+            do {
+                let parsed = try await GranolaCSVImporter.load(from: url)
+                let result = try GranolaCSVImporter.importMeetings(
+                    parsed,
+                    into: modelContext,
+                    defaultLanguage: appState.defaultLanguage
+                )
+                granolaImportMessage = result.message
+            } catch {
+                granolaImportFailed = true
+                granolaImportMessage = error.localizedDescription
+                DebugLogger.shared.log(.app, "Granola CSV import FAILED: \(error.localizedDescription)")
+            }
+            isImportingGranola = false
+        }
     }
 
     private var personalDictionaryTermCount: Int {
@@ -845,13 +1031,13 @@ struct APIKeyRow: View {
                 if showKey {
                     TextField(placeholder, text: $key)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: 13, design: .default))
                         .autocorrectionDisabled()
                         .textInputAutocapitalization(.never)
                 } else {
                     SecureField(placeholder, text: $key)
                         .textFieldStyle(.roundedBorder)
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: 13, design: .default))
                 }
                 
                 Button {
@@ -907,7 +1093,7 @@ private struct DocsMCPSettingsSection_iOS: View {
                     .font(.caption)
                     .foregroundStyle(testSucceeded ? ColorPalette.Accent.green : ColorPalette.Status.error)
             }
-            Text("HTTPS Streamable HTTP MCP server for product docs. In the Docs insights tab, tap look up when you want answers with citations. Example: https://docs.lightdash.com/mcp")
+            Text("HTTPS Streamable HTTP MCP server for product docs. In the Playbook insight view, choose a topic when you want an answer with citations. Example: https://docs.lightdash.com/mcp")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("Looking up docs sends recent transcript text from the meeting to this docs host to search for relevant pages.")

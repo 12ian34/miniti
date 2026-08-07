@@ -14,14 +14,34 @@ import AppKit
 
 @MainActor
 final class AudioLevelsState: ObservableObject {
-    @Published var combinedLevel: Float = 0
-    @Published var microphoneLevel: Float = 0
-    @Published var systemAudioLevel: Float = 0
+    struct Snapshot: Equatable {
+        let combinedLevel: Float
+        let microphoneLevel: Float
+        let systemAudioLevel: Float
+
+        static let zero = Snapshot(combinedLevel: 0, microphoneLevel: 0, systemAudioLevel: 0)
+    }
+
+    @Published private(set) var snapshot = Snapshot.zero
+
+    var combinedLevel: Float { snapshot.combinedLevel }
+    var microphoneLevel: Float { snapshot.microphoneLevel }
+    var systemAudioLevel: Float { snapshot.systemAudioLevel }
+
+    /// Publish all meters together so a mic/system sample pair invalidates waveform views once.
+    func update(microphoneLevel: Float, systemAudioLevel: Float) {
+        let next = Snapshot(
+            combinedLevel: max(microphoneLevel, systemAudioLevel),
+            microphoneLevel: microphoneLevel,
+            systemAudioLevel: systemAudioLevel
+        )
+        guard next != snapshot else { return }
+        snapshot = next
+    }
 
     func reset() {
-        combinedLevel = 0
-        microphoneLevel = 0
-        systemAudioLevel = 0
+        guard snapshot != .zero else { return }
+        snapshot = .zero
     }
 }
 
@@ -149,8 +169,25 @@ final class AppState: ObservableObject {
         let upserts: [LiveSegmentSaveSnapshot]
     }
 
+    struct EchoComparisonSegment: Equatable {
+        let text: String
+        let startTime: Double
+        let endTime: Double
+    }
+
+    private struct PendingMicSegment {
+        let segment: DeepgramService.SpeakerSegment
+        let deadline: Date
+    }
+
+    private struct BufferedSystemSegment {
+        let segment: DeepgramService.SpeakerSegment
+        let receivedAt: Date
+    }
+
     private struct MeetingSavePayload {
         let meeting: Meeting
+        let periodicFingerprint: Int?
         let finalSegments: [LiveSegmentSaveSnapshot]
         let summary: String
         let actionItems: [String]
@@ -179,6 +216,17 @@ final class AppState: ObservableObject {
     @Published var currentMeeting: Meeting?
     @Published var pendingOpenSavedMeetingID: UUID?
     @Published var recordingDuration: TimeInterval = 0
+    @Published private(set) var recordingErrorMessage: String?
+    @Published private(set) var isFinalizingMeeting = false
+    @Published private(set) var finalizationStatusText = ""
+    @Published private(set) var finalizingInsightMeetingIDs: Set<UUID> = []
+    @Published private(set) var lastInsightsUpdatedAt: [InsightsMode: Date] = [:]
+    private var shouldOpenMeetingAfterFinalization = false
+
+    var isCurrentMeetingGeneratingFinalInsights: Bool {
+        guard let meetingID = currentMeeting?.id else { return false }
+        return finalizingInsightMeetingIDs.contains(meetingID)
+    }
     
     // MARK: - Session Management
     var modelContext: ModelContext?
@@ -187,14 +235,27 @@ final class AppState: ObservableObject {
     let transcriptRuntime = TranscriptRuntimeState()
     
     // MARK: - Live Transcript
-    @Published var liveSegments: [LiveSegment] = []
+    /// Finalized, non-empty transcript segments only. Interim text lives in `transcriptRuntime`.
+    @Published var liveSegments: [LiveSegment] = [] {
+        didSet { updateLiveTranscriptCaches(previous: oldValue, current: liveSegments) }
+    }
     @Published var detectedSpeakers: Set<Int> = []  // Track unique speakers
+    private var liveTranscriptRevision: UInt64 = 0
+    private var cachedFullTranscript = ""
+    private var cachedSpeakerIDTranscript = ""
+    private var cachedSaveSegments: [LiveSegmentSaveSnapshot] = []
+    private var lastPeriodicSaveRequestedFingerprint: Int?
+    private var trainingMetricsTask: Task<Void, Never>?
     
     // MARK: - UI State
     @Published var showSettings = false
     @Published var selectedTab: Tab = .transcript
     @Published var isGeneratingInsights = false
-    @Published var isLiveInsightsCollapsed = false
+    @Published var isLiveInsightsCollapsed = UserDefaults.standard.bool(forKey: "mainWindow.insightsCollapsed") {
+        didSet {
+            UserDefaults.standard.set(isLiveInsightsCollapsed, forKey: "mainWindow.insightsCollapsed")
+        }
+    }
     @Published var isMonitoring = false  // Audio monitoring active (home screen)
     @Published var audioRecoveryState: AudioRecoveryState = .healthy
 
@@ -214,18 +275,15 @@ final class AppState: ObservableObject {
     }
 
     var audioLevel: Float {
-        get { audioLevels.combinedLevel }
-        set { audioLevels.combinedLevel = newValue }
+        audioLevels.combinedLevel
     }
 
     var microphoneLevel: Float {
-        get { audioLevels.microphoneLevel }
-        set { audioLevels.microphoneLevel = newValue }
+        audioLevels.microphoneLevel
     }
 
     var systemAudioLevel: Float {
-        get { audioLevels.systemAudioLevel }
-        set { audioLevels.systemAudioLevel = newValue }
+        audioLevels.systemAudioLevel
     }
     
     // MARK: - Insights Mode
@@ -316,9 +374,9 @@ final class AppState: ObservableObject {
     private var lastStandardSummaryContext: String = ""
     private var lastMeddpiccSummaryContext: String = ""
     private let managedIncrementalRecentWindowChars = 10_000
-    // Keep managed questions on full-transcript requests until the backend rollout
-    // accepts `incremental_payload` for `mode=questions`.
-    private let managedQuestionsIncrementalEnabled = false
+    // The managed backend supports the same delta + rolling-state transport for
+    // Questions as standard and MEDDPICC, including degraded-response preservation.
+    private let managedQuestionsIncrementalEnabled = true
     private var managedStandardAckedSegmentCount = 0
     private var managedMeddpiccAckedSegmentCount = 0
     private var managedQuestionsAckedSegmentCount = 0
@@ -456,6 +514,39 @@ final class AppState: ObservableObject {
     var hasReceivedMeddpiccInsights: Bool { meddpiccSuccessCount > 0 }
     var hasReceivedQuestionsInsights: Bool { questionsSuccessCount > 0 }
     var hasReceivedDocsInsights: Bool { docsSuccessCount > 0 }
+
+    /// Core views are always available. Specialist views become active only after a person
+    /// explicitly chooses them; configuring a Docs MCP also opts Playbook in automatically.
+    var enabledInsightModes: [InsightsMode] {
+        InsightsMode.coreModes + InsightsMode.specialistModes.filter(isInsightModeEnabled)
+    }
+
+    func isInsightModeEnabled(_ mode: InsightsMode) -> Bool {
+        switch mode {
+        case .standard, .training, .questions:
+            return true
+        case .meddpicc:
+            return salesInsightsEnabled
+        case .docs:
+            return playbookInsightsEnabled
+        }
+    }
+
+    func setInsightModeEnabled(_ mode: InsightsMode, enabled: Bool) {
+        switch mode {
+        case .standard, .training, .questions:
+            return
+        case .meddpicc:
+            salesInsightsEnabled = enabled
+        case .docs:
+            playbookInsightsEnabled = enabled
+        }
+
+        if !enabled, insightsMode == mode {
+            insightsMode = .standard
+        }
+    }
+
     /// Docs topics can be looked up from live segments or the persisted transcript,
     /// so a stopped meeting with no live segments can still be looked up.
     var canLookupDocs: Bool {
@@ -543,6 +634,7 @@ final class AppState: ObservableObject {
     
     /// Whether the app can start recording right now.
     var canStartRecording: Bool {
+        guard !isFinalizingMeeting else { return false }
         switch appMode {
         case .byok:
             return !deepgramApiKey.isEmpty
@@ -582,7 +674,17 @@ final class AppState: ObservableObject {
         }
     }
     @AppStorage("webhookURL") var webhookURL: String = ""
-    @AppStorage("docsMCPURL") var docsMCPURL: String = ""
+    @AppStorage("salesInsightsEnabled") var salesInsightsEnabled: Bool = false
+    @AppStorage("playbookInsightsEnabled") var playbookInsightsEnabled: Bool = false
+    @AppStorage("docsMCPURL") var docsMCPURL: String = "" {
+        didSet {
+            if validatedDocsMCPURL != nil {
+                playbookInsightsEnabled = true
+            } else {
+                setInsightModeEnabled(.docs, enabled: false)
+            }
+        }
+    }
     @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
     @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
@@ -669,9 +771,13 @@ final class AppState: ObservableObject {
     private var deepgramReconnectTask: Task<Void, Never>?
     private var deepgramReconnectGeneration = 0
     private var lastDeepgramReconnectScheduledAt: CFAbsoluteTime = 0
+    private var pendingMicSegments: [PendingMicSegment] = []
+    private var recentSystemSegments: [BufferedSystemSegment] = []
+    private var pendingMicFlushTask: Task<Void, Never>?
+    private let micEchoReconciliationDelay: TimeInterval = 4
+    private let echoSystemHistoryWindow: TimeInterval = 8
     private var pendingAudioRecoveryTransitionTask: Task<Void, Never>?
     private var desiredAudioRecoveryState: AudioRecoveryState = .healthy
-    private var isGeneratingFinalInsights = false
     private var systemAudioInactiveSince: CFAbsoluteTime = 0
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
@@ -761,11 +867,134 @@ final class AppState: ObservableObject {
         segments.append(newSegment)
         return .appended
     }
+
+    /// Preserve transcript text that was visible as an interim when a recording stopped but the
+    /// streaming socket could not deliver a final result. The normal final-segment merge keeps
+    /// this fallback from duplicating a final that arrived during graceful shutdown.
+    @discardableResult
+    nonisolated static func mergeStoppedInterimTranscript(
+        _ text: String,
+        speaker: Int,
+        timestamp: TimeInterval,
+        into segments: inout [LiveSegment]
+    ) -> FinalSegmentMergeResult? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        return mergeFinalSegment(
+            LiveSegment(
+                id: UUID(),
+                text: trimmed,
+                speaker: speaker,
+                timestamp: timestamp,
+                isFinal: true
+            ),
+            into: &segments
+        )
+    }
+
+    /// Returns true when a mic transcript is best explained by acoustic playback
+    /// leaking from the system channel into the microphone. Text/time agreement is
+    /// the primary signal; source energy only relaxes the threshold for short or
+    /// imperfect matches so genuine overlapping local speech is preserved.
+    nonisolated static func isLikelyMicEcho(
+        mic: EchoComparisonSegment,
+        systemSegments: [EchoComparisonSegment],
+        systemDominant: Bool,
+        timePadding: TimeInterval = 0.8
+    ) -> Bool {
+        let overlapping = systemSegments.filter {
+            $0.endTime >= mic.startTime - timePadding &&
+            $0.startTime <= mic.endTime + timePadding
+        }.sorted { $0.startTime < $1.startTime }
+        guard !overlapping.isEmpty else { return false }
+
+        let micTokens = echoTokens(mic.text)
+        guard !micTokens.isEmpty else { return false }
+        let systemTokens = echoTokens(overlapping.map(\.text).joined(separator: " "))
+        guard !systemTokens.isEmpty else { return false }
+
+        let matched = longestCommonSubsequenceLength(micTokens, systemTokens)
+        let longestContiguousMatch = longestCommonContiguousTokenRun(micTokens, systemTokens)
+        let micCoverage = Double(matched) / Double(micTokens.count)
+
+        if micTokens.count <= 2 {
+            // Short interjections are easy to match by accident. Only suppress an
+            // exact ordered match while the clean system source is dominant.
+            return systemDominant && matched == micTokens.count
+        }
+
+        // Near-verbatim duplicates are safe to suppress even when speaker volume
+        // makes the mic energy look strong. For fuzzier ASR variants, require the
+        // clean system source to be dominant as corroborating evidence. A three-word
+        // contiguous run catches leakage where one channel invents a different tail
+        // (for example "nobody alive today, though" vs "nobody alive today will...")
+        // without matching scattered conversational stop words.
+        if matched >= 3 && micCoverage >= 0.84 { return true }
+        return systemDominant && matched >= 3 && (
+            micCoverage >= 0.66 ||
+            (longestContiguousMatch >= 3 && micCoverage >= 0.60)
+        )
+    }
+
+    nonisolated private static func echoTokens(_ text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+
+    nonisolated private static func longestCommonSubsequenceLength(
+        _ lhs: [String],
+        _ rhs: [String]
+    ) -> Int {
+        guard !lhs.isEmpty, !rhs.isEmpty else { return 0 }
+        var previous = [Int](repeating: 0, count: rhs.count + 1)
+        var current = previous
+
+        for left in lhs {
+            current[0] = 0
+            for index in rhs.indices {
+                if left == rhs[index] {
+                    current[index + 1] = previous[index] + 1
+                } else {
+                    current[index + 1] = max(previous[index + 1], current[index])
+                }
+            }
+            swap(&previous, &current)
+        }
+        return previous[rhs.count]
+    }
+
+    nonisolated private static func longestCommonContiguousTokenRun(
+        _ lhs: [String],
+        _ rhs: [String]
+    ) -> Int {
+        guard !lhs.isEmpty, !rhs.isEmpty else { return 0 }
+        var previous = [Int](repeating: 0, count: rhs.count + 1)
+        var longest = 0
+
+        for left in lhs {
+            var current = [Int](repeating: 0, count: rhs.count + 1)
+            for index in rhs.indices where left == rhs[index] {
+                current[index + 1] = previous[index] + 1
+                longest = max(longest, current[index + 1])
+            }
+            previous = current
+        }
+        return longest
+    }
     
     init() {
         // One-time migration from legacy boolean acceptance storage.
         if acceptedTermsVersion == 0, legacyHasAcceptedTerms {
             acceptedTermsVersion = 1
+        }
+
+        // Existing Docs users have already expressed intent by configuring an MCP URL. Preserve
+        // that intent on the first launch with specialist-view preferences.
+        if UserDefaults.standard.object(forKey: "playbookInsightsEnabled") == nil,
+           validatedDocsMCPURL != nil {
+            playbookInsightsEnabled = true
         }
 
         // Seed default keys from Secrets.swift only in BYOK mode.
@@ -869,28 +1098,19 @@ final class AppState: ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Subscribe to audio levels for visualization (separate + combined)
+        // Coalesce the independently sampled mic/system meters into one UI update.
+        // The services already cap each source at ~20 Hz; this keeps the combined
+        // stream at that same display cadence instead of publishing 3–4 times per pair.
         if let audioService = audioCaptureService {
             audioService.$microphoneLevel
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] level in
-                    self?.microphoneLevel = level
-                }
-                .store(in: &cancellables)
-            
-            audioService.$systemAudioLevel
-                .receive(on: DispatchQueue.main)
-                .sink { [weak self] level in
-                    self?.systemAudioLevel = level
-                }
-                .store(in: &cancellables)
-            
-            audioService.$microphoneLevel
                 .combineLatest(audioService.$systemAudioLevel)
-                .receive(on: DispatchQueue.main)
+                .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
                 .sink { [weak self] micLevel, sysLevel in
                     guard let self else { return }
-                    self.audioLevel = max(micLevel, sysLevel)
+                    self.audioLevels.update(
+                        microphoneLevel: micLevel,
+                        systemAudioLevel: sysLevel
+                    )
                     if micLevel > Self.speechMicLevelThreshold
                         || (self.captureSystemAudio && sysLevel > Self.speechSystemLevelThreshold) {
                         self.lastAudioActivityAt = CFAbsoluteTimeGetCurrent()
@@ -934,6 +1154,24 @@ final class AppState: ObservableObject {
             interimText = ""
             interimSpeaker = nil
         } else {
+            #if os(macOS)
+            if captureMicrophone,
+               captureSystemAudio,
+               update.channelIndex == DeepgramService.micChannelIndex,
+               let firstWord = update.words.first,
+               let lastWord = update.words.last {
+                switch audioCaptureService?.dominantSource(from: firstWord.start, to: lastWord.end) {
+                case .system:
+                    // Do not flash playback echo as a green "You" interim. A genuine
+                    // overlapping mic turn is retained once its final text has been
+                    // reconciled against the system-channel transcript.
+                    return
+                case .mic, .unknown, .none:
+                    break
+                }
+            }
+            #endif
+
             // Interim result - show live typing
             interimText = update.text
             let candidateSpeaker = update.speaker
@@ -1030,6 +1268,7 @@ final class AppState: ObservableObject {
                 deepgramService.disconnect()
                 #if os(macOS)
                 if self.captureMicrophone && self.captureSystemAudio {
+                    self.resetEchoReconciliation(flushPending: true)
                     self.audioCaptureService?.resetSourceTracking()
                     self.resetSpeakerIdentityForDeepgramReconnect()
                     DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
@@ -1118,9 +1357,9 @@ final class AppState: ObservableObject {
 
     /// How recently audio must have been loud enough to count as "still an active meeting".
     /// Two auto-stop ticks, so a single quiet sample can't flip the decision.
-    static let autoStopAudioActivityWindow: TimeInterval = 60
+    nonisolated static let autoStopAudioActivityWindow: TimeInterval = 60
     /// Multiple of the silence window we tolerate before giving up on a stalled pipeline.
-    static let autoStopStalledPipelineMultiplier: Double = 3
+    nonisolated static let autoStopStalledPipelineMultiplier: Double = 3
 
     /// Pure auto-stop decision. `audioGap` is seconds since audio was last loud enough to be
     /// speech (`.infinity` if never), `transcriptGap` is seconds since the last transcript.
@@ -1163,17 +1402,17 @@ final class AppState: ObservableObject {
     }
 
     /// Outer bound on how stale audio activity can be before a transcript gap is just a quiet room.
-    static let transcriptHealthAudioActivityWindow: TimeInterval = 60
+    nonisolated static let transcriptHealthAudioActivityWindow: TimeInterval = 60
     /// Slack for the delay between someone speaking and Deepgram finalizing those words, so normal
     /// end-of-turn latency never reads as a stall.
-    static let transcriptFinalizeLatencyMargin: TimeInterval = 5
+    nonisolated static let transcriptFinalizeLatencyMargin: TimeInterval = 5
     /// Transcript gap that counts as starvation while audio is still arriving.
-    static let transcriptStarvationGap: TimeInterval = 20
-    static let transcriptStarvationCooldown: TimeInterval = 30
+    nonisolated static let transcriptStarvationGap: TimeInterval = 20
+    nonisolated static let transcriptStarvationCooldown: TimeInterval = 30
     /// Longer cooldown for retrying after the backoff ladder gave up, so a genuinely dead network
     /// isn't hammered every health tick.
-    static let transcriptExhaustedRetryCooldown: TimeInterval = 60
-    static let transcriptRecoveryMaxCooldown: TimeInterval = 600
+    nonisolated static let transcriptExhaustedRetryCooldown: TimeInterval = 60
+    nonisolated static let transcriptRecoveryMaxCooldown: TimeInterval = 600
 
     /// Cooldown after `consecutiveRecoveries` reconnects that produced no transcript. Reconnecting
     /// isn't free (it drops the socket and resets macOS multichannel speaker identity), so when it
@@ -1410,15 +1649,201 @@ final class AppState: ObservableObject {
     }
     
     private func handleSpeakerSegments(_ segments: [DeepgramService.SpeakerSegment]) {
-        // Only process final segments
         let finalSegments = segments.filter { $0.isFinal }
+        guard !finalSegments.isEmpty else { return }
+
+        #if os(macOS)
+        if captureMicrophone && captureSystemAudio {
+            handleDualSourceFinalSegments(finalSegments)
+            return
+        }
+        #endif
+
+        commitFinalSpeakerSegments(finalSegments)
+    }
+
+    #if os(macOS)
+    private func handleDualSourceFinalSegments(_ segments: [DeepgramService.SpeakerSegment]) {
+        let systemSegments = segments.filter {
+            $0.channelIndex == DeepgramService.systemChannelIndex
+        }
+        let micSegments = segments.filter {
+            $0.channelIndex == DeepgramService.micChannelIndex
+        }
+        let unclassified = segments.filter {
+            $0.channelIndex != DeepgramService.micChannelIndex &&
+            $0.channelIndex != DeepgramService.systemChannelIndex
+        }
+
+        if !systemSegments.isEmpty {
+            let now = Date()
+            recentSystemSegments.append(contentsOf: systemSegments.map {
+                BufferedSystemSegment(segment: $0, receivedAt: now)
+            })
+            pruneSystemEchoHistory(now: now)
+            suppressPendingMicEchoes()
+            releasePendingMicSegmentsCoveredBySystem()
+            commitFinalSpeakerSegments(systemSegments)
+        }
+
+        var immediateMic: [DeepgramService.SpeakerSegment] = []
+        for segment in micSegments {
+            if isLikelyEcho(segment) {
+                DebugLogger.shared.log(
+                    .deepgram,
+                    "Suppressed mic playback echo: words=\(Self.echoTokens(segment.text).count), start=\(String(format: "%.2f", segment.startTime))"
+                )
+                continue
+            }
+
+            switch audioCaptureService?.dominantSource(from: segment.startTime, to: segment.endTime) {
+            case .mic:
+                // Clear local speech stays fully live with no reconciliation delay.
+                immediateMic.append(segment)
+            case .system, .unknown, .none:
+                pendingMicSegments.append(
+                    PendingMicSegment(
+                        segment: segment,
+                        deadline: Date().addingTimeInterval(micEchoReconciliationDelay)
+                    )
+                )
+            }
+        }
+
+        if !immediateMic.isEmpty {
+            commitFinalSpeakerSegments(immediateMic)
+        }
+        if !unclassified.isEmpty {
+            // Defensive fallback for malformed multichannel results. Never drop
+            // transcript content merely because Deepgram omitted channel_index.
+            commitFinalSpeakerSegments(unclassified)
+        }
+        schedulePendingMicFlush()
+    }
+
+    private func isLikelyEcho(_ micSegment: DeepgramService.SpeakerSegment) -> Bool {
+        let sourceIsSystemDominant: Bool
+        switch audioCaptureService?.dominantSource(from: micSegment.startTime, to: micSegment.endTime) {
+        case .system:
+            sourceIsSystemDominant = true
+        case .mic, .unknown, .none:
+            sourceIsSystemDominant = false
+        }
+
+        return Self.isLikelyMicEcho(
+            mic: EchoComparisonSegment(
+                text: micSegment.text,
+                startTime: micSegment.startTime,
+                endTime: micSegment.endTime
+            ),
+            systemSegments: recentSystemSegments.map {
+                EchoComparisonSegment(
+                    text: $0.segment.text,
+                    startTime: $0.segment.startTime,
+                    endTime: $0.segment.endTime
+                )
+            },
+            systemDominant: sourceIsSystemDominant
+        )
+    }
+
+    private func suppressPendingMicEchoes() {
+        guard !pendingMicSegments.isEmpty else { return }
+        var survivors: [PendingMicSegment] = []
+        survivors.reserveCapacity(pendingMicSegments.count)
+
+        for pending in pendingMicSegments {
+            if isLikelyEcho(pending.segment) {
+                DebugLogger.shared.log(
+                    .deepgram,
+                    "Suppressed delayed mic playback echo: words=\(Self.echoTokens(pending.segment.text).count), start=\(String(format: "%.2f", pending.segment.startTime))"
+                )
+            } else {
+                survivors.append(pending)
+            }
+        }
+        pendingMicSegments = survivors
+    }
+
+    private func pruneSystemEchoHistory(now: Date = Date()) {
+        recentSystemSegments.removeAll {
+            now.timeIntervalSince($0.receivedAt) > echoSystemHistoryWindow
+        }
+    }
+
+    /// Once the clean system channel has finalized beyond an ambiguous mic segment,
+    /// a surviving non-match is genuine local speech and does not need to wait for
+    /// the fallback deadline. Word timestamps share the same multichannel clock.
+    private func releasePendingMicSegmentsCoveredBySystem() {
+        guard let systemWatermark = recentSystemSegments.map(\.segment.endTime).max() else { return }
+        let covered = pendingMicSegments.filter {
+            $0.segment.endTime + 0.8 <= systemWatermark
+        }
+        guard !covered.isEmpty else { return }
+
+        let coveredIDs = Set(covered.map(\.segment.id))
+        pendingMicSegments.removeAll { coveredIDs.contains($0.segment.id) }
+        commitFinalSpeakerSegments(covered.map(\.segment))
+    }
+
+    private func schedulePendingMicFlush() {
+        pendingMicFlushTask?.cancel()
+        pendingMicFlushTask = nil
+        guard let deadline = pendingMicSegments.map(\.deadline).min() else { return }
+
+        let delay = max(0, deadline.timeIntervalSinceNow)
+        let nanoseconds = UInt64(delay * 1_000_000_000)
+        pendingMicFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: nanoseconds)
+            guard !Task.isCancelled, let self else { return }
+            self.flushExpiredPendingMicSegments()
+        }
+    }
+
+    private func flushExpiredPendingMicSegments(now: Date = Date()) {
+        suppressPendingMicEchoes()
+        let due = pendingMicSegments.filter { $0.deadline <= now }.map(\.segment)
+        pendingMicSegments.removeAll { $0.deadline <= now }
+        if !due.isEmpty {
+            commitFinalSpeakerSegments(due)
+        }
+        pruneSystemEchoHistory(now: now)
+        schedulePendingMicFlush()
+    }
+
+    private func flushAllPendingMicSegments() {
+        pendingMicFlushTask?.cancel()
+        pendingMicFlushTask = nil
+        suppressPendingMicEchoes()
+        let remaining = pendingMicSegments.map(\.segment)
+        pendingMicSegments.removeAll()
+        if !remaining.isEmpty {
+            commitFinalSpeakerSegments(remaining)
+        }
+    }
+
+    private func resetEchoReconciliation(flushPending: Bool = false) {
+        if flushPending {
+            flushAllPendingMicSegments()
+        } else {
+            pendingMicFlushTask?.cancel()
+            pendingMicFlushTask = nil
+            pendingMicSegments.removeAll()
+        }
+        recentSystemSegments.removeAll()
+    }
+    #endif
+
+    private func commitFinalSpeakerSegments(_ finalSegments: [DeepgramService.SpeakerSegment]) {
         guard !finalSegments.isEmpty else { return }
         
         // Build new array state atomically to avoid multiple @Published mutations.
         // Previously, removeAll + append fired per iteration, causing SwiftUI's
         // AttributeGraph to see intermediate states and corrupt weak references
         // during ForEach diffing (EXC_BAD_ACCESS in AGGraphGetWeakValue).
-        var updated = liveSegments.filter { $0.isFinal } // Strip interims once
+        // `liveSegments` contains finalized, non-empty segments by contract, so copying it
+        // avoids an O(n) filter allocation on every final transcript callback.
+        var updated = liveSegments
         var receivedTranscriptContent = false
         
         for segment in finalSegments {
@@ -1474,14 +1899,14 @@ final class AppState: ObservableObject {
         
         // Update training metrics if in training mode
         if insightsMode == .training {
-            recomputeTrainingMetrics()
+            scheduleTrainingMetricsRecompute()
         }
         
         // Warmup: fire first request when we have 4 segments (standard) or 6 (MEDDPICC).
         // Steady-state: cadence task handles 30s intervals.
-        let finalCount = Self.finalizedLiveSegmentCount(in: liveSegments)
+        let finalCount = updated.count
         let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
-        let meddpiccWarmup = meddpiccSuccessCount < 2 && finalCount >= 6
+        let meddpiccWarmup = salesInsightsEnabled && meddpiccSuccessCount < 2 && finalCount >= 6
         let questionsWarmup = questionsSuccessCount < 2 && finalCount >= 6
         let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup) && finalCount > lastInsightSegmentCount
         if shouldTrigger {
@@ -1503,13 +1928,13 @@ final class AppState: ObservableObject {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled, isRecording else { break }
                 let liveSegmentsSnapshot = liveSegments
-                let finalCount = Self.finalizedLiveSegmentCount(in: liveSegmentsSnapshot)
+                let finalCount = liveSegmentsSnapshot.count
                 var finalizedSegmentsCache: [LiveSegment]?
                 func finalizedSegments() -> [LiveSegment] {
                     if let finalizedSegmentsCache {
                         return finalizedSegmentsCache
                     }
-                    let snapshot = Self.finalizedLiveSegments(from: liveSegmentsSnapshot)
+                    let snapshot = liveSegmentsSnapshot
                     finalizedSegmentsCache = snapshot
                     return snapshot
                 }
@@ -1520,7 +1945,7 @@ final class AppState: ObservableObject {
                    finalCount > standardLastFiredSegmentCount {
                     await updateLiveInsights(standardOnly: true)
                 }
-                if meddpiccSuccessCount >= 2 {
+                if salesInsightsEnabled, meddpiccSuccessCount >= 2 {
                     let anchor = meddpiccCadenceAnchor ?? standardCadenceAnchor?.addingTimeInterval(meddpiccCadenceStagger) ?? recordingStartDate ?? now
                     let interval: TimeInterval = meddpiccCadenceAnchor == nil ? meddpiccCadenceStagger : insightsCadenceInterval
                     if now.timeIntervalSince(anchor) >= interval,
@@ -1558,7 +1983,7 @@ final class AppState: ObservableObject {
                 // topics and (for Pro/BYOK) auto-looks-them-up.
                 if insightsMode == .docs, validatedDocsMCPURL != nil, !isExtractingDocsTopics {
                     let meetsTime = lastDocsTopicsRequestAt.map {
-                        now.timeIntervalSince($0) >= docsTopicsMinInterval
+                        now.timeIntervalSince($0) >= self.docsTopicsMinInterval
                     } ?? true
                     if meetsTime, finalCount > docsTopicsLastFiredSegmentCount {
                         lastDocsTopicsRequestAt = now
@@ -1601,7 +2026,7 @@ final class AppState: ObservableObject {
             return
         }
         
-        let finalSegments = Self.finalizedLiveSegments(from: liveSegments)
+        let finalSegments = liveSegments
         
         let transcript = transcriptText(from: finalSegments)
         
@@ -1657,6 +2082,7 @@ final class AppState: ObservableObject {
         // MEDDPICC — independent background task, never blocks standard (skip when standardOnly)
         guard !standardOnly else { return }
         let shouldRunMeddpicc: Bool = {
+            guard salesInsightsEnabled else { return false }
             guard !isGeneratingMeddpiccInsights else { return false }
             let meetsSegmentThreshold = segmentCount >= lastMEDDPICCSegmentCount + (
                 lastMEDDPICCSegmentCount == 0 ? firstMEDDPICCInsightThreshold : meddpiccInsightUpdateThreshold
@@ -1714,6 +2140,7 @@ final class AppState: ObservableObject {
         existingTitle: String?,
         meetingID: UUID
     ) async {
+        guard salesInsightsEnabled else { return }
         guard !isGeneratingMeddpiccInsights else { return }
         guard currentMeeting?.id == meetingID else { return }
         isGeneratingMeddpiccInsights = true
@@ -1826,10 +2253,7 @@ final class AppState: ObservableObject {
     /// persisted transcript for a stopped meeting).
     private func currentDocsTranscript() -> String? {
         guard let meeting = currentMeeting else { return nil }
-        let liveFinalSegments = liveSegments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.timestamp < $1.timestamp }
-        let liveTranscript = transcriptText(from: liveFinalSegments)
+        let liveTranscript = cachedFullTranscript
         let persisted = meeting.fullTranscript
         let transcript = liveTranscript.count > persisted.count ? liveTranscript : persisted
         return transcript.isEmpty ? nil : transcript
@@ -2200,7 +2624,7 @@ final class AppState: ObservableObject {
         guard autoInferSpeakerNames else { return }
         guard !isGeneratingSpeakerNames else { return }
         guard currentMeeting?.id == meetingID else { return }
-        let transcript = Self.transcriptTextWithSpeakerIDs(from: finalSegments)
+        let transcript = transcriptTextWithSpeakerIDs(from: finalSegments)
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
 
@@ -2372,9 +2796,7 @@ final class AppState: ObservableObject {
 
     var canRequestZonedOutCatchUp: Bool {
         guard isRecording, currentMeeting != nil else { return false }
-        let finalCount = liveSegments.filter {
-            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.count
+        let finalCount = liveSegments.count
         return finalCount >= catchUpTriggerMinSegments && !isGeneratingCatchUp
     }
 
@@ -2829,7 +3251,73 @@ final class AppState: ObservableObject {
     }
 
     private func transcriptText(from segments: [LiveSegment]) -> String {
-        Self.transcriptText(from: segments)
+        if segmentsRepresentCurrentLiveTranscript(segments) {
+            return cachedFullTranscript
+        }
+        return Self.transcriptText(from: segments)
+    }
+
+    private func transcriptTextWithSpeakerIDs(from segments: [LiveSegment]) -> String {
+        if segmentsRepresentCurrentLiveTranscript(segments) {
+            return cachedSpeakerIDTranscript
+        }
+        return Self.transcriptTextWithSpeakerIDs(from: segments)
+    }
+
+    private func segmentsRepresentCurrentLiveTranscript(_ segments: [LiveSegment]) -> Bool {
+        guard segments.count == liveSegments.count else { return false }
+        guard let first = segments.first, let last = segments.last,
+              first.id == liveSegments.first?.id, last.id == liveSegments.last?.id else {
+            return segments.isEmpty && liveSegments.isEmpty
+        }
+        return true
+    }
+
+    private func updateLiveTranscriptCaches(previous: [LiveSegment], current: [LiveSegment]) {
+        // Array equality exits in O(1) when counts differ (the common append path),
+        // but still catches a non-tail replacement accurately when counts match.
+        if previous == current { return }
+
+        let unchangedSuffixCount = min(3, min(previous.count, current.count))
+        let prefixStillMatches = previous.first?.id == current.first?.id
+            && (0..<unchangedSuffixCount).allSatisfy { offset in
+                previous[previous.count - 1 - offset] == current[previous.count - 1 - offset]
+            }
+
+        liveTranscriptRevision &+= 1
+        let canAppend = current.count > previous.count
+            && (previous.isEmpty || prefixStillMatches)
+
+        if canAppend {
+            for segment in current.dropFirst(previous.count) where Self.isFinalNonEmptyLiveSegment(segment) {
+                appendCachedTranscriptSegment(segment)
+            }
+            return
+        }
+
+        let finalized = Self.finalizedLiveSegments(from: current)
+        cachedFullTranscript = Self.transcriptText(from: finalized)
+        cachedSpeakerIDTranscript = Self.transcriptTextWithSpeakerIDs(from: finalized)
+        cachedSaveSegments = finalized.map(Self.saveSnapshot(from:))
+    }
+
+    private func appendCachedTranscriptSegment(_ segment: LiveSegment) {
+        let displayLine = "[\(segment.speakerLabel)] \(segment.text)"
+        let speakerIDLine = "[SpeakerID:\(segment.speaker)] \(segment.text)"
+        if !cachedFullTranscript.isEmpty { cachedFullTranscript.append("\n") }
+        if !cachedSpeakerIDTranscript.isEmpty { cachedSpeakerIDTranscript.append("\n") }
+        cachedFullTranscript.append(displayLine)
+        cachedSpeakerIDTranscript.append(speakerIDLine)
+        cachedSaveSegments.append(Self.saveSnapshot(from: segment))
+    }
+
+    nonisolated private static func saveSnapshot(from segment: LiveSegment) -> LiveSegmentSaveSnapshot {
+        LiveSegmentSaveSnapshot(
+            id: segment.id,
+            text: segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
+            speaker: segment.speaker,
+            timestamp: segment.timestamp
+        )
     }
 
     /// Build a transcript with raw speaker IDs embedded (e.g. `[SpeakerID:1000] ...`).
@@ -3061,11 +3549,25 @@ final class AppState: ObservableObject {
                 #endif
             }
         }
+
+        markInsightsUpdated(mode)
+    }
+
+    private func markInsightsUpdated(_ mode: InsightsMode, meeting: Meeting? = nil) {
+        let now = Date()
+        lastInsightsUpdatedAt[mode] = now
+        let target = meeting ?? currentMeeting
+        target?.insightsUpdatedAt = now
     }
     
     func startNewMeeting() {
         DebugLogger.shared.log(.app, "startNewMeeting (mode=\(appMode.rawValue))")
         updateLogRedaction()
+
+        guard !isFinalizingMeeting else { return }
+        recordingErrorMessage = nil
+        finalizationStatusText = ""
+        shouldOpenMeetingAfterFinalization = false
 
         guard hasAcceptedTerms else {
             DebugLogger.shared.log(.app, "startNewMeeting blocked: terms not accepted")
@@ -3091,12 +3593,18 @@ final class AppState: ObservableObject {
         
         // Save previous meeting if exists and has content
         saveCurrentMeetingIfNeeded()
+        lastPeriodicSaveRequestedFingerprint = nil
+        trainingMetricsTask?.cancel()
+        trainingMetricsTask = nil
         
         let meeting = Meeting(title: "untitled")
         meeting.language = meetingLanguage
         currentMeeting = meeting
         currentTitleSuffix = ""
         lastTitleUpdateCount = 0
+        #if os(macOS)
+        resetEchoReconciliation()
+        #endif
         liveSegments = []
         interimText = ""
         currentSpeaker = 0
@@ -3142,6 +3650,7 @@ final class AppState: ObservableObject {
         lastSpeakerNamesSegmentCount = 0
         lastSpeakerNamesRequestAt = nil
         resetManagedIncrementalTracking()
+        lastInsightsUpdatedAt = [:]
         
         if appMode == .managed {
             Task { await startManagedRecording() }
@@ -3165,6 +3674,7 @@ final class AppState: ObservableObject {
     
     /// Go back to home screen (clears current session after saving)
     func goHome() {
+        guard !isFinalizingMeeting else { return }
         wasAutoStopped = false
         autoStopReason = nil
         calendarEventEndedWhileRecording = false
@@ -3266,9 +3776,54 @@ final class AppState: ObservableObject {
     func saveAndOpenCurrentMeeting() {
         pendingOpenSavedMeetingID = currentMeeting?.id
         if isRecording {
+            shouldOpenMeetingAfterFinalization = true
             stopRecording()
+            return
+        }
+        if isFinalizingMeeting {
+            shouldOpenMeetingAfterFinalization = true
+            return
         }
         goHome()
+    }
+
+    /// User-triggered repair for a degraded recording. Restarts capture in place and
+    /// reconnects transcription without ending or creating a meeting.
+    func retryRecordingHealth() {
+        guard isRecording, let audioCaptureService else { return }
+        recordingErrorMessage = nil
+        applyAudioRecoveryState(.recovering)
+
+        Task { @MainActor in
+            audioCaptureService.stopCapture()
+            do {
+                audioCaptureService.onAudioBuffer = { [weak deepgramService] data in
+                    deepgramService?.sendAudio(data)
+                }
+                try await audioCaptureService.startCapture(
+                    microphone: captureMicrophone,
+                    systemAudio: captureSystemAudio
+                )
+
+                deepgramReconnectTask?.cancel()
+                deepgramReconnectTask = nil
+                lastDeepgramReconnectScheduledAt = 0
+                if deepgramService?.connectionState != .connected {
+                    deepgramService?.disconnect()
+                    scheduleDeepgramReconnect(reason: "manual retry")
+                } else {
+                    updateAudioRecoveryState()
+                }
+            } catch {
+                recordingErrorMessage = "Audio could not restart. Check microphone permissions and your selected audio devices, then try again."
+                applyAudioRecoveryState(.degraded)
+                DebugLogger.shared.log(.app, "Manual recording repair FAILED: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func dismissRecordingError() {
+        recordingErrorMessage = nil
     }
     
     /// Discard current meeting without saving — deletes from SwiftData and clears session
@@ -3301,6 +3856,7 @@ final class AppState: ObservableObject {
     /// `modelContext.delete(_:)`.
     func noteMeetingDeleted(_ meeting: Meeting) {
         deletedMeetingIDs.insert(meeting.id)
+        finalizingInsightMeetingIDs.remove(meeting.id)
         if currentMeeting?.id == meeting.id {
             activeMeetingSaveTask?.cancel()
             activeMeetingSaveTask = nil
@@ -3314,7 +3870,7 @@ final class AppState: ObservableObject {
         deletedMeetingIDs.contains(id)
     }
     
-    /// Generate standard + MEDDPICC insights for a saved meeting (used from history detail)
+    /// Generate only the currently selected insight view for a saved meeting.
     func generateInsightsForMeeting(_ meeting: Meeting) async {
         if insightsMode == .training {
             return
@@ -3338,103 +3894,109 @@ final class AppState: ObservableObject {
         let meetingID = meeting.id
         let transcript = meeting.fullTranscript
         let language = meeting.language
-        var summaryForContext = meeting.summaryText
+        let requestedMode = insightsMode
+        guard isInsightModeEnabled(requestedMode) else { return }
+        let summaryForContext = meeting.summaryText
         guard !transcript.isEmpty else { return }
         
         isGeneratingInsights = true
         defer { isGeneratingInsights = false }
         let model = OpenAIModel.gpt5Mini
         
-        // Generate standard insights
-        do {
-            if appMode == .managed, let minitiAPIService {
-                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await minitiAPIService.generateInsights(
-                    deviceId: deviceId, transcript: transcript,
-                    existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.standard.rawValue, model: model.rawValue,
-                    language: language
-                )
-                guard !isMeetingDeleted(meetingID) else { return }
-                let insights = response.toLiveInsights()
-                meeting.summaryText = insights.summary
-                meeting.actionItems = insights.actionItems
-                meeting.topics = insights.topics
-                meeting.discussionFlow = insights.discussionFlow
-                summaryForContext = insights.summary
-            } else {
-                let insights = try await insightsService!.generateInsights(
-                    transcript: transcript,
-                    model: model, apiKey: openaiApiKey, language: language
-                )
-                guard !isMeetingDeleted(meetingID) else { return }
-                meeting.summaryText = insights.summary
-                meeting.actionItems = insights.actionItems
-                meeting.keyDecisions = insights.decisions
-                meeting.topics = insights.topics
-                summaryForContext = insights.summary
+        if requestedMode == .standard {
+            do {
+                if appMode == .managed, let minitiAPIService {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await minitiAPIService.generateInsights(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: nil, existingTitle: nil,
+                        mode: InsightsMode.standard.rawValue, model: model.rawValue,
+                        language: language
+                    )
+                    guard !isMeetingDeleted(meetingID) else { return }
+                    let insights = response.toLiveInsights()
+                    meeting.summaryText = insights.summary
+                    meeting.actionItems = insights.actionItems
+                    meeting.topics = insights.topics
+                    meeting.discussionFlow = insights.discussionFlow
+                } else {
+                    let insights = try await insightsService!.generateInsights(
+                        transcript: transcript,
+                        model: model, apiKey: openaiApiKey, language: language
+                    )
+                    guard !isMeetingDeleted(meetingID) else { return }
+                    meeting.summaryText = insights.summary
+                    meeting.actionItems = insights.actionItems
+                    meeting.keyDecisions = insights.decisions
+                    meeting.topics = insights.topics
+                }
+                markInsightsUpdated(.standard, meeting: meeting)
+            } catch {
+                DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("insights_history_standard_failed", category: .insights, level: .warning)
             }
-        } catch {
-            DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
-            enqueueDiagnosticEvent("insights_history_standard_failed", category: .insights, level: .warning)
         }
         
-        // Generate MEDDPICC insights
-        do {
-            let meddpiccInsights: InsightsService.LiveInsights
-            if appMode == .managed, minitiAPIService != nil {
-                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId, transcript: transcript,
-                    existingSummary: summaryForContext, existingTitle: nil,
-                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
-                    language: language
-                )
-                meddpiccInsights = response.toLiveInsights()
-            } else {
-                meddpiccInsights = try await insightsService!.generateLiveInsights(
-                    transcript: transcript, existingSummary: summaryForContext,
-                    existingTitle: nil, mode: .meddpicc,
-                    model: model, apiKey: openaiApiKey, language: language
-                )
+        if requestedMode == .meddpicc {
+            do {
+                let meddpiccInsights: InsightsService.LiveInsights
+                if appMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: summaryForContext, existingTitle: nil,
+                        mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
+                        language: language
+                    )
+                    meddpiccInsights = response.toLiveInsights()
+                } else {
+                    meddpiccInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcript, existingSummary: summaryForContext,
+                        existingTitle: nil, mode: .meddpicc,
+                        model: model, apiKey: openaiApiKey, language: language
+                    )
+                }
+                guard !isMeetingDeleted(meetingID) else { return }
+                meeting.meddpiccMetrics = meddpiccInsights.metrics
+                meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
+                meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
+                meeting.meddpiccDecisionProcess = meddpiccInsights.decisionProcess
+                meeting.meddpiccPaperProcess = meddpiccInsights.paperProcess
+                meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
+                meeting.meddpiccChampion = meddpiccInsights.champion
+                meeting.meddpiccCompetition = meddpiccInsights.competition
+                markInsightsUpdated(.meddpicc, meeting: meeting)
+            } catch {
+                DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
             }
-            guard !isMeetingDeleted(meetingID) else { return }
-            meeting.meddpiccMetrics = meddpiccInsights.metrics
-            meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
-            meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
-            meeting.meddpiccDecisionProcess = meddpiccInsights.decisionProcess
-            meeting.meddpiccPaperProcess = meddpiccInsights.paperProcess
-            meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
-            meeting.meddpiccChampion = meddpiccInsights.champion
-            meeting.meddpiccCompetition = meddpiccInsights.competition
-        } catch {
-            DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
-            enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
         }
         
-        // Generate questions
-        do {
-            let questionsInsights: InsightsService.LiveInsights
-            if appMode == .managed, minitiAPIService != nil {
-                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId, transcript: transcript,
-                    existingSummary: nil, existingTitle: nil,
-                    mode: InsightsMode.questions.rawValue, model: model.rawValue,
-                    language: language
-                )
-                questionsInsights = response.toLiveInsights()
-            } else {
-                questionsInsights = try await insightsService!.generateLiveInsights(
-                    transcript: transcript, existingSummary: nil,
-                    existingTitle: nil, mode: .questions,
-                    model: model, apiKey: openaiApiKey, language: language
-                )
+        if requestedMode == .questions {
+            do {
+                let questionsInsights: InsightsService.LiveInsights
+                if appMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: nil, existingTitle: nil,
+                        mode: InsightsMode.questions.rawValue, model: model.rawValue,
+                        language: language
+                    )
+                    questionsInsights = response.toLiveInsights()
+                } else {
+                    questionsInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcript, existingSummary: nil,
+                        existingTitle: nil, mode: .questions,
+                        model: model, apiKey: openaiApiKey, language: language
+                    )
+                }
+                guard !isMeetingDeleted(meetingID) else { return }
+                meeting.suggestedQuestions = questionsInsights.questions
+                markInsightsUpdated(.questions, meeting: meeting)
+            } catch {
+                DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
             }
-            guard !isMeetingDeleted(meetingID) else { return }
-            meeting.suggestedQuestions = questionsInsights.questions
-        } catch {
-            DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
         }
 
         guard !isMeetingDeleted(meetingID) else { return }
@@ -3628,6 +4190,7 @@ final class AppState: ObservableObject {
         
         // Reconstruct liveSegments from persisted TranscriptSegments
         liveSegments = interrupted.segments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .sorted { $0.timestamp < $1.timestamp }
             .map { seg in
                 LiveSegment(
@@ -3661,7 +4224,7 @@ final class AppState: ObservableObject {
         liveSpeakerOverrides = interrupted.speakerOverrides
         liveSelfSpeakerIDs = interrupted.selfSpeakerIDs
 
-        if interrupted.hasMEDDPICC {
+        if salesInsightsEnabled, interrupted.hasMEDDPICC {
             insightsMode = .meddpicc
         }
         
@@ -3682,7 +4245,7 @@ final class AppState: ObservableObject {
         }
         
         // Track segment counts so insight generation doesn't re-trigger unnecessarily
-        let finalCount = liveSegments.filter { $0.isFinal && !$0.text.isEmpty }.count
+        let finalCount = liveSegments.count
         lastInsightSegmentCount = finalCount
         lastMEDDPICCSegmentCount = finalCount
         lastMEDDPICCRequestAt = Date()
@@ -3761,10 +4324,13 @@ final class AppState: ObservableObject {
     }
     
     func switchInsightsMode(to mode: InsightsMode) {
+        if mode.isSpecialist {
+            setInsightModeEnabled(mode, enabled: true)
+        }
         insightsMode = mode
 
         if mode == .training {
-            recomputeTrainingMetrics()
+            scheduleTrainingMetricsRecompute()
         }
         // Populate the docs-topic list on first visit to the tab so it's ready
         // without waiting for the next cadence tick. Auto-lookup (Pro/BYOK) then
@@ -3776,6 +4342,7 @@ final class AppState: ObservableObject {
     
     /// Recompute training metrics from current live segments
     func recomputeTrainingMetrics() {
+        trainingMetricsTask?.cancel()
         let segments = liveSegments.map {
             TrainingMetrics.Segment(
                 text: $0.text,
@@ -3787,35 +4354,102 @@ final class AppState: ObservableObject {
         trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSelfSpeakerIDs)
     }
 
+    private func scheduleTrainingMetricsRecompute() {
+        trainingMetricsTask?.cancel()
+        let revision = liveTranscriptRevision
+        let segments = liveSegments.map {
+            TrainingMetrics.Segment(
+                text: $0.text,
+                speaker: $0.speaker,
+                isFinal: $0.isFinal,
+                timestamp: $0.timestamp
+            )
+        }
+        let duration = recordingDuration
+        let language = meetingLanguage
+        let names = liveSpeakerNames
+        let selfIDs = liveSelfSpeakerIDs
+
+        trainingMetricsTask = Task { [weak self] in
+            let metrics = await Task.detached(priority: .utility) {
+                TrainingMetrics.compute(
+                    from: segments,
+                    duration: duration,
+                    language: language,
+                    names: names,
+                    selfIDs: selfIDs
+                )
+            }.value
+            guard !Task.isCancelled, let self,
+                  self.liveTranscriptRevision == revision,
+                  self.insightsMode == .training else { return }
+            self.trainingMetrics = metrics
+        }
+    }
+
     /// Save current meeting to SwiftData if it has transcript content.
     /// Called periodically during recording, on background transition, and on goHome/stopRecording.
     /// Does NOT set endTime — callers (stopRecording, goHome) set it explicitly so that
     /// meetings with endTime == nil can be identified as interrupted and resumed on next launch.
-    func saveCurrentMeetingIfNeeded() {
-        guard let payload = makeMeetingSavePayload() else { return }
+    func saveCurrentMeetingIfNeeded(onlyIfChanged: Bool = false) {
+        let fingerprint = periodicSaveFingerprint()
+        if onlyIfChanged, lastPeriodicSaveRequestedFingerprint == fingerprint {
+            return
+        }
+        guard let payload = makeMeetingSavePayload(
+            periodicFingerprint: onlyIfChanged ? fingerprint : nil
+        ) else { return }
+        if onlyIfChanged {
+            lastPeriodicSaveRequestedFingerprint = fingerprint
+        }
         enqueueMeetingSave(payload)
     }
 
-    private func makeMeetingSavePayload() -> MeetingSavePayload? {
+    private func periodicSaveFingerprint() -> Int {
+        var hasher = Hasher()
+        hasher.combine(currentMeeting?.id)
+        hasher.combine(liveTranscriptRevision)
+        hasher.combine(liveSummary)
+        hasher.combine(liveActionItems)
+        hasher.combine(liveTopics)
+        hasher.combine(liveDiscussionFlow)
+        hasher.combine(liveNotes)
+        hasher.combine(liveMetrics)
+        hasher.combine(liveEconomicBuyer)
+        hasher.combine(liveDecisionCriteria)
+        hasher.combine(liveDecisionProcess)
+        hasher.combine(livePaperProcess)
+        hasher.combine(liveIdentifiedPain)
+        hasher.combine(liveChampion)
+        hasher.combine(liveCompetition)
+        for question in liveQuestions {
+            hasher.combine(question.question)
+            hasher.combine(question.type)
+            hasher.combine(question.context)
+            hasher.combine(question.priority)
+        }
+        if let topicsData = try? JSONEncoder().encode(liveDocTopics) {
+            hasher.combine(topicsData)
+        }
+        for pair in liveSpeakerNames.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(pair.key)
+            hasher.combine(pair.value)
+        }
+        for value in liveSpeakerOverrides.sorted() { hasher.combine(value) }
+        for value in liveSelfSpeakerIDs.sorted() { hasher.combine(value) }
+        return hasher.finalize()
+    }
+
+    private func makeMeetingSavePayload(periodicFingerprint: Int?) -> MeetingSavePayload? {
         guard let meeting = currentMeeting else { return nil }
 
-        let finalSegments = liveSegments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.timestamp < $1.timestamp }
-            .map {
-                LiveSegmentSaveSnapshot(
-                    id: $0.id,
-                    text: $0.text.trimmingCharacters(in: .whitespacesAndNewlines),
-                    speaker: $0.speaker,
-                    timestamp: $0.timestamp
-                )
-            }
-            .filter { !$0.text.isEmpty }
+        let finalSegments = cachedSaveSegments
 
         guard !finalSegments.isEmpty else { return nil }
 
         return MeetingSavePayload(
             meeting: meeting,
+            periodicFingerprint: periodicFingerprint,
             finalSegments: finalSegments,
             summary: liveSummary,
             actionItems: liveActionItems,
@@ -3863,6 +4497,7 @@ final class AppState: ObservableObject {
     private func persistMeetingSavePayload(_ payload: MeetingSavePayload) async {
         guard let modelContext else {
             DebugLogger.shared.log(.app, "Save skipped: no model context")
+            clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             return
         }
 
@@ -3889,7 +4524,10 @@ final class AppState: ObservableObject {
         // The off-main diff above is a suspension point, so the meeting can be discarded while we
         // are suspended. Re-check before writing: the insert below would otherwise resurrect a
         // meeting the user already deleted.
-        guard !Task.isCancelled, !isMeetingDeleted(meetingID) else { return }
+        guard !Task.isCancelled, !isMeetingDeleted(meetingID) else {
+            clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
+            return
+        }
 
         applySegmentSyncPlan(syncPlan, to: payload.meeting, modelContext: modelContext)
 
@@ -3923,8 +4561,14 @@ final class AppState: ObservableObject {
             try modelContext.save()
             hasUnsavedSession = false
         } catch {
+            clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
         }
+    }
+
+    private func clearPeriodicSaveFingerprintIfCurrent(_ fingerprint: Int?) {
+        guard let fingerprint, lastPeriodicSaveRequestedFingerprint == fingerprint else { return }
+        lastPeriodicSaveRequestedFingerprint = nil
     }
 
     nonisolated static func buildSegmentSyncPlan(
@@ -3965,6 +4609,8 @@ final class AppState: ObservableObject {
         var existingByID = meeting.segments.reduce(into: [UUID: TranscriptSegment]()) { partial, segment in
             partial[segment.id] = segment
         }
+        var insertedSegments: [TranscriptSegment] = []
+        insertedSegments.reserveCapacity(plan.upserts.count)
         for upsert in plan.upserts {
             if let existing = existingByID[upsert.id] {
                 existing.text = upsert.text
@@ -3979,9 +4625,15 @@ final class AppState: ObservableObject {
                     timestamp: upsert.timestamp,
                     isFinal: true
                 )
-                meeting.segments.append(newSegment)
+                insertedSegments.append(newSegment)
                 existingByID[upsert.id] = newSegment
             }
+        }
+        // Publish one relationship mutation after a long meeting save. Appending each
+        // segment individually can invalidate the historical transcript hundreds of
+        // times while the detail view is already visible.
+        if !insertedSegments.isEmpty {
+            meeting.segments.append(contentsOf: insertedSegments)
         }
     }
     
@@ -4012,9 +4664,7 @@ final class AppState: ObservableObject {
         guard isMonitoring else { return }
         audioCaptureService?.stopCapture()
         isMonitoring = false
-        microphoneLevel = 0
-        systemAudioLevel = 0
-        audioLevel = 0
+        audioLevels.reset()
         lastAudioActivityAt = 0
     }
     
@@ -4028,12 +4678,24 @@ final class AppState: ObservableObject {
     func startRecording() {
         guard let audioCaptureService, let deepgramService else { return }
 
+        guard !isFinalizingMeeting else {
+            DebugLogger.shared.log(.app, "startRecording blocked: meeting finalization in progress")
+            return
+        }
+
+        guard !isCurrentMeetingGeneratingFinalInsights else {
+            DebugLogger.shared.log(.app, "startRecording blocked: final insights are still being applied to this meeting")
+            return
+        }
+
         guard hasAcceptedTerms else {
             DebugLogger.shared.log(.app, "startRecording blocked: terms not accepted")
             return
         }
         
         DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
+        recordingErrorMessage = nil
+        finalizationStatusText = ""
         isStartingMeeting = false
         isResumingRecording = false
         currentMeeting?.endTime = nil
@@ -4054,6 +4716,9 @@ final class AppState: ObservableObject {
         isRecording = true
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
+        trainingMetricsTask?.cancel()
+        trainingMetricsTask = nil
+        lastPeriodicSaveRequestedFingerprint = nil
         audioRecoveryState = .healthy
         desiredAudioRecoveryState = .healthy
         systemAudioInactiveSince = 0
@@ -4073,6 +4738,7 @@ final class AppState: ObservableObject {
         #if os(macOS)
         let useMultichannel = captureMicrophone && captureSystemAudio
         if useMultichannel {
+            resetEchoReconciliation(flushPending: true)
             // Multichannel attributes mic via channel 0 — no energy-based sourceLookup.
             audioCaptureService.resetSourceTracking()
             deepgramService.sourceLookup = nil
@@ -4105,6 +4771,7 @@ final class AppState: ObservableObject {
                 )
             } catch {
                 DebugLogger.shared.log(.app, "Audio capture FAILED in startRecording: \(error.localizedDescription)")
+                recordingErrorMessage = "Recording could not start. Check microphone and system-audio permissions, then try again."
                 stopRecording()
             }
         }
@@ -4119,11 +4786,11 @@ final class AppState: ObservableObject {
             }
         }
         
-        // Periodic auto-save every 30s so transcript is preserved if app is killed
+        // Periodic dirty-save every 60s. Explicit background/stop/home saves remain immediate.
         periodicSaveTimer?.invalidate()
-        periodicSaveTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        periodicSaveTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.saveCurrentMeetingIfNeeded()
+                self?.saveCurrentMeetingIfNeeded(onlyIfChanged: true)
             }
         }
         
@@ -4149,6 +4816,8 @@ final class AppState: ObservableObject {
 
         let obtained = await refreshManagedDeepgramCredential(trigger: "start")
         guard obtained else { return }
+
+        recordingErrorMessage = nil
         
         managedSessionStartRecordedDuration = accumulatedRecordedDuration
         await flushPendingSessionEndReports(trigger: "session started")
@@ -4208,6 +4877,7 @@ final class AppState: ObservableObject {
         guard appMode == .managed else { return true }
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
+            recordingErrorMessage = "Miniti could not reach the transcription service. Check your connection and try again."
             isStartingMeeting = false
             isResumingRecording = false
             return false
@@ -4248,6 +4918,7 @@ final class AppState: ObservableObject {
                 managedSessionError = error.localizedDescription
             }
             DebugLogger.shared.log(.app, "Managed session FAILED (\(trigger)): \(error.localizedDescription)")
+            recordingErrorMessage = managedSessionError
             return false
         } catch {
             if trigger == "start" {
@@ -4256,17 +4927,28 @@ final class AppState: ObservableObject {
                 isResumingRecording = false
             }
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
+            recordingErrorMessage = "Miniti could not start transcription. Check your connection and try again."
             DebugLogger.shared.log(.app, "Managed session FAILED (\(trigger)): \(error.localizedDescription)")
             return false
         }
     }
     
     func stopRecording() {
+        guard !isFinalizingMeeting else {
+            DebugLogger.shared.log(.app, "stopRecording ignored: finalization already in progress")
+            return
+        }
         DebugLogger.shared.log(.app, "stopRecording (duration=\(formattedDuration))")
         if let startDate = recordingStartDate {
             recordingDuration = Date().timeIntervalSince(startDate)
             accumulatedRecordedDuration = recordingDuration
         }
+
+        // Snapshot text the user can currently see. On short meetings (or after a socket failure)
+        // Deepgram may not have promoted this interim to a final segment before Stop is pressed.
+        let stoppedInterimText = interimText
+        let stoppedInterimSpeaker = interimSpeaker ?? currentSpeaker
+        let stoppedInterimTimestamp = recordingDuration
         
         isRecording = false
         pendingAudioRecoveryTransitionTask?.cancel()
@@ -4319,25 +5001,108 @@ final class AppState: ObservableObject {
 
         // Gracefully close Deepgram (wait for final transcripts) then generate insights
         if let meeting = currentMeeting {
+            let meetingIDAtStop = meeting.id
             meeting.endTime = Date()
 
-            let hasContent = !liveSegments.filter {
-                $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            }.isEmpty
+            var hasContent = !liveSegments.isEmpty ||
+                !stoppedInterimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            #if os(macOS)
+            hasContent = hasContent || !pendingMicSegments.isEmpty
+            #endif
 
             if hasContent {
+                // Persist any finals already in memory immediately. A second save after graceful
+                // shutdown captures its last final result or the visible-interim fallback.
+                saveCurrentMeetingIfNeeded()
                 isGeneratingInsights = true
+                isFinalizingMeeting = true
+                finalizationStatusText = "Finishing transcript…"
                 Task {
                     await deepgramService?.gracefulDisconnect()
-                    await generateFinalInsightsAndSave()
+                    guard currentMeeting?.id == meetingIDAtStop,
+                          !isMeetingDeleted(meetingIDAtStop) else {
+                        // The meeting was discarded/deleted mid-finalization. clearCurrentSession
+                        // usually resets these already; do it here too so no abandonment path can
+                        // leave the app stuck reporting insights generation or finalization.
+                        isGeneratingInsights = false
+                        isFinalizingMeeting = false
+                        finalizationStatusText = ""
+                        shouldOpenMeetingAfterFinalization = false
+                        DebugLogger.shared.log(.app, "Dropping stop finalization after meeting changed/discarded")
+                        return
+                    }
+                    preserveStoppedInterimTranscript(
+                        stoppedInterimText,
+                        speaker: stoppedInterimSpeaker,
+                        timestamp: stoppedInterimTimestamp
+                    )
+                    #if os(macOS)
+                    flushAllPendingMicSegments()
+                    #endif
+                    // Make the transcript durable before slower, failure-prone AI requests.
+                    saveCurrentMeetingIfNeeded()
+                    if let saveTask = activeMeetingSaveTask {
+                        await saveTask.value
+                    }
+                    let finalSegments = liveSegments
+                        .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                        .sorted { $0.timestamp < $1.timestamp }
+                    let finalTranscript = transcriptText(from: finalSegments)
+                    let finalLanguage = meetingLanguage
+                    let finalTitleContext = currentTitleSuffix
+                    let shouldGenerateSales = salesInsightsEnabled
+
+                    // From here on, insight generation is scoped to the saved Meeting rather than
+                    // the live session. This lets the user return home and record another meeting
+                    // without an older response writing into the new meeting's state.
+                    finalizingInsightMeetingIDs.insert(meetingIDAtStop)
+                    isGeneratingInsights = false
+                    completeMeetingFinalization()
+                    await generateFinalInsightsAndSave(
+                        for: meeting,
+                        transcript: finalTranscript,
+                        language: finalLanguage,
+                        existingTitle: finalTitleContext,
+                        includeSales: shouldGenerateSales
+                    )
+                    finalizingInsightMeetingIDs.remove(meetingIDAtStop)
+                    if currentMeeting?.id == meetingIDAtStop, !isRecording {
+                        finalizationStatusText = "Saved automatically"
+                    }
                 }
             } else {
                 deepgramService?.disconnect()
                 saveCurrentMeetingIfNeeded()
+                finalizationStatusText = "Saved automatically"
             }
         } else {
             deepgramService?.disconnect()
         }
+    }
+
+    private func preserveStoppedInterimTranscript(
+        _ text: String,
+        speaker: Int,
+        timestamp: TimeInterval
+    ) {
+        var updated = liveSegments
+        guard let result = Self.mergeStoppedInterimTranscript(
+            text,
+            speaker: speaker,
+            timestamp: timestamp,
+            into: &updated
+        ) else { return }
+
+        switch result {
+        case .appended, .replacedSuperset:
+            liveSegments = updated
+            detectedSpeakers.insert(speaker)
+            DebugLogger.shared.log(.app, "Preserved visible interim transcript during stop")
+        case .skippedExactDuplicate, .skippedContainedDuplicate:
+            break
+        }
+        interimText = ""
+        interimSpeaker = nil
     }
     
     /// Clears current session state (moves meeting to history)
@@ -4355,7 +5120,14 @@ final class AppState: ObservableObject {
         lastTranscriptHealthDebugLogAt = 0
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
-        isGeneratingFinalInsights = false
+        #if os(macOS)
+        resetEchoReconciliation()
+        #endif
+        isGeneratingInsights = false
+        isFinalizingMeeting = false
+        finalizationStatusText = ""
+        shouldOpenMeetingAfterFinalization = false
+        recordingErrorMessage = nil
         currentMeeting = nil
         isStartingMeeting = false
         isResumingRecording = false
@@ -4441,59 +5213,58 @@ final class AppState: ObservableObject {
         managedSessionStartRecordedDuration = nil
         managedSessionError = nil
     }
-    
-    private func generateFinalInsightsAndSave() async {
-        guard !isGeneratingFinalInsights else {
-            DebugLogger.shared.log(.app, "Skipping duplicate final insights request")
+
+    private func completeMeetingFinalization() {
+        isFinalizingMeeting = false
+        finalizationStatusText = "Saved automatically"
+        guard !isRecording else {
+            // Defensive only: startRecording() rejects this transition while finalizing, but never
+            // let completion from an older stop clear a recording if another entry point regresses.
+            shouldOpenMeetingAfterFinalization = false
+            DebugLogger.shared.log(.app, "Finalization completed while recording; preserving active session")
             return
         }
-        isGeneratingFinalInsights = true
-        defer { isGeneratingFinalInsights = false }
-        
+        guard shouldOpenMeetingAfterFinalization else { return }
+        shouldOpenMeetingAfterFinalization = false
+        goHome()
+    }
+
+    private func generateFinalInsightsAndSave(
+        for meeting: Meeting,
+        transcript: String,
+        language: String,
+        existingTitle: String,
+        includeSales: Bool
+    ) async {
+        let meetingIDAtRequest = meeting.id
+        let transcriptRevisionAtRequest = meeting.transcriptRevision
+        let requestAppMode = appMode
+        let requestAPIKey = openaiApiKey
+
         // Check if we can generate insights (mode-aware)
         let canGenerate: Bool
-        if appMode == .managed {
+        if requestAppMode == .managed {
             canGenerate = minitiAPIService != nil
         } else {
-            canGenerate = insightsService != nil && !openaiApiKey.isEmpty
+            canGenerate = insightsService != nil && !requestAPIKey.isEmpty
         }
         
         guard canGenerate else {
-            saveCurrentMeetingIfNeeded()
+            try? modelContext?.save()
             return
         }
-
-        guard let meetingIDAtRequest = currentMeeting?.id else {
-            return
-        }
-
-        let requestFinalSegments = liveSegments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.timestamp < $1.timestamp }
-        let requestFinalSegmentCount = requestFinalSegments.count
-        let transcript = transcriptText(from: requestFinalSegments)
 
         guard !transcript.isEmpty else {
-            saveCurrentMeetingIfNeeded()
+            try? modelContext?.save()
             return
         }
 
         func isFinalInsightsRequestStillCurrent() -> Bool {
-            guard let meeting = currentMeeting, meeting.id == meetingIDAtRequest else {
-                return false
-            }
-            guard !isRecording, meeting.endTime != nil else {
-                return false
-            }
-            let currentFinalSegmentCount = liveSegments
-                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .count
-            return currentFinalSegmentCount == requestFinalSegmentCount
+            !isMeetingDeleted(meetingIDAtRequest) &&
+                meeting.transcriptRevision == transcriptRevisionAtRequest
         }
         
         DebugLogger.shared.log(.app, "Generating final insights before save")
-        isGeneratingInsights = true
-        defer { isGeneratingInsights = false }
         
         let model = OpenAIModel.gpt5Mini
         
@@ -4502,19 +5273,19 @@ final class AppState: ObservableObject {
             DebugLogger.shared.log(.app, "Generating final standard insights")
             let insights: InsightsService.LiveInsights
             
-            if appMode == .managed, let minitiAPIService {
+            if requestAppMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: nil,
                     mode: InsightsMode.standard.rawValue, model: model.rawValue,
-                    language: meetingLanguage
+                    language: language
                 )
                 insights = response.toLiveInsights()
             } else {
                 insights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: nil, existingTitle: nil,
-                    mode: .standard, model: model, apiKey: openaiApiKey, language: meetingLanguage
+                    mode: .standard, model: model, apiKey: requestAPIKey, language: language
                 )
             }
             
@@ -4523,118 +5294,157 @@ final class AppState: ObservableObject {
                     .app,
                     "Dropping stale final standard insights response (meeting changed/resumed/segments advanced)"
                 )
-                saveCurrentMeetingIfNeeded()
                 return
             }
 
-            liveSummary = insights.summary
-            liveActionItems = insights.actionItems
-            liveTopics = insights.topics
-            liveDiscussionFlow = insights.discussionFlow
+            meeting.summaryText = insights.summary
+            meeting.actionItems = insights.actionItems
+            meeting.topics = insights.topics
+            meeting.discussionFlow = insights.discussionFlow
+            markInsightsUpdated(.standard, meeting: meeting)
+
+            if currentMeeting?.id == meetingIDAtRequest {
+                liveSummary = insights.summary
+                liveActionItems = insights.actionItems
+                liveTopics = insights.topics
+                liveDiscussionFlow = insights.discussionFlow
+            }
             
             if let suggestedTitle = insights.suggestedTitle,
-               !suggestedTitle.isEmpty,
-               let meeting = currentMeeting {
-                currentTitleSuffix = suggestedTitle
+               !suggestedTitle.isEmpty {
                 meeting.title = suggestedTitle
+                if currentMeeting?.id == meetingIDAtRequest {
+                    currentTitleSuffix = suggestedTitle
+                }
                 DebugLogger.shared.log(.app, "Final title updated: \(meeting.title)")
                 #if os(iOS)
-                updateLiveActivityState(isRecording: isRecording)
+                if currentMeeting?.id == meetingIDAtRequest {
+                    updateLiveActivityState(isRecording: isRecording)
+                }
                 #endif
             }
+            try? modelContext?.save()
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
             enqueueDiagnosticEvent("insights_final_standard_failed", category: .insights, level: .warning)
         }
         
-        // Also generate MEDDPICC insights
-        do {
-            guard isFinalInsightsRequestStillCurrent() else {
-                DebugLogger.shared.log(
-                    .app,
-                    "Skipping final meddpicc insights request (meeting changed/resumed/segments advanced)"
-                )
-                saveCurrentMeetingIfNeeded()
-                return
-            }
+        // Sales qualification is specialist functionality: don't spend a request on it unless
+        // the person has explicitly enabled the Sales view.
+        if includeSales {
+            do {
+                guard isFinalInsightsRequestStillCurrent() else {
+                    DebugLogger.shared.log(
+                        .app,
+                        "Skipping final meddpicc insights request (meeting changed/resumed/segments advanced)"
+                    )
+                    return
+                }
 
-            DebugLogger.shared.log(.app, "Generating final meddpicc insights")
-            let meddpiccInsights: InsightsService.LiveInsights
-            
-            if appMode == .managed, minitiAPIService != nil {
-                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-                let response = try await generateManagedInsightsWithRetry(
-                    deviceId: deviceId, transcript: transcript,
-                    existingSummary: liveSummary, existingTitle: currentTitleSuffix,
-                    mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
-                    language: meetingLanguage
-                )
-                meddpiccInsights = response.toLiveInsights()
-            } else {
-                meddpiccInsights = try await insightsService!.generateLiveInsights(
-                    transcript: transcript, existingSummary: liveSummary,
-                    existingTitle: currentTitleSuffix, mode: .meddpicc,
-                    model: model, apiKey: openaiApiKey, language: meetingLanguage
-                )
-            }
-            
-            guard isFinalInsightsRequestStillCurrent() else {
-                DebugLogger.shared.log(
-                    .app,
-                    "Dropping stale final meddpicc insights response (meeting changed/resumed/segments advanced)"
-                )
-                saveCurrentMeetingIfNeeded()
-                return
-            }
+                DebugLogger.shared.log(.app, "Generating final meddpicc insights")
+                let meddpiccInsights: InsightsService.LiveInsights
 
-            liveMetrics = meddpiccInsights.metrics
-            liveEconomicBuyer = meddpiccInsights.economicBuyer
-            liveDecisionCriteria = meddpiccInsights.decisionCriteria
-            liveDecisionProcess = meddpiccInsights.decisionProcess
-            livePaperProcess = meddpiccInsights.paperProcess
-            liveIdentifiedPain = meddpiccInsights.identifiedPain
-            liveChampion = meddpiccInsights.champion
-            liveCompetition = meddpiccInsights.competition
-            DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
-        } catch {
-            DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
-            enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
+                if requestAppMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: meeting.summaryText, existingTitle: existingTitle,
+                        mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
+                        language: language
+                    )
+                    meddpiccInsights = response.toLiveInsights()
+                } else {
+                    meddpiccInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcript, existingSummary: meeting.summaryText,
+                        existingTitle: existingTitle, mode: .meddpicc,
+                        model: model, apiKey: requestAPIKey, language: language
+                    )
+                }
+
+                guard isFinalInsightsRequestStillCurrent() else {
+                    DebugLogger.shared.log(
+                        .app,
+                        "Dropping stale final meddpicc insights response (meeting changed/resumed/segments advanced)"
+                    )
+                    return
+                }
+
+                meeting.meddpiccMetrics = meddpiccInsights.metrics
+                meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
+                meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
+                meeting.meddpiccDecisionProcess = meddpiccInsights.decisionProcess
+                meeting.meddpiccPaperProcess = meddpiccInsights.paperProcess
+                meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
+                meeting.meddpiccChampion = meddpiccInsights.champion
+                meeting.meddpiccCompetition = meddpiccInsights.competition
+                markInsightsUpdated(.meddpicc, meeting: meeting)
+                if currentMeeting?.id == meetingIDAtRequest {
+                    liveMetrics = meddpiccInsights.metrics
+                    liveEconomicBuyer = meddpiccInsights.economicBuyer
+                    liveDecisionCriteria = meddpiccInsights.decisionCriteria
+                    liveDecisionProcess = meddpiccInsights.decisionProcess
+                    livePaperProcess = meddpiccInsights.paperProcess
+                    liveIdentifiedPain = meddpiccInsights.identifiedPain
+                    liveChampion = meddpiccInsights.champion
+                    liveCompetition = meddpiccInsights.competition
+                }
+                try? modelContext?.save()
+                DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
+            } catch {
+                DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
+            }
         }
         
-        // Questions — fire-and-forget, don't block save
+        // Questions complete as part of the meeting-scoped background work.
         do {
             let questionsInsights: InsightsService.LiveInsights
             
-            if appMode == .managed, minitiAPIService != nil {
+            if requestAppMode == .managed, minitiAPIService != nil {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: transcript,
-                    existingSummary: nil, existingTitle: currentTitleSuffix,
+                    existingSummary: nil, existingTitle: existingTitle,
                     mode: InsightsMode.questions.rawValue, model: model.rawValue,
-                    language: meetingLanguage
+                    language: language
                 )
                 questionsInsights = response.toLiveInsights()
             } else {
                 questionsInsights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: nil,
-                    existingTitle: currentTitleSuffix, mode: .questions,
-                    model: model, apiKey: openaiApiKey, language: meetingLanguage
+                    existingTitle: existingTitle, mode: .questions,
+                    model: model, apiKey: requestAPIKey, language: language
                 )
             }
             
             guard isFinalInsightsRequestStillCurrent() else {
                 DebugLogger.shared.log(.app, "Dropping stale final questions insights response")
-                saveCurrentMeetingIfNeeded()
                 return
             }
             
-            liveQuestions = questionsInsights.questions
-            DebugLogger.shared.log(.app, "Final insights complete (questions): count=\(liveQuestions.count)")
+            meeting.suggestedQuestions = questionsInsights.questions
+            markInsightsUpdated(.questions, meeting: meeting)
+            if currentMeeting?.id == meetingIDAtRequest {
+                liveQuestions = questionsInsights.questions
+            }
+            try? modelContext?.save()
+            DebugLogger.shared.log(.app, "Final insights complete (questions): count=\(questionsInsights.questions.count)")
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
         }
 
-        saveCurrentMeetingIfNeeded()
+        guard isFinalInsightsRequestStillCurrent() else { return }
+        try? modelContext?.save()
+
+        #if os(macOS)
+        if autoExportMarkdown {
+            exportMeetingAsMarkdownFile(markdown: meeting.fullMeetingAsMarkdown(), meeting: meeting)
+        }
+        #endif
+
+        if !webhookURL.isEmpty, currentMeeting?.id != meetingIDAtRequest {
+            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+        }
     }
     
     func generateInsights() async {
@@ -4651,13 +5461,20 @@ final class AppState: ObservableObject {
         }
 
         if isRecording, appMode == .managed {
-            resetCadenceAnchors()
-            await updateLiveInsights(standardOnly: true)
+            let requestedMode = insightsMode
+            if requestedMode == .standard {
+                resetCadenceAnchors()
+                await updateLiveInsights(standardOnly: true)
+                return
+            }
+
             let finalSegments = liveSegments
                 .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .sorted { $0.timestamp < $1.timestamp }
             let transcript = transcriptText(from: finalSegments)
-            if !transcript.isEmpty, let meetingID = currentMeeting?.id {
+            guard !transcript.isEmpty, let meetingID = currentMeeting?.id else { return }
+
+            if requestedMode == .meddpicc, salesInsightsEnabled {
                 await updateMeddpiccInBackground(
                     transcript: transcript,
                     finalSegments: finalSegments,
@@ -4665,6 +5482,7 @@ final class AppState: ObservableObject {
                     existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
                     meetingID: meetingID
                 )
+            } else if requestedMode == .questions {
                 await updateQuestionsInBackground(
                     transcript: transcript,
                     finalSegments: finalSegments,
@@ -4705,6 +5523,10 @@ final class AppState: ObservableObject {
         
         do {
             let requestedMode: InsightsMode = (insightsMode == .training) ? .standard : insightsMode
+            guard isInsightModeEnabled(requestedMode) else {
+                isGeneratingInsights = false
+                return
+            }
             let model = OpenAIModel.gpt5Mini
 
             if requestedMode == .questions {
@@ -4736,6 +5558,7 @@ final class AppState: ObservableObject {
                 
                 liveQuestions = questionsInsights.questions
                 meeting.suggestedQuestions = questionsInsights.questions
+                markInsightsUpdated(.questions, meeting: meeting)
             } else if requestedMode == .meddpicc {
                 let meddpiccInsights: InsightsService.LiveInsights
                 
@@ -4780,6 +5603,7 @@ final class AppState: ObservableObject {
                 liveChampion = meddpiccInsights.champion
                 liveCompetition = meddpiccInsights.competition
                 lastMeddpiccSummaryContext = meddpiccInsights.summary
+                markInsightsUpdated(.meddpicc, meeting: meeting)
             } else if appMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
@@ -4798,6 +5622,7 @@ final class AppState: ObservableObject {
                 liveTopics = insights.topics
                 liveDiscussionFlow = insights.discussionFlow
                 lastStandardSummaryContext = insights.summary
+                markInsightsUpdated(.standard, meeting: meeting)
             } else {
                 let insights = try await insightsService!.generateInsights(
                     transcript: transcriptForRequest,
@@ -4811,6 +5636,7 @@ final class AppState: ObservableObject {
                 liveSummary = insights.summary
                 liveActionItems = insights.actionItems
                 liveTopics = insights.topics
+                markInsightsUpdated(.standard, meeting: meeting)
             }
             
             try? modelContext?.save()
@@ -5661,7 +6487,7 @@ final class AppState: ObservableObject {
         let state = RecordingActivityAttributes.ContentState(
             meetingTitle: currentMeeting?.displayTitle ?? "",
             isRecording: isRecording,
-            currentTranscript: currentTranscriptLine,
+            currentTranscript: LiveActivityPreferences.presentedTranscript(currentTranscriptLine),
             elapsedSeconds: isRecording ? nil : Int(recordingDuration)
         )
         lastLiveActivityUpdate = Date()
@@ -5678,13 +6504,19 @@ final class AppState: ObservableObject {
         guard now.timeIntervalSince(lastLiveActivityUpdate) >= liveActivityUpdateInterval else { return }
         updateLiveActivityState(isRecording: isRecording)
     }
+
+    /// Applies a Live Activity privacy preference change immediately rather than
+    /// waiting for the next throttled transcript update.
+    func refreshLiveActivityPrivacySetting() {
+        updateLiveActivityState(isRecording: isRecording)
+    }
     
     /// The most recent transcript line — interim text if available, otherwise the last finalized segment.
     private var currentTranscriptLine: String {
         if !interimText.isEmpty {
             return interimText
         }
-        if let last = liveSegments.last(where: { $0.isFinal && !$0.text.isEmpty }) {
+        if let last = liveSegments.last {
             return last.text
         }
         return ""
@@ -5726,7 +6558,7 @@ final class AppState: ObservableObject {
                 meetingID: meetingID,
                 meetingTitle: meetingTitle,
                 isRecording: false,
-                transcript: self.currentTranscriptLine,
+                transcript: LiveActivityPreferences.presentedTranscript(self.currentTranscriptLine),
                 elapsedSeconds: Int(self.recordingDuration),
                 reason: "restored paused session"
             )
@@ -5769,7 +6601,7 @@ final class AppState: ObservableObject {
         let state = RecordingActivityAttributes.ContentState(
             meetingTitle: meetingTitle,
             isRecording: isRecording,
-            currentTranscript: transcript,
+            currentTranscript: LiveActivityPreferences.presentedTranscript(transcript),
             elapsedSeconds: elapsedSeconds
         )
         await endAllLiveActivities(finalState: nil)

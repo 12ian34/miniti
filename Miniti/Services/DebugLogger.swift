@@ -32,10 +32,50 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
 
     @Published private(set) var entries: [Entry] = []
 
+    struct EntryRing {
+        private var storage: [Entry?]
+        private var startIndex = 0
+        private(set) var count = 0
+
+        init(capacity: Int) {
+            storage = Array(repeating: nil, count: max(1, capacity))
+        }
+
+        mutating func append(_ entry: Entry) {
+            if count < storage.count {
+                storage[(startIndex + count) % storage.count] = entry
+                count += 1
+            } else {
+                storage[startIndex] = entry
+                startIndex = (startIndex + 1) % storage.count
+            }
+        }
+
+        mutating func removeAll() {
+            for index in storage.indices {
+                storage[index] = nil
+            }
+            startIndex = 0
+            count = 0
+        }
+
+        func snapshot() -> [Entry] {
+            guard count > 0 else { return [] }
+            var result: [Entry] = []
+            result.reserveCapacity(count)
+            for offset in 0..<count {
+                if let entry = storage[(startIndex + offset) % storage.count] {
+                    result.append(entry)
+                }
+            }
+            return result
+        }
+    }
+
     private let lock = NSLock()
-    nonisolated(unsafe) private var buffer: [Entry] = []
+    nonisolated(unsafe) private var buffer = EntryRing(capacity: 1000)
     nonisolated(unsafe) private var redactPatterns: [String] = []
-    private let maxEntries = 1000
+    nonisolated(unsafe) private var hasPendingPublish = false
 
     private init() {}
 
@@ -55,14 +95,20 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
 
         lock.lock()
         buffer.append(entry)
-        if buffer.count > maxEntries {
-            buffer.removeFirst(buffer.count - maxEntries)
+        let shouldSchedulePublish = !hasPendingPublish
+        if shouldSchedulePublish {
+            hasPendingPublish = true
         }
-        let snapshot = buffer
         lock.unlock()
 
-        DispatchQueue.main.async { [weak self] in
-            self?.entries = snapshot
+        guard shouldSchedulePublish else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let snapshot = self.buffer.snapshot()
+            self.hasPendingPublish = false
+            self.lock.unlock()
+            self.entries = snapshot
         }
     }
 
@@ -143,7 +189,7 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
 
     func exportText() -> String {
         lock.lock()
-        let snap = buffer
+        let snap = buffer.snapshot()
         lock.unlock()
         return snap.map(Self.format).joined(separator: "\n")
     }

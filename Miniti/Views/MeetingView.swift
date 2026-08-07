@@ -12,6 +12,18 @@ struct MeetingView: View {
                 VStack(spacing: 0) {
                     // Header
                     TerminalHeader(meetingTitle: $meetingTitle)
+
+                    if let error = appState.recordingErrorMessage {
+                        RecordingIssueBanner(message: error)
+                    }
+
+                    // Only claim the meeting was saved when finalization is running or there is
+                    // transcript content to save — a failed start has neither and should show
+                    // just the error banner.
+                    if !appState.isRecording,
+                       appState.isFinalizingMeeting || !appState.liveSegments.isEmpty {
+                        PostMeetingReviewBar()
+                    }
                     
                     // Divider
                     Rectangle()
@@ -82,6 +94,106 @@ struct MeetingView: View {
     }
 }
 
+private struct RecordingIssueBanner: View {
+    @EnvironmentObject private var appState: AppState
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(ColorPalette.Accent.amber)
+                .accessibilityHidden(true)
+
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button(appState.isRecording ? "Retry" : "Resume") {
+                if appState.isRecording {
+                    appState.retryRecordingHealth()
+                } else {
+                    appState.startRecording()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.amber)
+
+            Button {
+                appState.dismissRecordingError()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss recording issue")
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Accent.amber.opacity(0.1))
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private struct PostMeetingReviewBar: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if appState.isFinalizingMeeting {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel("Finalizing meeting")
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(ColorPalette.Accent.green)
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(statusTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text(statusDetail)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ColorPalette.Text.muted)
+            }
+
+            Spacer(minLength: 8)
+
+            if !appState.isFinalizingMeeting {
+                Button(appState.isCurrentMeetingGeneratingFinalInsights ? "Back to meetings" : "Open in History") {
+                    if appState.isCurrentMeetingGeneratingFinalInsights {
+                        appState.goHome()
+                    } else {
+                        appState.saveAndOpenCurrentMeeting()
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.blue)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Background.secondary)
+    }
+
+    private var statusTitle: String {
+        if appState.isFinalizingMeeting { return appState.finalizationStatusText }
+        if appState.isCurrentMeetingGeneratingFinalInsights { return "Generating final insights…" }
+        return "Meeting saved automatically"
+    }
+
+    private var statusDetail: String {
+        if appState.isFinalizingMeeting {
+            return "You can keep reviewing while Miniti finishes and saves automatically."
+        }
+        if appState.isCurrentMeetingGeneratingFinalInsights {
+            return "You can return to meetings now; insights will finish in History."
+        }
+        return "Review the transcript and insights, resume recording, or open it in History."
+    }
+}
+
 // MARK: - Home Action Button
 
 struct HomeActionButton: View {
@@ -101,12 +213,12 @@ struct HomeActionButton: View {
                     .foregroundStyle(isHovered ? accentColor : ColorPalette.Text.dim)
 
                 Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(isHovered ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
                     .lineLimit(1)
 
                 Text(shortcut)
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 10, weight: .semibold, design: .default))
                     .foregroundStyle(isHovered ? accentColor.opacity(0.8) : ColorPalette.Text.disabled)
                     .padding(.horizontal, 5)
                     .padding(.vertical, 2)
@@ -142,7 +254,6 @@ struct HomeActionButton: View {
             )
         }
         .buttonStyle(.plain)
-        .focusable(false)
         .fixedSize()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {
@@ -162,7 +273,7 @@ struct ReadyStateView: View {
     @State private var editingOpenAI = false
     @State private var confirmEvent: MinitiAPIService.CalendarEvent?
     var meetings: [Meeting] = []
-    
+
     var body: some View {
         VStack(spacing: 24) {
             Spacer()
@@ -226,17 +337,17 @@ struct ReadyStateView: View {
             if appState.isDeviceDisabled {
                 VStack(spacing: 8) {
                     Text("account disabled")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F85149"))
                     
                     Text("contact support for help")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "A1A1AA"))
                 }
             } else if appState.isLimitReached {
                 VStack(spacing: 8) {
                     Text("limit reached")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F85149"))
                     
                     Button {
@@ -246,7 +357,7 @@ struct ReadyStateView: View {
                             Image(systemName: "key.fill")
                                 .font(.system(size: 10))
                             Text("switch to BYOK")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                         }
                         .foregroundStyle(Color(hex: "58A6FF"))
                         .padding(.horizontal, 14)
@@ -271,17 +382,18 @@ struct ReadyStateView: View {
                                 .controlSize(.small)
                                 .tint(Color(hex: "09090B"))
                             Text("starting...")
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 13, weight: .semibold, design: .default))
                         } else {
                             Image(systemName: "record.circle")
                                 .font(.system(size: 15))
-                            Text("start")
-                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            Text("start meeting")
+                                .font(.system(size: 13, weight: .semibold, design: .default))
+                                .lineLimit(1)
                         }
                         
                         if !appState.isStartingMeeting {
                             Text("⌘⇧R")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "09090B").opacity(0.5))
                         }
                     }
@@ -298,9 +410,14 @@ struct ReadyStateView: View {
                 .buttonStyle(.plain)
                 .focusable(false)
                 .disabled(!appState.canStartRecording || appState.isStartingMeeting)
-                .focusable(false)
 
                 MeetingLanguagePicker(language: $appState.meetingLanguage)
+
+                Text(captureSummary)
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                    .accessibilityLabel("Recording setup: \(captureSummary)")
+
             }
 
             // Upcoming calendar events
@@ -364,6 +481,18 @@ struct ReadyStateView: View {
         }
         
     }
+
+    private var captureSummary: String {
+        let sources: String
+        switch (appState.captureMicrophone, appState.captureSystemAudio) {
+        case (true, true): sources = "Microphone + system audio"
+        case (true, false): sources = "Microphone only"
+        case (false, true): sources = "System audio only"
+        case (false, false): sources = "No audio source selected"
+        }
+        let language = TranscriptionLanguage(rawValue: appState.meetingLanguage)?.displayName ?? "English"
+        return "\(sources) • \(language)"
+    }
 }
 
 private struct AutoStartBanner: View {
@@ -381,13 +510,13 @@ private struct AutoStartBanner: View {
                     .animation(.easeInOut(duration: 0.5), value: countdown)
                 
                 Text(event.title)
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(1)
             }
             
             Text("starting in \(countdown)s")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Accent.green)
             
             HStack(spacing: 12) {
@@ -395,7 +524,7 @@ private struct AutoStartBanner: View {
                     appState.startMeetingFromEvent(event)
                 } label: {
                     Text("start now")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "09090B"))
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
@@ -411,7 +540,7 @@ private struct AutoStartBanner: View {
                     appState.dismissAutoStart()
                 } label: {
                     Text("dismiss")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
@@ -493,19 +622,19 @@ private struct EventConfirmSheet: View {
 
             VStack(alignment: .leading, spacing: 0) {
                 Text(event.title)
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
+                    .font(.system(size: 14, weight: .bold, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
                     if let time = timeRange {
                         Text(time)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.dim)
                     }
                     if let soon = startsInText {
                         Text(soon)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .foregroundStyle(ColorPalette.Accent.amber)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
@@ -523,7 +652,7 @@ private struct EventConfirmSheet: View {
                         .padding(.vertical, 10)
 
                     Text("attendees")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .padding(.bottom, 6)
 
@@ -532,7 +661,7 @@ private struct EventConfirmSheet: View {
                             HStack(spacing: 8) {
                                 if a.isSelf {
                                     Text("⬢")
-                                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                        .font(.system(size: 10, weight: .bold, design: .default))
                                         .foregroundStyle(ColorPalette.Accent.green)
                                         .frame(width: 14, height: 14)
                                 } else {
@@ -541,14 +670,14 @@ private struct EventConfirmSheet: View {
                                 VStack(alignment: .leading, spacing: 1) {
                                     if let name = a.displayName, name != a.email {
                                         Text(name)
-                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .font(.system(size: 11, weight: .medium, design: .default))
                                             .foregroundStyle(a.isSelf ? ColorPalette.Accent.green : ColorPalette.Text.primary)
                                         Text(a.email)
-                                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                            .font(.system(size: 10, weight: .medium, design: .default))
                                             .foregroundStyle(ColorPalette.Text.dim)
                                     } else {
                                         Text(a.email)
-                                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                            .font(.system(size: 11, weight: .medium, design: .default))
                                             .foregroundStyle(a.isSelf ? ColorPalette.Accent.green : ColorPalette.Text.primary)
                                     }
                                 }
@@ -563,9 +692,9 @@ private struct EventConfirmSheet: View {
                     } label: {
                         HStack(spacing: 6) {
                             Text("cancel")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 11, weight: .semibold, design: .default))
                             Text("esc")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(ColorPalette.Text.placeholder)
                         }
                         .foregroundStyle(ColorPalette.Text.dim)
@@ -590,9 +719,9 @@ private struct EventConfirmSheet: View {
                             Image(systemName: "record.circle")
                                 .font(.system(size: 10, weight: .bold))
                             Text("start")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 11, weight: .semibold, design: .default))
                             Text("⌘↩")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "09090B").opacity(0.5))
                         }
                         .foregroundStyle(Color(hex: "09090B"))
@@ -650,12 +779,12 @@ private struct CompactEventRow: View {
     var body: some View {
         HStack(spacing: 6) {
             Text(formattedTime)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
                 .frame(width: 40, alignment: .leading)
 
             Text(event.title)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(isHovered ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -664,7 +793,7 @@ private struct CompactEventRow: View {
 
             if let dur = durationText {
                 Text(dur)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(ColorPalette.Text.dim)
             }
 
@@ -683,7 +812,7 @@ private struct CompactEventRow: View {
                         Image(systemName: "person.2.fill")
                             .font(.system(size: 8))
                         Text("\(extCount > 0 ? extCount : event.attendees.count)")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(ColorPalette.Text.dim)
                 }
@@ -784,7 +913,7 @@ private struct DomainFavicon: View {
                     .clipShape(RoundedRectangle(cornerRadius: 2))
             } else {
                 Text(String(domain.prefix(1)).uppercased())
-                    .font(.system(size: 7, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .bold, design: .default))
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.8))
                     .frame(width: 12, height: 12)
                     .background(
@@ -820,14 +949,14 @@ private struct FlashingTagline: View {
     
     private var baseText: some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .font(.system(size: 12, weight: .medium, design: .default))
             .foregroundStyle(Color(hex: "A1A1AA"))
             .tracking(2)
     }
     
     private func highlightedText(motion: FlashMotion) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
+            .font(.system(size: 12, weight: .medium, design: .default))
             .foregroundStyle(Color(hex: "3FB950"))
             .tracking(2)
             .opacity(0.72 + (0.20 * motion.spark))
@@ -909,12 +1038,12 @@ struct APIStatusPill: View {
             // Edit mode - show input field
             VStack(alignment: .leading, spacing: 6) {
                 Text(label)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "71717A"))
                 
                 HStack(spacing: 8) {
                     SecureField(placeholder, text: $key)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "E6EDF3"))
                         .textFieldStyle(.plain)
                         .focused($isFocused)
@@ -955,16 +1084,16 @@ struct APIStatusPill: View {
                         .frame(width: 6, height: 6)
                     
                     Text(label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(isConnected ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
                     
                     if isConnected {
                         Text("connected")
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "3FB950").opacity(0.8))
                     } else {
                         Text("click to add")
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A").opacity(0.6))
                     }
                 }
@@ -1019,9 +1148,9 @@ struct MeetingLanguagePicker: View {
         } label: {
             HStack(spacing: 6) {
                 Text(selectedLang.rawValue.uppercased())
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                 Text(selectedLang.displayName)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
             }
@@ -1049,18 +1178,18 @@ struct StatusCheckRow: View {
     var body: some View {
         HStack(spacing: 12) {
             Text(isReady ? "✓" : "○")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(isReady ? Color(hex: "3FB950") : Color(hex: "484F58"))
                 .frame(width: 16)
             
             Text(label)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             
             Spacer()
             
             Text(isReady ? "configured" : "missing")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(isReady ? Color(hex: "3FB950") : Color(hex: "D29922"))
         }
     }
@@ -1077,10 +1206,10 @@ struct SectionHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(icon)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
             Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             Spacer()
             
@@ -1103,7 +1232,7 @@ struct SectionHeader: View {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .medium))
                         Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
                     .padding(.horizontal, 6)
@@ -1119,7 +1248,7 @@ struct SectionHeader: View {
             
             if let shortcut = shortcut {
                 Text(shortcut)
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
             }
         }
@@ -1202,7 +1331,7 @@ struct NotesEditor: View {
             // Placeholder
             if appState.liveNotes.isEmpty && !isFocused {
                 Text("relax and take notes...")
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -1210,7 +1339,7 @@ struct NotesEditor: View {
             
             // Text editor
             TextEditor(text: $appState.liveNotes)
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .font(.system(size: 12, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
                 .scrollContentBackground(.hidden)
                 .focused($isFocused)
@@ -1231,10 +1360,10 @@ struct InsightsSectionHeader: View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Text("◇")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                 Text("insights")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 
                 Spacer()
@@ -1257,7 +1386,7 @@ struct InsightsSectionHeader: View {
                             Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                                 .font(.system(size: 9, weight: .medium))
                             Text(showCopied ? "copied" : "copy")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                         }
                         .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
                         .padding(.horizontal, 6)
@@ -1274,12 +1403,7 @@ struct InsightsSectionHeader: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
             
-            InsightsModeTabs(
-                selectedMode: Binding(
-                    get: { appState.insightsMode },
-                    set: { appState.switchInsightsMode(to: $0) }
-                )
-            )
+            InsightsModeTabs()
         }
     }
 }
@@ -1305,7 +1429,7 @@ private struct LiveInsightsColumn: View {
                         }
                     }
                     Text("⌘]")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "71717A").opacity(0.5))
                 }
                 
@@ -1324,7 +1448,7 @@ private struct CollapsedInsightsRail: View {
     var body: some View {
         VStack(spacing: 0) {
             Text("insights")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
                 .rotationEffect(.degrees(-90))
                 .fixedSize()
@@ -1341,7 +1465,7 @@ private struct CollapsedInsightsRail: View {
                 Spacer()
                 VStack(spacing: 3) {
                     Text("⌘]")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "71717A").opacity(0.5))
                     InsightsPaneToggleButton(direction: .expand) {
                         withAnimation(.easeInOut(duration: 0.16)) {
@@ -1385,6 +1509,7 @@ private struct InsightsPaneToggleButton: View {
 
 struct LiveInsightsPanel: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
     
     private var canUpdateInsights: Bool {
         appState.currentMeeting != nil && !appState.liveSegments.isEmpty
@@ -1418,9 +1543,9 @@ struct LiveInsightsPanel: View {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 9, weight: .semibold))
                                 Text("update")
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 10, weight: .semibold, design: .default))
                                 Text("⌘⇧I")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "52525B"))
                             }
                             .foregroundStyle(Color(hex: "D4D4D8"))
@@ -1484,8 +1609,8 @@ struct LiveInsightsPanel: View {
                         HStack(spacing: 8) {
                             ProgressView()
                                 .controlSize(.small)
-                            Text("analyzing with MEDDPICC...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            Text("analyzing sales qualification…")
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "58A6FF"))
                         }
                         .padding(.horizontal, 16)
@@ -1502,7 +1627,7 @@ struct LiveInsightsPanel: View {
                             ProgressView()
                                 .controlSize(.small)
                             Text("updating...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "58A6FF"))
                         }
                         .padding(.horizontal, 16)
@@ -1513,9 +1638,9 @@ struct LiveInsightsPanel: View {
                             SelectableTextView(
                                 SelectableAttributed.body(
                                     appState.liveSummary,
-                                    fontSize: 12,
+                                    fontSize: interfaceScale.insightBodySize,
                                     color: Color(hex: "E6EDF3"),
-                                    lineSpacing: 4
+                                    lineSpacing: interfaceScale.insightLineSpacing
                                 )
                             )
                         }
@@ -1528,7 +1653,7 @@ struct LiveInsightsPanel: View {
                                     items: appState.liveDiscussionFlow.enumerated().map { "\($0.offset + 1). \($0.element)" },
                                     prefix: "",
                                     prefixColor: Color(hex: "F59E0B"),
-                                    fontSize: 11,
+                                    fontSize: interfaceScale.insightSecondarySize,
                                     textColor: Color(hex: "D4D4D8")
                                 )
                             )
@@ -1542,7 +1667,7 @@ struct LiveInsightsPanel: View {
                                     items: appState.liveActionItems,
                                     prefix: "→",
                                     prefixColor: Color(hex: "3FB950"),
-                                    fontSize: 11,
+                                    fontSize: interfaceScale.insightSecondarySize,
                                     textColor: Color(hex: "E6EDF3")
                                 )
                             )
@@ -1554,7 +1679,7 @@ struct LiveInsightsPanel: View {
                             FlowLayout(spacing: 6) {
                                 ForEach(appState.liveTopics, id: \.self) { topic in
                                     Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                         .foregroundStyle(Color(hex: "A371F7"))
                                         .padding(.horizontal, 6)
                                         .padding(.vertical, 3)
@@ -1582,6 +1707,7 @@ struct LiveInsightsPanel: View {
 
 struct LiveMEDDPICCSections: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
     
     private var fields: [(title: String, color: String, value: String?)] {
         [
@@ -1599,7 +1725,7 @@ struct LiveMEDDPICCSections: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             LiveInsightSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!, fontSize: 12)
+                MEDDPICCBulletText(field.value!, fontSize: interfaceScale.insightBodySize)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1620,24 +1746,24 @@ private struct LiveInsightsEmptyState: View {
     var body: some View {
         VStack(spacing: 10) {
             Text(icon)
-                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 28, weight: .ultraLight, design: .default))
                 .foregroundStyle(Color(hex: "1C1C1F"))
 
             if appState.appMode == .byok && appState.openaiApiKey.isEmpty {
                 Text("openai key missing")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "D29922"))
             } else if appState.isRecording {
                 Text(waitingTitle)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                 Text(waitingSubtitle)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .multilineTextAlignment(.center)
             } else {
                 Text("start recording")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -1746,11 +1872,11 @@ struct LiveTrainingInsightsContent: View {
                         
                         HStack {
                             Text("you \(Int(metrics.talkRatioYou * 100))%")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "D4D4D8"))
                             Spacer()
                             Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "D4D4D8"))
                         }
                     }
@@ -1804,7 +1930,7 @@ struct LiveTrainingInsightsContent: View {
                     }
                     
                     Text("lower = clearer = better")
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "3F3F46"))
                 }
             }
@@ -1825,7 +1951,7 @@ private struct LiveTrainingFillersSection: View {
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
                         
                         if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
@@ -1833,11 +1959,11 @@ private struct LiveTrainingFillersSection: View {
                                 ForEach(speaker.fillers) { entry in
                                     HStack(spacing: 6) {
                                         Text(entry.word)
-                                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                            .font(.system(size: 10, weight: .medium, design: .default))
                                             .foregroundStyle(Color(hex: "D4D4D8"))
                                             .fixedSize()
                                         Text("\(entry.count)")
-                                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                            .font(.system(size: 10, weight: .semibold, design: .default))
                                             .foregroundStyle(Color(hex: "F59E0B"))
                                     }
                                 }
@@ -1858,17 +1984,17 @@ private struct LiveTrainingMetricRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 48, alignment: .leading)
             
             Text(value)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -1901,7 +2027,7 @@ struct LiveInsightSection<Content: View>: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1)
                 Text(title)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .bold, design: .default))
                     .foregroundStyle(color)
                 if let info {
                     TerminalSectionInfoButton(info: info, accent: color)
@@ -1945,7 +2071,7 @@ struct TerminalHeader: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
-                if appState.currentMeeting != nil {
+                if isStopped {
                     Button {
                         showDiscardConfirmation = true
                     } label: {
@@ -1955,11 +2081,11 @@ struct TerminalHeader: View {
                                     .font(.system(size: 10, weight: .semibold))
                                     .frame(width: 11)
                                 Text("discard")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                             }
                             
                             Text("⌘⌫")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "F85149").opacity(0.5))
                                 .lineLimit(1)
                         }
@@ -1978,7 +2104,6 @@ struct TerminalHeader: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .focusable(false)
                     .keyboardShortcut(.delete, modifiers: .command)
                 }
                 
@@ -2006,11 +2131,11 @@ struct TerminalHeader: View {
                                 .font(.system(size: 11, weight: .semibold))
                                 .frame(width: 11)
                         }
-                        Text(isResumePending ? "starting..." : (appState.isRecording ? "stop" : "cont"))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                        Text(isResumePending ? "starting..." : (appState.isRecording ? "stop" : "resume"))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                             .lineLimit(1)
                         Text("⌘⇧R")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(appState.isRecording ? Color(hex: "F85149").opacity(0.5) : Color(hex: "3FB950").opacity(0.5))
                             .lineLimit(1)
                     }
@@ -2029,46 +2154,96 @@ struct TerminalHeader: View {
                     )
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
-                .disabled(isResumePending)
+                .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights)
+                .accessibilityLabel(appState.isRecording ? "Stop recording" : "Resume recording")
                 
-                if appState.currentMeeting != nil {
-                    Button {
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            appState.saveAndOpenCurrentMeeting()
-                        }
-                    } label: {
+                if isStopped {
+                    if appState.isFinalizingMeeting {
                         HStack(spacing: 6) {
-                            HStack(spacing: 6) {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .frame(width: 11)
-                                Text("save")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                            }
-                            
-                            Text("⌘S")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "58A6FF").opacity(0.5))
-                                .lineLimit(1)
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 11)
+                            Text("finishing...")
+                                .font(.system(size: 11, weight: .medium, design: .default))
                         }
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
-                        .foregroundStyle(Color(hex: "58A6FF"))
+                        .foregroundStyle(ColorPalette.Text.muted)
                         .frame(height: headerActionHeight)
                         .padding(.horizontal, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "58A6FF").opacity(0.1))
+                                .fill(ColorPalette.Background.tertiary)
                         )
                         .overlay(
                             RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
+                                .stroke(ColorPalette.Border.subtle, lineWidth: 1)
                         )
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(appState.finalizationStatusText)
+                    } else if appState.isCurrentMeetingGeneratingFinalInsights {
+                        Button {
+                            appState.goHome()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "rectangle.stack")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .frame(width: 11)
+                                Text("meetings")
+                                    .font(.system(size: 11, weight: .medium, design: .default))
+                            }
+                            .foregroundStyle(ColorPalette.Accent.blue)
+                            .frame(height: headerActionHeight)
+                            .padding(.horizontal, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(ColorPalette.Accent.blue.opacity(0.1))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Returns home while insights finish in History")
+                    } else {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                appState.saveAndOpenCurrentMeeting()
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .frame(width: 11)
+                                    Text("done")
+                                        .font(.system(size: 11, weight: .medium, design: .default))
+                                }
+
+                                Text("⌘S")
+                                    .font(.system(size: 10, weight: .medium, design: .default))
+                                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.5))
+                                    .lineLimit(1)
+                            }
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .foregroundStyle(Color(hex: "58A6FF"))
+                            .frame(height: headerActionHeight)
+                            .padding(.horizontal, 10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(Color(hex: "58A6FF").opacity(0.1))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 4)
+                                    .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut("s", modifiers: .command)
+                        .accessibilityHint("Opens the saved meeting in History")
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
-                    .keyboardShortcut("s", modifiers: .command)
                 }
 
                 if appState.isRecording {
@@ -2080,7 +2255,7 @@ struct TerminalHeader: View {
                         Text(lang.flag)
                             .font(.system(size: 11))
                         Text(lang.rawValue.uppercased())
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
                     .padding(.horizontal, 6)
@@ -2096,7 +2271,7 @@ struct TerminalHeader: View {
                         Image(systemName: "person.2.fill")
                             .font(.system(size: 9))
                         Text("\(meeting.attendees.filter { !$0.isSelf }.count)")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(ColorPalette.Text.muted)
                     .padding(.horizontal, 6)
@@ -2115,9 +2290,17 @@ struct TerminalHeader: View {
                     .fill(recoveryAccent)
                     .frame(width: 6, height: 6)
                 Text(appState.audioRecoveryState.label)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(recoveryAccent)
                 Spacer(minLength: 0)
+                if appState.audioRecoveryState == .degraded {
+                    Button("Retry") {
+                        appState.retryRecordingHealth()
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(recoveryAccent)
+                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
@@ -2130,7 +2313,7 @@ struct TerminalHeader: View {
                     .stroke(recoveryAccent.opacity(0.24), lineWidth: 1)
             )
             .opacity(appState.audioRecoveryState == .healthy ? 0 : 1)
-            .allowsHitTesting(false)
+            .allowsHitTesting(appState.audioRecoveryState == .degraded)
             .accessibilityHidden(appState.audioRecoveryState == .healthy)
             
             if appState.wasAutoStopped && isStopped {
@@ -2139,7 +2322,7 @@ struct TerminalHeader: View {
                     Image(systemName: reason.icon)
                         .font(.system(size: 10, weight: .semibold))
                     Text(reason.label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)
                 .padding(.horizontal, 10)
@@ -2159,7 +2342,7 @@ struct TerminalHeader: View {
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: 10, weight: .semibold))
                     Text("meeting time ended — will stop when silent")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)
                 .padding(.horizontal, 10)
@@ -2184,7 +2367,8 @@ struct TerminalHeader: View {
                                 .shadow(color: Color(hex: "F85149").opacity(0.5), radius: 4)
                             
                             Text(appState.formattedDuration)
-                                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                                .font(.system(size: 13, weight: .medium, design: .default))
+                                .monospacedDigit()
                                 .foregroundStyle(Color(hex: "F85149"))
                         }
                         .fixedSize()
@@ -2229,22 +2413,27 @@ struct TerminalHeader: View {
                 
                 HStack(spacing: 6) {
                     Text("~")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .font(.system(size: 13, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
                     
                     if isEditingTitle {
                         TextField("session_name", text: $meetingTitle)
                             .textFieldStyle(.plain)
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
+                            .font(.system(size: 13, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "E6EDF3"))
                             .onSubmit { isEditingTitle = false }
                     } else {
-                        Text(meetingTitle)
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
-                            .foregroundStyle(Color(hex: "8B949E"))
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .onTapGesture { isEditingTitle = true }
+                        Button {
+                            isEditingTitle = true
+                        } label: {
+                            Text(meetingTitle)
+                                .font(.system(size: 13, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Text.secondary)
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Edit meeting title")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2306,6 +2495,7 @@ private struct ObservedSourceWaveform: View {
 }
 
 struct SourceWaveform: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let level: Float
     let color: Color
     let bandCount: Int
@@ -2322,8 +2512,9 @@ struct SourceWaveform: View {
     
     @State private var bands: [CGFloat] = []
     @State private var previousLevel: CGFloat = 0
+    @State private var idleTick = false
     
-    let timer = Timer.publish(every: 0.04, on: .main, in: .common).autoconnect()
+    let timer = Timer.publish(every: 1.0 / 16.0, on: .main, in: .common).autoconnect()
     
     var body: some View {
         HStack(spacing: 2) {
@@ -2338,8 +2529,14 @@ struct SourceWaveform: View {
         }
         .onReceive(timer) { _ in
             guard bands.count == bandCount else { return }
-            withAnimation(.linear(duration: 0.04)) {
-                let rawLevel = CGFloat(max(level, 0))
+            let rawLevel = CGFloat(max(level, 0))
+            if rawLevel < 0.001 {
+                idleTick.toggle()
+                guard idleTick else { return }
+            }
+            var transaction = Transaction()
+            transaction.animation = reduceMotion ? nil : .linear(duration: 1.0 / 16.0)
+            withTransaction(transaction) {
                 // Noise gate: suppress levels below threshold
                 let gated = rawLevel < 0.001 ? 0.0 : rawLevel
                 let amplified = gated > 0 ? min(1.0, pow(gated, 0.2)) : 0.0
@@ -2427,7 +2624,7 @@ struct AudioSourcePanel: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 11))
                     Text(isTesting ? "stop" : "test")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                 }
                 .foregroundStyle(isTesting ? Color(hex: "3FB950") : Color(hex: "71717A"))
                 .padding(.horizontal, 10)
@@ -2479,7 +2676,7 @@ private struct ManagedStatusInline: View {
     var body: some View {
         if appState.shouldShowManagedSubscriptionPlaceholder {
             Text("checking plan...")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "52525B"))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -2493,11 +2690,11 @@ private struct ManagedStatusInline: View {
                         .fill(accent)
                         .frame(width: 5, height: 5)
                     Text(appState.isPro ? "miniti pro" : "miniti free")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(isHovered ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
                         .lineLimit(1)
                     Text("\(Int(usage.minutesUsed.rounded()))/\(Int(usage.minutesLimit))")
-                        .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(isHovered ? accent : accent.opacity(0.8))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
@@ -2557,12 +2754,12 @@ struct AudioSourcePill: View {
                     .frame(width: 6, height: 6)
                 
                 Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(isEnabled ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
                     .lineLimit(1)
 
                 Text(isEnabled ? "on" : "off")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(isEnabled ? color.opacity(0.8) : Color(hex: "71717A").opacity(0.6))
                     .lineLimit(1)
             }
@@ -2607,11 +2804,11 @@ struct CalendarNudgeCard: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("see your meetings here")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
 
                     Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -2654,7 +2851,7 @@ struct CalendarNudgeCard: View {
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         Text(isConnecting ? "opening browser..." : "connect calendar")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "09090B"))
                     .padding(.horizontal, 12)
@@ -2675,7 +2872,7 @@ struct CalendarNudgeCard: View {
                     appState.snoozeCalendarNudge()
                 } label: {
                     Text("not now")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -2728,7 +2925,7 @@ struct UpdateAvailableBanner: View {
                     .foregroundStyle(ColorPalette.Accent.blue)
                 
                 Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 13, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Accent.blue)
                 
                 Spacer()
@@ -2739,7 +2936,7 @@ struct UpdateAvailableBanner: View {
                             Image(systemName: "arrow.down.to.line")
                                 .font(.system(size: 11, weight: .semibold))
                             Text("download")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                         .foregroundStyle(Color(hex: "09090B"))
                         .padding(.horizontal, 12)
@@ -2773,7 +2970,7 @@ struct UpdateAvailableBanner: View {
                             .font(.system(size: 9, weight: .bold))
                             .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
                         Text(isShowingFullNotes ? "hide release notes" : "show release notes")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                     }
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
                     .contentShape(Rectangle())
@@ -2784,7 +2981,7 @@ struct UpdateAvailableBanner: View {
             
             if let notes = releaseNotes, isShowingFullNotes {
                 Text(notes)
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .font(.system(size: 11, weight: .regular, design: .default))
                     .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 13)
@@ -2824,10 +3021,10 @@ struct ZonedOutButton: View {
                         .font(.system(size: 12))
                         .frame(width: 11)
                     Text("zoned out")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                 }
                 Text("⌘⇧Z")
-                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(accent.opacity(0.5))
                     .lineLimit(1)
             }
@@ -2889,12 +3086,12 @@ private struct ZonedOutPopoverContent: View {
                 Text("😶")
                     .font(.system(size: 14))
                 Text("catch me up")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
                     .foregroundStyle(accent)
                 Spacer(minLength: 0)
                 if let label = generatedLabel {
                     Text(label)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
                 Button {
@@ -2910,7 +3107,7 @@ private struct ZonedOutPopoverContent: View {
                                 .font(.system(size: 10, weight: .semibold))
                         }
                         Text(appState.isGeneratingCatchUp ? "thinking" : "refresh")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(accent)
                     .padding(.horizontal, 8)
@@ -2934,7 +3131,7 @@ private struct ZonedOutPopoverContent: View {
                         if !catchUp.currentTopic.isEmpty {
                             ZonedOutSection(title: "current topic", accent: accent) {
                                 Text(catchUp.currentTopic)
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 12, design: .default))
                                     .foregroundStyle(ColorPalette.Text.primary)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
@@ -2946,10 +3143,10 @@ private struct ZonedOutPopoverContent: View {
                                     ForEach(catchUp.questionsForYou, id: \.self) { q in
                                         HStack(alignment: .top, spacing: 6) {
                                             Text("?")
-                                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .bold, design: .default))
                                                 .foregroundStyle(Color(hex: "FFA657"))
                                             Text(q)
-                                                .font(.system(size: 12, design: .monospaced))
+                                                .font(.system(size: 12, design: .default))
                                                 .foregroundStyle(ColorPalette.Text.primary)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
@@ -2964,10 +3161,10 @@ private struct ZonedOutPopoverContent: View {
                                     ForEach(catchUp.recentDiscussion, id: \.self) { line in
                                         HStack(alignment: .top, spacing: 6) {
                                             Text("›")
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold, design: .default))
                                                 .foregroundStyle(ColorPalette.Text.muted)
                                             Text(line)
-                                                .font(.system(size: 12, design: .monospaced))
+                                                .font(.system(size: 12, design: .default))
                                                 .foregroundStyle(ColorPalette.Text.secondary)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
@@ -2986,7 +3183,7 @@ private struct ZonedOutPopoverContent: View {
                                                 .foregroundStyle(ColorPalette.Accent.green)
                                                 .padding(.top, 3)
                                             Text(line)
-                                                .font(.system(size: 12, design: .monospaced))
+                                                .font(.system(size: 12, design: .default))
                                                 .foregroundStyle(ColorPalette.Text.primary)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
@@ -3000,7 +3197,7 @@ private struct ZonedOutPopoverContent: View {
                                 .controlSize(.small)
                                 .tint(accent)
                             Text("catching you up…")
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 12, design: .default))
                                 .foregroundStyle(ColorPalette.Text.muted)
                         }
                     }
@@ -3011,7 +3208,7 @@ private struct ZonedOutPopoverContent: View {
                                 .font(.system(size: 10, weight: .semibold))
                                 .foregroundStyle(ColorPalette.Accent.amber)
                             Text(err)
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 11, design: .default))
                                 .foregroundStyle(ColorPalette.Accent.amber)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -3023,7 +3220,7 @@ private struct ZonedOutPopoverContent: View {
                     }
 
                     Text("covers roughly the last 3 minutes of discussion")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted.opacity(0.7))
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -3043,7 +3240,7 @@ private struct ZonedOutSection<Content: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(accent)
                 .textCase(.lowercase)
             content()

@@ -32,65 +32,128 @@ struct InsightsView: View {
 
 // MARK: - Mode Selector
 
+#if os(macOS)
 struct InsightsModeSelector: View {
-    @EnvironmentObject var appState: AppState
-    
     var body: some View {
-        InsightsModeTabs(
-            selectedMode: Binding(
-                get: { appState.insightsMode },
-                set: { appState.switchInsightsMode(to: $0) }
-            )
-        )
+        InsightsModeTabs()
     }
 }
 
 struct InsightsModeTabs: View {
-    @Binding var selectedMode: InsightsMode
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+
+    private var selectedSpecialist: InsightsMode? {
+        appState.insightsMode.isSpecialist ? appState.insightsMode : nil
+    }
     
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(Array(InsightsMode.allCases.enumerated()), id: \.element) { index, mode in
+            ForEach(InsightsMode.coreModes, id: \.self) { mode in
                 Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        selectedMode = mode
-                    }
+                    appState.switchInsightsMode(to: mode)
                 } label: {
-                    HStack(spacing: 4) {
-                        Text(mode.displayName)
-                            .font(.system(size: 10, weight: selectedMode == mode ? .semibold : .medium, design: .monospaced))
-                            .foregroundStyle(selectedMode == mode ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                        
-                        Text("⌘\(index + 1)")
-                            .font(.system(size: 8, weight: .medium, design: .monospaced))
-                            .foregroundStyle(selectedMode == mode ? Color(hex: "E6EDF3").opacity(0.4) : Color(hex: "8B949E").opacity(0.5))
-                            .fixedSize()
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedMode == mode ? Color(hex: "3FB950").opacity(0.15) : Color.clear)
-                    )
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
+                    Text(mode.displayName)
+                        .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
+                        .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.muted)
+                        .lineLimit(1)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(appState.insightsMode == mode ? ColorPalette.Accent.green.opacity(0.15) : Color.clear)
+                        )
+                        .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
+                .help(mode.description)
             }
-            
+
+            Menu {
+                Section("Specialist views") {
+                    specialistButton(.meddpicc)
+
+                    if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
+                        specialistButton(.docs)
+                    } else {
+                        Button {
+                            appState.selectedSettingsTab = "integrations"
+                            openSettings()
+                        } label: {
+                            Label("Set Up Playbook…", systemImage: "gearshape")
+                        }
+                    }
+                }
+
+                if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
+                    Divider()
+                    Section("Enabled specialist views") {
+                        if appState.salesInsightsEnabled {
+                            Button {
+                                appState.setInsightModeEnabled(.meddpicc, enabled: false)
+                            } label: {
+                                Label("Turn Off Sales Insights", systemImage: "eye.slash")
+                            }
+                        }
+
+                        if appState.playbookInsightsEnabled {
+                            Button {
+                                appState.setInsightModeEnabled(.docs, enabled: false)
+                            } label: {
+                                Label("Hide Playbook", systemImage: "eye.slash")
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    if let selectedSpecialist {
+                        Image(systemName: selectedSpecialist.systemImage)
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                    Text(selectedSpecialist?.displayName ?? "More")
+                        .font(.system(size: 11, weight: selectedSpecialist == nil ? .medium : .semibold, design: .default))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .foregroundStyle(selectedSpecialist == nil ? ColorPalette.Text.muted : ColorPalette.Text.primary)
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(selectedSpecialist == nil ? Color.clear : ColorPalette.Accent.green.opacity(0.15))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .help("Specialist insight views")
+
             Spacer()
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 8)
     }
+
+    private func specialistButton(_ mode: InsightsMode) -> some View {
+        Button {
+            appState.switchInsightsMode(to: mode)
+        } label: {
+            Label {
+                Text("\(mode.displayName) — \(mode.description)")
+            } icon: {
+                Image(systemName: appState.insightsMode == mode ? "checkmark.circle.fill" : mode.systemImage)
+            }
+        }
+    }
 }
+#endif
 
 // MARK: - Live Insights Content
 
 struct LiveInsightsContent: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
     
     var body: some View {
         #if os(iOS)
@@ -130,8 +193,8 @@ struct LiveInsightsContent: View {
                     )
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
-                        Text("no meddpicc yet...")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        Text("no sales insights yet…")
+                            .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                     MEDDPICCContent()
@@ -141,7 +204,7 @@ struct LiveInsightsContent: View {
                             ProgressView()
                                 .scaleEffect(0.6)
                             Text("updating...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "8B949E"))
                         }
                         .padding(.top, 8)
@@ -149,14 +212,18 @@ struct LiveInsightsContent: View {
                 } else {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedStandardInsights {
                         Text("no insights yet...")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                     // Summary (always shown)
                     if !appState.liveSummary.isEmpty {
                         TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
                             SelectableTextView(
-                                SelectableAttributed.body(appState.liveSummary)
+                                SelectableAttributed.body(
+                                    appState.liveSummary,
+                                    fontSize: interfaceScale.insightBodySize,
+                                    lineSpacing: interfaceScale.insightLineSpacing
+                                )
                             )
                         }
                     }
@@ -168,7 +235,8 @@ struct LiveInsightsContent: View {
                                 SelectableAttributed.bulletList(
                                     items: appState.liveActionItems,
                                     prefix: "→",
-                                    prefixColor: Color(hex: "3FB950")
+                                    prefixColor: Color(hex: "3FB950"),
+                                    fontSize: interfaceScale.insightBodySize
                                 )
                             )
                         }
@@ -191,7 +259,7 @@ struct LiveInsightsContent: View {
                             ProgressView()
                                 .scaleEffect(0.6)
                             Text("updating...")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "8B949E"))
                         }
                         .padding(.top, 8)
@@ -207,6 +275,7 @@ struct LiveInsightsContent: View {
 #if os(iOS)
 private struct LiveInsightsContent_iOSPlain: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
 
     var body: some View {
         ScrollView(.vertical) {
@@ -243,21 +312,25 @@ private struct LiveInsightsContent_iOSPlain: View {
                     )
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
-                        Text("no meddpicc yet...")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        Text("no sales insights yet…")
+                            .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                     LiveMEDDPICCContent_iOSPlain()
                 } else {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedStandardInsights {
                         Text("no insights yet...")
-                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                     if !appState.liveSummary.isEmpty {
                         InsightsPlainBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
                             SelectableTextView(
-                                SelectableAttributed.body(appState.liveSummary)
+                                SelectableAttributed.body(
+                                    appState.liveSummary,
+                                    fontSize: interfaceScale.insightBodySize,
+                                    lineSpacing: interfaceScale.insightLineSpacing
+                                )
                             )
                         }
                     }
@@ -268,7 +341,8 @@ private struct LiveInsightsContent_iOSPlain: View {
                                 SelectableAttributed.bulletList(
                                     items: appState.liveDiscussionFlow,
                                     prefix: "->",
-                                    prefixColor: Color(hex: "D29922")
+                                    prefixColor: Color(hex: "D29922"),
+                                    fontSize: interfaceScale.insightBodySize
                                 )
                             )
                         }
@@ -280,7 +354,8 @@ private struct LiveInsightsContent_iOSPlain: View {
                                 SelectableAttributed.bulletList(
                                     items: appState.liveActionItems,
                                     prefix: "→",
-                                    prefixColor: Color(hex: "3FB950")
+                                    prefixColor: Color(hex: "3FB950"),
+                                    fontSize: interfaceScale.insightBodySize
                                 )
                             )
                         }
@@ -387,10 +462,10 @@ private struct LiveTrainingContent_iOSPlain: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
                                 Text("total \(speaker.totalFillers)")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "E6EDF3"))
                                 Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "8B949E"))
                             }
                             
@@ -399,11 +474,11 @@ private struct LiveTrainingContent_iOSPlain: View {
                                     ForEach(speaker.fillers) { entry in
                                         HStack(spacing: 6) {
                                             Text(entry.word)
-                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .font(.system(size: 11, weight: .medium, design: .default))
                                                 .foregroundStyle(Color(hex: "D4D4D8"))
                                                 .frame(width: 70, alignment: .trailing)
                                             Text("\(entry.count)")
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold, design: .default))
                                                 .foregroundStyle(Color(hex: "F59E0B"))
                                         }
                                     }
@@ -418,12 +493,12 @@ private struct LiveTrainingContent_iOSPlain: View {
                 InsightsPlainBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "E6EDF3"))
                         Text("•")
                             .foregroundStyle(Color(hex: "484F58"))
                         Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
                 }
@@ -475,7 +550,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                         )
                     }
                     Text("lower = clearer = better")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
                 }
             }
@@ -491,16 +566,16 @@ private struct TrainingMetricRow_iOS: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 62, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer(minLength: 6)
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -533,7 +608,7 @@ private struct InsightsPlainBlock_iOS<Content: View>: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1.5)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
                     .foregroundStyle(color)
                 if let info {
                     TerminalSectionInfoButton(info: info, accent: color)
@@ -561,30 +636,30 @@ struct QuestionsEmptyState: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("?")
-                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 28, weight: .ultraLight, design: .default))
                 .foregroundStyle(Color(hex: "58A6FF").opacity(0.3))
 
             switch variant {
             case .waiting:
                 Text("generating questions...")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "58A6FF"))
                 ProgressView()
                     .controlSize(.small)
             case .needsMore:
                 Text("needs more conversation")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text("questions appear once there's enough\nto find gaps and unstated assumptions")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .multilineTextAlignment(.center)
             case .noQuestions:
                 Text("no questions yet")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text("use update above to generate, or\nrecord a longer conversation")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .multilineTextAlignment(.center)
             }
@@ -637,7 +712,7 @@ private struct QuestionCard: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1)
                 Text(typeLabel)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(.system(size: 10, weight: .bold, design: .default))
                     .foregroundStyle(typeColor)
 
                 Spacer()
@@ -662,7 +737,7 @@ private struct QuestionCard: View {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .medium))
                         Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
                     .padding(.horizontal, 6)
@@ -677,7 +752,7 @@ private struct QuestionCard: View {
             }
 
             Text(question.question)
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .font(.system(size: 12, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
                 .lineSpacing(4)
                 .textSelection(.enabled)
@@ -689,7 +764,7 @@ private struct QuestionCard: View {
                 .padding(.leading, 12)
 
             Text(question.context)
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
                 .lineSpacing(3)
                 .padding(.leading, 12)
@@ -717,12 +792,12 @@ struct DocsEmptyState: View {
     var body: some View {
         VStack(spacing: 8) {
             Text("◇")
-                .font(.system(size: 20, weight: .light, design: .monospaced))
+                .font(.system(size: 20, weight: .light, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
             switch variant {
             case .needsSetup:
                 Text("add a docs MCP URL")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 #if os(macOS)
                 Button {
@@ -733,7 +808,7 @@ struct DocsEmptyState: View {
                         Image(systemName: "gearshape")
                             .font(.system(size: 9, weight: .semibold))
                         Text("open Settings → Docs MCP")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "D4D4D8"))
                     .padding(.horizontal, 8)
@@ -745,34 +820,34 @@ struct DocsEmptyState: View {
                 .padding(.top, 2)
                 #else
                 Text("Settings → Integrations → Docs MCP")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                     .multilineTextAlignment(.center)
                 #endif
                 Text("e.g. https://docs.lightdash.com/mcp")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .multilineTextAlignment(.center)
             case .idle(let auto):
                 Text("topics will appear as you talk")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text(auto ? "each one looks itself up in your docs" : "tap a topic to look it up in your docs")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .multilineTextAlignment(.center)
             case .extracting:
                 ProgressView()
                     .controlSize(.small)
                 Text("finding topics...")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
             case .error(let message):
                 Text("docs unavailable")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                 Text(message)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .multilineTextAlignment(.center)
             }
@@ -843,7 +918,7 @@ struct DocsTabContent: View {
                 }
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "F85149"))
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -862,7 +937,7 @@ struct DocsTabContent: View {
                             .font(.system(size: 9, weight: .semibold))
                     }
                     Text(isExtracting ? "finding topics…" : (topics.isEmpty ? "find topics" : "refresh"))
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                 }
                 .foregroundStyle(Color(hex: "D4D4D8"))
                 .padding(.horizontal, 8)
@@ -884,14 +959,14 @@ struct DocsTabContent: View {
     private var quotaBadge: some View {
         if autoLookup {
             Text("auto")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "3FB950"))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 3)
                 .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "14251A")))
         } else if let remaining = lookupsRemaining {
             Text("\(remaining) lookup\(remaining == 1 ? "" : "s") left")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(remaining <= 0 ? Color(hex: "F85149") : Color(hex: "8B949E"))
         }
     }
@@ -915,7 +990,7 @@ private struct DocTopicRow: View {
                 HStack(spacing: 8) {
                     stateIndicator
                     Text(topic.label)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(topic.lookupState == .answered ? accentColor : Color(hex: "C9D1D9"))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -937,19 +1012,19 @@ private struct DocTopicRow: View {
                         .padding(.leading, 20)
                 }
                 Text(topic.errorMessage ?? "Docs service is busy — tap to try again.")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "D29922"))
                     .padding(.leading, 20)
                     .fixedSize(horizontal: false, vertical: true)
             } else if topic.lookupState == .failed, let message = topic.errorMessage {
                 Text(message)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "F85149"))
                     .padding(.leading, 20)
                     .fixedSize(horizontal: false, vertical: true)
             } else if topic.lookupState == .noMatch {
                 Text("no docs match this topic")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                     .padding(.leading, 20)
             }
@@ -1013,14 +1088,14 @@ private struct DocTopicRow: View {
             chip("retry")
         case .lookingUp:
             Text("looking up…")
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
         }
     }
 
     private func chip(_ label: String) -> some View {
         Text(label)
-            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+            .font(.system(size: 10, weight: .semibold, design: .default))
             .foregroundStyle(Color(hex: "D4D4D8"))
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
@@ -1038,7 +1113,7 @@ private struct DocAnswerBody: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
                 Text(card.answer)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                     .lineSpacing(4)
                     .textSelection(.enabled)
@@ -1049,7 +1124,7 @@ private struct DocAnswerBody: View {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .medium))
                         Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
                     .padding(.horizontal, 6)
@@ -1070,18 +1145,18 @@ private struct DocAnswerBody: View {
                         if let urlString = citation.url, let url = docsCitationLinkURL(urlString) {
                             Link(destination: url) {
                                 Text(citation.title)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "58A6FF"))
                                     .underline()
                             }
                         } else {
                             Text(citation.title)
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "8B949E"))
                         }
                         if let snippet = citation.snippet, !snippet.isEmpty {
                             Text(snippet)
-                                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                .font(.system(size: 10, weight: .regular, design: .default))
                                 .foregroundStyle(Color(hex: "484F58"))
                                 .lineLimit(2)
                         }
@@ -1121,6 +1196,7 @@ private func docsCitationLinkURL(_ raw: String) -> URL? {
 
 struct MEDDPICCContent: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
     
     private var fields: [(title: String, color: String, value: String?)] {
         [
@@ -1138,7 +1214,7 @@ struct MEDDPICCContent: View {
     var body: some View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             TerminalSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!, fontSize: 13)
+                MEDDPICCBulletText(field.value!, fontSize: interfaceScale.insightBodySize)
             }
         }
     }
@@ -1278,13 +1354,13 @@ struct TrainingEmptyState: View {
     var body: some View {
         VStack(spacing: 10) {
             Text("◇")
-                .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 28, weight: .ultraLight, design: .default))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             Text("waiting for speech...")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
             Text("fillers, pace, clarity, and talk ratio\nupdate as you speak")
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "3F3F46"))
                 .multilineTextAlignment(.center)
         }
@@ -1306,7 +1382,7 @@ private struct FillerWordsSection: View {
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "71717A"))
                 
                 if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
@@ -1314,12 +1390,12 @@ private struct FillerWordsSection: View {
                         ForEach(speaker.fillers) { entry in
                             HStack(spacing: 6) {
                                 Text(entry.word)
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "D4D4D8"))
                                     .fixedSize()
                                 
                                 Text("\(entry.count)")
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                    .font(.system(size: 11, weight: .semibold, design: .default))
                                     .foregroundStyle(Color(hex: "F59E0B"))
                             }
                         }
@@ -1355,13 +1431,13 @@ private struct TalkRatioSection: View {
                     HStack(spacing: 4) {
                         Circle().fill(Color(hex: "3FB950")).frame(width: 6, height: 6)
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "D4D4D8"))
                     }
                     Spacer()
                     HStack(spacing: 4) {
                         Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "D4D4D8"))
                         Circle().fill(Color(hex: "58A6FF").opacity(0.5)).frame(width: 6, height: 6)
                     }
@@ -1440,7 +1516,7 @@ private struct ClaritySection: View {
                 }
                 
                 Text("lower = clearer = better")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .padding(.top, 4)
             }
@@ -1456,17 +1532,17 @@ private struct TerminalTrainingMetricRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 48, alignment: .leading)
             
             Text(primary)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             
             if let secondary {
                 Text(secondary)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -1496,6 +1572,7 @@ struct SavedTrainingContent: View {
 }
 
 struct TerminalInsightsContent: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let meeting: Meeting
 
     var body: some View {
@@ -1503,7 +1580,11 @@ struct TerminalInsightsContent: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let summary = meeting.summaryText {
                     TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                        SelectableTextView(SelectableAttributed.body(summary))
+                        SelectableTextView(SelectableAttributed.body(
+                            summary,
+                            fontSize: interfaceScale.insightBodySize,
+                            lineSpacing: interfaceScale.insightLineSpacing
+                        ))
                     }
                 }
 
@@ -1513,7 +1594,8 @@ struct TerminalInsightsContent: View {
                             SelectableAttributed.bulletList(
                                 items: meeting.discussionFlow,
                                 prefix: "->",
-                                prefixColor: Color(hex: "D29922")
+                                prefixColor: Color(hex: "D29922"),
+                                fontSize: interfaceScale.insightBodySize
                             )
                         )
                     }
@@ -1525,7 +1607,8 @@ struct TerminalInsightsContent: View {
                             SelectableAttributed.bulletList(
                                 items: meeting.actionItems,
                                 prefix: "→",
-                                prefixColor: Color(hex: "3FB950")
+                                prefixColor: Color(hex: "3FB950"),
+                                fontSize: interfaceScale.insightBodySize
                             )
                         )
                     }
@@ -1537,7 +1620,8 @@ struct TerminalInsightsContent: View {
                             SelectableAttributed.bulletList(
                                 items: meeting.keyDecisions,
                                 prefix: "->",
-                                prefixColor: Color(hex: "D29922")
+                                prefixColor: Color(hex: "D29922"),
+                                fontSize: interfaceScale.insightBodySize
                             )
                         )
                     }
@@ -1590,11 +1674,11 @@ struct TerminalSection<Content: View>: View {
             HStack(spacing: 8) {
                 if headerStyle == .markdown {
                     Text("##")
-                        .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        .font(.system(size: 12, weight: .bold, design: .default))
                         .foregroundStyle(color)
                 }
                 Text(title)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12, weight: .bold, design: .default))
                     .foregroundStyle(color)
                 if let info {
                     TerminalSectionInfoButton(info: info, accent: color)
@@ -1872,10 +1956,10 @@ struct TrainingMainView: View {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("training")
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .font(.system(size: 20, weight: .bold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
                     Text("speech analytics from your recent meetings")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
 
@@ -1888,7 +1972,7 @@ struct TrainingMainView: View {
                         ProgressView()
                             .controlSize(.small)
                         Text("computing metrics...")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.dim)
                     }
                     .padding(.vertical, 20)
@@ -1902,7 +1986,7 @@ struct TrainingMainView: View {
                     }
                 } else if !isComputing {
                     Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see training stats.")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .padding(.vertical, 20)
                 }
@@ -2040,7 +2124,7 @@ struct TrainingMainView: View {
         } label: {
             HStack(spacing: 1) {
                 Text(letter)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    .font(.system(size: 12, weight: .bold, design: .default))
                     .foregroundStyle(sortColumn == column ? color : color.opacity(0.5))
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
@@ -2108,7 +2192,7 @@ struct TrainingMainView: View {
         return VStack(alignment: alignment, spacing: 1) {
             HStack(spacing: 2) {
                 Text(label)
-                    .font(.system(size: labelSize, weight: .semibold, design: .monospaced))
+                    .font(.system(size: labelSize, weight: .semibold, design: .default))
                     .foregroundStyle(sortColumn == column ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
                 if sortColumn == column {
                     Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
@@ -2118,7 +2202,7 @@ struct TrainingMainView: View {
             }
             if let unit {
                 Text(unit)
-                    .font(.system(size: unitSize, weight: .medium, design: .monospaced))
+                    .font(.system(size: unitSize, weight: .medium, design: .default))
                     .foregroundStyle(ColorPalette.Text.dim.opacity(0.6))
             }
         }
@@ -2130,13 +2214,13 @@ struct TrainingMainView: View {
         HStack(spacing: 0) {
             #if os(iOS)
             Text(row.dateString)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: Self.dateColumnWidth, alignment: .leading)
                 .padding(.trailing, 4)
 
             Text(row.title)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
                 .padding(.leading, 2)
@@ -2149,60 +2233,60 @@ struct TrainingMainView: View {
                     set: { if !$0 { popoverRowID = nil } }
                 )) {
                     Text(row.title)
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .font(.system(size: 13, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
                         .padding(12)
                         .presentationCompactAdaptation(.popover)
                 }
 
             Text(String(format: "%.1f", row.fillers))
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "F59E0B"))
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(Int(row.pace))")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "58A6FF"))
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(Int(row.clarity))")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "A371F7"))
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(row.questions)")
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                .font(.system(size: 12, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "3FB950"))
                 .frame(width: Self.statColumnWidth, alignment: .center)
             #else
             Text(row.dateString)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: Self.dateColumnWidth, alignment: .leading)
 
             Text(row.title)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(String(format: "%.1f", row.fillers))
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "F59E0B"))
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.pace))")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "58A6FF"))
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.clarity))")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "A371F7"))
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(row.questions)")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "3FB950"))
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
             #endif
@@ -2396,21 +2480,21 @@ private struct TrainingStatHeader: View {
             Spacer(minLength: 4)
 
             Text("all \(allCount)")
-                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last \(meetingCount)")
-                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last 1")
-                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .monospaced))
+                .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "52525B"))
                 .frame(width: TrainingStatRow.colWidth)
 
@@ -2459,14 +2543,14 @@ private struct TrainingStatRow: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1)
                 Text(label)
-                    .font(.system(size: Self.fontSize, weight: .semibold, design: .monospaced))
+                    .font(.system(size: Self.fontSize, weight: .semibold, design: .default))
                     .foregroundStyle(color)
                     .lineLimit(1)
                     .fixedSize()
                 TerminalSectionInfoButton(info: info, accent: color)
                 #if os(iOS)
                 Text(unit)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .lineLimit(1)
                     .fixedSize()
@@ -2477,21 +2561,21 @@ private struct TrainingStatRow: View {
             Spacer(minLength: 4)
 
             Text(allValue)
-                .font(.system(size: Self.fontSize, weight: .medium, design: .monospaced))
+                .font(.system(size: Self.fontSize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "71717A"))
                 .frame(width: Self.colWidth, alignment: .center)
 
             Spacer(minLength: 8)
 
             Text(avgValue)
-                .font(.system(size: Self.fontSize, weight: .medium, design: .monospaced))
+                .font(.system(size: Self.fontSize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "A1A1AA"))
                 .frame(width: Self.colWidth, alignment: .center)
 
             Spacer(minLength: 8)
 
             Text(lastValue)
-                .font(.system(size: Self.fontSize, weight: .semibold, design: .monospaced))
+                .font(.system(size: Self.fontSize, weight: .semibold, design: .default))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .frame(width: Self.colWidth, alignment: .center)
 
@@ -2506,6 +2590,7 @@ private struct TrainingStatRow: View {
 }
 
 struct TerminalListItem: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let index: Int
     let text: String
     let style: ListStyle
@@ -2528,24 +2613,25 @@ struct TerminalListItem: View {
                     }
                 } label: {
                     Text(isCompleted ? "[x]" : "[ ]")
-                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: .medium, design: .default))
                         .foregroundStyle(isCompleted ? Color(hex: "3FB950") : Color(hex: "484F58"))
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
             case .arrow:
                 Text("->")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "D29922"))
             case .bullet:
                 Text("•")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
             
             Text(text)
-                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
                 .foregroundStyle(isCompleted ? Color(hex: "484F58") : Color(hex: "E6EDF3"))
+                .lineSpacing(interfaceScale.insightLineSpacing)
                 .strikethrough(isCompleted)
         }
     }
@@ -2556,7 +2642,7 @@ struct TerminalTag: View {
     
     var body: some View {
         Text("#\(text.lowercased().replacingOccurrences(of: "_", with: " "))")
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .font(.system(size: 11, weight: .medium, design: .default))
             .foregroundStyle(Color(hex: "A371F7"))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
@@ -2572,13 +2658,13 @@ struct TerminalGeneratingView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("⟳")
-                .font(.system(size: 32, weight: .light, design: .monospaced))
+                .font(.system(size: 32, weight: .light, design: .default))
                 .foregroundStyle(Color(hex: "58A6FF"))
                 .rotationEffect(.degrees(Double(dots.count) * 90))
                 .animation(.linear(duration: 0.4), value: dots)
             
             Text("generating insights\(dots)")
-                .font(.system(size: 13, weight: .medium, design: .monospaced))
+                .font(.system(size: 13, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2602,16 +2688,16 @@ struct TerminalNoInsightsView: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("◇")
-                .font(.system(size: 40, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 40, weight: .ultraLight, design: .default))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             
             Text("no insights")
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                .font(.system(size: 14, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             
             if hasTranscript {
                 Text("$ generate --from=transcript")
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                 
                 Button {
@@ -2622,7 +2708,7 @@ struct TerminalNoInsightsView: View {
                     HStack(spacing: 6) {
                         Text("⚡")
                         Text("generate")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "58A6FF"))
                     .padding(.horizontal, 16)
@@ -2646,11 +2732,11 @@ struct TerminalNoInsightsView: View {
                         Text("openai api key not set")
                             .foregroundStyle(Color(hex: "D29922"))
                     }
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                 }
             } else {
                 Text("record a session first")
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }

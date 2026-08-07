@@ -1,8 +1,24 @@
-- Live transcription now recovers on its own when it stops returning words mid-meeting, and keeps trying instead of giving up after the first few attempts.
-- Recording recovers automatically after a phone call, Siri, or an alarm interrupts it, and after a failed switch between headphones and the built-in mic.
-- Meetings no longer stop themselves with "no speech detected" when live transcription drops while people are still talking.
-- A meeting that stopped because live transcription failed now says so, instead of reporting a silent room.
-- A meeting you discard no longer reappears in your history, and deleting a meeting while its insights are being regenerated no longer brings it back.
-- Training mode now counts "mhmm" as a filler word, and the default filler list no longer offers hesitations that could never be detected.
-- The Lock Screen and Dynamic Island recording activity no longer risks crashing the app when its meeting is discarded.
-- Suggested questions, docs topics, and calendar attendees can no longer be lost from a saved meeting.
+NEW
+
+- Pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups.
+- Import your Granola meeting history from its CSV export, with duplicate protection and clear source labels.
+- Choose a Compact, Standard, or Large interface scale in Settings.
+- Choose whether live transcript text appears on the Lock Screen and Dynamic Island, and tap the activity to return to your active meeting.
+
+IMPROVED
+
+- On iPad, regular-width layouts now use sidebar navigation while iPhone keeps its compact tab bar.
+- Summary, Questions, and Coaching stay prominent, while optional Sales and Playbook views live in a specialist menu. Sales analysis only runs after you enable it.
+- Settings now opens into searchable, task-based categories, and first-run setup is shorter with a live microphone check.
+- Start meeting always begins a fresh meeting; calendar meetings remain explicit choices in the upcoming list.
+- Return to meetings and start another recording while final insights finish safely in the background.
+- Clearer system typography, roomier transcript lines, and merged same-speaker turns make meetings easier to read.
+- Transcript trims and speaker edits now work with the system Undo command, while confirmations stay inline.
+- Reduce Motion now applies consistently across transitions and animated status elements.
+- Longer meetings stay more responsive, autosaves skip unchanged meetings, and managed Questions updates reuse prior context.
+- Starting, stopping, recovery, and post-meeting review now explain what is happening and show actions only when they are available.
+
+FIXED
+
+- Resumed interrupted meetings no longer restore unfinished or blank transcript fragments.
+- Stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it.

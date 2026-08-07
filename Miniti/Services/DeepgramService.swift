@@ -208,6 +208,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     private var credential: String = ""
     private var authorizationScheme: DeepgramAuthorizationScheme = .token
     private var isConnected = false
+    private var connectionGeneration: UInt64 = 0
     
     // Concurrent-safe references for sendAudio (avoids main actor hop per buffer).
     // Written from @MainActor (connect/disconnect), read from audio thread (sendAudio).
@@ -226,7 +227,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// Optional callback to determine audio source for a time range.
     /// Legacy mono-mix path only. Prefer multichannel (ch0=mic) when mic+system
     /// are both active — then `sourceLookup` stays nil.
-    var sourceLookup: ((Double, Double) -> AudioCaptureService.AudioSource)?
+    var sourceLookup: (@Sendable (Double, Double) -> AudioCaptureService.AudioSource)?
     
     /// When true, streaming audio is stereo and results arrive per-channel via
     /// `channel_index`. Channel 0 is always the local mic ("You").
@@ -246,14 +247,17 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         case error
     }
     
-    struct TranscriptUpdate: Equatable {
+    struct TranscriptUpdate: Equatable, Sendable {
         let text: String
         let speaker: Int
         let isFinal: Bool
         let confidence: Double
         let words: [Word]
+        /// Deepgram stream channel for multichannel audio (`0` mic, `1` system).
+        /// Nil for mono responses that omit `channel_index`.
+        let channelIndex: Int?
         
-        struct Word: Equatable {
+        struct Word: Equatable, Sendable {
             let text: String
             let start: Double
             let end: Double
@@ -264,7 +268,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     }
     
     // Represents a continuous segment from one speaker
-    struct SpeakerSegment: Identifiable, Equatable {
+    struct SpeakerSegment: Identifiable, Equatable, Sendable {
         let id: UUID
         let speaker: Int
         let text: String
@@ -272,16 +276,19 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let endTime: Double
         let isFinal: Bool
         let confidence: Double
+        /// Deepgram stream channel for multichannel audio (`0` mic, `1` system).
+        /// Nil for mono responses that omit `channel_index`.
+        let channelIndex: Int?
     }
     
     // Track info about each speaker
-    struct SpeakerInfo {
+    struct SpeakerInfo: Sendable {
         var wordCount: Int = 0
         var totalDuration: Double = 0
         var firstSeen: Date = Date()
     }
     
-    struct PendingSpeakerEvidence {
+    struct PendingSpeakerEvidence: Sendable {
         var wordCount: Int = 0
         var duration: Double = 0
         var speakerConfidenceSum: Double = 0
@@ -428,7 +435,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         webSocketTask?.resume()
         DebugLogger.shared.log(.deepgram, "WebSocket resume requested")
         
-        receiveMessages()
+        connectionGeneration &+= 1
+        receiveMessages(generation: connectionGeneration)
     }
     
     /// Gracefully disconnect: stop sending audio, send CloseStream, wait for final transcripts, then tear down.
@@ -457,6 +465,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     }
 
     func disconnect() {
+        connectionGeneration &+= 1
         let mbSent = Double(audioBytesSent) / (1024.0 * 1024.0)
         DebugLogger.shared.log(
             .deepgram,
@@ -527,35 +536,61 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
     
-    private func receiveMessages() {
-        webSocketTask?.receive { [weak self] result in
+    private struct ProcessedTranscript: Sendable {
+        let update: TranscriptUpdate
+        let segments: [SpeakerSegment]
+        let segmentationState: SegmentationState
+        let deepgramIsFinal: Bool
+        let speechFinal: Bool
+        let hasTranscriptText: Bool
+        let originalWordCount: Int
+        let originalSpeakerIDs: [Int]
+        let micTaggedWordCount: Int
+        let unknownTaggedWordCount: Int
+        let usedSourceLookup: Bool
+        let wasMultichannel: Bool
+    }
+
+    private enum BackgroundParseResult: Sendable {
+        case transcript(ProcessedTranscript)
+        case ignored
+        case warning(String)
+    }
+
+    private func receiveMessages(generation: UInt64) {
+        guard generation == connectionGeneration, let task = webSocketTask else { return }
+        task.receive { [weak self] result in
             Task { @MainActor in
-                guard let self else { return }
+                guard let self,
+                      generation == self.connectionGeneration,
+                      self.webSocketTask === task else { return }
                 switch result {
                 case .success(let message):
                     self.consecutiveSendErrors = 0
                     self.wsMessageCount += 1
-                    let now = CFAbsoluteTimeGetCurrent()
-                    if now - self.lastWsHeartbeat > 15.0 {
-                        self.lastWsHeartbeat = now
-                        let kbSent = Double(self.audioBytesSent) / 1024.0
-                        let sinceTranscript: String
-                        if self.lastTranscriptAt > 0 {
-                            sinceTranscript = String(format: "%.1fs", now - self.lastTranscriptAt)
-                        } else {
-                            sinceTranscript = "never"
-                        }
-                        DebugLogger.shared.log(
-                            .deepgram,
-                            "WS heartbeat: msg=\(self.wsMessageCount), speakers=\(self.speakerHistory.count), audio=\(self.audioPacketsSent) packets/\(String(format: "%.0f", kbSent))KB, transcript(msg=\(self.transcriptMessageCount), words=\(self.transcriptWordCount), final=\(self.finalTranscriptCount), empty=\(self.emptyTranscriptCount), last=\(sinceTranscript))"
+                    self.logHeartbeatIfNeeded()
+
+                    if let json = Self.jsonString(from: message) {
+                        let state = SegmentationState(
+                            confirmedSpeakerIDs: self.confirmedSpeakerIDs,
+                            pendingSpeakerEvidence: self.pendingSpeakerEvidence
                         )
-                        if self.wsMessageCount > 20 && self.transcriptWordCount == 0 {
-                            DebugLogger.shared.log(.deepgram, "WS warning: receiving messages but no transcript words yet")
-                        }
+                        let multichannel = self.isMultichannel
+                        let lookup = self.sourceLookup
+                        let parsed = await Task.detached(priority: .userInitiated) {
+                            Self.processTranscriptJSON(
+                                json,
+                                isMultichannel: multichannel,
+                                sourceLookup: lookup,
+                                segmentationState: state
+                            )
+                        }.value
+                        guard generation == self.connectionGeneration,
+                              self.webSocketTask === task else { return }
+                        self.applyBackgroundParseResult(parsed)
                     }
-                    self.handleMessage(message)
-                    self.receiveMessages()
-                    
+                    self.receiveMessages(generation: generation)
+
                 case .failure(let error):
                     guard self.isConnected else { return }
                     DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
@@ -568,141 +603,172 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             }
         }
     }
-    
-    private func handleMessage(_ message: URLSessionWebSocketTask.Message) {
+
+    nonisolated private static func jsonString(from message: URLSessionWebSocketTask.Message) -> String? {
         switch message {
-        case .string(let text):
-            parseTranscriptResponse(text)
-        case .data(let data):
-            if let text = String(data: data, encoding: .utf8) {
-                parseTranscriptResponse(text)
-            }
-        @unknown default:
-            break
+        case .string(let text): return text
+        case .data(let data): return String(data: data, encoding: .utf8)
+        @unknown default: return nil
         }
     }
-    
-    private func parseTranscriptResponse(_ json: String) {
-        guard let data = json.data(using: .utf8) else { return }
-        
+
+    nonisolated private static func processTranscriptJSON(
+        _ json: String,
+        isMultichannel: Bool,
+        sourceLookup: (@Sendable (Double, Double) -> AudioCaptureService.AudioSource)?,
+        segmentationState: SegmentationState
+    ) -> BackgroundParseResult {
+        guard let data = json.data(using: .utf8) else { return .ignored }
+        let response: DeepgramResponse
         do {
-            let response = try JSONDecoder().decode(DeepgramResponse.self, from: data)
-            
-            // Handle transcript results
-            if let channel = response.channel,
-               let alternative = channel.alternatives.first {
-                
-                let deepgramIsFinal = response.isFinal ?? false
-                let speechFinal = response.speechFinal ?? false
-                let isFinal = deepgramIsFinal || speechFinal
-                let hasTranscriptText = !alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                transcriptMessageCount += 1
-                if alternative.words.isEmpty && !hasTranscriptText {
-                    emptyTranscriptCount += 1
-                } else {
-                    transcriptWordCount += alternative.words.count
-                    lastTranscriptAt = CFAbsoluteTimeGetCurrent()
-                    if isFinal { finalTranscriptCount += 1 }
-                }
-                if speechFinal && !deepgramIsFinal && hasTranscriptText {
-                    DebugLogger.shared.log(
-                        .deepgram,
-                        "Promoting speech_final transcript to final: words=\(alternative.words.count)"
-                    )
-                }
-
-                let speakersInResponse = alternative.words.compactMap { $0.speaker }
-                let uniqueSpeakers = Set(speakersInResponse)
-                if isFinal && !alternative.words.isEmpty {
-                    DebugLogger.shared.log(
-                        .deepgram,
-                        "Final transcript received: words=\(alternative.words.count), speakers=\(Array(uniqueSpeakers).sorted())"
-                    )
-                }
-
-                // Streaming multichannel delivers one channel per message via channel_index.
-                // Prefer that over energy-based sourceLookup when active.
-                let streamChannel = response.channelIndex?.first
-                let forceMicSpeaker = isMultichannel && streamChannel == Self.micChannelIndex
-                
-                var micTaggedWordCount = 0
-                var unknownTaggedWordCount = 0
-                let words = alternative.words.map { word in
-                    var speaker = word.speaker ?? 0
-                    
-                    if forceMicSpeaker {
-                        speaker = DeepgramService.micSpeakerID
-                        micTaggedWordCount += 1
-                    } else if let lookup = sourceLookup {
-                        // Legacy mono-mix fallback.
-                        let source = lookup(word.start, word.end)
-                        if source == .mic {
-                            speaker = DeepgramService.micSpeakerID
-                            micTaggedWordCount += 1
-                        } else if source == .unknown {
-                            unknownTaggedWordCount += 1
-                        }
-                    }
-                    
-                    return TranscriptUpdate.Word(
-                        text: word.punctuatedWord ?? word.word,
-                        start: word.start,
-                        end: word.end,
-                        confidence: word.confidence,
-                        speaker: speaker,
-                        speakerConfidence: word.speakerConfidence
-                    )
-                }
-                
-                // Update speaker history for final results
-                if isFinal {
-                    if isMultichannel || sourceLookup != nil {
-                        DebugLogger.shared.log(
-                            .deepgram,
-                            "Speaker tagging: channel=\(streamChannel.map(String.init) ?? "n/a"), multichannel=\(isMultichannel), mic=\(micTaggedWordCount), unknown=\(unknownTaggedWordCount), total=\(alternative.words.count)"
-                        )
-                    }
-                    for word in words {
-                        var info = speakerHistory[word.speaker] ?? SpeakerInfo()
-                        info.wordCount += 1
-                        info.totalDuration += word.end - word.start
-                        speakerHistory[word.speaker] = info
-                    }
-                }
-                
-                // Segment by speaker - group consecutive words by the same speaker
-                let segments = segmentBySpeaker(words: words, isFinal: isFinal, confidence: alternative.confidence)
-                if isFinal {
-                    updateConfirmedSpeakers(from: segments)
-                }
-                self.speakerSegments = segments
-                
-                // Also provide the dominant speaker for backward compatibility
-                let dominantSpeaker = findDominantSpeaker(words: words)
-                
-                let update = TranscriptUpdate(
-                    text: alternative.transcript,
-                    speaker: dominantSpeaker,
-                    isFinal: isFinal,
-                    confidence: alternative.confidence,
-                    words: words
-                )
-                
-                self.transcriptUpdate = update
-            }
+            response = try JSONDecoder().decode(DeepgramResponse.self, from: data)
         } catch {
-            // Some messages are metadata or other types we can safely ignore
             let ignoredTypes = ["Metadata", "UtteranceEnd", "SpeechStarted", "Filler"]
-            let isIgnoredType = ignoredTypes.contains { json.contains("\"\($0)\"") }
-            
-            if !isIgnoredType {
-                // Only log unexpected parse errors
-                DebugLogger.shared.log(.deepgram, "Parse warning: \(error.localizedDescription)")
+            if ignoredTypes.contains(where: { json.contains("\"\($0)\"") }) {
+                return .ignored
             }
+            return .warning(error.localizedDescription)
+        }
+
+        guard let alternative = response.channel?.alternatives.first else { return .ignored }
+        let deepgramIsFinal = response.isFinal ?? false
+        let speechFinal = response.speechFinal ?? false
+        let isFinal = deepgramIsFinal || speechFinal
+        let hasTranscriptText = !alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let streamChannel = response.channelIndex?.first
+        let forceMicSpeaker = isMultichannel && streamChannel == micChannelIndex
+        var micTaggedWordCount = 0
+        var unknownTaggedWordCount = 0
+
+        let words = alternative.words.map { word in
+            var speaker = word.speaker ?? 0
+            if forceMicSpeaker {
+                speaker = micSpeakerID
+                micTaggedWordCount += 1
+            } else if let sourceLookup {
+                switch sourceLookup(word.start, word.end) {
+                case .mic:
+                    speaker = micSpeakerID
+                    micTaggedWordCount += 1
+                case .unknown:
+                    unknownTaggedWordCount += 1
+                case .system:
+                    break
+                }
+            }
+            return TranscriptUpdate.Word(
+                text: word.punctuatedWord ?? word.word,
+                start: word.start,
+                end: word.end,
+                confidence: word.confidence,
+                speaker: speaker,
+                speakerConfidence: word.speakerConfidence
+            )
+        }
+
+        var nextState = segmentationState
+        let segments = segmentBySpeaker(
+            words: words,
+            isFinal: isFinal,
+            confidence: alternative.confidence,
+            channelIndex: streamChannel,
+            state: &nextState
+        )
+        if isFinal {
+            for segment in segments {
+                nextState.confirmedSpeakerIDs.insert(segment.speaker)
+                nextState.pendingSpeakerEvidence.removeValue(forKey: segment.speaker)
+            }
+        }
+
+        var speakerCounts: [Int: Int] = [:]
+        for word in words { speakerCounts[word.speaker, default: 0] += 1 }
+        let dominantSpeaker = speakerCounts.max(by: { $0.value < $1.value })?.key ?? 0
+        let update = TranscriptUpdate(
+            text: alternative.transcript,
+            speaker: dominantSpeaker,
+            isFinal: isFinal,
+            confidence: alternative.confidence,
+            words: words,
+            channelIndex: streamChannel
+        )
+        return .transcript(ProcessedTranscript(
+            update: update,
+            segments: segments,
+            segmentationState: nextState,
+            deepgramIsFinal: deepgramIsFinal,
+            speechFinal: speechFinal,
+            hasTranscriptText: hasTranscriptText,
+            originalWordCount: alternative.words.count,
+            originalSpeakerIDs: Array(Set(alternative.words.compactMap(\.speaker))).sorted(),
+            micTaggedWordCount: micTaggedWordCount,
+            unknownTaggedWordCount: unknownTaggedWordCount,
+            usedSourceLookup: sourceLookup != nil,
+            wasMultichannel: isMultichannel
+        ))
+    }
+
+    private func applyBackgroundParseResult(_ result: BackgroundParseResult) {
+        switch result {
+        case .ignored:
+            return
+        case .warning(let message):
+            DebugLogger.shared.log(.deepgram, "Parse warning: \(message)")
+        case .transcript(let parsed):
+            transcriptMessageCount += 1
+            if parsed.originalWordCount == 0 && !parsed.hasTranscriptText {
+                emptyTranscriptCount += 1
+            } else {
+                transcriptWordCount += parsed.originalWordCount
+                lastTranscriptAt = CFAbsoluteTimeGetCurrent()
+                if parsed.update.isFinal { finalTranscriptCount += 1 }
+            }
+            if parsed.speechFinal && !parsed.deepgramIsFinal && parsed.hasTranscriptText {
+                DebugLogger.shared.log(.deepgram, "Promoting speech_final transcript to final: words=\(parsed.originalWordCount)")
+            }
+            if parsed.update.isFinal && parsed.originalWordCount > 0 {
+                DebugLogger.shared.log(
+                    .deepgram,
+                    "Final transcript received: words=\(parsed.originalWordCount), speakers=\(parsed.originalSpeakerIDs)"
+                )
+                if parsed.wasMultichannel || parsed.usedSourceLookup {
+                    DebugLogger.shared.log(
+                        .deepgram,
+                        "Speaker tagging: channel=\(parsed.update.channelIndex.map(String.init) ?? "n/a"), multichannel=\(parsed.wasMultichannel), mic=\(parsed.micTaggedWordCount), unknown=\(parsed.unknownTaggedWordCount), total=\(parsed.originalWordCount)"
+                    )
+                }
+                for word in parsed.update.words {
+                    var info = speakerHistory[word.speaker] ?? SpeakerInfo()
+                    info.wordCount += 1
+                    info.totalDuration += word.end - word.start
+                    speakerHistory[word.speaker] = info
+                }
+            }
+            confirmedSpeakerIDs = parsed.segmentationState.confirmedSpeakerIDs
+            pendingSpeakerEvidence = parsed.segmentationState.pendingSpeakerEvidence
+            speakerSegments = parsed.segments
+            transcriptUpdate = parsed.update
+        }
+    }
+
+    private func logHeartbeatIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard now - lastWsHeartbeat > 15.0 else { return }
+        lastWsHeartbeat = now
+        let kbSent = Double(audioBytesSent) / 1024.0
+        let sinceTranscript = lastTranscriptAt > 0
+            ? String(format: "%.1fs", now - lastTranscriptAt)
+            : "never"
+        DebugLogger.shared.log(
+            .deepgram,
+            "WS heartbeat: msg=\(wsMessageCount), speakers=\(speakerHistory.count), audio=\(audioPacketsSent) packets/\(String(format: "%.0f", kbSent))KB, transcript(msg=\(transcriptMessageCount), words=\(transcriptWordCount), final=\(finalTranscriptCount), empty=\(emptyTranscriptCount), last=\(sinceTranscript))"
+        )
+        if wsMessageCount > 20 && transcriptWordCount == 0 {
+            DebugLogger.shared.log(.deepgram, "WS warning: receiving messages but no transcript words yet")
         }
     }
     
-    struct SegmentationState {
+    struct SegmentationState: Sendable {
         var confirmedSpeakerIDs: Set<Int> = []
         var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
     }
@@ -711,6 +777,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         words: [TranscriptUpdate.Word],
         isFinal: Bool,
         confidence: Double,
+        channelIndex: Int? = nil,
         state: inout SegmentationState
     ) -> [SpeakerSegment] {
         guard !words.isEmpty else { return [] }
@@ -789,7 +856,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                             startTime: startTime,
                             endTime: currentWords.last?.end ?? startTime,
                             isFinal: isFinal,
-                            confidence: confidence
+                            confidence: confidence,
+                            channelIndex: channelIndex
                         )
                         segments.append(segment)
                     }
@@ -818,7 +886,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 startTime: startTime,
                 endTime: currentWords.last?.end ?? startTime,
                 isFinal: isFinal,
-                confidence: confidence
+                confidence: confidence,
+                channelIndex: channelIndex
             )
             segments.append(segment)
         }
@@ -826,24 +895,6 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         return segments
     }
 
-    private func segmentBySpeaker(words: [TranscriptUpdate.Word], isFinal: Bool, confidence: Double) -> [SpeakerSegment] {
-        var state = SegmentationState(
-            confirmedSpeakerIDs: confirmedSpeakerIDs,
-            pendingSpeakerEvidence: pendingSpeakerEvidence
-        )
-        let result = Self.segmentBySpeaker(words: words, isFinal: isFinal, confidence: confidence, state: &state)
-        confirmedSpeakerIDs = state.confirmedSpeakerIDs
-        pendingSpeakerEvidence = state.pendingSpeakerEvidence
-        return result
-    }
-    
-    private func updateConfirmedSpeakers(from segments: [SpeakerSegment]) {
-        for segment in segments {
-            confirmedSpeakerIDs.insert(segment.speaker)
-            pendingSpeakerEvidence.removeValue(forKey: segment.speaker)
-        }
-    }
-    
     /// Find the speaker who spoke the most words in this segment
     func findDominantSpeaker(words: [TranscriptUpdate.Word]) -> Int {
         var speakerWordCount: [Int: Int] = [:]
@@ -904,7 +955,7 @@ extension DeepgramService {
 
 // MARK: - Deepgram Response Models
 
-struct DeepgramResponse: Codable {
+struct DeepgramResponse: Codable, Sendable {
     let type: String?
     let channel: Channel?
     /// Streaming multichannel: `[channelIndex, channelCount]` e.g. `[0, 2]` or `[1, 2]`.
@@ -926,11 +977,11 @@ struct DeepgramResponse: Codable {
         case fromFinalize = "from_finalize"
     }
     
-    struct Channel: Codable {
+    struct Channel: Codable, Sendable {
         let alternatives: [Alternative]
     }
     
-    struct Alternative: Codable {
+    struct Alternative: Codable, Sendable {
         let transcript: String
         let confidence: Double
         let words: [Word]
@@ -950,7 +1001,7 @@ struct DeepgramResponse: Codable {
         }
     }
     
-    struct Word: Codable {
+    struct Word: Codable, Sendable {
         let word: String
         let punctuatedWord: String?
         let start: Double

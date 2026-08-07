@@ -1,16 +1,31 @@
 import SwiftUI
 import SwiftData
 
+extension Notification.Name {
+    static let minitiOpenActiveMeeting = Notification.Name("minitiOpenActiveMeeting")
+}
+
 struct MainTabView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var selectedTab: MobileTab = .record
 
-    enum MobileTab: String {
+    enum MobileTab: String, CaseIterable, Identifiable {
         case record = "Record"
         case training = "Training"
         case history = "History"
+
+        var id: Self { self }
+
+        var systemImage: String {
+            switch self {
+            case .record: return "waveform"
+            case .training: return "chart.bar.fill"
+            case .history: return "clock"
+            }
+        }
     }
 
     var body: some View {
@@ -20,44 +35,100 @@ struct MainTabView: View {
                 appState.modelContext = modelContext
                 appState.resumeInterruptedMeeting()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .minitiOpenActiveMeeting)) { _ in
+                selectedTab = .record
+            }
+            .sheet(isPresented: $appState.showSettings) {
+                NavigationStack {
+                    SettingsView_iOS()
+                }
+                .preferredColorScheme(.dark)
+            }
     }
 
     @ViewBuilder
     private var tabContent: some View {
         if #available(iOS 18.0, *) {
-            TabView(selection: $selectedTab) {
-                Tab("Record", systemImage: "waveform", value: .record) {
-                    MeetingView_iOS()
-                }
-                Tab("Training", systemImage: "chart.bar.fill", value: .training) {
-                    TrainingMainView(meetings: meetings)
-                }
-                Tab("History", systemImage: "clock", value: .history) {
-                    HistoryView_iOS()
-                }
+            if horizontalSizeClass == .regular {
+                modernTabView
+                    .tabViewStyle(.sidebarAdaptable)
+            } else {
+                modernTabView
+                    .tabViewStyle(.tabBarOnly)
+                    .defaultAdaptableTabBarPlacement(.tabBar)
             }
-            .tabViewStyle(.tabBarOnly)
-            .defaultAdaptableTabBarPlacement(.tabBar)
+        } else if horizontalSizeClass == .regular {
+            legacyRegularWidthNavigation
         } else {
-            TabView(selection: $selectedTab) {
-                MeetingView_iOS()
-                    .tabItem {
-                        Label("Record", systemImage: "waveform")
-                    }
-                    .tag(MobileTab.record)
+            legacyCompactTabView
+        }
+    }
 
-                TrainingMainView(meetings: meetings)
-                    .tabItem {
-                        Label("Training", systemImage: "chart.bar.fill")
-                    }
-                    .tag(MobileTab.training)
-
-                HistoryView_iOS()
-                    .tabItem {
-                        Label("History", systemImage: "clock")
-                    }
-                    .tag(MobileTab.history)
+    @available(iOS 18.0, *)
+    private var modernTabView: some View {
+        TabView(selection: $selectedTab) {
+            ForEach(MobileTab.allCases) { tab in
+                Tab(tab.rawValue, systemImage: tab.systemImage, value: tab) {
+                    content(for: tab)
+                }
             }
+        }
+    }
+
+    private var legacyCompactTabView: some View {
+        TabView(selection: $selectedTab) {
+            ForEach(MobileTab.allCases) { tab in
+                content(for: tab)
+                    .tabItem {
+                        Label(tab.rawValue, systemImage: tab.systemImage)
+                    }
+                    .tag(tab)
+            }
+        }
+    }
+
+    private var legacyRegularWidthNavigation: some View {
+        NavigationSplitView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("miniti")
+                    .font(.system(size: 15, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 16)
+
+                List(MobileTab.allCases) { tab in
+                    Button {
+                        selectedTab = tab
+                    } label: {
+                        Label(tab.rawValue, systemImage: tab.systemImage)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(selectedTab == tab ? ColorPalette.Accent.green : ColorPalette.Text.muted)
+                    .listRowBackground(
+                        selectedTab == tab
+                            ? ColorPalette.Accent.green.opacity(0.12)
+                            : Color.clear
+                    )
+                }
+            }
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210, max: 260)
+        } detail: {
+            content(for: selectedTab)
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    @ViewBuilder
+    private func content(for tab: MobileTab) -> some View {
+        switch tab {
+        case .record:
+            MeetingView_iOS()
+        case .training:
+            TrainingMainView(meetings: meetings)
+        case .history:
+            HistoryView_iOS()
         }
     }
 }
