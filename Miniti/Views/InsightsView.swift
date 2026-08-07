@@ -33,50 +33,6 @@ struct InsightsView: View {
 // MARK: - Mode Selector
 
 #if os(macOS)
-struct VibeyButtonLabel<Content: View>: View {
-    let accent: Color
-    let isEmphasized: Bool
-    let height: CGFloat
-    let horizontalPadding: CGFloat
-    @ViewBuilder let content: () -> Content
-    @State private var isHovered = false
-
-    init(
-        accent: Color,
-        isEmphasized: Bool = false,
-        height: CGFloat = 30,
-        horizontalPadding: CGFloat = 10,
-        @ViewBuilder content: @escaping () -> Content
-    ) {
-        self.accent = accent
-        self.isEmphasized = isEmphasized
-        self.height = height
-        self.horizontalPadding = horizontalPadding
-        self.content = content
-    }
-
-    var body: some View {
-        content()
-            .foregroundStyle(accent)
-            .frame(height: height)
-            .padding(.horizontal, horizontalPadding)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(accent.opacity(isEmphasized ? 0.18 : (isHovered ? 0.14 : 0.10)))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(accent.opacity(isEmphasized ? 0.40 : (isHovered ? 0.34 : 0.26)), lineWidth: 1)
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 6))
-            .onHover { hovering in
-                withAnimation(.easeOut(duration: 0.12)) {
-                    isHovered = hovering
-                }
-            }
-    }
-}
-
 struct InsightsModeSelector: View {
     var body: some View {
         InsightsModeTabs()
@@ -91,96 +47,111 @@ struct InsightsModeTabs: View {
         appState.insightsMode.isSpecialist ? appState.insightsMode : nil
     }
 
-    private func accent(for mode: InsightsMode) -> Color {
-        switch mode {
-        case .standard: return ColorPalette.Accent.blueGitHub
-        case .questions: return ColorPalette.Accent.purpleLight
-        case .training: return ColorPalette.Accent.amber
-        case .meddpicc: return ColorPalette.Accent.pink
-        case .docs: return ColorPalette.Accent.purpleSoft
-        }
+    private var enabledSpecialists: [InsightsMode] {
+        var modes: [InsightsMode] = []
+        if appState.salesInsightsEnabled { modes.append(.meddpicc) }
+        if appState.playbookInsightsEnabled { modes.append(.docs) }
+        return modes
     }
-    
+
     var body: some View {
-        HStack(spacing: 2) {
+        ViewThatFits(in: .horizontal) {
+            modeStrip(showsEnabledSpecialists: true)
+            modeStrip(showsEnabledSpecialists: false)
+        }
+        .padding(.horizontal, MinitiDesignSystem.Spacing.standard)
+        .padding(.vertical, MinitiDesignSystem.Spacing.standard)
+    }
+
+    private func modeStrip(showsEnabledSpecialists: Bool) -> some View {
+        HStack(spacing: MinitiDesignSystem.Control.modeSpacing) {
             ForEach(InsightsMode.coreModes, id: \.self) { mode in
-                Button {
-                    appState.switchInsightsMode(to: mode)
-                } label: {
-                    VibeyButtonLabel(
-                        accent: accent(for: mode),
-                        isEmphasized: appState.insightsMode == mode,
-                        horizontalPadding: 9
-                    ) {
-                        Text(mode.displayName)
-                            .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
-                            .lineLimit(1)
-                    }
-                }
-                .buttonStyle(.plain)
-                .help(mode.description)
+                modeButton(mode)
             }
 
-            Menu {
-                Section("Specialist views") {
-                    specialistButton(.meddpicc)
-
-                    if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
-                        specialistButton(.docs)
-                    } else {
-                        Button {
-                            appState.selectedSettingsTab = "integrations"
-                            openSettings()
-                        } label: {
-                            Label("Set Up Playbook…", systemImage: "gearshape")
-                        }
-                    }
-                }
-
-                if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
-                    Divider()
-                    Section("Enabled specialist views") {
-                        if appState.salesInsightsEnabled {
-                            Button {
-                                appState.setInsightModeEnabled(.meddpicc, enabled: false)
-                            } label: {
-                                Label("Turn Off Sales Insights", systemImage: "eye.slash")
-                            }
-                        }
-
-                        if appState.playbookInsightsEnabled {
-                            Button {
-                                appState.setInsightModeEnabled(.docs, enabled: false)
-                            } label: {
-                                Label("Hide Playbook", systemImage: "eye.slash")
-                            }
-                        }
-                    }
-                }
-            } label: {
-                VibeyButtonLabel(
-                    accent: selectedSpecialist.map { accent(for: $0) } ?? ColorPalette.Accent.purpleSoft,
-                    isEmphasized: selectedSpecialist != nil,
-                    horizontalPadding: 9
-                ) {
-                    HStack(spacing: 5) {
-                        if let selectedSpecialist {
-                            Image(systemName: selectedSpecialist.systemImage)
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        Text(selectedSpecialist?.displayName ?? "More")
-                            .font(.system(size: 11, weight: selectedSpecialist == nil ? .medium : .semibold, design: .default))
-                    }
+            if showsEnabledSpecialists {
+                ForEach(enabledSpecialists, id: \.self) { mode in
+                    modeButton(mode)
                 }
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Specialist insight views")
+
+            specialistMenu(replacesSelectedSpecialist: !showsEnabledSpecialists)
 
             Spacer()
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 8)
+    }
+
+    private func modeButton(_ mode: InsightsMode) -> some View {
+        Button {
+            appState.switchInsightsMode(to: mode)
+        } label: {
+            MinitiVibeyLabel(
+                accent: MinitiDesignSystem.Accent.insightMode(mode),
+                isEmphasized: appState.insightsMode == mode,
+                horizontalPadding: MinitiDesignSystem.Control.modeHorizontalPadding
+            ) {
+                Text(mode.displayName)
+                    .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(mode.description)
+    }
+
+    private func specialistMenu(replacesSelectedSpecialist: Bool) -> some View {
+        let displayedSpecialist = replacesSelectedSpecialist ? selectedSpecialist : nil
+
+        return Menu {
+            Section("Specialist views") {
+                specialistButton(.meddpicc)
+
+                if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
+                    specialistButton(.docs)
+                } else {
+                    Button {
+                        appState.selectedSettingsTab = "integrations"
+                        openSettings()
+                    } label: {
+                        Label("Set Up Playbook…", systemImage: "gearshape")
+                    }
+                }
+            }
+
+            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
+                Divider()
+                Section("Enabled specialist views") {
+                    if appState.salesInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.meddpicc, enabled: false)
+                        } label: {
+                            Label("Turn Off Sales Insights", systemImage: "eye.slash")
+                        }
+                    }
+
+                    if appState.playbookInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.docs, enabled: false)
+                        } label: {
+                            Label("Hide Playbook", systemImage: "eye.slash")
+                        }
+                    }
+                }
+            }
+        } label: {
+            MinitiVibeyLabel(
+                accent: displayedSpecialist.map { MinitiDesignSystem.Accent.insightMode($0) } ?? ColorPalette.Accent.purpleSoft,
+                isEmphasized: displayedSpecialist != nil,
+                horizontalPadding: MinitiDesignSystem.Control.modeHorizontalPadding
+            ) {
+                Text(displayedSpecialist?.displayName ?? "More")
+                    .font(.system(size: 11, weight: displayedSpecialist == nil ? .medium : .semibold, design: .default))
+                    .lineLimit(1)
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Specialist insight views")
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {

@@ -650,10 +650,11 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 
 - **button-primary** — the "start", "save", and "upgrade to pro" CTAs. Green fill, 8px radius, 14px padding.
 - **button-secondary** — neutral terminal-style buttons (tabs, "update", "copy").
-- **button-vibey** — compact accent-tinted actions used for recording controls, home utilities, post-meeting navigation, and macOS insight modes. All variants share a 30px height, 6px radius, tinted fill, and 1px accent border; semantic accent color and selected emphasis are the only differences.
+- **button-vibey** — compact accent-tinted actions used for recording controls, home utilities, post-meeting navigation, and macOS insight modes. All variants share a 30px height, 10px horizontal padding, 6px radius, tinted fill, and 1px accent border; semantic accent color and selected emphasis are the only differences. Insight-mode peers use 4px gaps. Enabled Sales and Playbook become matching direct mode buttons when width permits; narrow panes retain the compact selected-specialist More label.
 - **button-destructive** — discard, cancel, "disconnect" in Settings. Error-colored text on a neutral ground until hover, then the red fill flips in.
 - **button-ghost** — in-content affordances (e.g. rename speaker), no fill until hover.
 - **card / panel** — the live insights panel, history detail panes, onboarding cards. `panel` is slightly darker than `card`.
+
 - **terminal-header** — the red-dot + timer strip at the top of the recording view.
 - **input-field** — note textarea, search, webhook URL, Attio search. Always system 13px.
 - **pill-tag** — topic tags, language badge, usage pill.
@@ -665,6 +666,12 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 - **transcript-row-you** / **transcript-row-remote** — the only two variants; remote rows take their hue from the active `speaker-chip-*` via the speaker cycle.
 - **waveform-bar** — 2px wide, green by default (mic). System-audio bars use `speaker-1` (blue).
 - **dot-recording / dot-connected / dot-disconnected** — 6×6 circular status dots used in headers, toolbars, and sidebar rows.
+
+### Implementation contract
+
+The design system has three code-level layers: `ColorPalette` owns colors, `InterfaceScale` owns platform-specific readable typography, and `MinitiDesignSystem` owns shared spacing, radii, control metrics, motion, opacity states, and semantic accent roles. `MinitiVibeyLabel` is the first reusable component built on those tokens. It styles label content only: the enclosing native `Button` or `Menu` continues to own actions, keyboard shortcuts, focus, disabled state, menus, and accessibility so adopting the design system cannot silently change behaviour.
+
+Feature views must consume these semantic contracts rather than copy their measurements. Existing native controls are migrated only when their visual contract is being changed; the presence of a design system is not permission for a broad restyle.
 
 Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button-primary-disabled`). Do not create a separate base color token for a one-off hover — reuse an existing color token so the palette stays small.
 

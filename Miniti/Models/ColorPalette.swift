@@ -263,6 +263,7 @@ struct ColorPalette {
         static let pink = Color(hex: "EC4899")          // Pink
         static let cyan = Color(hex: "06B6D4")          // Cyan
         static let orange = Color(hex: "D29922")       // Orange
+        static let zonedOut = Color(hex: "D2A8FF")     // Zoned Out catch-up
     }
 
     // MARK: - Integration Colors
