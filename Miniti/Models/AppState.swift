@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Combine
+import os
 @preconcurrency import UserNotifications
 #if os(iOS)
 import ActivityKit
@@ -47,16 +48,73 @@ final class AudioLevelsState: ObservableObject {
 
 @MainActor
 final class TranscriptRuntimeState: ObservableObject {
-    @Published var interimText: String = ""
-    @Published var currentSpeaker: Int = 0
-    @Published var interimSpeaker: Int? = nil
+    struct Snapshot: Equatable {
+        let interimText: String
+        let currentSpeaker: Int
+        let interimSpeaker: Int?
+        let revision: UInt64
+
+        static let zero = Snapshot(
+            interimText: "",
+            currentSpeaker: 0,
+            interimSpeaker: nil,
+            revision: 0
+        )
+    }
+
+    @Published private(set) var snapshot = Snapshot.zero
+
+    var interimText: String {
+        get { snapshot.interimText }
+        set {
+            update(
+                interimText: newValue,
+                currentSpeaker: snapshot.currentSpeaker,
+                interimSpeaker: snapshot.interimSpeaker
+            )
+        }
+    }
+
+    var currentSpeaker: Int {
+        get { snapshot.currentSpeaker }
+        set {
+            update(
+                interimText: snapshot.interimText,
+                currentSpeaker: newValue,
+                interimSpeaker: snapshot.interimSpeaker
+            )
+        }
+    }
+
+    var interimSpeaker: Int? {
+        get { snapshot.interimSpeaker }
+        set {
+            update(
+                interimText: snapshot.interimText,
+                currentSpeaker: snapshot.currentSpeaker,
+                interimSpeaker: newValue
+            )
+        }
+    }
+
+    func update(interimText: String, currentSpeaker: Int, interimSpeaker: Int?) {
+        snapshot = Snapshot(
+            interimText: interimText,
+            currentSpeaker: currentSpeaker,
+            interimSpeaker: interimSpeaker,
+            revision: snapshot.revision &+ 1
+        )
+    }
 
     func clear() {
-        interimText = ""
-        currentSpeaker = 0
-        interimSpeaker = nil
+        update(interimText: "", currentSpeaker: 0, interimSpeaker: nil)
     }
 }
+
+private let appStatePerformanceLog = OSLog(
+    subsystem: "com.miniti.app",
+    category: .pointsOfInterest
+)
 
 // MARK: - App Mode
 
@@ -70,6 +128,12 @@ enum AppMode: String {
 
 @MainActor
 final class AppState: ObservableObject {
+    struct LiveInsightCadencePolicy: Equatable {
+        let minimumInterval: TimeInterval
+        let minimumSegmentDelta: Int
+        let maximumInterval: TimeInterval
+    }
+
     enum AudioRecoveryState: String {
         case healthy
         case recovering
@@ -405,11 +469,30 @@ final class AppState: ObservableObject {
     private var standardCadenceAnchor: Date?
     private var meddpiccCadenceAnchor: Date?
     private var questionsCadenceAnchor: Date?
+    private var standardLastAttemptAt: Date?
+    private var meddpiccLastAttemptAt: Date?
+    private var questionsLastAttemptAt: Date?
+    private var lastWarmupInsightsAttemptAt: Date?
     private var standardLastFiredSegmentCount = 0
     private var meddpiccLastFiredSegmentCount = 0
     private var questionsLastFiredSegmentCount = 0
     private var insightsCadenceTask: Task<Void, Never>?
-    private let insightsCadenceInterval: TimeInterval = 30
+    private let standardCadencePolicy = LiveInsightCadencePolicy(
+        minimumInterval: 60,
+        minimumSegmentDelta: 4,
+        maximumInterval: 120
+    )
+    private let meddpiccCadencePolicy = LiveInsightCadencePolicy(
+        minimumInterval: 90,
+        minimumSegmentDelta: 8,
+        maximumInterval: 180
+    )
+    private let questionsCadencePolicy = LiveInsightCadencePolicy(
+        minimumInterval: 60,
+        minimumSegmentDelta: 6,
+        maximumInterval: 120
+    )
+    private let warmupInsightsRetryInterval: TimeInterval = 30
     private let meddpiccCadenceStagger: TimeInterval = 15
     private let questionsCadenceStagger: TimeInterval = 22
     
@@ -1151,8 +1234,11 @@ final class AppState: ObservableObject {
         
         if update.isFinal {
             // Final result - will be handled by speaker segments for better accuracy
-            interimText = ""
-            interimSpeaker = nil
+            transcriptRuntime.update(
+                interimText: "",
+                currentSpeaker: currentSpeaker,
+                interimSpeaker: nil
+            )
         } else {
             #if os(macOS)
             if captureMicrophone,
@@ -1172,8 +1258,8 @@ final class AppState: ObservableObject {
             }
             #endif
 
-            // Interim result - show live typing
-            interimText = update.text
+            // Interim result - show live typing. Publish text + speaker atomically so a
+            // throttled presentation can never pair a new fragment with stale identity.
             let candidateSpeaker = update.speaker
             let lastFinalSpeaker = liveSegments.last(where: \.isFinal)?.speaker
             // Interim gating: avoid jumping to never-confirmed speakers too early.
@@ -1183,12 +1269,13 @@ final class AppState: ObservableObject {
                 candidateSpeaker == lastFinalSpeaker ||
                 candidateSpeaker == currentSpeaker
             
-            if canUseCandidateSpeaker {
-                currentSpeaker = candidateSpeaker
-                interimSpeaker = candidateSpeaker
-            } else {
-                interimSpeaker = currentSpeaker
-            }
+            let presentedCurrentSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
+            let presentedInterimSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
+            transcriptRuntime.update(
+                interimText: update.text,
+                currentSpeaker: presentedCurrentSpeaker,
+                interimSpeaker: presentedInterimSpeaker
+            )
             
             // Push to Live Activity (throttled)
             #if os(iOS)
@@ -1889,8 +1976,11 @@ final class AppState: ObservableObject {
         
         // Single atomic mutation — one @Published change instead of N
         liveSegments = updated
-        interimText = ""
-        interimSpeaker = nil
+        transcriptRuntime.update(
+            interimText: "",
+            currentSpeaker: currentSpeaker,
+            interimSpeaker: nil
+        )
         
         // Push final segment to Live Activity (throttled)
         #if os(iOS)
@@ -1908,9 +1998,16 @@ final class AppState: ObservableObject {
         let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
         let meddpiccWarmup = salesInsightsEnabled && meddpiccSuccessCount < 2 && finalCount >= 6
         let questionsWarmup = questionsSuccessCount < 2 && finalCount >= 6
-        let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup) && finalCount > lastInsightSegmentCount
+        let now = Date()
+        let warmupRetryReady = lastWarmupInsightsAttemptAt.map {
+            now.timeIntervalSince($0) >= warmupInsightsRetryInterval
+        } ?? true
+        let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup)
+            && finalCount > lastInsightSegmentCount
+            && warmupRetryReady
         if shouldTrigger {
             lastInsightSegmentCount = finalCount
+            lastWarmupInsightsAttemptAt = now
             Task { await updateLiveInsights() }
         }
 
@@ -1919,6 +2016,28 @@ final class AppState: ObservableObject {
 
     private var isGeneratingMeddpiccInsights = false
     private var isGeneratingQuestionsInsights = false
+
+    nonisolated static func shouldFireLiveInsightCadence(
+        now: Date,
+        lastSuccessAt: Date?,
+        lastAttemptAt: Date?,
+        lastSuccessfulSegmentCount: Int,
+        currentSegmentCount: Int,
+        policy: LiveInsightCadencePolicy
+    ) -> Bool {
+        guard currentSegmentCount > lastSuccessfulSegmentCount else { return false }
+
+        if let lastAttemptAt,
+           now.timeIntervalSince(lastAttemptAt) < policy.minimumInterval {
+            return false
+        }
+
+        let elapsedSinceSuccess = lastSuccessAt.map { now.timeIntervalSince($0) } ?? .infinity
+        let segmentDelta = currentSegmentCount - lastSuccessfulSegmentCount
+        return elapsedSinceSuccess >= policy.maximumInterval
+            || (elapsedSinceSuccess >= policy.minimumInterval
+                && segmentDelta >= policy.minimumSegmentDelta)
+    }
 
     private func startInsightsCadenceTask() {
         insightsCadenceTask?.cancel()
@@ -1940,16 +2059,30 @@ final class AppState: ObservableObject {
                 }
                 let now = Date()
                 if standardSuccessCount >= 2,
-                   let anchor = standardCadenceAnchor,
-                   now.timeIntervalSince(anchor) >= insightsCadenceInterval,
-                   finalCount > standardLastFiredSegmentCount {
+                   Self.shouldFireLiveInsightCadence(
+                       now: now,
+                       lastSuccessAt: standardCadenceAnchor,
+                       lastAttemptAt: standardLastAttemptAt,
+                       lastSuccessfulSegmentCount: standardLastFiredSegmentCount,
+                       currentSegmentCount: finalCount,
+                       policy: standardCadencePolicy
+                   ) {
+                    standardLastAttemptAt = now
                     await updateLiveInsights(standardOnly: true)
                 }
                 if salesInsightsEnabled, meddpiccSuccessCount >= 2 {
-                    let anchor = meddpiccCadenceAnchor ?? standardCadenceAnchor?.addingTimeInterval(meddpiccCadenceStagger) ?? recordingStartDate ?? now
-                    let interval: TimeInterval = meddpiccCadenceAnchor == nil ? meddpiccCadenceStagger : insightsCadenceInterval
-                    if now.timeIntervalSince(anchor) >= interval,
-                       finalCount > meddpiccLastFiredSegmentCount {
+                    let anchor = meddpiccCadenceAnchor
+                        ?? standardCadenceAnchor?.addingTimeInterval(meddpiccCadenceStagger)
+                        ?? recordingStartDate
+                    if Self.shouldFireLiveInsightCadence(
+                        now: now,
+                        lastSuccessAt: anchor,
+                        lastAttemptAt: meddpiccLastAttemptAt,
+                        lastSuccessfulSegmentCount: meddpiccLastFiredSegmentCount,
+                        currentSegmentCount: finalCount,
+                        policy: meddpiccCadencePolicy
+                    ) {
+                        meddpiccLastAttemptAt = now
                         let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
                         guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
@@ -1963,10 +2096,18 @@ final class AppState: ObservableObject {
                     }
                 }
                 if questionsSuccessCount >= 2 {
-                    let anchor = questionsCadenceAnchor ?? standardCadenceAnchor?.addingTimeInterval(questionsCadenceStagger) ?? recordingStartDate ?? now
-                    let interval: TimeInterval = questionsCadenceAnchor == nil ? questionsCadenceStagger : insightsCadenceInterval
-                    if now.timeIntervalSince(anchor) >= interval,
-                       finalCount > questionsLastFiredSegmentCount {
+                    let anchor = questionsCadenceAnchor
+                        ?? standardCadenceAnchor?.addingTimeInterval(questionsCadenceStagger)
+                        ?? recordingStartDate
+                    if Self.shouldFireLiveInsightCadence(
+                        now: now,
+                        lastSuccessAt: anchor,
+                        lastAttemptAt: questionsLastAttemptAt,
+                        lastSuccessfulSegmentCount: questionsLastFiredSegmentCount,
+                        currentSegmentCount: finalCount,
+                        policy: questionsCadencePolicy
+                    ) {
+                        questionsLastAttemptAt = now
                         let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
                         guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
@@ -2032,6 +2173,7 @@ final class AppState: ObservableObject {
         
         guard !transcript.isEmpty else { return }
         guard let meetingIDAtRequest = currentMeeting?.id else { return }
+        standardLastAttemptAt = Date()
         
         let segmentCount = finalSegments.count
         let shouldUpdateTitle = segmentCount >= lastTitleUpdateCount + titleUpdateThreshold
@@ -2143,6 +2285,7 @@ final class AppState: ObservableObject {
         guard salesInsightsEnabled else { return }
         guard !isGeneratingMeddpiccInsights else { return }
         guard currentMeeting?.id == meetingID else { return }
+        meddpiccLastAttemptAt = Date()
         isGeneratingMeddpiccInsights = true
         defer { isGeneratingMeddpiccInsights = false }
         
@@ -2198,6 +2341,7 @@ final class AppState: ObservableObject {
     ) async {
         guard !isGeneratingQuestionsInsights else { return }
         guard currentMeeting?.id == meetingID else { return }
+        questionsLastAttemptAt = Date()
         isGeneratingQuestionsInsights = true
         defer { isGeneratingQuestionsInsights = false }
         
@@ -3295,10 +3439,27 @@ final class AppState: ObservableObject {
             return
         }
 
+        let rebuildSignpostID = OSSignpostID(log: appStatePerformanceLog)
+        os_signpost(
+            .begin,
+            log: appStatePerformanceLog,
+            name: "TranscriptCacheFullRebuild",
+            signpostID: rebuildSignpostID,
+            "segments=%{public}d",
+            current.count
+        )
         let finalized = Self.finalizedLiveSegments(from: current)
         cachedFullTranscript = Self.transcriptText(from: finalized)
         cachedSpeakerIDTranscript = Self.transcriptTextWithSpeakerIDs(from: finalized)
         cachedSaveSegments = finalized.map(Self.saveSnapshot(from:))
+        os_signpost(
+            .end,
+            log: appStatePerformanceLog,
+            name: "TranscriptCacheFullRebuild",
+            signpostID: rebuildSignpostID,
+            "finalized=%{public}d",
+            finalized.count
+        )
     }
 
     private func appendCachedTranscriptSegment(_ segment: LiveSegment) {
@@ -3498,6 +3659,16 @@ final class AppState: ObservableObject {
         meddpiccSuccessCount = 0
         questionsSuccessCount = 0
         docsSuccessCount = 0
+        standardCadenceAnchor = nil
+        meddpiccCadenceAnchor = nil
+        questionsCadenceAnchor = nil
+        standardLastAttemptAt = nil
+        meddpiccLastAttemptAt = nil
+        questionsLastAttemptAt = nil
+        lastWarmupInsightsAttemptAt = nil
+        standardLastFiredSegmentCount = 0
+        meddpiccLastFiredSegmentCount = 0
+        questionsLastFiredSegmentCount = 0
     }
 
     private func restoreManagedIncrementalTracking(finalCount: Int) {
@@ -4514,12 +4685,31 @@ final class AppState: ObservableObject {
         }
         let finalSegmentSnapshots = payload.finalSegments
 
+        let planSignpostID = OSSignpostID(log: appStatePerformanceLog)
+        os_signpost(
+            .begin,
+            log: appStatePerformanceLog,
+            name: "MeetingSavePlan",
+            signpostID: planSignpostID,
+            "desired=%{public}d existing=%{public}d",
+            finalSegmentSnapshots.count,
+            existingSnapshots.count
+        )
         let syncPlan = await Task.detached(priority: .utility) {
             Self.buildSegmentSyncPlan(
                 finalSegments: finalSegmentSnapshots,
                 existingSegments: existingSnapshots
             )
         }.value
+        os_signpost(
+            .end,
+            log: appStatePerformanceLog,
+            name: "MeetingSavePlan",
+            signpostID: planSignpostID,
+            "upserts=%{public}d deletes=%{public}d",
+            syncPlan.upserts.count,
+            syncPlan.deleteIDs.count
+        )
 
         // The off-main diff above is a suspension point, so the meeting can be discarded while we
         // are suspended. Re-check before writing: the insert below would otherwise resurrect a
@@ -4529,6 +4719,16 @@ final class AppState: ObservableObject {
             return
         }
 
+        let applySignpostID = OSSignpostID(log: appStatePerformanceLog)
+        os_signpost(
+            .begin,
+            log: appStatePerformanceLog,
+            name: "MeetingSaveApply",
+            signpostID: applySignpostID,
+            "upserts=%{public}d deletes=%{public}d",
+            syncPlan.upserts.count,
+            syncPlan.deleteIDs.count
+        )
         applySegmentSyncPlan(syncPlan, to: payload.meeting, modelContext: modelContext)
 
         if !payload.summary.isEmpty {
@@ -4556,7 +4756,20 @@ final class AppState: ObservableObject {
         if payload.meeting.modelContext == nil {
             modelContext.insert(payload.meeting)
         }
+        os_signpost(
+            .end,
+            log: appStatePerformanceLog,
+            name: "MeetingSaveApply",
+            signpostID: applySignpostID
+        )
 
+        let commitSignpostID = OSSignpostID(log: appStatePerformanceLog)
+        os_signpost(
+            .begin,
+            log: appStatePerformanceLog,
+            name: "MeetingStoreCommit",
+            signpostID: commitSignpostID
+        )
         do {
             try modelContext.save()
             hasUnsavedSession = false
@@ -4564,6 +4777,12 @@ final class AppState: ObservableObject {
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
         }
+        os_signpost(
+            .end,
+            log: appStatePerformanceLog,
+            name: "MeetingStoreCommit",
+            signpostID: commitSignpostID
+        )
     }
 
     private func clearPeriodicSaveFingerprintIfCurrent(_ fingerprint: Int?) {

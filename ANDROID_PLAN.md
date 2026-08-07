@@ -495,9 +495,10 @@ Standard, MEDDPICC, and questions run as independent background coroutines. Each
 
 Cadence during recording:
 - Warmup: fire first request at 4 finalized segments for standard, 6 for MEDDPICC, 6 for questions
-- Steady state: 30s interval per mode
-- Stagger: MEDDPICC fires 15s after standard, questions fires 22s after standard
-- Silence gate: skip tick if no new finalized segments since last request for that mode
+- Failed warmup cycles: at most one combined attempt every 30s
+- Steady state: standard requires 60s + 4 new segments (120s max-age escape hatch), MEDDPICC 90s + 8 (180s max), questions 60s + 6 (120s max)
+- Attempt gate: compare against the last attempt as well as the last success so offline failures cannot retry on every scheduler tick
+- Silence gate: every mode still requires at least one new finalized segment; the max-age path prevents quiet meetings from starving on the normal segment delta
 
 ### Incremental cutover + delta window
 
@@ -627,9 +628,8 @@ Copy the "no-loss protocol" from iOS verbatim:
 - `meta.degraded` → don't advance ack cursor
 - Per-mode `request_seq` counters reject out-of-order responses
 - Warmup at 4/6/6 segments for standard/MEDDPICC/questions
-- 30s steady-state cadence
-- MEDDPICC staggered +15s, questions +22s
-- Silence gate: skip tick if no new segments
+- Per-mode steady state: standard 60s + 4 new segments (120s max), MEDDPICC 90s + 8 (180s max), questions 60s + 6 (120s max)
+- Last-attempt failure cooldown plus silence gate; maximum age still requires at least one new segment
 - 2 non-degraded responses → switch to incremental
 - Delta > 35k → full recovery
 - Update button fires all three immediately and resets anchors
