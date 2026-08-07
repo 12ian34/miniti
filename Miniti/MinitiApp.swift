@@ -10,7 +10,12 @@ extension Notification.Name {
     static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var appState: AppState?
+    private var isTerminationReplyPending = false
+    private var terminationTimeoutTask: Task<Void, Never>?
+
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             let scheme = url.scheme?.lowercased() ?? ""
@@ -31,6 +36,40 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         !flag
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let appState, appState.hasUnsavedSession else {
+            return .terminateNow
+        }
+        guard !isTerminationReplyPending else {
+            return .terminateLater
+        }
+
+        isTerminationReplyPending = true
+        Task { @MainActor [weak self, weak sender] in
+            let didSave = await appState.saveCurrentMeetingAndWait()
+            guard let self, let sender else { return }
+            if !didSave {
+                DebugLogger.shared.log(.app, "Termination save did not reach SwiftData before reply")
+            }
+            self.finishTerminationReply(to: sender)
+        }
+        terminationTimeoutTask = Task { @MainActor [weak self, weak sender] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self, let sender else { return }
+            DebugLogger.shared.log(.app, "Termination save timed out after 5s")
+            self.finishTerminationReply(to: sender)
+        }
+        return .terminateLater
+    }
+
+    private func finishTerminationReply(to application: NSApplication) {
+        guard isTerminationReplyPending else { return }
+        isTerminationReplyPending = false
+        terminationTimeoutTask?.cancel()
+        terminationTimeoutTask = nil
+        application.reply(toApplicationShouldTerminate: true)
     }
 
     @MainActor private func closeDuplicateWindows() {
@@ -94,12 +133,17 @@ struct MinitiApp: App {
             .environment(\.interfaceScale, interfaceScale)
             .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
             .minitiReduceMotionAware()
+            .onAppear {
+                appDelegate.appState = appState
+            }
         }
         .handlesExternalEvents(matching: ["*"])
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
-                appState.saveCurrentMeetingIfNeeded()
+                Task {
+                    _ = await appState.saveCurrentMeetingAndWait()
+                }
             } else if newPhase == .active && appState.appMode == .managed {
                 Task {
                     await appState.refreshUsage()
