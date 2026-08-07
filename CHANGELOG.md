@@ -11,7 +11,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### 2026-08-07 - v2.0.0 (macOS; iOS pending App Review)
+### 2026-08-07 - v2.0.0 (macOS; iOS pending App Store release)
 
 #### New
 
