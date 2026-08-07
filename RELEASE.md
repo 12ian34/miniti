@@ -90,16 +90,15 @@ Tell the backend agent (or edit `miniti-api` directly):
 - app/api/version/route.ts:
     MACOS_LATEST_VERSION → X.Y.Z once the Sparkle DMG is live
     IOS_LATEST_VERSION   → X.Y.Z only once the App Store build is live
-    MACOS_RELEASE_NOTES  → macOS-applicable bullets from the top CHANGELOG.md entry, including shared bullets
-    IOS_RELEASE_NOTES    → fastlane/metadata/en-US/release_notes.txt (iPhone/iPad only), only once live
+    legacy force-update notes → keep concise and platform-appropriate
   Do not touch MACOS_MIN_VERSION / IOS_MIN_VERSION unless you're intentionally force-updating.
 
 Deploy.
 ```
 
-Only bump a platform's `*_LATEST_VERSION` once that platform's build is actually installable. The two ship independently — macOS goes live the moment the appcast is deployed, while iOS waits on App Review — so if only one platform shipped, leave the other on its previous version or you'll advertise an update nobody can install.
+Only bump a platform's real `*_LATEST_VERSION` once that platform's build is actually installable. Supported clients receive their own `X-App-Version` from this route, suppressing the removed home-screen optional-update banner; below-minimum clients still receive the real latest version. The two platforms ship independently, and Sparkle's appcast remains the normal macOS update source.
 
-`app/api/version/route.test.ts` asserts the version strings and release notes as literals, so it fails until you update it alongside the constants. That's deliberate: it catches a half-finished bump. Run `npm test` in `miniti-api` before pushing, since a push to `main` is a production deploy.
+`app/api/version/route.test.ts` asserts supported-client suppression and below-minimum force-update behavior alongside the platform constants. Run `npm test` in `miniti-api` before pushing, since a push to `main` is a production deploy.
 
 Sanity-check once deployed:
 

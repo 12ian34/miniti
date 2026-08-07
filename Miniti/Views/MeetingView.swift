@@ -314,11 +314,6 @@ struct ReadyStateView: View {
                 }
             }
 
-            // Update available banner
-            if let update = appState.availableUpdate {
-                UpdateAvailableBanner(versionInfo: update)
-            }
-
             // Limit reached warning (managed mode)
             if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
@@ -2909,107 +2904,6 @@ struct CalendarNudgeCard: View {
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
                         .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
-                )
-        )
-    }
-}
-
-struct UpdateAvailableBanner: View {
-    let versionInfo: MinitiAPIService.VersionInfo
-    @State private var isShowingFullNotes = false
-    @State private var isHoveringDownload = false
-    
-    private var releaseNotes: String? {
-        guard let notes = versionInfo.releaseNotes?.trimmingCharacters(in: .whitespacesAndNewlines),
-              !notes.isEmpty else { return nil }
-        return notes
-    }
-    
-    private var downloadURL: URL? {
-        guard let url = URL(string: versionInfo.downloadUrl),
-              url.scheme?.lowercased() == "https" else { return nil }
-        return url
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                Image(systemName: "arrow.down.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                
-                Text("v\(versionInfo.latestVersion) available")
-                    .font(.system(size: 13, weight: .semibold, design: .default))
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                
-                Spacer()
-                
-                if let url = downloadURL {
-                    Link(destination: url) {
-                        HStack(spacing: 7) {
-                            Image(systemName: "arrow.down.to.line")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("download")
-                                .font(.system(size: 11, weight: .semibold, design: .default))
-                        }
-                        .foregroundStyle(Color(hex: "09090B"))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(isHoveringDownload ? ColorPalette.Accent.blue : ColorPalette.Accent.blue.opacity(0.75))
-                        )
-                        .shadow(
-                            color: isHoveringDownload ? ColorPalette.Accent.blue.opacity(0.3) : ColorPalette.Accent.blue.opacity(0.1),
-                            radius: isHoveringDownload ? 10 : 4, x: 0, y: 2
-                        )
-                    }
-                    .focusable(false)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isHoveringDownload = hovering
-                        }
-                    }
-                }
-            }
-            
-            if releaseNotes != nil {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isShowingFullNotes.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 9, weight: .bold))
-                            .rotationEffect(.degrees(isShowingFullNotes ? 90 : 0))
-                        Text(isShowingFullNotes ? "hide release notes" : "show release notes")
-                            .font(.system(size: 11, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-            
-            if let notes = releaseNotes, isShowingFullNotes {
-                Text(notes)
-                    .font(.system(size: 11, weight: .regular, design: .default))
-                    .foregroundStyle(ColorPalette.Accent.blue.opacity(0.7))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 13)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .frame(maxWidth: 480, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.Accent.blue.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(ColorPalette.Accent.blue.opacity(0.25), lineWidth: 1)
                 )
         )
     }
