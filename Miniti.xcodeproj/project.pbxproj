@@ -41,6 +41,8 @@
 		AD0000010000000000000013 /* DocsMCPService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD0000010000000000000011 /* DocsMCPService.swift */; };
 		B80000010000000000000002 /* GranolaCSVImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000010000000000000001 /* GranolaCSVImporter.swift */; };
 		B80000010000000000000003 /* GranolaCSVImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80000010000000000000001 /* GranolaCSVImporter.swift */; };
+		B90000010000000000000002 /* MinitiDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000010000000000000001 /* MinitiDesignSystem.swift */; };
+		B90000010000000000000003 /* MinitiDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000010000000000000001 /* MinitiDesignSystem.swift */; };
 		AE0000010000000000000002 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AE0000010000000000000003 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AF0000010000000000000001 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
@@ -159,6 +161,7 @@
 		AD0000010000000000000001 /* WebhookService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebhookService.swift; sourceTree = "<group>"; };
 		AD0000010000000000000011 /* DocsMCPService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DocsMCPService.swift; sourceTree = "<group>"; };
 		B80000010000000000000001 /* GranolaCSVImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GranolaCSVImporter.swift; sourceTree = "<group>"; };
+		B90000010000000000000001 /* MinitiDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiDesignSystem.swift; sourceTree = "<group>"; };
 		AE0000010000000000000001 /* ForceUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceUpdateView.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
@@ -277,6 +280,7 @@
 				A20000010000000000000004 /* TranscriptView.swift */,
 				AF0000010000000000000003 /* SelectableTextView.swift */,
 				A20000010000000000000005 /* InsightsView.swift */,
+				B90000010000000000000001 /* MinitiDesignSystem.swift */,
 				A20000010000000000000007 /* SettingsView.swift */,
 				A20000010000000000000020 /* OnboardingView.swift */,
 				A20000010000000000000021 /* UsageBanner.swift */,
@@ -598,6 +602,7 @@
 				AD0000010000000000000002 /* WebhookService.swift in Sources */,
 				AD0000010000000000000012 /* DocsMCPService.swift in Sources */,
 				B80000010000000000000002 /* GranolaCSVImporter.swift in Sources */,
+				B90000010000000000000002 /* MinitiDesignSystem.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -633,6 +638,7 @@
 				AD0000010000000000000003 /* WebhookService.swift in Sources */,
 				AD0000010000000000000013 /* DocsMCPService.swift in Sources */,
 				B80000010000000000000003 /* GranolaCSVImporter.swift in Sources */,
+				B90000010000000000000003 /* MinitiDesignSystem.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

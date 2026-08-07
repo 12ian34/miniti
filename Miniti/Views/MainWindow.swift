@@ -1277,7 +1277,7 @@ struct MeetingDetailView: View {
         HStack(spacing: 10) {
             if showsBackToCoaching {
                 Button(action: onBackToCoaching) {
-                    VibeyButtonLabel(accent: ColorPalette.Accent.amber) {
+                    MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.coaching) {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 9, weight: .bold))

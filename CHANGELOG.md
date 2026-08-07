@@ -25,7 +25,7 @@ This release keeps the complete 2.0 update together, including everything from v
 #### Experience and workflow improvements
 
 - improvement: (macOS and iOS) Training is now called Coaching throughout the app, using clearer system typography; select any meeting in the Coaching overview to open it and return easily
-- improvement: (macOS) recording controls, Zoned Out, Shortcuts, Settings, post-meeting navigation, and the Summary, Questions, Coaching, and More controls now share the same compact accent-tinted button style; More shows one dropdown arrow
+- improvement: (macOS) recording controls, Zoned Out, Shortcuts, Settings, post-meeting navigation, and every insight mode now share the same compact accent-tinted button style; Summary, Questions, and Coaching have slightly more breathing room, enabled Sales and Playbook become matching peer buttons when space allows, and More shows one dropdown arrow
 - improvement: (macOS and iOS) insight text now matches transcript text size, and Discussion, Actions, Questions, Coaching, Sales, and Playbook content matches Summary instead of appearing smaller
 - improvement: (macOS and iOS) normal update notices no longer take over the home screen with large release notes; macOS continues updating through Sparkle and iOS through the App Store
 - improvement: (macOS) Send to Attio keeps its primary action visible, uses a clearer compact search control, and collapses the detailed payload checklist until you need it

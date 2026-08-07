@@ -96,4 +96,22 @@ final class ColorPaletteTests: XCTestCase {
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "m"), "3B82F6")
         XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "e"), "A78BFA")
     }
+
+    // MARK: - Design-system contracts
+
+    func testCompactControlMetricsStayAligned() {
+        XCTAssertEqual(MinitiDesignSystem.Control.compactHeight, 30)
+        XCTAssertEqual(MinitiDesignSystem.Control.horizontalPadding, 10)
+        XCTAssertEqual(MinitiDesignSystem.Control.modeHorizontalPadding, 10)
+        XCTAssertEqual(MinitiDesignSystem.Control.modeSpacing, 4)
+        XCTAssertEqual(MinitiDesignSystem.Radius.control, 6)
+    }
+
+    func testInsightModesUseTheirSemanticAccents() {
+        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.standard), ColorPalette.Accent.blueGitHub)
+        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.questions), ColorPalette.Accent.purpleLight)
+        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.training), ColorPalette.Accent.amber)
+        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.meddpicc), ColorPalette.Accent.pink)
+        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.docs), ColorPalette.Accent.purpleSoft)
+    }
 }

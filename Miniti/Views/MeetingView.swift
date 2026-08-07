@@ -168,7 +168,7 @@ private struct PostMeetingReviewBar: View {
                         appState.saveAndOpenCurrentMeeting()
                     }
                 } label: {
-                    VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
+                    MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
                         HStack(spacing: 6) {
                             Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "rectangle.stack" : "clock.arrow.circlepath")
                                 .font(.system(size: 10, weight: .semibold))
@@ -213,7 +213,7 @@ struct HomeActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            VibeyButtonLabel(accent: accentColor) {
+            MinitiVibeyLabel(accent: accentColor) {
                 HStack(spacing: 7) {
                     Image(systemName: icon)
                         .font(.system(size: 11, weight: .semibold))
@@ -224,7 +224,7 @@ struct HomeActionButton: View {
 
                     Text(shortcut)
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(accentColor.opacity(0.55))
+                        .foregroundStyle(accentColor.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
                         .lineLimit(1)
                 }
             }
@@ -2027,7 +2027,7 @@ struct TerminalHeader: View {
     @State private var isEditingTitle = false
     @State private var showDiscardConfirmation = false
     
-    private let headerActionHeight: CGFloat = 30
+    private let headerActionHeight = MinitiDesignSystem.Control.compactHeight
 
     private var isStopped: Bool {
         appState.currentMeeting != nil && !appState.isRecording
@@ -2100,8 +2100,8 @@ struct TerminalHeader: View {
                         }
                     }
                 } label: {
-                    let accent = appState.isRecording ? ColorPalette.Accent.redGitHub : ColorPalette.Accent.greenGitHub
-                    VibeyButtonLabel(accent: accent, isEmphasized: appState.isRecording) {
+                    let accent = appState.isRecording ? MinitiDesignSystem.Accent.recording : MinitiDesignSystem.Accent.resume
+                    MinitiVibeyLabel(accent: accent, isEmphasized: appState.isRecording) {
                         HStack(spacing: 6) {
                             if isResumePending {
                                 ProgressView()
@@ -2118,7 +2118,7 @@ struct TerminalHeader: View {
                                 .lineLimit(1)
                             Text("⌘⇧R")
                                 .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(accent.opacity(0.55))
+                                .foregroundStyle(accent.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
                                 .lineLimit(1)
                         }
                     }
@@ -2155,7 +2155,7 @@ struct TerminalHeader: View {
                         Button {
                             appState.goHome()
                         } label: {
-                            VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
+                            MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "rectangle.stack")
                                         .font(.system(size: 10, weight: .semibold))
@@ -2173,7 +2173,7 @@ struct TerminalHeader: View {
                                 appState.saveAndOpenCurrentMeeting()
                             }
                         } label: {
-                            VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
+                            MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
@@ -2182,7 +2182,7 @@ struct TerminalHeader: View {
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                     Text("⌘S")
                                         .font(.system(size: 10, weight: .medium, design: .default))
-                                        .foregroundStyle(ColorPalette.Accent.blueGitHub.opacity(0.55))
+                                        .foregroundStyle(MinitiDesignSystem.Accent.navigation.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
                                         .lineLimit(1)
                                 }
                             }
@@ -2851,7 +2851,7 @@ struct CalendarNudgeCard: View {
 
 struct ZonedOutButton: View {
     @EnvironmentObject var appState: AppState
-    private let accent = Color(hex: "D2A8FF")
+    private let accent = MinitiDesignSystem.Accent.zonedOut
 
     var body: some View {
         Button {
@@ -2861,7 +2861,7 @@ struct ZonedOutButton: View {
                 appState.triggerZonedOutCatchUp()
             }
         } label: {
-            VibeyButtonLabel(accent: accent) {
+            MinitiVibeyLabel(accent: accent) {
                 HStack(spacing: 6) {
                     Text("😶")
                         .font(.system(size: 12))
@@ -2870,7 +2870,7 @@ struct ZonedOutButton: View {
                         .font(.system(size: 11, weight: .medium, design: .default))
                     Text("⌘⇧Z")
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(accent.opacity(0.55))
+                        .foregroundStyle(accent.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
                         .lineLimit(1)
                 }
             }
