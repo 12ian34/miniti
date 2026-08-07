@@ -43,7 +43,7 @@ sed -i '' 's/CURRENT_PROJECT_VERSION = OLD_BUILD;/CURRENT_PROJECT_VERSION = NEW_
 fastlane mac release
 ```
 
-This runs build → re-sign Sparkle framework (preserving entitlements) → verify entitlements → notarize → staple → DMG. Takes ~3–5 minutes.
+This runs build → re-sign Sparkle framework (preserving entitlements) → verify entitlements → notarize/staple app → create and Developer ID-sign the DMG → notarize/staple DMG → generate the Sparkle signature from the final bytes. It makes two Apple notarization submissions and normally takes a few minutes.
 
 If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped entitlements. Do not work around this — investigate. See the v1.24.0 postmortem in `docs/distribution.md`.
 
@@ -53,7 +53,7 @@ If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped e
 bash scripts/release-info.sh
 ```
 
-Confirm all sanity checks are `[ok]` (DMG stapling is an expected `[warn]`, tolerated). Copy the five appcast values for step 5.
+Confirm all sanity checks are `[ok]`; DMG signing, notarization, stapling, and Sparkle signing are release-blocking. Copy the five appcast values for step 5.
 
 ### 4. Upload DMG to Netlify blobs
 

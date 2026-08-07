@@ -316,6 +316,25 @@ final class SelectableAttributedTests: XCTestCase {
 
     #if os(macOS)
     @MainActor
+    func testTranscriptMeasurementRejectsTransientNarrowerProposal() {
+        let container = _SelectableTextContainer(
+            attributed: NSAttributedString(string: "Transcript"),
+            mutation: nil,
+            onSelectionChange: nil,
+            onDeleteSelection: nil
+        )
+        container.frame = NSRect(x: 0, y: 0, width: 480, height: 100)
+
+        XCTAssertEqual(container.reliableMeasurementWidth(for: 220), 480)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: 479), 480)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: 620), 620)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: nil), 480)
+
+        container.frame = NSRect(x: 0, y: 0, width: 320, height: 100)
+        XCTAssertEqual(container.reliableMeasurementWidth(for: 320), 320)
+    }
+
+    @MainActor
     func testLongTranscriptHeightStaysAccurateAcrossIncrementalTailUpdates() {
         var turns: [Turn] = []
         var document = SelectableAttributed.transcriptDocument(

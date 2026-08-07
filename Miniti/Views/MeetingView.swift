@@ -254,6 +254,7 @@ struct HomeActionButton: View {
             )
         }
         .buttonStyle(.plain)
+        .focusable(false)
         .fixedSize()
         .onHover { hovering in
             withAnimation(.easeOut(duration: 0.15)) {

@@ -21,9 +21,11 @@ MAC_SCHEME = "Miniti"
 MAC_CONFIGURATION = "Release"
 MAC_OUTPUT_DIRECTORY = File.join(REPO_ROOT, "build", "macos")
 MAC_OUTPUT_NAME = "miniti"
+MAC_BUNDLE_ID = "com.miniti.app"
 MAC_DERIVED_DATA_PATH = File.join(REPO_ROOT, "DerivedDataLocal")
 MAC_ARCHIVE_PATH = File.join(MAC_OUTPUT_DIRECTORY, "miniti.xcarchive")
 DMG_SCRIPT_PATH = File.join(REPO_ROOT, "scripts", "build-dmg.sh")
+MAC_DMG_PATH = File.join(REPO_ROOT, "miniti.dmg")
 MAC_ROOT_APP_PATH = File.join(REPO_ROOT, "#{MAC_OUTPUT_NAME}.app")
 APPLE_TEAM_ID = "9AUR5U5KTF"
 
@@ -325,33 +327,99 @@ platform :mac do
     publish_notarized_app_to_root(app: app_path)
   end
 
-  desc "Build a DMG from a notarized macOS app"
+  desc "Build, notarize, staple, and Sparkle-sign a DMG from a notarized macOS app"
   lane :dmg do |options|
     app_path = options[:app] || mac_app_path
 
     UI.user_error!("Couldn't find macOS app at #{app_path}. Run `fastlane mac build` first or pass app:/path/to/miniti.app.") unless File.exist?(app_path)
 
-    sh("#{Shellwords.escape(DMG_SCRIPT_PATH)} #{Shellwords.escape(app_path)}")
+    api_key = load_app_store_connect_api_key
+    dmg_path = build_mac_dmg(app: app_path)
+    sign_mac_dmg_for_notarization(dmg: dmg_path, identity: mac_codesign_identity)
+    notarize_mac_dmg(dmg: dmg_path, api_key: api_key)
+    sign_mac_dmg_for_sparkle(dmg: dmg_path)
   end
 
-  desc "Build, notarize, and package the macOS app as miniti.dmg"
+  desc "Build and notarize the macOS app, then package, notarize, and Sparkle-sign miniti.dmg"
   lane :release do
-    app_path = build_mac_release
-    resign_sparkle_framework(app: app_path, identity: mac_codesign_identity)
+    api_key = load_app_store_connect_api_key
+    codesign_identity = mac_codesign_identity
+    app_path = build_mac_release(identity: codesign_identity)
+    resign_sparkle_framework(app: app_path, identity: codesign_identity)
     verify_mac_signing_for_notarization(app: app_path)
 
     notarize(
       package: app_path,
-      api_key: load_app_store_connect_api_key,
+      api_key: api_key,
       print_log: true
     )
 
     publish_notarized_app_to_root(app: app_path)
-    sh("#{Shellwords.escape(DMG_SCRIPT_PATH)} #{Shellwords.escape(app_path)}")
+    dmg_path = build_mac_dmg(app: app_path)
+    sign_mac_dmg_for_notarization(dmg: dmg_path, identity: codesign_identity)
+    notarize_mac_dmg(dmg: dmg_path, api_key: api_key)
+    sign_mac_dmg_for_sparkle(dmg: dmg_path)
   end
 
-  private_lane :build_mac_release do
-    codesign_identity = mac_codesign_identity
+  private_lane :build_mac_dmg do |options|
+    app_path = options[:app]
+    sh("#{Shellwords.escape(DMG_SCRIPT_PATH)} #{Shellwords.escape(app_path)}")
+    UI.user_error!("DMG packaging completed without producing #{MAC_DMG_PATH}.") unless File.exist?(MAC_DMG_PATH)
+
+    MAC_DMG_PATH
+  end
+
+  private_lane :sign_mac_dmg_for_notarization do |options|
+    dmg_path = options[:dmg]
+    identity = options[:identity]
+    UI.user_error!("Couldn't find DMG at #{dmg_path}.") unless File.exist?(dmg_path)
+
+    sh(
+      "codesign --force --timestamp " \
+      "--sign #{Shellwords.escape(identity)} #{Shellwords.escape(dmg_path)}"
+    )
+    sh("codesign --verify --verbose=2 #{Shellwords.escape(dmg_path)}")
+    UI.success("DMG signed with Developer ID for notarization.")
+  end
+
+  private_lane :notarize_mac_dmg do |options|
+    dmg_path = options[:dmg]
+    UI.user_error!("Couldn't find DMG at #{dmg_path}.") unless File.exist?(dmg_path)
+
+    notarize(
+      package: dmg_path,
+      bundle_id: MAC_BUNDLE_ID,
+      api_key: options[:api_key],
+      print_log: true
+    )
+
+    sh("xcrun stapler validate #{Shellwords.escape(dmg_path)}")
+    sh("spctl --assess --type open --context context:primary-signature #{Shellwords.escape(dmg_path)}")
+    UI.success("DMG notarization and stapling verified.")
+  end
+
+  private_lane :sign_mac_dmg_for_sparkle do |options|
+    dmg_path = options[:dmg]
+    UI.user_error!("Couldn't find DMG at #{dmg_path}.") unless File.exist?(dmg_path)
+
+    sign_update_path = ENV.fetch("PATH", "")
+      .split(File::PATH_SEPARATOR)
+      .map { |directory| File.join(directory, "sign_update") }
+      .find { |candidate| File.file?(candidate) && File.executable?(candidate) }
+
+    UI.user_error!("Sparkle's sign_update is not on PATH. A Sparkle signature is required before this DMG can ship.") if sign_update_path.nil?
+
+    output, status = Open3.capture2e(sign_update_path, dmg_path)
+    unless status.success? && output.include?("sparkle:edSignature=")
+      UI.user_error!("sign_update did not produce a valid Sparkle signature.\n#{output}")
+    end
+
+    UI.message("Sparkle signature for final stapled DMG:")
+    UI.message(output.strip)
+  end
+
+  private_lane :build_mac_release do |options|
+    codesign_identity = options[:identity] || mac_codesign_identity
 
     build_mac_app(
       project: PROJECT_PATH,

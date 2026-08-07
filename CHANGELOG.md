@@ -11,6 +11,61 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-07 - v2.0.3 (macOS; iOS pending App Store release)
+
+This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.2.
+
+#### New
+
+- new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
+- new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
+- new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
+- new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
+
+#### Experience and workflow improvements
+
+- improvement: (macOS) Send to Attio keeps its primary action visible, uses a clearer compact search control, and collapses the detailed payload checklist until you need it
+- improvement: (macOS and iOS) when several people are grouped as “Others” in Coaching, you can expand the filler section to see each person’s totals and filler-word detail
+- improvement: (macOS and iOS) speaker names remain readable when a meeting has many detected speakers
+- improvement: (macOS and iOS) clearer system typography and roomier transcript lines make meetings easier to read while preserving Miniti's compact navigation and original wordmark
+- improvement: (iPad) regular-width layouts now use adaptive sidebar navigation while iPhone keeps its compact tab bar
+- improvement: (iOS) navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface
+- improvement: (macOS) the main window now resizes more freely and remembers collapsed navigation and insight panes
+- improvement: (macOS) the navigation sidebar now gets out of the way when recording starts and returns when you save or leave the session
+- improvement: (macOS and iOS) Reduce Motion now applies consistently across app transitions and animated status elements
+- improvement: (macOS and iOS) starting, stopping, recovery, and post-meeting review now explain what is happening and offer clear next actions without implying you still need to save
+- improvement: (macOS and iOS) first-run setup is shorter, adapts to small screens, and includes a live microphone check
+- improvement: (iOS) insights use one descriptive mode menu with update timing, and Settings opens into searchable task-based categories
+- improvement: (macOS and iOS) insights keep Summary, Questions, and Coaching prominent while optional Sales and Playbook views live in a specialist menu; Sales analysis only runs after you enable it
+- improvement: (macOS and iOS) the main Start meeting button always begins a fresh meeting, while calendar meetings remain explicit choices in the upcoming list
+- improvement: (macOS and iOS) after the final transcript is saved, you can return to meetings and start another recording while final insights finish safely in the background
+- improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
+- improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
+- improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
+
+#### Performance improvements
+
+- improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, training analysis, transcript rendering, and audio meters do less work on the interface thread
+- improvement: (macOS and iOS) live transcripts now render speaker turns independently for smoother long-meeting scrolling and resizing; each turn remains selectable, and Copy still includes the complete meeting
+- improvement: (macOS and iOS) live transcript fragments and follow-to-bottom scrolling now update at a steadier, power-efficient pace without overriding manual scrolling
+- improvement: (macOS and iOS) live AI insights now refresh less often during long meetings while still updating promptly when enough new conversation arrives
+- improvement: (macOS and iOS) saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details
+- improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
+- improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
+- improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
+
+#### Fixes
+
+- fix: (macOS and iOS) finalized transcript and insight changes are more reliably saved when the app backgrounds, a meeting stops, or the Mac app quits
+- fix: (macOS) system-audio-only recordings now detect and recover when the system capture callback stalls
+- fix: (macOS) live transcripts no longer develop the recurring large blank gap before the newest line during long meetings or pane resizing; saved transcripts also keep their content aligned while resizing
+- fix: (macOS) the Shortcuts action no longer receives an unwanted keyboard-focus highlight when the app opens
+- fix: (macOS) future in-app updates no longer fail on the first attempt with a macOS security warning on affected Macs; installing v2.0.3 from an older version may still need one final retry because that update starts with the older updater
+- fix: (macOS) opening Send to Attio immediately after saving a long meeting no longer risks freezing the app, including when Attio is not connected
+- fix: (macOS) system audio leaking through speakers into the microphone no longer creates duplicated green “You” lines, while actual mic speech is preserved even when it overlaps playback
+- fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments
+- fix: (macOS and iOS) stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it
+
 ### 2026-08-07 - v2.0.2 (macOS; iOS pending App Store release)
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 and v2.0.1.

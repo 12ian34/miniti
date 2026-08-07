@@ -131,11 +131,6 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     private var lastAppliedRevision: UInt64
     private var lastAttributedInput: NSAttributedString
     private var onSelectionChange: ((NSRange?) -> Void)?
-    #if DEBUG
-    private var hasLoggedLayoutDiagnosticsActive = false
-    private var lastWidthFallbackLogAt = Date.distantPast
-    private var lastFrameGapLogAt = Date.distantPast
-    #endif
 
     init(
         attributed: NSAttributedString,
@@ -194,13 +189,6 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        #if DEBUG
-        logFrameGapIfNeeded()
-        #endif
-    }
 
     func apply(
         _ attributed: NSAttributedString,
@@ -290,25 +278,32 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     }
 
     func reliableMeasurementWidth(for proposedWidth: CGFloat?) -> CGFloat? {
+        let placedWidth = bounds.width >= Self.minimumReliableMeasurementWidth
+            ? bounds.width
+            : nil
+
         if let proposedWidth,
            proposedWidth >= Self.minimumReliableMeasurementWidth {
+            // During ScrollView reconciliation SwiftUI can briefly propose a
+            // narrower-but-still-plausible width. Measuring a long transcript
+            // at that width inflates its height even though AppKit is still
+            // displaying it at the wider placed width. Prefer the placed width
+            // for that pass; a real pane shrink updates bounds and is measured
+            // correctly on the next layout pass.
+            if let placedWidth, proposedWidth < placedWidth {
+                return placedWidth
+            }
             return proposedWidth
         }
+
+        // An unspecified proposal is routine inside SwiftUI scroll views. Once
+        // the native view has been placed, its current bounds are a better
+        // measurement source than a width cached before a pane/window resize.
+        if let placedWidth {
+            return placedWidth
+        }
+
         if lastMeasuredWidth >= Self.minimumReliableMeasurementWidth {
-            #if DEBUG
-            let now = Date()
-            if now.timeIntervalSince(lastWidthFallbackLogAt) >= 2 {
-                lastWidthFallbackLogAt = now
-                DebugLogger.shared.log(
-                    .app,
-                    "Transcript layout width fallback: proposed=\(Self.format(proposedWidth)) "
-                        + "using=\(Self.format(lastMeasuredWidth)) "
-                        + "frame=\(Self.format(bounds.width))x\(Self.format(bounds.height)) "
-                        + "chars=\(measurementStorage.length)",
-                    level: .warning
-                )
-            }
-            #endif
             return lastMeasuredWidth
         }
         return nil
@@ -355,19 +350,6 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
                     - freshMeasuredHeight(of: mutation.previousTail, for: width)
             }
             if abs(measuredHeight - expectedHeight) > Self.measurementDeltaTolerance {
-                #if DEBUG
-                DebugLogger.shared.log(
-                    .app,
-                    "Transcript layout measurement repair: "
-                        + "cached=\(Self.format(measuredHeight)) "
-                        + "expected=\(Self.format(expectedHeight)) "
-                        + "delta=\(Self.format(measuredHeight - expectedHeight)) "
-                        + "width=\(Self.format(width)) "
-                        + "chars=\(measurementStorage.length) "
-                        + "tailMutations=\(mutationsToValidate.count)",
-                    level: .warning
-                )
-                #endif
                 rebuildMeasurementLayout(for: width)
                 _ = measurementLayoutManager.glyphRange(for: measurementContainer)
                 measurementLayoutManager.ensureLayout(for: measurementContainer)
@@ -426,54 +408,6 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
         lastMeasuredWidth = -1
         lastMeasuredHeight = 0
     }
-
-    #if DEBUG
-    private func logFrameGapIfNeeded() {
-        guard measurementStorage.length >= 500,
-              bounds.width >= Self.minimumReliableMeasurementWidth,
-              bounds.height > 0,
-              let layoutManager = textView.layoutManager,
-              let textContainer = textView.textContainer else { return }
-
-        if !hasLoggedLayoutDiagnosticsActive {
-            hasLoggedLayoutDiagnosticsActive = true
-            DebugLogger.shared.log(
-                .app,
-                "Transcript layout diagnostics active: "
-                    + "frame=\(Self.format(bounds.width))x\(Self.format(bounds.height)) "
-                    + "measured=\(Self.format(lastMeasuredWidth))x\(Self.format(lastMeasuredHeight)) "
-                    + "chars=\(measurementStorage.length)"
-            )
-        }
-
-        layoutManager.ensureLayout(for: textContainer)
-        let renderedHeight = ceil(layoutManager.usedRect(for: textContainer).height)
-        let blankHeight = bounds.height - renderedHeight
-        guard blankHeight > 80 else { return }
-
-        let now = Date()
-        guard now.timeIntervalSince(lastFrameGapLogAt) >= 2 else { return }
-        lastFrameGapLogAt = now
-        DebugLogger.shared.log(
-            .app,
-            "Transcript layout GAP DETECTED: "
-                + "blank=\(Self.format(blankHeight)) "
-                + "frame=\(Self.format(bounds.width))x\(Self.format(bounds.height)) "
-                + "rendered=\(Self.format(renderedHeight)) "
-                + "measured=\(Self.format(lastMeasuredWidth))x\(Self.format(lastMeasuredHeight)) "
-                + "textContainer=\(Self.format(textContainer.containerSize.width))"
-                + "x\(Self.format(textContainer.containerSize.height)) "
-                + "chars=\(measurementStorage.length) "
-                + "mutations=\(measurementMutationCount)",
-            level: .warning
-        )
-    }
-
-    private static func format(_ value: CGFloat?) -> String {
-        guard let value else { return "nil" }
-        return String(format: "%.1f", Double(value))
-    }
-    #endif
 }
 
 #else
