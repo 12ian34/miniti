@@ -1345,13 +1345,13 @@ struct MeetingDetailView: View {
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                     }
-                    .foregroundStyle(Color(hex: "F97316"))
+                    .foregroundStyle(ColorPalette.Integrations.attio)
                     .frame(minWidth: compact ? 30 : nil, minHeight: 28)
                     .padding(.horizontal, compact ? 0 : 12)
-                    .background(Color(hex: "F97316").opacity(0.08))
+                    .background(ColorPalette.Integrations.attio.opacity(0.08))
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
+                            .stroke(ColorPalette.Integrations.attio.opacity(0.22), lineWidth: 1)
                     )
                     .cornerRadius(6)
                 }
@@ -2238,13 +2238,13 @@ struct AttioLogoMark: View {
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 3)
-                .fill(Color(hex: "FB923C").opacity(0.18))
+                .fill(ColorPalette.Integrations.attioLight.opacity(0.18))
             Circle()
-                .fill(Color(hex: "F97316"))
+                .fill(ColorPalette.Integrations.attio)
                 .frame(width: 6, height: 6)
                 .offset(x: -2.5, y: -1.5)
             Circle()
-                .fill(Color(hex: "FDBA74"))
+                .fill(ColorPalette.Integrations.attioPale)
                 .frame(width: 4, height: 4)
                 .offset(x: 3, y: 2)
         }
@@ -2275,6 +2275,7 @@ struct AttioSendSheet: View {
     @State private var selectedRecordText: String?
     @State private var selectedRecordDetail: String?
     @State private var showSearchResults = false
+    @State private var showPayloadDetails = false
     @State private var isSearching = false
     @State private var searchError: String?
 
@@ -2294,11 +2295,13 @@ struct AttioSendSheet: View {
                     connectionSection
                     searchSection
                     payloadPreviewSection
-                    sendSection
                 }
                 .padding(16)
             }
             .background(Color(hex: "09090B"))
+
+            Divider().overlay(ColorPalette.Border.primary)
+            sendSection
         }
         .frame(width: 640, height: 620)
         .background(Color(hex: "09090B"))
@@ -2373,10 +2376,10 @@ struct AttioSendSheet: View {
                 } label: {
                     Text((status?.connected ?? false) ? "reconnect" : "connect")
                         .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(Color(hex: "F97316"))
+                        .foregroundStyle(ColorPalette.Integrations.attio)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(Color(hex: "F97316").opacity(0.08))
+                        .background(ColorPalette.Integrations.attio.opacity(0.08))
                         .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
@@ -2421,39 +2424,72 @@ struct AttioSendSheet: View {
                 Spacer()
             }
 
-            HStack(spacing: 8) {
-                TextField(searchPlaceholder, text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(hex: "09090B"))
-                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
-                    )
-                    .onSubmit {
-                        Task { await runSearch() }
+            HStack(spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.meta)
+
+                    TextField(searchPlaceholder, text: $query)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .onSubmit {
+                            Task { await runSearch() }
+                        }
+
+                    if !query.isEmpty {
+                        Button {
+                            query = ""
+                            results = []
+                            showSearchResults = false
+                            searchError = nil
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 11))
+                                .foregroundStyle(ColorPalette.Text.meta)
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .accessibilityLabel("Clear Attio search")
                     }
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+                .frame(maxWidth: 360)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(ColorPalette.Background.primary)
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(ColorPalette.Border.primary, lineWidth: 1))
+                )
 
                 Button {
                     Task { await runSearch() }
                 } label: {
                     HStack(spacing: 6) {
-                        if isSearching { ProgressView().controlSize(.small) }
-                        Text("search")
+                        if isSearching {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(ColorPalette.Background.primary)
+                        } else {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 10, weight: .bold))
+                        }
+                        Text(isSearching ? "searching..." : "search attio")
                             .font(.system(size: 11, weight: .semibold, design: .default))
                     }
-                    .foregroundStyle(Color(hex: "58A6FF"))
-                    .padding(.horizontal, 12)
+                    .foregroundStyle(ColorPalette.Background.primary)
+                    .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(Color(hex: "58A6FF").opacity(0.08))
+                    .background(ColorPalette.Accent.blueGitHub)
                     .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .disabled(isSearching || !(status?.connected ?? false) || query.trimmingCharacters(in: .whitespacesAndNewlines).count < 2)
+                .disabled(!searchIsEnabled)
+                .opacity(searchIsEnabled ? 1 : 0.42)
+
+                Spacer(minLength: 0)
             }
 
             if let searchError {
@@ -2542,18 +2578,53 @@ struct AttioSendSheet: View {
     }
 
     private var payloadPreviewSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("what will be sent")
-            VStack(alignment: .leading, spacing: 6) {
-                payloadLine("summary", hasValue(meeting.summaryText))
-                payloadLine("discussion", !meeting.discussionFlow.isEmpty)
-                payloadLine("action items", !normalizedActionItems.isEmpty)
-                payloadLine("decisions", !meeting.keyDecisions.isEmpty)
-                payloadLine("topics", !meeting.topics.isEmpty)
-                payloadLine("MEDDPICC", meeting.hasMEDDPICC)
-                payloadLine("notes", !meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                payloadLine("transcript", false, note: "not sent")
-                payloadLine("training", false, note: "not sent")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                sectionTitle("what will be sent")
+                Text("\(includedPayloadCount) included")
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.meta)
+                Spacer()
+                Button {
+                    showPayloadDetails.toggle()
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(showPayloadDetails ? "hide details" : "review details")
+                        Image(systemName: showPayloadDetails ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 8, weight: .bold))
+                    }
+                    .font(.system(size: 10, weight: .semibold, design: .default))
+                    .foregroundStyle(ColorPalette.Accent.blueGitHub)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+            }
+
+            Text("A meeting note is added to the selected record. Transcript and coaching stay in Miniti.")
+                .font(.system(size: 10, weight: .regular, design: .default))
+                .foregroundStyle(ColorPalette.Text.meta)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if showPayloadDetails {
+                Divider().overlay(ColorPalette.Border.primary)
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), alignment: .leading),
+                        GridItem(.flexible(), alignment: .leading),
+                    ],
+                    alignment: .leading,
+                    spacing: 6
+                ) {
+                    payloadLine("summary", hasValue(meeting.summaryText))
+                    payloadLine("discussion", !meeting.discussionFlow.isEmpty)
+                    payloadLine("action items", !normalizedActionItems.isEmpty)
+                    payloadLine("decisions", !meeting.keyDecisions.isEmpty)
+                    payloadLine("topics", !meeting.topics.isEmpty)
+                    payloadLine("MEDDPICC", meeting.hasMEDDPICC)
+                    payloadLine("notes", !meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    payloadLine("transcript", false, note: "not sent")
+                    payloadLine("coaching", false, note: "not sent")
+                }
             }
         }
         .padding(12)
@@ -2565,61 +2636,70 @@ struct AttioSendSheet: View {
     }
 
     private var sendSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("send")
-
-            Toggle(isOn: $createTasksFromActionItems) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("create tasks from action items")
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundStyle(Color(hex: "E6EDF3"))
-                    Text(normalizedActionItems.isEmpty ? "No action items found in this meeting" : "Creates Attio tasks linked to the selected record")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                        .foregroundStyle(Color(hex: "8B949E"))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 16) {
+                Toggle(isOn: $createTasksFromActionItems) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("create attio tasks")
+                            .font(.system(size: 11, weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.secondary)
+                        Text(actionItemToggleDetail)
+                            .font(.system(size: 10, weight: .regular, design: .default))
+                            .foregroundStyle(ColorPalette.Text.meta)
+                    }
                 }
+                .toggleStyle(.switch)
+                .focusable(false)
+                .disabled(normalizedActionItems.isEmpty)
+
+                Spacer(minLength: 12)
+
+                Button {
+                    Task { await sendToAttio() }
+                } label: {
+                    HStack(spacing: 8) {
+                        if isSending {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(ColorPalette.Background.primary)
+                        } else {
+                            Image(systemName: "paperplane.fill")
+                                .font(.system(size: 11, weight: .bold))
+                        }
+                        Text(isSending ? "sending..." : "send meeting to attio")
+                            .font(.system(size: 12, weight: .bold, design: .default))
+                    }
+                    .foregroundStyle(ColorPalette.Background.primary)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .background(ColorPalette.Integrations.attio)
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .disabled(!sendIsEnabled)
+                .opacity(sendIsEnabled ? 1 : 0.42)
+                .accessibilityHint(sendDisabledReason ?? "Adds this meeting to the selected Attio record")
             }
-            .toggleStyle(.switch)
-            .focusable(false)
-            .disabled(normalizedActionItems.isEmpty)
 
             if let sendMessage {
                 Text(sendMessage)
                     .font(.system(size: 11, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "3FB950"))
+                    .foregroundStyle(ColorPalette.Status.success)
             }
             if let sendError {
                 errorLine(sendError)
             }
 
-            Button {
-                Task { await sendToAttio() }
-            } label: {
-                HStack(spacing: 8) {
-                    if isSending { ProgressView().controlSize(.small) }
-                    AttioLogoMark().frame(width: 12, height: 12)
-                    Text("send to attio")
-                        .font(.system(size: 11, weight: .semibold, design: .default))
-                }
-                .foregroundStyle(Color(hex: "F97316"))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(hex: "F97316").opacity(0.08))
-                .cornerRadius(6)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
-                )
+            if sendMessage == nil, sendError == nil, let sendDisabledReason {
+                Text(sendDisabledReason)
+                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.meta)
             }
-            .buttonStyle(.plain)
-            .focusable(false)
-            .disabled(!(status?.connected ?? false) || selectedRecordID == nil || selectedRecordObject == nil || isSending)
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(hex: "0F0F11"))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
-        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(ColorPalette.Background.panel)
     }
 
     private var connectionStatusText: String {
@@ -2637,13 +2717,13 @@ struct AttioSendSheet: View {
     private func sectionTitle(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .semibold, design: .default))
-            .foregroundStyle(Color(hex: "E6EDF3"))
+            .foregroundStyle(ColorPalette.Text.secondary)
     }
 
     private func errorLine(_ text: String) -> some View {
         Text(text)
             .font(.system(size: 11, weight: .medium, design: .default))
-            .foregroundStyle(Color(hex: "F85149"))
+            .foregroundStyle(ColorPalette.Status.error)
     }
 
     private func payloadLine(_ label: String, _ included: Bool, note: String? = nil) -> some View {
@@ -2653,11 +2733,11 @@ struct AttioSendSheet: View {
                 .frame(width: 6, height: 6)
             Text(label)
                 .font(.system(size: 11, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "E6EDF3"))
+                .foregroundStyle(ColorPalette.Text.secondary)
             if let note {
                 Text("(\(note))")
                     .font(.system(size: 10, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "8B949E"))
+                    .foregroundStyle(ColorPalette.Text.meta)
             }
             Spacer()
         }
@@ -2680,6 +2760,44 @@ struct AttioSendSheet: View {
         case .both:
             return "search people or companies..."
         }
+    }
+
+    private var searchIsEnabled: Bool {
+        !isSearching &&
+        status?.connected == true &&
+        query.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+    }
+
+    private var includedPayloadCount: Int {
+        [
+            hasValue(meeting.summaryText),
+            !meeting.discussionFlow.isEmpty,
+            !normalizedActionItems.isEmpty,
+            !meeting.keyDecisions.isEmpty,
+            !meeting.topics.isEmpty,
+            meeting.hasMEDDPICC,
+            !meeting.notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+        ].filter { $0 }.count
+    }
+
+    private var actionItemToggleDetail: String {
+        guard !normalizedActionItems.isEmpty else { return "no action items in this meeting" }
+        return "\(normalizedActionItems.count) action item\(normalizedActionItems.count == 1 ? "" : "s")"
+    }
+
+    private var sendIsEnabled: Bool {
+        sendDisabledReason == nil && !isSending
+    }
+
+    private var sendDisabledReason: String? {
+        if deviceId == nil || isLoadingStatus || status == nil {
+            return "Checking your Attio connection..."
+        }
+        if status?.connected != true { return "Connect Attio above before sending." }
+        if selectedRecordID == nil || selectedRecordObject == nil {
+            return "Select a person or company above to enable sending."
+        }
+        return nil
     }
 
     private func hasValue(_ value: String?) -> Bool {
