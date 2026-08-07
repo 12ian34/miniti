@@ -1804,55 +1804,18 @@ private struct LiveInsightsEmptyState: View {
 
 struct LiveTrainingInsightsContent: View {
     let metrics: TrainingMetrics
+
+    private var speakerPresentations: [TrainingMetrics.SpeakerPresentation] {
+        metrics.speakerPresentations()
+    }
     
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
-        let localSpeakers = metrics.speakers.filter(\.isLocalMic)
-        let externalSpeakers = metrics.speakers.filter { !$0.isLocalMic }
-        guard externalSpeakers.count > 1, !localSpeakers.isEmpty else {
-            return metrics.speakers
-        }
-        
-        var fillerCounts: [String: Int] = [:]
-        
-        let totalExternalWords = externalSpeakers.reduce(0) { $0 + $1.wordCount }
-        let totalExternalSegments = externalSpeakers.reduce(0) { $0 + $1.segmentCount }
-        let totalExternalQuestions = externalSpeakers.reduce(0) { $0 + $1.questionsAsked }
-        let totalExternalFillers = externalSpeakers.reduce(0) { $0 + $1.totalFillers }
-        let longestExternalMonologue = externalSpeakers.map(\.longestMonologueWords).max() ?? 0
-        
-        for speaker in externalSpeakers {
-            for filler in speaker.fillers {
-                fillerCounts[filler.word, default: 0] += filler.count
-            }
-        }
-        
-        let mergedFillers = fillerCounts
-            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
-            .sorted {
-                if $0.count == $1.count { return $0.word < $1.word }
-                return $0.count > $1.count
-            }
-        
-        let others = TrainingMetrics.SpeakerStats(
-            speakerLabel: "Others",
-            isLocalMic: false,
-            wordCount: totalExternalWords,
-            segmentCount: totalExternalSegments,
-            fillers: mergedFillers,
-            totalFillers: totalExternalFillers,
-            fillersPerMinute: Double(totalExternalFillers) / max(metrics.durationMinutes, 0.01),
-            wordsPerMinute: Double(totalExternalWords) / max(metrics.durationMinutes, 0.01),
-            longestMonologueWords: longestExternalMonologue,
-            questionsAsked: totalExternalQuestions,
-            avgWordsPerTurn: totalExternalSegments > 0 ? Double(totalExternalWords) / Double(totalExternalSegments) : 0
-        )
-        
-        return localSpeakers + [others]
+        speakerPresentations.map(\.summary)
     }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            LiveTrainingFillersSection(speakers: displaySpeakers)
+            LiveTrainingFillersSection(presentations: speakerPresentations)
             
             if metrics.speakers.count > 1 {
                 LiveInsightSection(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
@@ -1939,10 +1902,12 @@ struct LiveTrainingInsightsContent: View {
 }
 
 private struct LiveTrainingFillersSection: View {
-    let speakers: [TrainingMetrics.SpeakerStats]
+    let presentations: [TrainingMetrics.SpeakerPresentation]
+    @State private var expandedPresentationIDs: Set<String> = []
     
     var body: some View {
-        ForEach(speakers) { speaker in
+        ForEach(presentations) { presentation in
+            let speaker = presentation.summary
             if speaker.totalFillers > 0 || speaker.isLocalMic {
                 LiveInsightSection(
                     title: "fillers: \(speaker.speakerLabel.lowercased())",
@@ -1954,22 +1919,70 @@ private struct LiveTrainingFillersSection: View {
                             .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
                         
-                        if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
-                            VStack(alignment: .leading, spacing: 4) {
-                                ForEach(speaker.fillers) { entry in
-                                    HStack(spacing: 6) {
-                                        Text(entry.word)
-                                            .font(.system(size: 10, weight: .medium, design: .default))
-                                            .foregroundStyle(Color(hex: "D4D4D8"))
-                                            .fixedSize()
-                                        Text("\(entry.count)")
-                                            .font(.system(size: 10, weight: .semibold, design: .default))
-                                            .foregroundStyle(Color(hex: "F59E0B"))
+                        if presentation.hasMultipleDetails {
+                            Button {
+                                toggleDetails(for: presentation.id)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: expandedPresentationIDs.contains(presentation.id) ? "chevron.down" : "chevron.right")
+                                        .font(.system(size: 8, weight: .bold))
+                                    Text(expandedPresentationIDs.contains(presentation.id) ? "hide speaker details" : "show speaker details")
+                                        .font(.system(size: 10, weight: .semibold, design: .default))
+                                }
+                                .foregroundStyle(ColorPalette.Accent.blue)
+                            }
+                            .buttonStyle(.plain)
+
+                            if expandedPresentationIDs.contains(presentation.id) {
+                                VStack(alignment: .leading, spacing: 10) {
+                                    ForEach(Array(presentation.details.enumerated()), id: \.offset) { _, detail in
+                                        fillerDetail(for: detail)
                                     }
                                 }
                             }
+                        } else if !speaker.fillers.isEmpty {
+                            fillerEntries(speaker.fillers)
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private func toggleDetails(for id: String) {
+        if expandedPresentationIDs.contains(id) {
+            expandedPresentationIDs.remove(id)
+        } else {
+            expandedPresentationIDs.insert(id)
+        }
+    }
+
+    private func fillerDetail(for speaker: TrainingMetrics.SpeakerStats) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(speaker.speakerLabel.lowercased()) · \(speaker.totalFillers)")
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(speaker.isLocalMic ? ColorPalette.Accent.green : ColorPalette.Text.secondary)
+            if speaker.fillers.isEmpty {
+                Text("no fillers detected")
+                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.meta)
+            } else {
+                fillerEntries(speaker.fillers)
+            }
+        }
+    }
+
+    private func fillerEntries(_ entries: [TrainingMetrics.FillerEntry]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(entries) { entry in
+                HStack(spacing: 6) {
+                    Text(entry.word)
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize()
+                    Text("\(entry.count)")
+                        .font(.system(size: 10, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Accent.amber)
                 }
             }
         }

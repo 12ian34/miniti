@@ -11,6 +11,17 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-07 - v2.0.1 (macOS; iOS pending App Store release)
+
+#### Experience and workflow improvements
+
+- improvement: (macOS and iOS) when several people are grouped as “Others” in Coaching, you can expand the filler section to see each person’s totals and filler-word detail
+
+#### Fixes
+
+- fix: (macOS) long live and saved transcripts no longer develop a large blank gap between the transcript and the latest line
+- fix: (macOS) future in-app updates no longer fail on the first attempt with a macOS security warning on affected Macs; installing v2.0.1 from an older version may still need one final retry because that update starts with the older updater
+
 ### 2026-08-07 - v2.0.0 (macOS; iOS pending App Store release)
 
 #### New

@@ -315,4 +315,71 @@ final class TrainingMetricsTests: XCTestCase {
         let alice = metrics.speakers.first(where: { !$0.isLocalMic })
         XCTAssertEqual(alice?.speakerLabel, "Alice")
     }
+
+    // MARK: - Speaker presentations
+
+    func testSpeakerPresentationsMergeDiarizationIDsWithSameDisplayedName() throws {
+        let metrics = TrainingMetrics(
+            speakers: [
+                speakerStats(label: "You", isLocal: true, words: 80, fillers: ["um": 1]),
+                speakerStats(label: "Max", words: 50, fillers: ["uh": 2]),
+                speakerStats(label: "MAX", words: 30, fillers: ["uh": 1, "like": 2]),
+            ],
+            talkRatioYou: 0.5,
+            durationMinutes: 2
+        )
+
+        let presentations = metrics.speakerPresentations()
+        XCTAssertEqual(presentations.map(\.summary.speakerLabel), ["You", "Max"])
+
+        let max = try XCTUnwrap(presentations.last?.summary)
+        XCTAssertEqual(max.wordCount, 80)
+        XCTAssertEqual(max.totalFillers, 5)
+        XCTAssertEqual(max.fillers.first(where: { $0.word == "uh" })?.count, 3)
+        XCTAssertFalse(presentations.last?.hasMultipleDetails ?? true)
+    }
+
+    func testSpeakerPresentationsExposeDistinctPeopleBehindOthers() throws {
+        let metrics = TrainingMetrics(
+            speakers: [
+                speakerStats(label: "You", isLocal: true, words: 100),
+                speakerStats(label: "Max", words: 60, fillers: ["um": 2]),
+                speakerStats(label: "Alex", words: 40, fillers: ["like": 3]),
+            ],
+            talkRatioYou: 0.5,
+            durationMinutes: 2
+        )
+
+        let others = try XCTUnwrap(metrics.speakerPresentations().last)
+        XCTAssertEqual(others.summary.speakerLabel, "Others")
+        XCTAssertEqual(others.summary.wordCount, 100)
+        XCTAssertEqual(others.summary.totalFillers, 5)
+        XCTAssertEqual(others.details.map(\.speakerLabel), ["Max", "Alex"])
+        XCTAssertTrue(others.hasMultipleDetails)
+    }
+
+    private func speakerStats(
+        label: String,
+        isLocal: Bool = false,
+        words: Int,
+        fillers: [String: Int] = [:]
+    ) -> TrainingMetrics.SpeakerStats {
+        let entries = fillers
+            .map { TrainingMetrics.FillerEntry(word: $0.key, count: $0.value) }
+            .sorted { $0.word < $1.word }
+        let totalFillers = fillers.values.reduce(0, +)
+        return TrainingMetrics.SpeakerStats(
+            speakerLabel: label,
+            isLocalMic: isLocal,
+            wordCount: words,
+            segmentCount: 1,
+            fillers: entries,
+            totalFillers: totalFillers,
+            fillersPerMinute: Double(totalFillers) / 2,
+            wordsPerMinute: Double(words) / 2,
+            longestMonologueWords: words,
+            questionsAsked: 0,
+            avgWordsPerTurn: Double(words)
+        )
+    }
 }

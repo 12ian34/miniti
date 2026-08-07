@@ -72,6 +72,8 @@ netlify blobs:set downloads miniti-1.25.0.dmg --input ../miniti/miniti.dmg --for
 
 Both keys matter: `miniti.dmg` is the "latest" for the marketing site's download button; `miniti-X.Y.Z.dmg` is what Sparkle's appcast enclosure URL points to forever for this version.
 
+Run `bash scripts/release-info.sh` again after upload. The public function response is streamed, so Netlify may omit `Content-Length`; the script falls back to downloading and counting the bytes. Do not switch the website's DMG functions back to classic base64-buffered responses: Netlify's 6 MB buffered limit is effectively about 4.5 MB for binary files and larger DMGs return 502.
+
 ### 5. Update backend
 
 Tell the backend agent (or edit `miniti-api` directly):
@@ -86,10 +88,10 @@ Tell the backend agent (or edit `miniti-api` directly):
   Keep prior <item>s (Sparkle renders "what's changed since your version" from them).
 
 - app/api/version/route.ts:
-    MACOS_LATEST_VERSION → X.Y.Z
-    IOS_LATEST_VERSION   → X.Y.Z
+    MACOS_LATEST_VERSION → X.Y.Z once the Sparkle DMG is live
+    IOS_LATEST_VERSION   → X.Y.Z only once the App Store build is live
     MACOS_RELEASE_NOTES  → macOS-applicable bullets from the top CHANGELOG.md entry, including shared bullets
-    IOS_RELEASE_NOTES    → fastlane/metadata/en-US/release_notes.txt (iPhone/iPad only)
+    IOS_RELEASE_NOTES    → fastlane/metadata/en-US/release_notes.txt (iPhone/iPad only), only once live
   Do not touch MACOS_MIN_VERSION / IOS_MIN_VERSION unless you're intentionally force-updating.
 
 Deploy.
@@ -182,11 +184,13 @@ git push origin main vX.Y.Z
 | Sparkle says "update improperly signed" | Public key in `Info.plist` doesn't match the signature on the DMG. Re-run `sign_update miniti.dmg`, redeploy appcast. |
 | Sparkle says "up to date" when it shouldn't | `sparkle:version` in appcast ≤ installed build's `CFBundleVersion`. Bump and redeploy. |
 | Sparkle downloads but fails install with `Failed copying system domain rights: -60005` | The installed sandboxed app lacks Sparkle's installer-launcher service setup. Server/appcast changes cannot repair that installed build. Ship a fixed DMG with `SUEnableInstallerLauncherService = true` and `com.miniti.app-spks` / `com.miniti.app-spki` mach lookup exceptions; affected users install it manually once. |
+| First update attempt says Miniti was prevented from modifying apps, then retry works | Miniti's bundle ID ends in `.app`, which collides with Sparkle 2.9.1's cache naming on current macOS. Pin Sparkle 2.9.3+ (currently 2.9.5). The transition from an older build may still fail once because the installed old build runs the updater; after the fixed build is installed, future updates use the corrected cache path. |
 | "My history is wiped" after update | Sandbox entitlement was stripped → app points at a fresh non-sandboxed SwiftData store. Users' data is still at `~/Library/Containers/com.miniti.app/Data/...` — intact. Ship a hotfix that preserves entitlements. |
 | `which sign_update` returns nothing | Symlink the Sparkle SPM tools — see "Before you start" above. |
 | iOS `exportArchive No Accounts` / `No signing certificate "iOS Distribution" found` | The machine has no Apple Distribution certificate or Xcode account (both are lost in a Migration Assistant transfer). Sign into Xcode → Settings → Accounts and let it create the certificate. See `fastlane/RUNBOOK.md` § `fastlane ios release`. macOS releases are unaffected. |
 | iOS build number ends up one ahead of the shipped macOS DMG | Both targets share `CURRENT_PROJECT_VERSION`, and the iOS lanes auto-increment it unless `build:N` is passed. Pass it explicitly when macOS shipped first. |
 | DMG URL returns 404 | Netlify blob upload didn't happen, or the marketing site's `/dmg/*` route is misconfigured. |
+| DMG URL returns 502 for a larger build | The marketing site's download function is buffering and base64-encoding the binary. Deploy the modern streamed `Response` implementation; Netlify's effective buffered binary limit is about 4.5 MB. |
 | Build number in built app differs from `Info.plist` | `CURRENT_PROJECT_VERSION` in pbxproj wins. Update both in sync. |
 
 ## Key management
