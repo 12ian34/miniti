@@ -251,6 +251,8 @@ final class AppState: ObservableObject {
 
     private struct MeetingSavePayload {
         let meeting: Meeting
+        let meetingID: UUID
+        let stateFingerprint: Int
         let periodicFingerprint: Int?
         let finalSegments: [LiveSegmentSaveSnapshot]
         let summary: String
@@ -271,6 +273,16 @@ final class AppState: ObservableObject {
         let speakerNames: [String: String]
         let speakerOverrides: Set<String>
         let selfSpeakerIDs: Set<Int>
+    }
+
+    private struct PendingMeetingSave {
+        var payload: MeetingSavePayload
+        var revision: UInt64
+    }
+
+    private struct MeetingSaveFence {
+        let meetingID: UUID
+        let revision: UInt64
     }
     
     // MARK: - Recording State
@@ -872,7 +884,11 @@ final class AppState: ObservableObject {
     private var recordingStartDate: Date?
     private var accumulatedRecordedDuration: TimeInterval = 0
     private var activeMeetingSaveTask: Task<Void, Never>?
-    private var queuedMeetingSavePayload: MeetingSavePayload?
+    private var pendingMeetingSaves: [UUID: PendingMeetingSave] = [:]
+    private var pendingMeetingSaveOrder: [UUID] = []
+    private var nextMeetingSaveRevision: UInt64 = 0
+    private var latestMeetingSaveRevision: [UUID: UInt64] = [:]
+    private var successfulMeetingSaveRevision: [UUID: UInt64] = [:]
     /// Meetings the user discarded or deleted from history. Async work that was already in flight
     /// must never write one back.
     private var deletedMeetingIDs: Set<UUID> = []
@@ -4007,12 +4023,10 @@ final class AppState: ObservableObject {
         endLiveActivity()
         #endif
 
-        activeMeetingSaveTask?.cancel()
-        activeMeetingSaveTask = nil
-        queuedMeetingSavePayload = nil
-        
         if let meeting = currentMeeting, let modelContext {
             deletedMeetingIDs.insert(meeting.id)
+            pendingMeetingSaves.removeValue(forKey: meeting.id)
+            pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
             modelContext.delete(meeting)
             try? modelContext.save()
         }
@@ -4028,11 +4042,8 @@ final class AppState: ObservableObject {
     func noteMeetingDeleted(_ meeting: Meeting) {
         deletedMeetingIDs.insert(meeting.id)
         finalizingInsightMeetingIDs.remove(meeting.id)
-        if currentMeeting?.id == meeting.id {
-            activeMeetingSaveTask?.cancel()
-            activeMeetingSaveTask = nil
-            queuedMeetingSavePayload = nil
-        }
+        pendingMeetingSaves.removeValue(forKey: meeting.id)
+        pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
     }
 
     /// Whether a meeting was discarded or deleted during this app run. Async work that resumes
@@ -4568,17 +4579,44 @@ final class AppState: ObservableObject {
             return
         }
         guard let payload = makeMeetingSavePayload(
+            stateFingerprint: fingerprint,
             periodicFingerprint: onlyIfChanged ? fingerprint : nil
         ) else { return }
         if onlyIfChanged {
             lastPeriodicSaveRequestedFingerprint = fingerprint
         }
-        enqueueMeetingSave(payload)
+        _ = enqueueMeetingSave(payload)
+    }
+
+    /// Snapshots the current finalized transcript and waits until that exact revision (or a newer
+    /// coalesced revision for the same meeting) reaches SwiftData. Lifecycle callers use this as a
+    /// durability fence; it never blocks the main actor while the off-main diff is running.
+    func saveCurrentMeetingAndWait() async -> Bool {
+        let fingerprint = periodicSaveFingerprint()
+        guard let payload = makeMeetingSavePayload(
+            stateFingerprint: fingerprint,
+            periodicFingerprint: nil
+        ) else {
+            return true
+        }
+        let fence = enqueueMeetingSave(payload)
+        guard let task = activeMeetingSaveTask else {
+            return isMeetingSaveFenceDurable(fence)
+        }
+        await task.value
+        return isMeetingSaveFenceDurable(fence)
     }
 
     private func periodicSaveFingerprint() -> Int {
         var hasher = Hasher()
         hasher.combine(currentMeeting?.id)
+        hasher.combine(currentMeeting?.title)
+        hasher.combine(currentMeeting?.startTime)
+        hasher.combine(currentMeeting?.endTime)
+        hasher.combine(currentMeeting?.language)
+        hasher.combine(currentMeeting?.calendarEventId)
+        hasher.combine(currentMeeting?.attendeesJSON)
+        hasher.combine(currentMeeting?.managedSessionId)
         hasher.combine(liveTranscriptRevision)
         hasher.combine(liveSummary)
         hasher.combine(liveActionItems)
@@ -4611,7 +4649,10 @@ final class AppState: ObservableObject {
         return hasher.finalize()
     }
 
-    private func makeMeetingSavePayload(periodicFingerprint: Int?) -> MeetingSavePayload? {
+    private func makeMeetingSavePayload(
+        stateFingerprint: Int,
+        periodicFingerprint: Int?
+    ) -> MeetingSavePayload? {
         guard let meeting = currentMeeting else { return nil }
 
         let finalSegments = cachedSaveSegments
@@ -4620,6 +4661,8 @@ final class AppState: ObservableObject {
 
         return MeetingSavePayload(
             meeting: meeting,
+            meetingID: meeting.id,
+            stateFingerprint: stateFingerprint,
             periodicFingerprint: periodicFingerprint,
             finalSegments: finalSegments,
             summary: liveSummary,
@@ -4643,38 +4686,80 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func enqueueMeetingSave(_ payload: MeetingSavePayload) {
+    @discardableResult
+    private func enqueueMeetingSave(_ payload: MeetingSavePayload) -> MeetingSaveFence {
+        nextMeetingSaveRevision &+= 1
+        let revision = nextMeetingSaveRevision
+        latestMeetingSaveRevision[payload.meetingID] = revision
+        let fence = MeetingSaveFence(meetingID: payload.meetingID, revision: revision)
+
         if activeMeetingSaveTask != nil {
-            queuedMeetingSavePayload = payload
-            return
+            if pendingMeetingSaves[payload.meetingID] == nil {
+                pendingMeetingSaveOrder.append(payload.meetingID)
+            }
+            pendingMeetingSaves[payload.meetingID] = PendingMeetingSave(
+                payload: payload,
+                revision: revision
+            )
+            return fence
         }
 
         activeMeetingSaveTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            var nextPayload: MeetingSavePayload? = payload
-            while let payloadToPersist = nextPayload {
-                await self.persistMeetingSavePayload(payloadToPersist)
-                if let queued = self.queuedMeetingSavePayload {
-                    self.queuedMeetingSavePayload = nil
-                    nextPayload = queued
-                } else {
-                    nextPayload = nil
+            var nextSave: PendingMeetingSave? = PendingMeetingSave(
+                payload: payload,
+                revision: revision
+            )
+            while let save = nextSave {
+                let succeeded = await self.persistMeetingSavePayload(save.payload)
+                if succeeded {
+                    let priorRevision = self.successfulMeetingSaveRevision[save.payload.meetingID] ?? 0
+                    self.successfulMeetingSaveRevision[save.payload.meetingID] = max(
+                        priorRevision,
+                        save.revision
+                    )
+                    if !self.isMeetingDeleted(save.payload.meetingID),
+                       self.currentMeeting?.id == save.payload.meetingID,
+                       self.latestMeetingSaveRevision[save.payload.meetingID] == save.revision,
+                       self.periodicSaveFingerprint() == save.payload.stateFingerprint {
+                        self.hasUnsavedSession = false
+                    }
                 }
+
+                nextSave = self.dequeuePendingMeetingSave()
             }
             self.activeMeetingSaveTask = nil
         }
+        return fence
     }
 
-    private func persistMeetingSavePayload(_ payload: MeetingSavePayload) async {
+    private func dequeuePendingMeetingSave() -> PendingMeetingSave? {
+        while !pendingMeetingSaveOrder.isEmpty {
+            let meetingID = pendingMeetingSaveOrder.removeFirst()
+            if let save = pendingMeetingSaves.removeValue(forKey: meetingID) {
+                return save
+            }
+        }
+        return nil
+    }
+
+    private func isMeetingSaveFenceDurable(_ fence: MeetingSaveFence) -> Bool {
+        isMeetingDeleted(fence.meetingID)
+            || (successfulMeetingSaveRevision[fence.meetingID] ?? 0) >= fence.revision
+    }
+
+    private func persistMeetingSavePayload(_ payload: MeetingSavePayload) async -> Bool {
         guard let modelContext else {
             DebugLogger.shared.log(.app, "Save skipped: no model context")
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
-            return
+            return false
         }
 
-        // Read before the suspension point below: after it, the meeting may have been deleted,
-        // and reading any property of a dead model traps.
-        let meetingID = payload.meeting.id
+        // The ID was snapshotted when the payload was built. Check it before any model access
+        // because this payload may have waited behind another meeting, then check it again after
+        // the detached diff below; reading a deleted SwiftData model traps.
+        let meetingID = payload.meetingID
+        guard !isMeetingDeleted(meetingID) else { return true }
         let existingSnapshots = payload.meeting.segments.map {
             PersistedSegmentSnapshot(
                 id: $0.id,
@@ -4716,7 +4801,7 @@ final class AppState: ObservableObject {
         // meeting the user already deleted.
         guard !Task.isCancelled, !isMeetingDeleted(meetingID) else {
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
-            return
+            return isMeetingDeleted(meetingID)
         }
 
         let applySignpostID = OSSignpostID(log: appStatePerformanceLog)
@@ -4770,19 +4855,24 @@ final class AppState: ObservableObject {
             name: "MeetingStoreCommit",
             signpostID: commitSignpostID
         )
+        let didSave: Bool
         do {
             try modelContext.save()
-            hasUnsavedSession = false
+            didSave = true
         } catch {
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
+            didSave = false
         }
         os_signpost(
             .end,
             log: appStatePerformanceLog,
             name: "MeetingStoreCommit",
-            signpostID: commitSignpostID
+            signpostID: commitSignpostID,
+            "success=%{public}d",
+            didSave ? 1 : 0
         )
+        return didSave
     }
 
     private func clearPeriodicSaveFingerprintIfCurrent(_ fingerprint: Int?) {
@@ -5259,10 +5349,7 @@ final class AppState: ObservableObject {
                     flushAllPendingMicSegments()
                     #endif
                     // Make the transcript durable before slower, failure-prone AI requests.
-                    saveCurrentMeetingIfNeeded()
-                    if let saveTask = activeMeetingSaveTask {
-                        await saveTask.value
-                    }
+                    _ = await saveCurrentMeetingAndWait()
                     let finalSegments = liveSegments
                         .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                         .sorted { $0.timestamp < $1.timestamp }

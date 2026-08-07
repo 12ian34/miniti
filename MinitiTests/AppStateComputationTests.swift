@@ -1455,6 +1455,74 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertNil(state.currentMeeting)
     }
 
+    // MARK: - Meeting save durability
+
+    @MainActor
+    func testSaveFencePersistsLatestRevisionForEachMeeting() async throws {
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        let firstMeeting = Meeting(title: "first")
+        let secondMeeting = Meeting(title: "second")
+        let firstSegment = AppState.LiveSegment(
+            id: UUID(),
+            text: "opening",
+            speaker: 0,
+            timestamp: 1,
+            isFinal: true
+        )
+        let firstTail = AppState.LiveSegment(
+            id: UUID(),
+            text: "terminal tail",
+            speaker: 1,
+            timestamp: 2,
+            isFinal: true
+        )
+        let secondSegment = AppState.LiveSegment(
+            id: UUID(),
+            text: "next meeting",
+            speaker: 0,
+            timestamp: 1,
+            isFinal: true
+        )
+
+        let state = AppState()
+        state.modelContext = context
+        state.currentMeeting = firstMeeting
+        state.liveSegments = [firstSegment]
+        state.saveCurrentMeetingIfNeeded()
+
+        // Queue a newer terminal snapshot for the first meeting, then a save for a second
+        // meeting before the serialized worker gets actor time. A single global latest slot
+        // would drop the first meeting's tail here.
+        state.liveSegments = [firstSegment, firstTail]
+        state.saveCurrentMeetingIfNeeded()
+        state.currentMeeting = secondMeeting
+        state.liveSegments = [secondSegment]
+
+        let didSave = await state.saveCurrentMeetingAndWait()
+        XCTAssertTrue(didSave)
+        XCTAssertEqual(Set(firstMeeting.segments.map(\.text)), ["opening", "terminal tail"])
+        XCTAssertEqual(secondMeeting.segments.map(\.text), ["next meeting"])
+    }
+
+    @MainActor
+    func testSaveFenceReportsFailureWithoutModelContext() async {
+        let state = AppState()
+        state.currentMeeting = Meeting(title: "not wired")
+        state.liveSegments = [
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "unsaved",
+                speaker: 0,
+                timestamp: 1,
+                isFinal: true
+            ),
+        ]
+
+        let didSave = await state.saveCurrentMeetingAndWait()
+        XCTAssertFalse(didSave)
+    }
+
     // MARK: - recoverySeverity
 
     func testRecoverySeverityHealthy() {

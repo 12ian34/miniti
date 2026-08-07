@@ -1,5 +1,34 @@
 import SwiftUI
 import SwiftData
+import UIKit
+
+@MainActor
+private final class MeetingBackgroundSaveLease {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    private var hasEnded = false
+
+    static func begin() -> MeetingBackgroundSaveLease {
+        let lease = MeetingBackgroundSaveLease()
+        lease.identifier = UIApplication.shared.beginBackgroundTask(
+            withName: "Persist meeting transcript"
+        ) { [weak lease] in
+            Task { @MainActor in
+                DebugLogger.shared.log(.app, "Background save time expired")
+                lease?.end()
+            }
+        }
+        return lease
+    }
+
+    func end() {
+        guard !hasEnded else { return }
+        hasEnded = true
+        if identifier != .invalid {
+            UIApplication.shared.endBackgroundTask(identifier)
+            identifier = .invalid
+        }
+    }
+}
 
 @main
 struct MinitiMobileApp: App {
@@ -60,7 +89,14 @@ struct MinitiMobileApp: App {
         .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
-                appState.saveCurrentMeetingIfNeeded()
+                let saveLease = MeetingBackgroundSaveLease.begin()
+                Task { @MainActor in
+                    let didSave = await appState.saveCurrentMeetingAndWait()
+                    if !didSave {
+                        DebugLogger.shared.log(.app, "Background save did not reach SwiftData")
+                    }
+                    saveLease.end()
+                }
             } else if newPhase == .active && appState.appMode == .managed {
                 Task {
                     await appState.refreshUsage()
