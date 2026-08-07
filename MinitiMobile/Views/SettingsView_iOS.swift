@@ -112,7 +112,7 @@ private struct SettingsDetailView_iOS: View {
                         }
                     }
                     
-                    Text("Transcription, insights, and training filler detection all adapt to this language. Can be overridden per meeting.")
+                    Text("Transcription, insights, and coaching filler detection all adapt to this language. Can be overridden per meeting.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     
@@ -764,7 +764,7 @@ struct FillerSettingsDetail_iOS: View {
     var body: some View {
         Form {
             Section {
-                Text("These words and phrases are tracked in training mode. The list updates when you change the default language in Settings.")
+                Text("These words and phrases are tracked in Coaching. The list updates when you change the default language in Settings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -76,42 +76,18 @@ enum InterfaceScale: Int, CaseIterable, Identifiable {
         #endif
     }
 
-    /// Insight prose grows less aggressively than the transcript so the
-    /// multi-mode rail remains useful at its existing width.
+    /// Insight prose intentionally matches transcript prose at every scale so
+    /// switching panes never changes the reading size.
     var insightBodySize: CGFloat {
-        #if os(macOS)
-        switch self {
-        case .compact: return 12
-        case .standard: return 13
-        case .large: return 14
-        }
-        #else
-        switch self {
-        case .compact: return 13
-        case .standard: return 14.5
-        case .large: return 16
-        }
-        #endif
+        transcriptBodySize
     }
 
     var insightSecondarySize: CGFloat {
-        #if os(macOS)
-        switch self {
-        case .compact: return 11
-        case .standard: return 12
-        case .large: return 13
-        }
-        #else
-        return insightBodySize
-        #endif
+        insightBodySize
     }
 
     var insightLineSpacing: CGFloat {
-        switch self {
-        case .compact: return 4
-        case .standard: return 5
-        case .large: return 6
-        }
+        transcriptLineSpacing
     }
 }
 

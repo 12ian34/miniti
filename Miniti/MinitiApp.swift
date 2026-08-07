@@ -35,7 +35,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        !flag
+        guard let mainWindow = sender.windows.first(where: Self.isMainAppWindow) else {
+            return true
+        }
+
+        sender.activate(ignoringOtherApps: true)
+        if mainWindow.isMiniaturized {
+            mainWindow.deminiaturize(nil)
+        }
+        mainWindow.makeKeyAndOrderFront(nil)
+        return false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -73,14 +82,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @MainActor private func closeDuplicateWindows() {
-        let mainWindows = NSApp.windows.filter {
-            $0.isVisible && $0.level == .normal && !($0 is NSPanel) &&
-            $0.styleMask.contains(.fullSizeContentView)
-        }
+        let mainWindows = NSApp.windows.filter { $0.isVisible && Self.isMainAppWindow($0) }
         guard mainWindows.count > 1 else { return }
         for window in mainWindows.dropFirst() {
             window.close()
         }
+    }
+
+    private static func isMainAppWindow(_ window: NSWindow) -> Bool {
+        window.level == .normal &&
+        !(window is NSPanel) &&
+        window.styleMask.contains(.fullSizeContentView)
     }
 }
 

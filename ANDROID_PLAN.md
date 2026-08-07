@@ -24,7 +24,7 @@ Miniti is a meeting assistant that records audio, streams it to Deepgram for liv
 ### In scope for v1
 - Mic recording with background support via foreground service
 - Live Deepgram transcription (Nova-3, 11 languages)
-- Live AI insights: standard, MEDDPICC, training, questions
+- Live AI insights: Summary, Sales, Coaching, Questions
 - Meeting history browser with full-text search
 - Editable meeting titles and notes
 - Terms acceptance gate, onboarding gate, force-update gate
@@ -93,7 +93,7 @@ app/
       DebugLogger.kt              1000-entry ring buffer, thread-safe, API key redaction
       DeviceIdentifier.kt         Android Keystore-backed stable UUID
       TrainingMetrics.kt          Pure computation — filler, pace, talk ratio, etc.
-      InsightsMode.kt             Enum: standard / meddpicc / training / questions
+      InsightsMode.kt             Stable raw values: standard / meddpicc / training / questions; training displays as Coaching
       TranscriptionLanguage.kt    Enum with 11 languages + default fillers
     state/
       AppStateViewModel.kt        Singleton-scoped, equivalent of @MainActor AppState
@@ -116,7 +116,7 @@ app/
         DebugLogScreen.kt
       components/
         TranscriptView.kt
-        InsightsView.kt           Mode tabs (standard/MEDDPICC/training/questions)
+        InsightsView.kt           Mode tabs (Summary/Sales/Coaching/Questions)
         TrainingContent.kt
         QuestionsContent.kt
         SourceWaveform.kt
@@ -273,7 +273,7 @@ OpenAI proxy for managed mode. Replaces direct OpenAI calls. 10 req/min. Transcr
 }
 ```
 
-- `mode`: `"standard"` | `"meddpicc"` | `"questions"` (Training mode is fully local — never call this endpoint in training mode)
+- `mode`: `"standard"` | `"meddpicc"` | `"questions"` (Coaching is fully local; retain the internal `training` identifier but never call this endpoint for it)
 - `language`: ISO 639-1, default `"en"`. Non-English languages instruct the model to respond in that language; JSON keys stay English.
 - `attendees`: optional, used for speaker attribution context
 
@@ -486,7 +486,7 @@ The exact prompts live in the `miniti-api` backend repo at `app/api/insights/rou
 - **Standard:** generates `summary`, `action_items`, `key_decisions`, `topics`, `discussion_flow`, `suggested_title`
 - **MEDDPICC:** generates the eight MEDDPICC fields (metrics, economic_buyer, decision_criteria, decision_process, paper_process, identify_pain, champion, competition)
 - **Questions:** generates 5–10 suggested questions with type + context
-- **Training:** 100% local — compute from transcript segments, never call OpenAI
+- **Coaching:** 100% local — compute from transcript segments, never call OpenAI
 
 ### Decoupled background scheduling
 
@@ -867,9 +867,9 @@ Payload shape (must match iOS exactly):
 
 ---
 
-## 12. Training metrics (pure computation)
+## 12. Coaching metrics (pure computation)
 
-Port `TrainingMetrics.compute()` from iOS. This is pure Kotlin — no network, no LLM. Runs on every new segment batch when training mode is active, and recomputes on mode switch.
+Port `TrainingMetrics.compute()` from iOS. This is pure Kotlin — no network, no LLM. Runs on every new segment batch when Coaching is active, and recomputes on mode switch. Keep the internal type/storage names for compatibility; all visible labels say Coaching.
 
 Input: `List<TranscriptSegment>`, `duration: Double` (seconds), `language: String`
 
@@ -889,7 +889,7 @@ Helper functions to port (pure, trivially testable):
 - `countPhraseOccurrences(tokens: List<String>, phrase: String): Int` — handles multi-word fillers like "you know"
 - `computeLongestMonologue(segments: List<TranscriptSegment>, speaker: Int): Double`
 
-Show training metrics in `TrainingContent` with the same info-popup help text as iOS. Standardized copy: clarity helper is `"lower = clearer = better"`.
+Show Coaching metrics in `TrainingContent` with the same info-popup help text as iOS. Standardized copy: clarity helper is `"lower = clearer = better"`.
 
 ---
 
@@ -956,7 +956,7 @@ Roughly 2–3 weeks of focused work without billing. Each step produces a runnab
 31. `InsightsView` with `TrainingContent`, `QuestionsContent`, MEDDPICC sections
 32. Decoupled insights scheduling with cadence anchors, silence gate, incremental cutover, stale-final guard
 33. `HistoryScreen` — list, swipe to delete, full-text search, drill-down
-34. `HistoryDetailScreen` — tabs (transcript/insights/meddpicc/training/questions/notes), generate/update insights, editable title and notes
+34. `HistoryDetailScreen` — tabs (Transcript/Insights/Sales/Coaching/Questions/Notes), generate/update insights, editable title and notes
 35. `SettingsScreen` — all sections
 36. `WebhookClient` + payload construction
 37. Unit tests — port of iOS `MinitiTests`:

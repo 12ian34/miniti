@@ -266,6 +266,7 @@ struct MeetingRow_iOS: View {
 
 struct MeetingDetail_iOS: View {
     @Bindable var meeting: Meeting
+    var backLabel: String? = nil
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(\.interfaceScale) private var interfaceScale
@@ -427,9 +428,15 @@ struct MeetingDetail_iOS: View {
                 Button {
                     dismiss()
                 } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(ColorPalette.Text.muted)
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 14, weight: .medium))
+                        if let backLabel {
+                            Text(backLabel)
+                                .font(.system(size: 14, weight: .medium, design: .default))
+                        }
+                    }
+                    .foregroundStyle(ColorPalette.Text.muted)
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -697,7 +704,7 @@ struct MeetingDetail_iOS: View {
             } else {
                 historicalEmptyState(
                     title: "no transcript",
-                    subtitle: "training metrics need transcript data"
+                    subtitle: "coaching metrics need transcript data"
                 )
             }
         }

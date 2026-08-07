@@ -299,7 +299,7 @@ struct LanguageSettingsView: View {
             }
             
             Section("Filler Detection") {
-                Text("These words and phrases are tracked in training mode across live and saved meetings.")
+                Text("These words and phrases are tracked in Coaching across live and saved meetings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 

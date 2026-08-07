@@ -277,6 +277,14 @@ final class SelectableAttributedTests: XCTestCase {
         #endif
     }
 
+    func testInsightTypographyMatchesTranscriptAtEveryInterfaceScale() {
+        for scale in InterfaceScale.allCases {
+            XCTAssertEqual(scale.insightBodySize, scale.transcriptBodySize)
+            XCTAssertEqual(scale.insightSecondarySize, scale.transcriptBodySize)
+            XCTAssertEqual(scale.insightLineSpacing, scale.transcriptLineSpacing)
+        }
+    }
+
     func testLiveAndSavedTranscriptBuildersUseMatchingTypographyMetrics() throws {
         let live = SelectableAttributed.transcript(
             turns: [Turn(speaker: 1, timestamp: 0, text: "Matching transcript body")],

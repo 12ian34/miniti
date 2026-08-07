@@ -345,7 +345,8 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
         meeting.segments = segs
 
         let md = meeting.trainingMetricsAsMarkdown()
-        XCTAssertTrue(md.contains("## Training"))
+        XCTAssertTrue(md.contains("## Coaching"))
+        XCTAssertFalse(md.contains("## Training"))
         XCTAssertTrue(md.contains("**Duration:**"))
         XCTAssertTrue(md.contains("Pace:"))
         XCTAssertTrue(md.contains("Fillers:"))

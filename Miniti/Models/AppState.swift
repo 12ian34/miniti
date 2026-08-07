@@ -7030,7 +7030,7 @@ final class AppState: ObservableObject {
     func trainingMetricsAsMarkdown() -> String {
         guard let metrics = trainingMetrics, !metrics.speakers.isEmpty else { return "" }
 
-        var md = "## Training\n\n"
+        var md = "## Coaching\n\n"
         md += "**Duration:** \(String(format: "%.1f", metrics.durationMinutes)) min"
         if let you = metrics.speakers.first(where: { $0.isLocalMic }) {
             let totalWords = metrics.speakers.reduce(0) { $0 + $1.wordCount }
@@ -7218,7 +7218,7 @@ final class AppState: ObservableObject {
         var index = "# Miniti Meeting Notes\n\n"
         index += "This folder contains auto-exported meeting notes from [Miniti](https://miniti.app).\n\n"
         index += "Each file contains notes, AI-generated insights (summary, discussion flow, action items, topics, MEDDPICC analysis), "
-        index += "training metrics (filler words, pace, talk ratio, clarity), and the full transcript.\n\n"
+        index += "coaching metrics (filler words, pace, talk ratio, clarity), and the full transcript.\n\n"
         index += "## Meetings\n\n"
 
         for file in mdFiles {

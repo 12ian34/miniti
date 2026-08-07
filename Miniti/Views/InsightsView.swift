@@ -33,6 +33,50 @@ struct InsightsView: View {
 // MARK: - Mode Selector
 
 #if os(macOS)
+struct VibeyButtonLabel<Content: View>: View {
+    let accent: Color
+    let isEmphasized: Bool
+    let height: CGFloat
+    let horizontalPadding: CGFloat
+    @ViewBuilder let content: () -> Content
+    @State private var isHovered = false
+
+    init(
+        accent: Color,
+        isEmphasized: Bool = false,
+        height: CGFloat = 30,
+        horizontalPadding: CGFloat = 10,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.accent = accent
+        self.isEmphasized = isEmphasized
+        self.height = height
+        self.horizontalPadding = horizontalPadding
+        self.content = content
+    }
+
+    var body: some View {
+        content()
+            .foregroundStyle(accent)
+            .frame(height: height)
+            .padding(.horizontal, horizontalPadding)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(accent.opacity(isEmphasized ? 0.18 : (isHovered ? 0.14 : 0.10)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(accent.opacity(isEmphasized ? 0.40 : (isHovered ? 0.34 : 0.26)), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { hovering in
+                withAnimation(.easeOut(duration: 0.12)) {
+                    isHovered = hovering
+                }
+            }
+    }
+}
+
 struct InsightsModeSelector: View {
     var body: some View {
         InsightsModeTabs()
@@ -46,6 +90,16 @@ struct InsightsModeTabs: View {
     private var selectedSpecialist: InsightsMode? {
         appState.insightsMode.isSpecialist ? appState.insightsMode : nil
     }
+
+    private func accent(for mode: InsightsMode) -> Color {
+        switch mode {
+        case .standard: return ColorPalette.Accent.blueGitHub
+        case .questions: return ColorPalette.Accent.purpleLight
+        case .training: return ColorPalette.Accent.amber
+        case .meddpicc: return ColorPalette.Accent.pink
+        case .docs: return ColorPalette.Accent.purpleSoft
+        }
+    }
     
     var body: some View {
         HStack(spacing: 2) {
@@ -53,17 +107,15 @@ struct InsightsModeTabs: View {
                 Button {
                     appState.switchInsightsMode(to: mode)
                 } label: {
-                    Text(mode.displayName)
-                        .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
-                        .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.muted)
-                        .lineLimit(1)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(appState.insightsMode == mode ? ColorPalette.Accent.green.opacity(0.15) : Color.clear)
-                        )
-                        .contentShape(RoundedRectangle(cornerRadius: 6))
+                    VibeyButtonLabel(
+                        accent: accent(for: mode),
+                        isEmphasized: appState.insightsMode == mode,
+                        horizontalPadding: 9
+                    ) {
+                        Text(mode.displayName)
+                            .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
+                            .lineLimit(1)
+                    }
                 }
                 .buttonStyle(.plain)
                 .help(mode.description)
@@ -106,24 +158,20 @@ struct InsightsModeTabs: View {
                     }
                 }
             } label: {
-                HStack(spacing: 5) {
-                    if let selectedSpecialist {
-                        Image(systemName: selectedSpecialist.systemImage)
-                            .font(.system(size: 10, weight: .semibold))
+                VibeyButtonLabel(
+                    accent: selectedSpecialist.map { accent(for: $0) } ?? ColorPalette.Accent.purpleSoft,
+                    isEmphasized: selectedSpecialist != nil,
+                    horizontalPadding: 9
+                ) {
+                    HStack(spacing: 5) {
+                        if let selectedSpecialist {
+                            Image(systemName: selectedSpecialist.systemImage)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+                        Text(selectedSpecialist?.displayName ?? "More")
+                            .font(.system(size: 11, weight: selectedSpecialist == nil ? .medium : .semibold, design: .default))
                     }
-                    Text(selectedSpecialist?.displayName ?? "More")
-                        .font(.system(size: 11, weight: selectedSpecialist == nil ? .medium : .semibold, design: .default))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
                 }
-                .foregroundStyle(selectedSpecialist == nil ? ColorPalette.Text.muted : ColorPalette.Text.primary)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(selectedSpecialist == nil ? Color.clear : ColorPalette.Accent.green.opacity(0.15))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -559,6 +607,7 @@ private struct LiveTrainingContent_iOSPlain: View {
 }
 
 private struct TrainingMetricRow_iOS: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let speaker: TrainingMetrics.SpeakerStats
     let value: String
     var trailing: String? = nil
@@ -570,12 +619,12 @@ private struct TrainingMetricRow_iOS: View {
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 62, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, weight: .medium, design: .default))
+                .font(.system(size: interfaceScale.insightBodySize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer(minLength: 6)
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -695,6 +744,7 @@ struct QuestionsContent: View {
 }
 
 private struct QuestionCard: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let question: SuggestedQuestion
     let typeColor: Color
 
@@ -752,9 +802,9 @@ private struct QuestionCard: View {
             }
 
             Text(question.question)
-                .font(.system(size: 12, weight: .regular, design: .default))
+                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
-                .lineSpacing(4)
+                .lineSpacing(interfaceScale.insightLineSpacing)
                 .textSelection(.enabled)
                 .padding(.leading, 12)
 
@@ -764,9 +814,9 @@ private struct QuestionCard: View {
                 .padding(.leading, 12)
 
             Text(question.context)
-                .font(.system(size: 10, weight: .regular, design: .default))
+                .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
-                .lineSpacing(3)
+                .lineSpacing(interfaceScale.insightLineSpacing)
                 .padding(.leading, 12)
         }
     }
@@ -1106,6 +1156,7 @@ private struct DocTopicRow: View {
 /// The grounded answer + citations for a resolved topic (no topic header — the
 /// row already shows the label).
 private struct DocAnswerBody: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let card: DocPlaybookCard
     @State private var showCopied = false
 
@@ -1113,9 +1164,9 @@ private struct DocAnswerBody: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
                 Text(card.answer)
-                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(4)
+                    .lineSpacing(interfaceScale.insightLineSpacing)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1370,6 +1421,7 @@ struct TrainingEmptyState: View {
 }
 
 private struct FillerWordsSection: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let speaker: TrainingMetrics.SpeakerStats
     let durationMinutes: Double
     
@@ -1382,7 +1434,7 @@ private struct FillerWordsSection: View {
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
-                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "71717A"))
                 
                 if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
@@ -1390,12 +1442,12 @@ private struct FillerWordsSection: View {
                         ForEach(speaker.fillers) { entry in
                             HStack(spacing: 6) {
                                 Text(entry.word)
-                                    .font(.system(size: 11, weight: .medium, design: .default))
+                                    .font(.system(size: interfaceScale.insightBodySize, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "D4D4D8"))
                                     .fixedSize()
                                 
                                 Text("\(entry.count)")
-                                    .font(.system(size: 11, weight: .semibold, design: .default))
+                                    .font(.system(size: interfaceScale.insightBodySize, weight: .semibold, design: .default))
                                     .foregroundStyle(Color(hex: "F59E0B"))
                             }
                         }
@@ -1525,6 +1577,7 @@ private struct ClaritySection: View {
 }
 
 private struct TerminalTrainingMetricRow: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let speaker: TrainingMetrics.SpeakerStats
     let primary: String
     var secondary: String? = nil
@@ -1537,12 +1590,12 @@ private struct TerminalTrainingMetricRow: View {
                 .frame(width: 48, alignment: .leading)
             
             Text(primary)
-                .font(.system(size: 12, weight: .semibold, design: .default))
+                .font(.system(size: interfaceScale.insightBodySize, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             
             if let secondary {
                 Text(secondary)
-                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -1882,7 +1935,7 @@ extension TerminalSectionInfo {
             "6+/min can make delivery feel less confident or less crisp.",
             "Context matters: brainstorming and interviews usually spike filler usage."
         ],
-        settingsNote: "You can add or edit your own filler words in Settings → Training."
+        settingsNote: "You can add or edit your own filler words in Settings → Language."
     )
     
     static let talkRatio = TerminalSectionInfo(
@@ -1945,6 +1998,7 @@ extension TerminalSectionInfo {
 
 struct TrainingMainView: View {
     let meetings: [Meeting]
+    var onSelectMeeting: ((UUID) -> Void)? = nil
     @State private var sortColumn: TrainingSortColumn = .date
     @State private var sortAscending = false
     @State private var cachedRows: [TrainingRow] = []
@@ -1955,7 +2009,7 @@ struct TrainingMainView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("training")
+                    Text("coaching")
                         .font(.system(size: 20, weight: .bold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
                     Text("speech analytics from your recent meetings")
@@ -1977,7 +2031,7 @@ struct TrainingMainView: View {
                     }
                     .padding(.vertical, 20)
                 } else if !displayedRows.isEmpty {
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 2) {
                         trainingTableHeader
 
                         ForEach(displayedRows) { row in
@@ -1985,7 +2039,7 @@ struct TrainingMainView: View {
                         }
                     }
                 } else if !isComputing {
-                    Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see training stats.")
+                    Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see coaching stats.")
                         .font(.system(size: 12, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .padding(.vertical, 20)
@@ -2208,9 +2262,24 @@ struct TrainingMainView: View {
         }
     }
 
-    @State private var popoverRowID: UUID?
-
+    @ViewBuilder
     private func trainingTableRow(_ row: TrainingRow) -> some View {
+        if let onSelectMeeting {
+            Button {
+                onSelectMeeting(row.id)
+            } label: {
+                trainingTableRowContent(row)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open \(row.title)")
+            .accessibilityHint("Opens this meeting and its coaching details")
+        } else {
+            trainingTableRowContent(row)
+        }
+    }
+
+    private func trainingTableRowContent(_ row: TrainingRow) -> some View {
         HStack(spacing: 0) {
             #if os(iOS)
             Text(row.dateString)
@@ -2225,19 +2294,6 @@ struct TrainingMainView: View {
                 .lineLimit(1)
                 .padding(.leading, 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .onTapGesture {
-                    popoverRowID = popoverRowID == row.id ? nil : row.id
-                }
-                .popover(isPresented: Binding(
-                    get: { popoverRowID == row.id },
-                    set: { if !$0 { popoverRowID = nil } }
-                )) {
-                    Text(row.title)
-                        .font(.system(size: 13, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.primary)
-                        .padding(12)
-                        .presentationCompactAdaptation(.popover)
-                }
 
             Text(String(format: "%.1f", row.fillers))
                 .font(.system(size: 12, weight: .semibold, design: .default))
@@ -2293,6 +2349,10 @@ struct TrainingMainView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(ColorPalette.Background.secondary.opacity(0.55))
+        )
     }
 
 }
