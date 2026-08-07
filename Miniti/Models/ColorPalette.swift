@@ -1,5 +1,217 @@
 import SwiftUI
 
+// MARK: - Interface Scale
+
+/// User-selectable interface sizing. Compact intentionally preserves the
+/// pre-scaling presentation so users can always return to the original density.
+enum InterfaceScale: Int, CaseIterable, Identifiable {
+    static let storageKey = "interfaceScale"
+
+    case compact = 0
+    case standard = 1
+    case large = 2
+
+    var id: Int { rawValue }
+
+    var title: String {
+        switch self {
+        case .compact: return "Compact"
+        case .standard: return "Standard"
+        case .large: return "Large"
+        }
+    }
+
+    func dynamicTypeSize(from systemSize: DynamicTypeSize) -> DynamicTypeSize {
+        let sizes = DynamicTypeSize.allCases
+        guard let currentIndex = sizes.firstIndex(of: systemSize) else { return systemSize }
+        let targetIndex = min(currentIndex + rawValue, sizes.index(before: sizes.endIndex))
+        return sizes[targetIndex]
+    }
+
+    var transcriptBodySize: CGFloat {
+        #if os(macOS)
+        switch self {
+        case .compact: return 13
+        case .standard: return 14
+        case .large: return 15
+        }
+        #else
+        switch self {
+        case .compact: return 13
+        case .standard: return 15
+        case .large: return 17
+        }
+        #endif
+    }
+
+    var transcriptHeaderSize: CGFloat {
+        #if os(macOS)
+        switch self {
+        case .compact: return 10
+        case .standard: return 11
+        case .large: return 12
+        }
+        #else
+        switch self {
+        case .compact: return 10
+        case .standard: return 11.5
+        case .large: return 13
+        }
+        #endif
+    }
+
+    var transcriptLineSpacing: CGFloat {
+        #if os(macOS)
+        switch self {
+        case .compact: return 2
+        case .standard: return 4
+        case .large: return 5
+        }
+        #else
+        switch self {
+        case .compact: return 2
+        case .standard: return 5
+        case .large: return 6
+        }
+        #endif
+    }
+
+    /// Insight prose grows less aggressively than the transcript so the
+    /// multi-mode rail remains useful at its existing width.
+    var insightBodySize: CGFloat {
+        #if os(macOS)
+        switch self {
+        case .compact: return 12
+        case .standard: return 13
+        case .large: return 14
+        }
+        #else
+        switch self {
+        case .compact: return 13
+        case .standard: return 14.5
+        case .large: return 16
+        }
+        #endif
+    }
+
+    var insightSecondarySize: CGFloat {
+        #if os(macOS)
+        switch self {
+        case .compact: return 11
+        case .standard: return 12
+        case .large: return 13
+        }
+        #else
+        return insightBodySize
+        #endif
+    }
+
+    var insightLineSpacing: CGFloat {
+        switch self {
+        case .compact: return 4
+        case .standard: return 5
+        case .large: return 6
+        }
+    }
+}
+
+private struct InterfaceScaleEnvironmentKey: EnvironmentKey {
+    static let defaultValue = InterfaceScale.compact
+}
+
+extension EnvironmentValues {
+    var interfaceScale: InterfaceScale {
+        get { self[InterfaceScaleEnvironmentKey.self] }
+        set { self[InterfaceScaleEnvironmentKey.self] = newValue }
+    }
+}
+
+/// Clears descendant animation transactions when the user enables Reduce Motion.
+/// Applying this once at each app root also covers animations introduced by
+/// system-scale changes without requiring every view to remember the setting.
+private struct ReduceMotionAwareModifier: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content.transaction { transaction in
+            if reduceMotion {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
+    }
+}
+
+extension View {
+    func minitiReduceMotionAware() -> some View {
+        modifier(ReduceMotionAwareModifier())
+    }
+
+    /// Uses the current system material for small utility surfaces on the newest
+    /// iOS while leaving the established terminal surfaces untouched elsewhere.
+    @ViewBuilder
+    func minitiAdaptiveUtilitySurface(tint: Color? = nil) -> some View {
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
+            glassEffect(
+                .regular.tint(tint),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+        } else {
+            self
+        }
+        #else
+        self
+        #endif
+    }
+}
+
+struct InterfaceScaleSlider: View {
+    @AppStorage(InterfaceScale.storageKey) private var rawScale = InterfaceScale.standard.rawValue
+
+    private var selectedScale: InterfaceScale {
+        InterfaceScale(rawValue: rawScale) ?? .standard
+    }
+
+    private var sliderValue: Binding<Double> {
+        Binding(
+            get: { Double(selectedScale.rawValue) },
+            set: { rawScale = Int($0.rounded()) }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Interface scale")
+                Spacer()
+                Text(selectedScale.title)
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: sliderValue, in: 0...2, step: 1)
+                .accessibilityLabel("Interface scale")
+                .accessibilityValue(selectedScale.title)
+
+            HStack {
+                ForEach(InterfaceScale.allCases) { scale in
+                    Text(scale.title)
+                        .font(.caption)
+                        .foregroundStyle(scale == selectedScale ? .primary : .secondary)
+                    if scale != InterfaceScale.allCases.last {
+                        Spacer()
+                    }
+                }
+            }
+
+            Text("Adjusts readable text and controls while keeping navigation and insight tabs compact.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
 // MARK: - Color Extension (must be defined before ColorPalette uses it)
 extension Color {
     init(hex: String) {

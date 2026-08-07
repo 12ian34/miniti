@@ -35,8 +35,8 @@ struct MainWindow: View {
     @Environment(\.modelContext) private var modelContext
     @State private var meetings: [Meeting] = []
     @State private var selectedMeetingID: UUID?
-    @State private var sidebarCollapsed = false
-    @State private var historyCollapsed = true
+    @AppStorage("mainWindow.sidebarCollapsed") private var sidebarCollapsed = false
+    @AppStorage("mainWindow.historyCollapsed") private var historyCollapsed = true
     @State private var didInitialize = false
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -51,7 +51,12 @@ struct MainWindow: View {
     }
 
     private var historicalMeetings: [Meeting] {
-        meetings.filter { $0.id != appState.currentMeeting?.id }
+        meetings
+            .filter { $0.id != appState.currentMeeting?.id }
+            .sorted {
+                if $0.isPinned != $1.isPinned { return $0.isPinned }
+                return $0.startTime > $1.startTime
+            }
     }
 
     private var searchResults: [MeetingSearchResult] {
@@ -102,6 +107,11 @@ struct MainWindow: View {
                     searchMatchCounts: searchMatchCounts,
                     onDeleteMeeting: { meeting in
                         deleteMeeting(meeting)
+                    },
+                    onTogglePin: { meeting in
+                        meeting.isPinned.toggle()
+                        try? modelContext.save()
+                        refreshMeetings()
                     }
                 )
                 .frame(width: sidebarCollapsed ? 52 : 220)
@@ -140,7 +150,7 @@ struct MainWindow: View {
                 KeyboardShortcutsOverlay()
             }
         }
-        .frame(minWidth: 1000, minHeight: 600)
+        .frame(minWidth: 760, minHeight: 520)
         .background(Theme.bg)
         .onAppear {
             initializeIfNeeded()
@@ -148,12 +158,22 @@ struct MainWindow: View {
             selectPendingSavedMeetingIfNeeded()
             debouncedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        .onChange(of: appState.currentMeeting) { _, newMeeting in
+        .onChange(of: appState.currentMeeting) { oldMeeting, newMeeting in
             // When starting a new meeting, deselect historical meeting
             if newMeeting != nil {
                 selectedMeetingID = nil
+            } else if oldMeeting != nil {
+                // Leaving a session (save, discard, or Home) restores full navigation.
+                sidebarCollapsed = false
             }
             refreshMeetings()
+        }
+        .onChange(of: appState.isRecording) { _, isRecording in
+            // Collapse once when recording begins. A manual reopen remains respected
+            // until recording is resumed or a new recording starts.
+            if isRecording {
+                sidebarCollapsed = true
+            }
         }
         .onChange(of: appState.pendingOpenSavedMeetingID) { _, _ in
             refreshMeetings()
@@ -187,6 +207,11 @@ struct MainWindow: View {
             if appState.appMode == .managed {
                 Task { await appState.refreshUsage() }
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiMeetingsImported)) { _ in
+            // Settings-window imports (Granola CSV) insert meetings without any of the
+            // main window's refresh triggers firing — the app never resigns active.
+            refreshMeetings()
         }
     }
 
@@ -237,45 +262,6 @@ struct MainWindow: View {
             }
         }
         
-        keyboardService.onStandardMode = { [self] in
-            if selectedMeeting != nil {
-                appState.insightsMode = .standard
-            } else {
-                appState.switchInsightsMode(to: .standard)
-            }
-        }
-        
-        keyboardService.onMeddpiccMode = { [self] in
-            if selectedMeeting != nil {
-                appState.insightsMode = .meddpicc
-            } else {
-                appState.switchInsightsMode(to: .meddpicc)
-            }
-        }
-        
-        keyboardService.onTrainingMode = { [self] in
-            if selectedMeeting != nil {
-                appState.insightsMode = .training
-            } else {
-                appState.switchInsightsMode(to: .training)
-            }
-        }
-        
-        keyboardService.onQuestionsMode = { [self] in
-            if selectedMeeting != nil {
-                appState.insightsMode = .questions
-            } else {
-                appState.switchInsightsMode(to: .questions)
-            }
-        }
-
-        keyboardService.onDocsMode = { [self] in
-            if selectedMeeting != nil {
-                appState.insightsMode = .docs
-            } else {
-                appState.switchInsightsMode(to: .docs)
-            }
-        }
     }
     
     private func navigateHistory(direction: Int) {
@@ -359,11 +345,37 @@ struct TerminalSidebar: View {
     let searchSnippets: [UUID: String]
     let searchMatchCounts: [UUID: Int]
     let onDeleteMeeting: (Meeting) -> Void
+    let onTogglePin: (Meeting) -> Void
     @State private var collapsedStatusPulse = false
     @FocusState private var searchFieldFocused: Bool
 
     private var historicalMeetings: [Meeting] {
         meetings.filter { $0.id != appState.currentMeeting?.id }
+    }
+
+    private var historySections: [(title: String, meetings: [Meeting])] {
+        if isSearchActive && !searchText.isEmpty {
+            return [("results", displayedMeetings)]
+        }
+        let calendar = Calendar.current
+        let pinned = displayedMeetings.filter(\.isPinned)
+        let unpinned = displayedMeetings.filter { !$0.isPinned }
+        var result: [(String, [Meeting])] = []
+        if !pinned.isEmpty { result.append(("pinned", pinned)) }
+        let today = unpinned.filter { calendar.isDateInToday($0.startTime) }
+        let yesterday = unpinned.filter { calendar.isDateInYesterday($0.startTime) }
+        let week = unpinned.filter {
+            !calendar.isDateInToday($0.startTime) &&
+            !calendar.isDateInYesterday($0.startTime) &&
+            calendar.isDate($0.startTime, equalTo: Date(), toGranularity: .weekOfYear)
+        }
+        let used = Set((today + yesterday + week).map(\.id))
+        let older = unpinned.filter { !used.contains($0.id) }
+        if !today.isEmpty { result.append(("today", today)) }
+        if !yesterday.isEmpty { result.append(("yesterday", yesterday)) }
+        if !week.isEmpty { result.append(("this week", week)) }
+        if !older.isEmpty { result.append(("older", older)) }
+        return result
     }
     
     var body: some View {
@@ -530,7 +542,7 @@ struct TerminalSidebar: View {
                             AnyView(
                                 HStack(spacing: 4) {
                                     Text("\(historicalMeetings.count)")
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                         .foregroundStyle(Theme.textDim)
 
                                     Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
@@ -557,7 +569,7 @@ struct TerminalSidebar: View {
 
                         HStack(spacing: 4) {
                             Text("/")
-                                .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 2)
@@ -568,9 +580,9 @@ struct TerminalSidebar: View {
 
                             HStack(spacing: 2) {
                                     Text("↑")
-                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                     Text("K")
-                                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                 }
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
                                 .padding(.horizontal, 4)
@@ -582,9 +594,9 @@ struct TerminalSidebar: View {
 
                                 HStack(spacing: 2) {
                                     Text("↓")
-                                        .font(.system(size: 8, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                     Text("J")
-                                        .font(.system(size: 7, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                 }
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
                                 .padding(.horizontal, 4)
@@ -600,18 +612,18 @@ struct TerminalSidebar: View {
                     // Search field
                     HStack(spacing: 6) {
                         Text("/")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                             .foregroundStyle(searchFieldFocused ? Theme.accent : Theme.textDim)
 
                         TextField("search meetings", text: $searchText)
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(Theme.text)
                             .textFieldStyle(.plain)
                             .focused($searchFieldFocused)
 
                         if !searchText.isEmpty {
                             Text("\(displayedMeetings.count)")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
 
                             Button {
@@ -657,7 +669,7 @@ struct TerminalSidebar: View {
                     if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
                         VStack(spacing: 6) {
                             Text("no results")
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
                         }
                         .frame(maxWidth: .infinity)
@@ -665,21 +677,32 @@ struct TerminalSidebar: View {
                     } else {
                         ScrollView(showsIndicators: false) {
                             LazyVStack(alignment: .leading, spacing: 4) {
-                                ForEach(displayedMeetings) { meeting in
-                                    SidebarHistoryItem(
-                                        meeting: meeting,
-                                        isSelected: selectedMeetingID == meeting.id,
-                                        searchQuery: isSearchActive ? searchText : nil,
-                                        matchSnippet: searchSnippets[meeting.id],
-                                        matchCount: searchMatchCounts[meeting.id],
-                                        action: {
-                                            showTraining = false
-                                            selectedMeetingID = meeting.id
-                                        },
-                                        onDelete: {
-                                            onDeleteMeeting(meeting)
-                                        }
-                                    )
+                                ForEach(historySections, id: \.title) { section in
+                                    Text(section.title)
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .foregroundStyle(Theme.textDim)
+                                        .textCase(.uppercase)
+                                        .padding(.horizontal, 8)
+                                        .padding(.top, 8)
+                                    ForEach(section.meetings) { meeting in
+                                        SidebarHistoryItem(
+                                            meeting: meeting,
+                                            isSelected: selectedMeetingID == meeting.id,
+                                            searchQuery: isSearchActive ? searchText : nil,
+                                            matchSnippet: searchSnippets[meeting.id],
+                                            matchCount: searchMatchCounts[meeting.id],
+                                            action: {
+                                                showTraining = false
+                                                selectedMeetingID = meeting.id
+                                            },
+                                            onTogglePin: {
+                                                onTogglePin(meeting)
+                                            },
+                                            onDelete: {
+                                                onDeleteMeeting(meeting)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                             .padding(.horizontal, 10)
@@ -705,11 +728,11 @@ struct TerminalSidebar: View {
                         
                         if let usage = appState.usageInfo {
                             Text("free • \(usage.formattedRemaining) left")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
                         } else {
                             Text("free")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
                         }
                     } else {
@@ -720,7 +743,7 @@ struct TerminalSidebar: View {
                             .shadow(color: appState.deepgramApiKey.isEmpty ? ColorPalette.Status.noApiKey.opacity(0.5) : Theme.accent.opacity(0.5), radius: 4)
                         
                         Text(appState.deepgramApiKey.isEmpty ? "byok • no_api_key" : "byok • connected")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
                     }
                     
@@ -731,7 +754,7 @@ struct TerminalSidebar: View {
                     } label: {
                         HStack(spacing: 4) {
                             Text("⌘[")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim.opacity(0.5))
                             Image(systemName: "sidebar.right")
                                 .font(.system(size: 11, weight: .semibold))
@@ -798,12 +821,14 @@ struct GradientDivider: View {
 
 // MARK: - Sidebar History Item
 struct SidebarHistoryItem: View {
+    @EnvironmentObject private var appState: AppState
     let meeting: Meeting
     let isSelected: Bool
     var searchQuery: String? = nil
     var matchSnippet: String? = nil
     var matchCount: Int? = nil
     let action: () -> Void
+    let onTogglePin: () -> Void
     let onDelete: () -> Void
 
     @State private var isHovering = false
@@ -819,18 +844,23 @@ struct SidebarHistoryItem: View {
         HStack(spacing: 0) {
             Button(action: action) {
                 VStack(alignment: .leading, spacing: 3) {
+                    if meeting.isPinned {
+                        Label("pinned", systemImage: "pin.fill")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(ColorPalette.Accent.amber)
+                    }
                     if let query = searchQuery, !query.isEmpty {
                         highlightedText(
                             titleText,
                             query: query,
                             baseColor: isSelected ? Theme.text : Theme.textMuted,
                             highlightColor: highlightColor,
-                            font: .system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced)
+                            font: .system(size: 11, weight: isSelected ? .semibold : .medium, design: .default)
                         )
                         .lineLimit(1)
                     } else {
                         Text(titleText)
-                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .default))
                             .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
                             .lineLimit(1)
                     }
@@ -842,34 +872,52 @@ struct SidebarHistoryItem: View {
                             query: query,
                             baseColor: Theme.textDim,
                             highlightColor: highlightColor,
-                            font: .system(size: 9, weight: .medium, design: .monospaced)
+                            font: .system(size: 10, weight: .medium, design: .default)
                         )
                         .lineLimit(2)
                     }
 
                     HStack(spacing: 6) {
                         Text(formatDate(meeting.startTime))
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
                         Text("•")
                             .foregroundStyle(Theme.textDim.opacity(0.6))
                         Text(meeting.formattedDuration)
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
 
                         if let lang = TranscriptionLanguage(rawValue: meeting.language), lang != .english {
                             Text("•")
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
                             Text("\(lang.flag) \(lang.rawValue.uppercased())")
-                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 10, weight: .semibold, design: .default))
                                 .foregroundStyle(Theme.textDim)
+                        }
+
+                        if let provenance = meeting.provenanceDisplayName {
+                            Text("•")
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                            Text(provenance.lowercased())
+                                .font(.system(size: 10, weight: .semibold, design: .default))
+                                .foregroundStyle(Theme.textDim)
+                        }
+
+                        if appState.finalizingInsightMeetingIDs.contains(meeting.id) {
+                            Text("•")
+                                .foregroundStyle(Theme.textDim.opacity(0.6))
+                            ProgressView()
+                                .controlSize(.mini)
+                            Text("insights")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Accent.blue)
                         }
 
                         if let count = matchCount, count > 0 {
                             Text("•")
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
                             Text("\(count) match\(count == 1 ? "" : "es")")
-                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(highlightColor)
                         }
                     }
@@ -882,6 +930,15 @@ struct SidebarHistoryItem: View {
             
             // Delete button (show on hover)
             if isHovering {
+                Button(action: onTogglePin) {
+                    Image(systemName: meeting.isPinned ? "pin.slash" : "pin")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(meeting.isPinned ? ColorPalette.Accent.amber : Theme.textDim)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(meeting.isPinned ? "Unpin meeting" : "Pin meeting")
+
                 Button {
                     showDeleteConfirm = true
                 } label: {
@@ -956,7 +1013,7 @@ struct SidebarIconItem: View {
                     trailing()
                 } else if let shortcut = shortcut {
                     Text(shortcut)
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Theme.textDim)
                 }
             }
@@ -994,7 +1051,7 @@ struct SidebarSessionItem: View {
                         .shadow(color: statusColor.opacity(0.6), radius: isRecording ? 4 : 2)
                     
                     Text(isRecording ? "recording" : "session")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(statusColor)
                     
                     Spacer()
@@ -1002,7 +1059,7 @@ struct SidebarSessionItem: View {
                 
                 // Title
                 Text(title)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .default))
                     .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
                     .lineLimit(2)
                     .truncationMode(.middle)
@@ -1031,6 +1088,7 @@ struct MeetingDetailView: View {
     @Bindable var meeting: Meeting
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.interfaceScale) private var interfaceScale
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @State private var showingAttioSheet = false
     @State private var showExportedConfirmation = false
@@ -1048,100 +1106,29 @@ struct MeetingDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack(spacing: 16) {
-                TextField("meeting_title", text: $meeting.title)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 14, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Theme.text)
-                    .onSubmit {
-                        saveTitle()
-                    }
-                
-                Spacer()
-                
-                HStack(spacing: 12) {
-                    HStack(spacing: 16) {
-                        HStack(spacing: 4) {
-                            Text("◷")
-                            Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
-                        }
-                        HStack(spacing: 4) {
-                            Text("⏱")
-                            Text(meeting.formattedDuration)
-                        }
-                        HStack(spacing: 4) {
-                            Text("¶")
-                            Text("\(meeting.segments.count)")
-                        }
-                    }
-                    .font(.system(size: 11, weight: .regular, design: .monospaced))
-                    .foregroundStyle(Theme.textDim)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    meetingTitleField
+                        .frame(minWidth: 140)
+                    Spacer(minLength: 0)
+                    meetingMetadata(compact: false)
+                    headerActions(compact: false)
+                }
 
-                    Button {
-                        let markdown = meeting.fullMeetingAsMarkdown()
-                        let filename = AppState.exportFilename(for: meeting)
-                        let panel = NSSavePanel()
-                        panel.nameFieldStringValue = filename
-                        panel.allowedContentTypes = [.plainText]
-                        panel.canCreateDirectories = true
-                        // Pre-fill with the configured export folder if set
-                        let exportPath = appState.markdownExportFolderPath
-                        if !exportPath.isEmpty {
-                            panel.directoryURL = URL(fileURLWithPath: exportPath)
+                VStack(alignment: .leading, spacing: 10) {
+                    meetingTitleField
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            meetingMetadata(compact: false)
+                            Spacer(minLength: 0)
+                            headerActions(compact: false)
                         }
-                        if panel.runModal() == .OK, let url = panel.url {
-                            do {
-                                try markdown.write(to: url, atomically: true, encoding: .utf8)
-                                showExportedConfirmation = true
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    showExportedConfirmation = false
-                                }
-                            } catch {
-                                DebugLogger.shared.log(.app, "Manual export FAILED: \(error.localizedDescription)")
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.down.doc")
-                                .font(.system(size: 11))
-                            Text(showExportedConfirmation ? "exported" : "export")
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        }
-                        .foregroundStyle(showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .background((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.08))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.22), lineWidth: 1)
-                        )
-                        .cornerRadius(6)
-                    }
-                    .buttonStyle(.plain)
-                    .focusable(false)
 
-                    if attioExportEnabled {
-                        Button {
-                            showingAttioSheet = true
-                        } label: {
-                            HStack(spacing: 8) {
-                                AttioLogoMark()
-                                    .frame(width: 14, height: 14)
-                                Text("send to attio")
-                                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            }
-                            .foregroundStyle(Color(hex: "F97316"))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                            .background(Color(hex: "F97316").opacity(0.08))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
-                            )
-                            .cornerRadius(6)
+                        HStack(spacing: 12) {
+                            meetingMetadata(compact: true)
+                            Spacer(minLength: 0)
+                            headerActions(compact: true)
                         }
-                        .buttonStyle(.plain)
-                        .focusable(false)
                     }
                 }
             }
@@ -1186,12 +1173,7 @@ struct MeetingDetailView: View {
                                 meeting.insightsAsMarkdown()
                             })
                             
-                            HistoricalInsightsModeSelector(
-                                selectedMode: Binding(
-                                    get: { appState.insightsMode },
-                                    set: { appState.insightsMode = $0 }
-                                )
-                            )
+                            HistoricalInsightsModeSelector()
                             GradientDivider()
                             
                             ScrollView {
@@ -1208,7 +1190,7 @@ struct MeetingDetailView: View {
                                         }
                                     }
                                     Text("⌘]")
-                                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                         .foregroundStyle(Theme.textDim.opacity(0.5))
                                 }
                                 Spacer()
@@ -1270,22 +1252,151 @@ struct MeetingDetailView: View {
         }
     }
 
-    private var transcriptContent: some View {
-        let sortedSegments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
-        let effectiveSelves = meeting.effectiveSelfSpeakerIDs
-        let uniqueSpeakers: [Int] = {
-            var seen = Set<Int>()
-            var ordered: [Int] = []
-            for s in sortedSegments where seen.insert(s.speaker).inserted {
-                ordered.append(s.speaker)
+    private var meetingTitleField: some View {
+        TextField("meeting_title", text: $meeting.title)
+            .textFieldStyle(.plain)
+            .font(.system(size: 14, weight: .bold, design: .default))
+            .foregroundStyle(Theme.text)
+            .lineLimit(1)
+            .onSubmit {
+                saveTitle()
             }
-            return ordered.sorted { a, b in
+    }
+
+    private func meetingMetadata(compact: Bool) -> some View {
+        HStack(spacing: compact ? 10 : 16) {
+            HStack(spacing: 4) {
+                Text("◷")
+                if compact {
+                    Text(meeting.startTime.formatted(
+                        .dateTime
+                            .day()
+                            .month(.abbreviated)
+                            .hour()
+                            .minute()
+                    ))
+                } else {
+                    Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
+                }
+            }
+            .help(meeting.startTime.formatted(date: .long, time: .shortened))
+            .accessibilityLabel(meeting.startTime.formatted(date: .long, time: .shortened))
+            HStack(spacing: 4) {
+                Text("⏱")
+                Text(meeting.formattedDuration)
+            }
+            HStack(spacing: 4) {
+                Text("¶")
+                Text("\(meeting.segments.count)")
+            }
+            if let provenance = meeting.provenanceDisplayName {
+                HStack(spacing: 4) {
+                    Image(systemName: "tray.and.arrow.down")
+                    if !compact {
+                        Text("Imported from \(provenance)")
+                    }
+                }
+                .help("Imported from \(provenance)")
+                .accessibilityLabel("Imported from \(provenance)")
+            }
+        }
+        .font(.system(size: 11, weight: .regular, design: .default))
+        .foregroundStyle(Theme.textDim)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    @ViewBuilder
+    private func headerActions(compact: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 12) {
+            Button(action: exportMeeting) {
+                HStack(spacing: 6) {
+                    Image(systemName: showExportedConfirmation ? "checkmark" : "arrow.down.doc")
+                        .font(.system(size: 11))
+                    if !compact {
+                        Text(showExportedConfirmation ? "exported" : "export")
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                    }
+                }
+                .foregroundStyle(showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue)
+                .frame(minWidth: compact ? 30 : nil, minHeight: 28)
+                .padding(.horizontal, compact ? 0 : 12)
+                .background((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke((showExportedConfirmation ? ColorPalette.Status.success : ColorPalette.Accent.blue).opacity(0.22), lineWidth: 1)
+                )
+                .cornerRadius(6)
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .help("Export meeting as Markdown")
+            .accessibilityLabel(showExportedConfirmation ? "Meeting exported" : "Export meeting as Markdown")
+
+            if attioExportEnabled {
+                Button {
+                    showingAttioSheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        AttioLogoMark()
+                            .frame(width: 14, height: 14)
+                        if !compact {
+                            Text("send to attio")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                    }
+                    .foregroundStyle(Color(hex: "F97316"))
+                    .frame(minWidth: compact ? 30 : nil, minHeight: 28)
+                    .padding(.horizontal, compact ? 0 : 12)
+                    .background(Color(hex: "F97316").opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(hex: "F97316").opacity(0.22), lineWidth: 1)
+                    )
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("Send meeting to Attio")
+                .accessibilityLabel("Send meeting to Attio")
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func exportMeeting() {
+        let markdown = meeting.fullMeetingAsMarkdown()
+        let filename = AppState.exportFilename(for: meeting)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = filename
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        let exportPath = appState.markdownExportFolderPath
+        if !exportPath.isEmpty {
+            panel.directoryURL = URL(fileURLWithPath: exportPath)
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            showExportedConfirmation = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                showExportedConfirmation = false
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "Manual export FAILED: \(error.localizedDescription)")
+        }
+    }
+
+    private var transcriptContent: some View {
+        let effectiveSelves = meeting.effectiveSelfSpeakerIDs
+        let uniqueSpeakers = Set(meeting.segments.map(\.speaker))
+            .sorted { a, b in
                 let aSelf = effectiveSelves.contains(a)
                 let bSelf = effectiveSelves.contains(b)
                 if aSelf != bSelf { return aSelf }
                 return a < b
             }
-        }()
         return VStack(alignment: .leading, spacing: 12) {
             if !uniqueSpeakers.isEmpty {
                 SpeakerLegend(
@@ -1322,14 +1433,14 @@ struct MeetingDetailView: View {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 9, weight: .semibold))
                             Text(meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")
-                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                .font(.system(size: 10, weight: .semibold, design: .default))
                             if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
-                                Text("meddpicc")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                Text("sales")
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.textDim)
                             } else if appState.insightsMode == .questions && !meeting.hasQuestions {
                                 Text("questions")
-                                    .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.textDim)
                             }
                         }
@@ -1355,7 +1466,7 @@ struct MeetingDetailView: View {
                             ProgressView()
                                 .controlSize(.small)
                             Text("updating...")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
                         }
                     }
@@ -1364,7 +1475,7 @@ struct MeetingDetailView: View {
                 }
                 if meeting.needsInsightsAfterTranscriptEdit {
                     Text("transcript edits cleared prior insights; regenerate to analyze the trimmed transcript")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textMuted)
                         .padding(.horizontal, 2)
                 }
@@ -1376,9 +1487,9 @@ struct MeetingDetailView: View {
                 if let summary = meeting.summaryText {
                     DetailInsightBlock(title: "summary", color: Theme.accentBlue) {
                         Text(summary)
-                            .font(.system(size: 12, weight: .regular, design: .monospaced))
+                            .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
                             .foregroundStyle(Theme.text)
-                            .lineSpacing(4)
+                            .lineSpacing(interfaceScale.insightLineSpacing)
                     }
                 }
                 
@@ -1389,11 +1500,11 @@ struct MeetingDetailView: View {
                             ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
                                 HStack(alignment: .top, spacing: 8) {
                                     Text("\(index + 1).")
-                                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 10, weight: .medium, design: .default))
                                         .foregroundStyle(ColorPalette.Accent.yellow.opacity(0.7))
                                         .frame(width: 16, alignment: .trailing)
                                     Text(item)
-                                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                        .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                                         .foregroundStyle(Theme.text)
                                 }
                             }
@@ -1412,7 +1523,7 @@ struct MeetingDetailView: View {
                                     Text(item)
                                         .foregroundStyle(Theme.text)
                                 }
-                                .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
                             }
                         }
                     }
@@ -1424,7 +1535,7 @@ struct MeetingDetailView: View {
                         FlowLayout(spacing: 6) {
                             ForEach(meeting.topics, id: \.self) { topic in
                                 Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(ColorPalette.Accent.purple)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 4)
@@ -1438,13 +1549,13 @@ struct MeetingDetailView: View {
                     VStack(spacing: 10) {
                         Spacer()
                         Text("◇")
-                            .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                            .font(.system(size: 28, weight: .ultraLight, design: .default))
                             .foregroundStyle(Theme.textDim)
                         Text("no insights yet")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textMuted)
                         Text("use update above to generate")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Theme.textDim)
                         Spacer()
                     }
@@ -1479,13 +1590,13 @@ struct MeetingDetailView: View {
                     VStack(spacing: 10) {
                         Spacer()
                         Text("◇")
-                            .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                            .font(.system(size: 28, weight: .ultraLight, design: .default))
                             .foregroundStyle(Theme.textDim)
-                        Text("no meddpicc yet")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        Text("no sales insights yet")
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textMuted)
                         Text("use update above to generate")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Theme.textDim)
                         Spacer()
                     }
@@ -1498,13 +1609,13 @@ struct MeetingDetailView: View {
                 VStack(spacing: 10) {
                     Spacer()
                     Text("◇")
-                        .font(.system(size: 28, weight: .ultraLight, design: .monospaced))
+                        .font(.system(size: 28, weight: .ultraLight, design: .default))
                         .foregroundStyle(Theme.textDim)
                     Text("no transcript")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(Theme.textMuted)
                     Text("record a meeting to see training stats")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                     Spacer()
                 }
@@ -1543,7 +1654,7 @@ private struct HistoricalCollapsedInsightsRail: View {
     var body: some View {
         VStack(spacing: 0) {
             Text("insights")
-                .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(Theme.textMuted)
                 .rotationEffect(.degrees(-90))
                 .fixedSize()
@@ -1558,7 +1669,7 @@ private struct HistoricalCollapsedInsightsRail: View {
                 Spacer()
                 VStack(spacing: 3) {
                     Text("⌘]")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Theme.textDim.opacity(0.5))
                     HistoricalInsightsPaneToggleButton(direction: .expand) {
                         withAnimation(.easeInOut(duration: 0.16)) {
@@ -1587,10 +1698,10 @@ struct DetailSectionHeader: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(icon)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Theme.textDim)
             Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Theme.textMuted)
             Spacer()
             
@@ -1613,7 +1724,7 @@ struct DetailSectionHeader: View {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
                             .font(.system(size: 9, weight: .medium))
                         Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                     }
                     .foregroundStyle(showCopied ? Theme.accent : Theme.textDim)
                     .padding(.horizontal, 6)
@@ -1633,10 +1744,8 @@ struct DetailSectionHeader: View {
 }
 
 struct HistoricalInsightsModeSelector: View {
-    @Binding var selectedMode: InsightsMode
-    
     var body: some View {
-        InsightsModeTabs(selectedMode: $selectedMode)
+        InsightsModeTabs()
     }
 }
 
@@ -1651,7 +1760,7 @@ struct SavedNotesView: View {
             // Placeholder
             if meeting.notes.isEmpty && !isFocused {
                 Text("No notes for this meeting")
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Theme.textDim)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -1659,7 +1768,7 @@ struct SavedNotesView: View {
             
             // Editable text editor
             TextEditor(text: $meeting.notes)
-                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                .font(.system(size: 12, weight: .regular, design: .default))
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
                 .focused($isFocused)
@@ -1698,7 +1807,7 @@ struct DetailInsightBlock<Content: View>: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1.5)
                 Text(title)
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 10, weight: .semibold, design: .default))
                     .foregroundStyle(color)
                 if let info {
                     TerminalSectionInfoButton(info: info, accent: color)
@@ -1819,10 +1928,10 @@ struct SavedTrainingSection: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
                                 Text("total \(speaker.totalFillers)")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.text)
                                 Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.textDim)
                             }
                             
@@ -1831,11 +1940,11 @@ struct SavedTrainingSection: View {
                                     ForEach(speaker.fillers) { entry in
                                         HStack(spacing: 6) {
                                             Text(entry.word)
-                                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                                .font(.system(size: 10, weight: .medium, design: .default))
                                                 .foregroundStyle(Color(hex: "D4D4D8"))
                                                 .frame(width: 60, alignment: .trailing)
                                             Text("\(entry.count)")
-                                                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 10, weight: .semibold, design: .default))
                                                 .foregroundStyle(ColorPalette.Accent.amber)
                                         }
                                     }
@@ -1850,12 +1959,12 @@ struct SavedTrainingSection: View {
                 DetailInsightBlock(title: "talk ratio", color: ColorPalette.Accent.blue, info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.text)
                         Text("•")
                             .foregroundStyle(Theme.textDim)
                         Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
                     }
                 }
@@ -1907,7 +2016,7 @@ struct SavedTrainingSection: View {
                         )
                     }
                     Text("lower = clearer = better")
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                 }
             }
@@ -1923,16 +2032,16 @@ private struct SavedTrainingMetricRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? Theme.accent : Theme.textDim)
                 .frame(width: 58, alignment: .leading)
             Text(value)
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Theme.text)
             Spacer()
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Theme.textDim)
             }
         }
@@ -1972,7 +2081,7 @@ struct KeyboardShortcutsOverlay: View {
     
     private func keycap(_ text: String, minWidth: CGFloat = 86, compact: Bool = false) -> some View {
         Text(text)
-            .font(.system(size: compact ? 11 : 14, weight: .bold, design: .monospaced))
+            .font(.system(size: compact ? 11 : 14, weight: .bold, design: .default))
             .foregroundStyle(Theme.text)
             .frame(minWidth: minWidth, alignment: .center)
             .padding(.horizontal, compact ? 8 : 12)
@@ -2010,7 +2119,7 @@ struct KeyboardShortcutsOverlay: View {
                     Text("⌨")
                         .font(.system(size: 18))
                     Text("Keyboard Shortcuts")
-                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .font(.system(size: 14, weight: .bold, design: .default))
                         .foregroundStyle(Theme.text)
                     
                     Spacer()
@@ -2041,7 +2150,7 @@ struct KeyboardShortcutsOverlay: View {
                             if let shortcuts = groupedShortcuts[category] {
                                 VStack(alignment: .leading, spacing: 8) {
                                     Text(category.uppercased())
-                                        .font(.system(size: 10, weight: .bold, design: .monospaced))
+                                        .font(.system(size: 10, weight: .bold, design: .default))
                                         .foregroundStyle(Theme.accent)
                                         .padding(.bottom, 4)
                                     
@@ -2050,7 +2159,7 @@ struct KeyboardShortcutsOverlay: View {
                                             keycap(shortcut.keys, minWidth: 96)
                                             
                                             Text(shortcut.description)
-                                                .font(.system(size: 12, weight: .regular, design: .monospaced))
+                                                .font(.system(size: 12, weight: .regular, design: .default))
                                                 .foregroundStyle(Theme.textMuted)
                                             
                                             Spacer(minLength: 0)
@@ -2071,15 +2180,15 @@ struct KeyboardShortcutsOverlay: View {
                 // Footer
                 HStack {
                     Text("Press")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                     keycap("Esc", minWidth: 0, compact: true)
                     Text("or")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                     keycap("⌘/", minWidth: 0, compact: true)
                     Text("to close")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                 }
                 .padding(12)
@@ -2160,8 +2269,7 @@ struct AttioSendSheet: View {
     @State private var sendMessage: String?
     @State private var sendError: String?
     @State private var localEscapeMonitor: Any?
-
-    private let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+    @State private var deviceId: String?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2183,6 +2291,13 @@ struct AttioSendSheet: View {
         .background(Color(hex: "09090B"))
         .task {
             loadPersistedSelection()
+            // Keychain can briefly block while macOS resolves access. Keep it off
+            // the main actor so presenting this sheet never stalls the window.
+            let resolvedDeviceID = await Task.detached(priority: .userInitiated) {
+                DeviceIdentifier.getOrCreateDeviceId()
+            }.value
+            guard !Task.isCancelled else { return }
+            deviceId = resolvedDeviceID
             await refreshStatus()
         }
         .onAppear {
@@ -2211,11 +2326,11 @@ struct AttioSendSheet: View {
             AttioLogoMark()
                 .frame(width: 18, height: 18)
             Text("send to attio")
-                .font(.system(size: 13, weight: .bold, design: .monospaced))
+                .font(.system(size: 13, weight: .bold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer()
             Button("close") { dismiss() }
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .buttonStyle(.plain)
                 .foregroundStyle(Color(hex: "8B949E"))
                 .focusable(false)
@@ -2234,7 +2349,7 @@ struct AttioSendSheet: View {
                     .fill((status?.connected ?? false) ? ColorPalette.Status.connected : ColorPalette.Status.disconnected)
                     .frame(width: 8, height: 8)
                 Text(connectionStatusText)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                 Spacer()
                 if isLoadingStatus {
@@ -2244,7 +2359,7 @@ struct AttioSendSheet: View {
                     Task { await startOAuth() }
                 } label: {
                     Text((status?.connected ?? false) ? "reconnect" : "connect")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F97316"))
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
@@ -2253,7 +2368,7 @@ struct AttioSendSheet: View {
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .disabled(isConnecting)
+                .disabled(deviceId == nil || isConnecting)
             }
 
             if let connectionError {
@@ -2278,7 +2393,7 @@ struct AttioSendSheet: View {
                         selectedScope = scope
                     } label: {
                         Text(scope.label)
-                            .font(.system(size: 11, weight: selectedScope == scope ? .semibold : .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: selectedScope == scope ? .semibold : .medium, design: .default))
                             .foregroundStyle(selectedScope == scope ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
@@ -2296,7 +2411,7 @@ struct AttioSendSheet: View {
             HStack(spacing: 8) {
                 TextField(searchPlaceholder, text: $query)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 12, weight: .regular, design: .monospaced))
+                    .font(.system(size: 12, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
@@ -2315,7 +2430,7 @@ struct AttioSendSheet: View {
                     HStack(spacing: 6) {
                         if isSearching { ProgressView().controlSize(.small) }
                         Text("search")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "58A6FF"))
                     .padding(.horizontal, 12)
@@ -2339,17 +2454,17 @@ struct AttioSendSheet: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Color(hex: "8B949E"))
                         Text(selectedRecordText ?? selectedRecordID)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "E6EDF3"))
                             .lineLimit(1)
                         Text("· \(selectedObjectLabel)")
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                         Spacer()
                     }
                     if let selectedRecordDetail, !selectedRecordDetail.isEmpty {
                         Text(selectedRecordDetail)
-                            .font(.system(size: 10, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                             .padding(.leading, 18)
                             .textSelection(.enabled)
@@ -2361,7 +2476,7 @@ struct AttioSendSheet: View {
                 VStack(spacing: 6) {
                 if results.isEmpty {
                     Text("no results yet")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.disabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.top, 2)
@@ -2376,11 +2491,11 @@ struct AttioSendSheet: View {
                                     .frame(width: 8, height: 8)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(record.recordText)
-                                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                                        .font(.system(size: 12, weight: .medium, design: .default))
                                         .foregroundStyle(Color(hex: "E6EDF3"))
                                         .lineLimit(1)
                                     Text(record.detailLabel)
-                                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                                        .font(.system(size: 10, weight: .regular, design: .default))
                                         .foregroundStyle(Color(hex: "8B949E"))
                                         .textSelection(.enabled)
                                 }
@@ -2443,10 +2558,10 @@ struct AttioSendSheet: View {
             Toggle(isOn: $createTasksFromActionItems) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("create tasks from action items")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "E6EDF3"))
                     Text(normalizedActionItems.isEmpty ? "No action items found in this meeting" : "Creates Attio tasks linked to the selected record")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "8B949E"))
                 }
             }
@@ -2456,7 +2571,7 @@ struct AttioSendSheet: View {
 
             if let sendMessage {
                 Text(sendMessage)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .font(.system(size: 11, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "3FB950"))
             }
             if let sendError {
@@ -2470,7 +2585,7 @@ struct AttioSendSheet: View {
                     if isSending { ProgressView().controlSize(.small) }
                     AttioLogoMark().frame(width: 12, height: 12)
                     Text("send to attio")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                 }
                 .foregroundStyle(Color(hex: "F97316"))
                 .padding(.horizontal, 14)
@@ -2495,6 +2610,7 @@ struct AttioSendSheet: View {
     }
 
     private var connectionStatusText: String {
+        if deviceId == nil { return "checking connection..." }
         if isConnecting { return "connecting..." }
         if let status, status.connected {
             if let label = status.accountLabel, !label.isEmpty {
@@ -2507,13 +2623,13 @@ struct AttioSendSheet: View {
 
     private func sectionTitle(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .font(.system(size: 11, weight: .semibold, design: .default))
             .foregroundStyle(Color(hex: "E6EDF3"))
     }
 
     private func errorLine(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .font(.system(size: 11, weight: .medium, design: .default))
             .foregroundStyle(Color(hex: "F85149"))
     }
 
@@ -2523,11 +2639,11 @@ struct AttioSendSheet: View {
                 .fill(included ? ColorPalette.Status.success : ColorPalette.Text.disabled)
                 .frame(width: 6, height: 6)
             Text(label)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             if let note {
                 Text("(\(note))")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
             }
             Spacer()
@@ -2563,6 +2679,7 @@ struct AttioSendSheet: View {
     }
 
     private func refreshStatus() async {
+        guard let deviceId else { return }
         isLoadingStatus = true
         defer { isLoadingStatus = false }
         DebugLogger.shared.log(.app, "[attio] status refresh start")
@@ -2584,6 +2701,10 @@ struct AttioSendSheet: View {
 
     private func startOAuth() async {
         connectionError = nil
+        guard let deviceId else {
+            connectionError = "Attio connection is still loading"
+            return
+        }
         isConnecting = true
         defer { isConnecting = false }
         DebugLogger.shared.log(.app, "[attio] oauth start requested")
@@ -2634,6 +2755,10 @@ struct AttioSendSheet: View {
     private func runSearch() async {
         searchError = nil
         sendMessage = nil
+        guard let deviceId else {
+            searchError = "Attio connection is still loading"
+            return
+        }
         guard status?.connected == true else {
             searchError = "Connect Attio first"
             DebugLogger.shared.log(.app, "[attio] search blocked not connected")
@@ -2676,6 +2801,10 @@ struct AttioSendSheet: View {
     private func sendToAttio() async {
         sendError = nil
         sendMessage = nil
+        guard let deviceId else {
+            sendError = "Attio connection is still loading"
+            return
+        }
         guard let selectedRecordID, let selectedRecordObject else {
             sendError = "Select an Attio record first"
             return

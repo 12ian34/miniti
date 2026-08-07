@@ -1,6 +1,21 @@
 import Foundation
 import ActivityKit
 
+enum LiveActivityPreferences {
+    static let showTranscriptKey = "liveActivity.showTranscript"
+
+    /// Privacy remains opt-out for continuity with the existing Live Activity.
+    static var showsTranscript: Bool {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: showTranscriptKey) != nil else { return true }
+        return defaults.bool(forKey: showTranscriptKey)
+    }
+
+    static func presentedTranscript(_ transcript: String, isEnabled: Bool = showsTranscript) -> String {
+        isEnabled ? transcript : ""
+    }
+}
+
 /// Shared between the MinitiMobile app target and the MinitiLiveActivity widget extension.
 /// Defines the static and dynamic data for the recording Live Activity.
 struct RecordingActivityAttributes: ActivityAttributes {

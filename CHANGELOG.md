@@ -7,8 +7,51 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - Write entries as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
 - Never modify older changelog entries after they are written. Add corrections, clarifications, or reversals only as a new entry at the top.
 - The entry at the top of this file is the source of truth; `fastlane/metadata/en-US/release_notes.txt` and `en-GB/release_notes.txt` are mirrored from it at release time.
+- While a release is still being prepared, its top entry may use `### Unreleased - vX.Y.Z`. Replace `Unreleased` with the ship date only when the release is actually going out.
 
 ## Releases
+
+### 2026-08-07 - v2.0.0 (macOS; iOS pending App Review)
+
+#### New
+
+- new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
+- new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
+- new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
+- new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
+
+#### Experience and workflow improvements
+
+- improvement: (macOS and iOS) clearer system typography and roomier transcript lines make meetings easier to read while preserving Miniti's compact navigation and original wordmark
+- improvement: (iPad) regular-width layouts now use adaptive sidebar navigation while iPhone keeps its compact tab bar
+- improvement: (iOS) navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface
+- improvement: (macOS) the main window now resizes more freely and remembers collapsed navigation and insight panes
+- improvement: (macOS) the navigation sidebar now gets out of the way when recording starts and returns when you save or leave the session
+- improvement: (macOS and iOS) Reduce Motion now applies consistently across app transitions and animated status elements
+- improvement: (macOS and iOS) starting, stopping, recovery, and post-meeting review now explain what is happening and offer clear next actions without implying you still need to save
+- improvement: (macOS and iOS) first-run setup is shorter, adapts to small screens, and includes a live microphone check
+- improvement: (iOS) insights use one descriptive mode menu with update timing, and Settings opens into searchable task-based categories
+- improvement: (macOS and iOS) insights keep Summary, Questions, and Coaching prominent while optional Sales and Playbook views live in a specialist menu; Sales analysis only runs after you enable it
+- improvement: (macOS and iOS) the main Start meeting button always begins a fresh meeting, while calendar meetings remain explicit choices in the upcoming list
+- improvement: (macOS and iOS) after the final transcript is saved, you can return to meetings and start another recording while final insights finish safely in the background
+- improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
+- improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
+- improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
+
+#### Performance improvements
+
+- improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, training analysis, transcript rendering, and audio meters do less work on the interface thread
+- improvement: (macOS and iOS) saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details
+- improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
+- improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
+- improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
+
+#### Fixes
+
+- fix: (macOS) opening Send to Attio immediately after saving a long meeting no longer risks freezing the app, including when Attio is not connected
+- fix: (macOS) system audio leaking through speakers into the microphone no longer creates duplicated green “You” lines, while actual mic speech is preserved even when it overlaps playback
+- fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments
+- fix: (macOS and iOS) stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it
 
 ### 2026-07-26 - v1.27.1
 

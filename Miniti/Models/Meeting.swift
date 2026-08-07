@@ -16,12 +16,20 @@ final class Meeting {
     var notes: String = ""
     var transcriptEditedAt: Date?
     var transcriptRevision: Int = 0
+    var isPinned: Bool = false
+    var insightsUpdatedAt: Date?
     
     var managedSessionId: String?
     var language: String = "en"
     
     var calendarEventId: String?
     var attendeesJSON: String?
+
+    // Import provenance. Optional fields keep existing SwiftData stores lightweight-migratable.
+    var externalSource: String?
+    var externalID: String?
+    var externalURL: String?
+    var importedAt: Date?
     
     // MEDDPICC fields
     var meddpiccMetrics: String?
@@ -70,6 +78,12 @@ final class Meeting {
         notes: String = "",
         transcriptEditedAt: Date? = nil,
         transcriptRevision: Int = 0,
+        isPinned: Bool = false,
+        insightsUpdatedAt: Date? = nil,
+        externalSource: String? = nil,
+        externalID: String? = nil,
+        externalURL: String? = nil,
+        importedAt: Date? = nil,
         meddpiccMetrics: String? = nil,
         meddpiccEconomicBuyer: String? = nil,
         meddpiccDecisionCriteria: String? = nil,
@@ -92,6 +106,12 @@ final class Meeting {
         self.notes = notes
         self.transcriptEditedAt = transcriptEditedAt
         self.transcriptRevision = transcriptRevision
+        self.isPinned = isPinned
+        self.insightsUpdatedAt = insightsUpdatedAt
+        self.externalSource = externalSource
+        self.externalID = externalID
+        self.externalURL = externalURL
+        self.importedAt = importedAt
         self.meddpiccMetrics = meddpiccMetrics
         self.meddpiccEconomicBuyer = meddpiccEconomicBuyer
         self.meddpiccDecisionCriteria = meddpiccDecisionCriteria
@@ -291,6 +311,14 @@ final class Meeting {
         }
         if title.wholeMatch(of: Self.timestampPattern) != nil { return "untitled" }
         return title
+    }
+
+    var provenanceDisplayName: String? {
+        switch externalSource?.lowercased() {
+        case "granola": return "Granola"
+        case let source?: return source.capitalized
+        case nil: return nil
+        }
     }
 
     var duration: TimeInterval? {
@@ -548,6 +576,9 @@ final class Meeting {
     func fullMeetingAsMarkdown() -> String {
         var md = "# \(displayTitle)\n\n"
         md += "_\(startTime.formatted(date: .long, time: .shortened))_\n\n"
+        if let provenanceDisplayName {
+            md += "_Imported from \(provenanceDisplayName)_\n\n"
+        }
         md += "---\n\n"
         if !notes.isEmpty {
             md += notesAsMarkdown()

@@ -87,7 +87,7 @@ error: exportArchive No signing certificate "iOS Distribution" found
 `security find-identity -v -p codesigning` on a working machine lists an `Apple Distribution:` identity; if you only see `Apple Development` and `Developer ID Application`, that's this. Fix by signing into Xcode → Settings → Accounts with the team Apple ID and letting it create the distribution certificate (interactive: needs the password and 2FA, and App Store Connect must be up — check [system status](https://developer.apple.com/system-status/)). The macOS lane is unaffected because Developer ID signing uses a different certificate.
 
 Release prep checklist for this lane:
-- update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `CHANGELOG.md`
+- update `fastlane/metadata/en-US/release_notes.txt` from the latest entry in `CHANGELOG.md`, keeping only iPhone/iPad and shared bullets; never include macOS-only changes
 - if your App Store Connect default locale is not `en-US`, mirror all localized metadata files into that locale folder too (example: `fastlane/metadata/en-GB/{name,subtitle,promotional_text,description,keywords,privacy_url,support_url,marketing_url,release_notes}.txt`)
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
 - ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)

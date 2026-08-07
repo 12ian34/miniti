@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: miniti
-description: Terminal-styled, dark-mode-only design system for the miniti macOS + iOS meeting assistant. Monospaced typography, near-black surfaces, and GitHub-accent status colors.
+description: Terminal-inspired, dark-mode-only design system for the miniti macOS + iOS meeting assistant. Legible Apple system typography, near-black surfaces, and GitHub-accent status colors.
 colors:
   primary: "#22C55E"
   on-primary: "#09090B"
@@ -74,55 +74,55 @@ colors:
 
 typography:
   display:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "56px"
     fontWeight: "700"
     lineHeight: "1.05"
     letterSpacing: "-0.01em"
   heading:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "20px"
     fontWeight: "700"
     lineHeight: "1.2"
     letterSpacing: "0em"
   subheading:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "15px"
     fontWeight: "700"
     lineHeight: "1.3"
     letterSpacing: "0em"
   body:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "13px"
     fontWeight: "400"
     lineHeight: "1.5"
     letterSpacing: "0em"
   body-emphasis:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "13px"
     fontWeight: "600"
     lineHeight: "1.5"
     letterSpacing: "0em"
   label:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "11px"
     fontWeight: "500"
     lineHeight: "1.3"
     letterSpacing: "0em"
   caption:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "10px"
     fontWeight: "500"
     lineHeight: "1.3"
     letterSpacing: "0em"
   micro:
-    fontFamily: "SF Mono, Menlo, monospace"
-    fontSize: "8px"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
+    fontSize: "10px"
     fontWeight: "500"
     lineHeight: "1.2"
     letterSpacing: "0.02em"
   tagline:
-    fontFamily: "SF Mono, Menlo, monospace"
+    fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
     fontSize: "12px"
     fontWeight: "500"
     lineHeight: "1.3"
@@ -549,15 +549,17 @@ components:
 
 ## Overview
 
-miniti is a macOS + iOS meeting assistant. The visual language is intentionally utilitarian: near-black surfaces, high-contrast monospaced text, and a small palette of saturated accents that carry semantic weight (recording, connected, action items, MEDDPICC letters, speaker identity). The design reads as a terminal-native tool, not a "productivity SaaS" — minimal chrome, no glass, no gradients, no ornamental motion.
+miniti is a macOS + iOS meeting assistant. The visual language is intentionally utilitarian: near-black surfaces, highly legible system text, and a small palette of saturated accents that carry semantic weight (recording, connected, action items, MEDDPICC letters, speaker identity). The design keeps its terminal-inspired restraint without sacrificing long-form readability — minimal chrome, no gradients, and no ornamental motion. Current-system material is allowed only on small functional utility surfaces where it improves platform fit without weakening contrast.
 
 The system is **dark-mode only**. iOS forces `.preferredColorScheme(.dark)` app-wide; macOS inherits the same palette regardless of the user's system appearance. Light-mode support is explicitly out of scope, so every token is tuned for legibility on a near-black background.
 
 Core principles:
 
-- **Information density over whitespace.** Tight line heights, 10–13px monospaced body, small pill tags. The transcript and insights panel must stay scannable during a live call.
+- **Information density over whitespace.** Compact 10–13px system text and small pill tags keep the transcript and insights panel scannable during a live call.
 - **Color carries meaning, not decoration.** Green = you/success, red = recording/error, amber = warning/discussion, blue = info/summary, purple = pro/topics. MEDDPICC letters each have a fixed hue.
-- **Monospaced everywhere.** Headings, body, labels, numbers — all SF Mono / Menlo. Variable-width fonts are not used in the product.
+- **Readability first.** Headings, body copy, labels, and controls use the Apple system font. Only changing numerical readouts use monospaced digits to prevent layout jitter.
+- **Motion is optional.** App-authored transitions, pulsing indicators, and scrolling animations stop when Reduce Motion is enabled; state and status must remain understandable without movement.
+- **Adapt by platform and space.** macOS windows resize and remember pane choices, iPhone retains bottom tabs, and regular-width iPad uses sidebar navigation. Do not stretch an iPhone layout across iPad.
 - **Shape is quiet.** Radii cap at 16px (used only for popup cards). Buttons and inputs use 6–8px. Pills use the radius scale's `pill` token.
 
 ## Colors
@@ -587,21 +589,28 @@ Any *new* component must clear 4.5:1. These two are pinned to the in-code palett
 
 ## Typography
 
-Miniti is monospaced end to end. Every text token resolves to `SF Mono, Menlo, monospace` — a deliberate choice that reinforces the terminal aesthetic and aligns numerals (critical for the recording timer, usage counters, and training metrics).
+Miniti uses the platform's Apple system font for prose and controls. Its open forms, proportional spacing, native hinting, and accessibility behavior make transcripts and AI insights easier to read at deliberately compact sizes. The `miniti` wordmark and primary Home / Training / History navigation retain the original monospaced identity; recording timers and other changing numerical readouts use monospaced digits.
 
-The scale is narrow and dense:
+Settings offers three discrete interface scales. **Compact** exactly preserves the original type metrics and the user's system Dynamic Type setting. **Standard** is the default restrained readability pass and adds one Dynamic Type step. **Large** adds two steps and roomier prose metrics. This is not a blanket view transform: important prose uses platform-specific metrics, existing accessibility sizes are never reduced, and the compact insight selector keeps Summary / Questions / Coaching visible while Sales / Playbook live in its More menu.
 
-- **display (56px/700)** — the lockup on the home screen (`miniti`).
+- **Transcript, macOS:** Compact 13px / 2px leading; Standard 14px / 4px; Large 15px / 5px.
+- **Transcript, iOS:** Compact 13px / 2px leading; Standard 15px / 5px; Large 17px / 6px.
+- **Insight body, macOS:** Compact 12px; Standard 13px; Large 14px.
+- **Insight body, iOS:** Compact 13px; Standard 14.5px; Large 16px.
+
+The supporting scale remains narrow and dense:
+
+- **display (56px/700, monospaced)** — the branded lockup on onboarding and terms; the in-app home lockup uses the same family at its platform layout size.
 - **heading (20px/700)** — stopped-session headers, settings section titles.
 - **subheading (15px/700)** — onboarding card titles, panel titles.
 - **body (13px/400)** — transcript rows, notes, MEDDPICC bullets, insights body copy.
 - **body-emphasis (13px/600)** — primary CTA labels, active tab.
 - **label (11px/500)** — buttons, tabs, terminal headers, pill text.
 - **caption (10px/500)** — chip metadata, keyboard-shortcut hints, speaker chips.
-- **micro (8px/500)** — insight-mode tab descriptors, dense status overlays.
+- **micro (10px/500)** — insight-mode tab descriptors, dense status overlays; 10px is the minimum text size.
 - **tagline (12px/500, +0.04em)** — the "multi-dimensional meetings" home tagline.
 
-Line heights skew tight (1.2–1.5) because monospaced fonts already read airy. Letter spacing is near-zero, with a small positive tracking on tagline and micro to keep uppercase-ish fragments legible.
+Non-transcript line heights remain compact (1.2–1.5) for information density. Transcript leading is explicitly shared by the live and saved attributed-text renderers so their wrapping and visual rhythm cannot drift. Letter spacing is near-zero, with a small positive tracking on tagline and micro to keep uppercase-ish fragments legible.
 
 ## Layout
 
@@ -645,7 +654,7 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 - **button-ghost** — in-content affordances (e.g. rename speaker), no fill until hover.
 - **card / panel** — the live insights panel, history detail panes, onboarding cards. `panel` is slightly darker than `card`.
 - **terminal-header** — the red-dot + timer strip at the top of the recording view.
-- **input-field** — note textarea, search, webhook URL, Attio search. Always monospaced 13px.
+- **input-field** — note textarea, search, webhook URL, Attio search. Always system 13px.
 - **pill-tag** — topic tags, language badge, usage pill.
 - **pill-status-recording** / **pill-status-pro** — live indicators; color is the only variance.
 - **update-banner** / **limit-banner** — home-screen banners; blue for update available, amber for usage warning.
@@ -671,9 +680,10 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 
 **Don't**
 
-- Don't introduce variable-width fonts. The terminal aesthetic breaks immediately.
+- Don't introduce custom display fonts or switch prose back to monospaced. The system font is the readability baseline; monospaced type is reserved for the existing wordmark, primary navigation identity, and changing numeric readouts.
 - Don't ship a light-mode variant of a screen. The product is dark-only; there is no light token set.
 - Don't add drop shadows or blurs to simulate depth. Use surface stacking and borders instead.
+- Don't apply glass broadly. On current iOS, reserve native material for small functional utility surfaces and keep core transcript and insight panels opaque.
 - Don't reassign MEDDPICC letter colors ad-hoc in a view — route through `ColorPalette.MEDDPICC` so a retune stays atomic.
 - Don't hardcode a speaker color — always call `ColorPalette.Speaker.color(for:micSpeakerID:)` so the mic speaker stays green.
 - Don't mix radii within a single surface (e.g. a 6px button inside an 8px card is fine; a 6px button next to a 7px sibling is not — pick one).

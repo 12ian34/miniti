@@ -5,6 +5,9 @@ import AppKit
 extension Notification.Name {
     static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
     static let minitiGoogleOAuthCallback = Notification.Name("minitiGoogleOAuthCallback")
+    /// Posted after meetings are inserted outside the main window's own flows
+    /// (e.g. Granola CSV import in Settings) so the history sidebar refreshes.
+    static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
@@ -48,7 +51,13 @@ struct MinitiApp: App {
     @StateObject private var appState = AppState()
     @StateObject private var keyboardService = KeyboardShortcutsService.shared
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
+    @AppStorage(InterfaceScale.storageKey) private var interfaceScaleRaw = InterfaceScale.standard.rawValue
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
+
+    private var interfaceScale: InterfaceScale {
+        InterfaceScale(rawValue: interfaceScaleRaw) ?? .standard
+    }
     
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -82,6 +91,9 @@ struct MinitiApp: App {
                 }
             }
             .environmentObject(appState)
+            .environment(\.interfaceScale, interfaceScale)
+            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+            .minitiReduceMotionAware()
         }
         .handlesExternalEvents(matching: ["*"])
         .modelContainer(sharedModelContainer)
@@ -96,8 +108,8 @@ struct MinitiApp: App {
             }
         }
         .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
-        .defaultSize(width: 800, height: 600)
+        .windowResizability(.contentMinSize)
+        .defaultSize(width: 1000, height: 650)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Session") {
@@ -157,11 +169,17 @@ struct MinitiApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .environment(\.interfaceScale, interfaceScale)
+                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+                .minitiReduceMotionAware()
         }
         .modelContainer(sharedModelContainer)
         
         Window("Debug Log", id: "debug-log") {
             DebugLogView()
+                .environment(\.interfaceScale, interfaceScale)
+                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+                .minitiReduceMotionAware()
                 .frame(minWidth: 600, minHeight: 400)
         }
         .defaultSize(width: 750, height: 500)
@@ -171,6 +189,8 @@ struct MinitiApp: App {
         MenuBarExtra(isInserted: $showInMenuBar) {
             MenuBarView()
                 .environmentObject(appState)
+                .environment(\.interfaceScale, interfaceScale)
+                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
         } label: {
             MenuBarIcon(
                 isRecording: appState.isRecording,
@@ -210,21 +230,6 @@ struct MinitiApp: App {
             }
         }
         
-        keyboardService.onStandardMode = { [weak appState] in
-            guard let appState else { return }
-            appState.switchInsightsMode(to: .standard)
-        }
-        
-        keyboardService.onMeddpiccMode = { [weak appState] in
-            guard let appState else { return }
-            appState.switchInsightsMode(to: .meddpicc)
-        }
-        
-        keyboardService.onTrainingMode = { [weak appState] in
-            guard let appState else { return }
-            appState.switchInsightsMode(to: .training)
-        }
-
         keyboardService.onZonedOut = { [weak appState] in
             guard let appState else { return }
             if appState.isZonedOutPresented {
@@ -286,7 +291,7 @@ struct MenuBarIcon: View {
                         .opacity(isPulsing ? 1.0 : 0.5)
 
                     Text("REC")
-                        .font(.system(size: 9, weight: .bold, design: .monospaced))
+                        .font(.system(size: 10, weight: .bold, design: .default))
                         .foregroundStyle(.white)
                 }
                 .padding(.horizontal, 6)
@@ -311,10 +316,10 @@ struct MenuBarIcon: View {
 
                     if let time = nextEventTime, let title = nextEventTitle {
                         Text(time)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .foregroundStyle(.secondary)
                         Text(title)
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
@@ -342,7 +347,8 @@ struct MenuBarView: View {
                         .font(.system(size: 12, weight: .semibold))
                     Spacer()
                     Text(formatDuration(appState.recordingDuration))
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 12)

@@ -26,11 +26,11 @@ struct TermsAcceptanceView: View {
                 // Legal text
                 VStack(spacing: 12) {
                     Text("before we start")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .font(.system(size: 13, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "A1A1AA"))
 
                     Text(.init("by using miniti, you agree to our [terms](https://miniti.app/terms) and [privacy policy](https://miniti.app/privacy)."))
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
+                        .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "71717A"))
                         .multilineTextAlignment(.center)
                         .tint(accentGreen)
@@ -43,7 +43,7 @@ struct TermsAcceptanceView: View {
                     }
                 } label: {
                     Text("i agree →")
-                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(hovering ? Color(hex: "09090B") : accentGreen)
                         .padding(.horizontal, 32)
                         .padding(.vertical, 12)

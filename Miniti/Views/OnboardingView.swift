@@ -1,175 +1,182 @@
 import SwiftUI
 
-/// First-launch mode selection: Managed (free 500 min/month) vs BYOK (own keys, unlimited).
+/// A short first-run path: choose how Miniti is powered, then verify microphone access.
 struct OnboardingView: View {
-    @EnvironmentObject var appState: AppState
-    @State private var hoveredMode: String? = nil
-    
+    @EnvironmentObject private var appState: AppState
+    @State private var step = 0
+
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            
-            // Logo
-            VStack(spacing: 12) {
-                Text("⬢")
-                    .font(.system(size: 56, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "3FB950"))
-                
-                Text("miniti")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                
-                Text("pick a plan")
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundStyle(Color(hex: "A1A1AA"))
-                    .padding(.top, 4)
+        ScrollView {
+            VStack(spacing: 28) {
+                Spacer(minLength: 24)
+
+                VStack(spacing: 10) {
+                    Text("⬢")
+                        .font(.system(size: 52, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Accent.green)
+                        .accessibilityHidden(true)
+                    Text("miniti")
+                        .font(.system(size: 30, weight: .bold, design: .monospaced))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text(step == 0 ? "Turn meetings into useful notes while you talk." : "Make sure Miniti can hear you.")
+                        .font(.headline)
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                if step == 0 {
+                    planStep
+                        .transition(.opacity)
+                } else {
+                    microphoneStep
+                        .transition(.opacity)
+                }
+
+                Spacer(minLength: 24)
             }
-            
-            Spacer().frame(height: 40)
-            
-            // Mode cards
-            HStack(spacing: 16) {
-                // Managed mode card
-                ModeCard(
-                    title: "early adopter",
-                    subtitle: "500 min/month",
-                    description: "No API keys needed.\nWe handle everything.",
-                    features: [
-                        "Real-time transcription",
-                        "AI-powered insights",
-                        "500 minutes per month",
-                        "Resets monthly"
-                    ],
-                    accentColor: Color(hex: "3FB950"),
-                    isHovered: hoveredMode == "managed"
-                ) {
-                    appState.appModeRaw = AppMode.managed.rawValue
-                    appState.hasCompletedOnboarding = true
-                    Task {
-                        await appState.refreshUsage()
+            .frame(maxWidth: 560)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+        }
+        .background(ColorPalette.Background.primary)
+        .onDisappear { appState.stopAudioMonitoring() }
+    }
+
+    private var planStep: some View {
+        VStack(spacing: 14) {
+            OnboardingChoice(
+                icon: "sparkles",
+                title: "Continue with Miniti Free",
+                detail: "No API keys. Includes 500 transcription minutes each month.",
+                accent: ColorPalette.Accent.green,
+                isPrimary: true
+            ) {
+                appState.appModeRaw = AppMode.managed.rawValue
+                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
+                Task { await appState.refreshUsage() }
+            }
+
+            OnboardingChoice(
+                icon: "key.fill",
+                title: "Use my own API keys",
+                detail: "Unlimited use billed directly by Deepgram and OpenAI. Add keys in Settings after setup.",
+                accent: ColorPalette.Accent.blue,
+                isPrimary: false
+            ) {
+                appState.appModeRaw = AppMode.byok.rawValue
+                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
+            }
+
+            Text("You can switch modes later in Settings.")
+                .font(.footnote)
+                .foregroundStyle(ColorPalette.Text.muted)
+        }
+    }
+
+    private var microphoneStep: some View {
+        VStack(spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Microphone check", systemImage: "mic.fill")
+                    .font(.headline)
+                    .foregroundStyle(ColorPalette.Text.primary)
+
+                Text("Allow microphone access when asked, then speak. The meter should move. On macOS, system-audio permission is requested when your first recording starts.")
+                    .font(.body)
+                    .foregroundStyle(ColorPalette.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                OnboardingMicrophoneMeter(audioLevels: appState.audioLevels)
+
+                Button(appState.isMonitoring ? "Stop microphone test" : "Test microphone") {
+                    if appState.isMonitoring {
+                        appState.stopAudioMonitoring()
+                    } else {
+                        appState.startAudioMonitoring()
                     }
                 }
-                .onHover { hovering in
-                    hoveredMode = hovering ? "managed" : nil
-                }
-                
-                // BYOK mode card
-                ModeCard(
-                    title: "bring your own keys",
-                    subtitle: "unlimited",
-                    description: "Use your own Deepgram\n& OpenAI API keys.",
-                    features: [
-                        "No usage limits",
-                        "Your own API costs"
-                    ],
-                    accentColor: Color(hex: "58A6FF"),
-                    isHovered: hoveredMode == "byok"
-                ) {
-                    appState.appModeRaw = AppMode.byok.rawValue
-                    appState.hasCompletedOnboarding = true
-                }
-                .onHover { hovering in
-                    hoveredMode = hovering ? "byok" : nil
-                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .frame(minHeight: 44)
             }
-            
-            Spacer().frame(height: 24)
-            
-            // Reassurance
-            Text("you can switch later")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color(hex: "71717A"))
-            
-            Spacer()
+            .padding(20)
+            .background(ColorPalette.Background.card)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+            }
+
+            Button("Continue") { finish() }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.green)
+                .controlSize(.large)
+                .frame(maxWidth: .infinity, minHeight: 48)
+
+            Button("Set up microphone later") { finish() }
+                .buttonStyle(.plain)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .frame(minHeight: 44)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(hex: "09090B"))
+    }
+
+    private func finish() {
+        appState.stopAudioMonitoring()
+        appState.hasCompletedOnboarding = true
     }
 }
 
-// MARK: - Mode Card
-
-private struct ModeCard: View {
+private struct OnboardingChoice: View {
+    let icon: String
     let title: String
-    let subtitle: String
-    let description: String
-    let features: [String]
-    let accentColor: Color
-    let isHovered: Bool
+    let detail: String
+    let accent: Color
+    let isPrimary: Bool
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 16) {
-                // Header
-                VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: icon)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(isPrimary ? ColorPalette.Background.primary : accent)
+                    .frame(width: 30)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
                     Text(title)
-                        .font(.system(size: 15, weight: .bold, design: .monospaced))
-                        .foregroundStyle(Color(hex: "E6EDF3"))
-                    
-                    Text(subtitle)
-                        .font(.system(size: 20, weight: .bold, design: .monospaced))
-                        .foregroundStyle(accentColor)
-                    
-                    Text(description)
-                        .font(.system(size: 11, weight: .regular, design: .monospaced))
-                        .foregroundStyle(Color(hex: "A1A1AA"))
-                        .lineSpacing(2)
+                        .font(.headline)
+                        .foregroundStyle(isPrimary ? ColorPalette.Background.primary : ColorPalette.Text.primary)
+                    Text(detail)
+                        .font(.subheadline)
+                        .foregroundStyle(isPrimary ? ColorPalette.Background.primary.opacity(0.72) : ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                
-                // Divider
-                Rectangle()
-                    .fill(Color(hex: "27272A"))
-                    .frame(height: 1)
-                
-                // Features
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(features, id: \.self) { feature in
-                        HStack(spacing: 8) {
-                            Text("✓")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(accentColor)
-                            Text(feature)
-                                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color(hex: "D4D4D8"))
-                        }
-                    }
-                }
-                
-                Spacer()
-                
-                // CTA
-                HStack {
-                    Spacer()
-                    Text("select →")
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(isHovered ? Color(hex: "09090B") : accentColor)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(isHovered ? accentColor : accentColor.opacity(0.15))
-                        )
-                    Spacer()
-                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .foregroundStyle(isPrimary ? ColorPalette.Background.primary.opacity(0.65) : ColorPalette.Text.muted)
+                    .accessibilityHidden(true)
             }
-            .padding(20)
-            .frame(maxWidth: 280, minHeight: 280)
-            .background(
+            .padding(18)
+            .frame(maxWidth: .infinity, minHeight: 88, alignment: .leading)
+            .background(isPrimary ? accent : ColorPalette.Background.card)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(hex: "0F0F11"))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovered ? accentColor.opacity(0.6) : Color(hex: "27272A"),
-                        lineWidth: isHovered ? 2 : 1
-                    )
-            )
+                    .stroke(isPrimary ? accent : ColorPalette.Border.primary, lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.15), value: isHovered)
+    }
+}
+
+private struct OnboardingMicrophoneMeter: View {
+    @ObservedObject var audioLevels: AudioLevelsState
+
+    var body: some View {
+        ProgressView(value: Double(min(max(audioLevels.microphoneLevel, 0), 1)))
+            .tint(ColorPalette.Accent.green)
+            .accessibilityLabel("Microphone input level")
+            .accessibilityValue(audioLevels.microphoneLevel > 0.01 ? "Signal detected" : "No signal detected")
     }
 }
 

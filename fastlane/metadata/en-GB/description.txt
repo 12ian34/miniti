@@ -1,17 +1,17 @@
-miniti is an AI meeting assistant and speaking coach for iPhone. Record conversations with live transcription, get clear AI insights after every meeting, and improve your communication over time.
+miniti is an AI meeting assistant and speaking coach for iPhone and iPad. Record conversations with live transcription, get clear AI insights after every meeting, and improve your communication over time.
 
 LIVE TRANSCRIPTION AND RECORDING
 - Real-time speech-to-text while recording
 - 11 languages: English, Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, Russian
 - Automatic speaker naming - miniti infers real names from the transcript, or you can rename any speaker yourself
 - Background recording support
-- Dynamic Island and Lock Screen Live Activity recording status
+- Dynamic Island and Lock Screen Live Activity with optional live transcript text and tap-to-return
 
 AI MEETING INSIGHTS
 - Structured summaries and clear action items
 - Discussion flow, key decisions, and topic extraction
-- Standard insights or MEDDPICC analysis for sales calls
-- Questions mode: AI suggests smart, context-specific questions to ask based on what's been said
+- Summary insights, with optional MEDDPICC Sales analysis and a Docs-grounded Playbook
+- Questions: AI suggests smart, context-specific questions to ask based on what's been said
 - "i zoned out" - tap to catch up on the current topic, any questions directed at you, and recent decisions
 - Regenerate insights anytime from meeting history
 
@@ -24,14 +24,17 @@ REAL-TIME SPEECH COACHING
 
 BUILT FOR REPEAT USE
 - Full meeting history with transcripts, insights, and coaching metrics
+- Pin important meetings and browse clear date groups
 - Search meetings by title, transcript, notes, insights, or any content
-- Edit titles and copy transcripts/insights as markdown
-- Stop and resume sessions without losing context
+- Import Granola CSV exports with duplicate protection and source labels
+- Trim transcripts with Undo, then regenerate insights from the edited meeting
+- Share transcripts and insights as markdown
+- Compact, Standard, and Large interface scales, plus adaptive iPad sidebar navigation
 
 PRICING
 - Free: 500 transcription minutes per month
 - Pro: 5,000 transcription minutes per month for $4.99/month
-- BYOK: connect your own Deepgram and LLM keys for unlimited usage from miniti at no additional app fee
+- BYOK: connect your own Deepgram and OpenAI keys for unlimited usage from miniti at no additional app fee
 
 SUBSCRIPTION INFO
 If you choose Pro, payment is charged to your Apple ID account at confirmation of purchase. The subscription renews automatically unless canceled at least 24 hours before the end of the current period. You can manage or cancel from your App Store account settings.
@@ -39,4 +42,4 @@ If you choose Pro, payment is charged to your Apple ID account at confirmation o
 TERMS OF USE (EULA) 
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-v1.27.1
+v2.0.0

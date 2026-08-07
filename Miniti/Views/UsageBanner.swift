@@ -56,11 +56,11 @@ struct UsageBanner: View {
                 if let usage {
                     if usage.isLimitReached {
                         Text("limit reached")
-                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .foregroundStyle(Color(hex: "F85149"))
                     } else {
                         Text("\(usage.formattedRemaining) left")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(accentColor)
                     }
                 } else if appState.shouldShowManagedSubscriptionPlaceholder {
@@ -68,7 +68,7 @@ struct UsageBanner: View {
                         ProgressView()
                             .controlSize(.mini)
                         Text("checking plan...")
-                            .font(.system(size: 9, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
                     }
                 } else if appState.isLoadingUsage {
@@ -76,7 +76,7 @@ struct UsageBanner: View {
                         .controlSize(.mini)
                 } else {
                     Text(appState.isPro ? "pro" : "free")
-                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(appState.isPro ? Color(hex: "A78BFA") : Color(hex: "3FB950"))
                 }
             }
@@ -119,14 +119,14 @@ struct ManagedStatusView: View {
                     .frame(width: 5, height: 5)
                 
                 Text(appState.shouldShowManagedSubscriptionPlaceholder ? "checking plan..." : (appState.isPro ? "miniti pro" : "miniti free"))
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "A1A1AA"))
                 
                 if let usage {
                     Text("•")
                         .foregroundStyle(Color(hex: "484F58"))
                     Text("\(Int(usage.minutesRemaining)) min left")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(accentColor)
                 }
             }
@@ -153,13 +153,13 @@ struct ManagedStatusView: View {
                     
                     HStack {
                         Text("\(Int(usage.minutesUsed.rounded()))m used")
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
                         
                         Spacer()
                         
                         Text("\(Int(usage.minutesLimit))m total")
-                            .font(.system(size: 9, weight: .regular, design: .monospaced))
+                            .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
                     }
                     .frame(width: 200)
@@ -185,7 +185,7 @@ struct ManagedStatusView: View {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 10))
                         Text("upgrade to pro")
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "A78BFA"))
                     .padding(.horizontal, 14)
@@ -220,22 +220,22 @@ struct RestoreLicenseKeySheet: View {
     var body: some View {
         VStack(spacing: 16) {
             Text("restore subscription")
-                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .font(.system(size: 14, weight: .bold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             
             Text("Enter the license key from your purchase email or Polar account.")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "A1A1AA"))
                 .multilineTextAlignment(.center)
             
             TextField("license key", text: $licenseKeyInput)
                 .textFieldStyle(.roundedBorder)
-                .font(.system(size: 12, design: .monospaced))
+                .font(.system(size: 12, design: .default))
                 .frame(width: 300)
             
             if let restoreError {
                 Text(restoreError)
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "F85149"))
             }
             
@@ -244,7 +244,7 @@ struct RestoreLicenseKeySheet: View {
                     onCancel()
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "71717A"))
                 
                 Button {
@@ -255,7 +255,7 @@ struct RestoreLicenseKeySheet: View {
                             .controlSize(.small)
                     } else {
                         Text("restore")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                     }
                 }
                 .buttonStyle(.plain)

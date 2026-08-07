@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import Combine
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -7,6 +8,231 @@ import SwiftData
 #endif
 
 final class AppStateComputationTests: XCTestCase {
+
+    func testDebugLogRingPreservesNewestEntriesInOrder() {
+        var ring = DebugLogger.EntryRing(capacity: 3)
+        for index in 0..<5 {
+            ring.append(.init(
+                timestamp: Date(timeIntervalSince1970: Double(index)),
+                category: .app,
+                level: .routine,
+                message: "entry \(index)"
+            ))
+        }
+
+        XCTAssertEqual(ring.snapshot().map(\.message), ["entry 2", "entry 3", "entry 4"])
+    }
+
+    #if IOS_TEST_TARGET
+    func testLiveActivityTranscriptPrivacyShowsTextWhenEnabled() {
+        XCTAssertEqual(
+            LiveActivityPreferences.presentedTranscript("confidential line", isEnabled: true),
+            "confidential line"
+        )
+    }
+
+    func testLiveActivityTranscriptPrivacyRedactsTextWhenDisabled() {
+        XCTAssertEqual(
+            LiveActivityPreferences.presentedTranscript("confidential line", isEnabled: false),
+            ""
+        )
+    }
+    #endif
+
+    @MainActor
+    func testAudioLevelsStatePublishesOneAtomicSnapshot() {
+        let state = AudioLevelsState()
+        var publishCount = 0
+        let cancellable = state.objectWillChange.sink { publishCount += 1 }
+
+        state.update(microphoneLevel: 0.25, systemAudioLevel: 0.5)
+
+        XCTAssertEqual(publishCount, 1)
+        XCTAssertEqual(state.microphoneLevel, 0.25)
+        XCTAssertEqual(state.systemAudioLevel, 0.5)
+        XCTAssertEqual(state.combinedLevel, 0.5)
+
+        state.update(microphoneLevel: 0.25, systemAudioLevel: 0.5)
+        XCTAssertEqual(publishCount, 1, "An unchanged meter snapshot should not invalidate views")
+        _ = cancellable
+    }
+
+    @MainActor
+    func testSpecialistInsightModeRequiresOptInAndFallsBackWhenDisabled() {
+        let defaults = UserDefaults.standard
+        let previousSalesValue = defaults.object(forKey: "salesInsightsEnabled")
+        defer {
+            if let previousSalesValue {
+                defaults.set(previousSalesValue, forKey: "salesInsightsEnabled")
+            } else {
+                defaults.removeObject(forKey: "salesInsightsEnabled")
+            }
+        }
+
+        let state = AppState()
+        state.setInsightModeEnabled(.meddpicc, enabled: false)
+
+        XCTAssertFalse(state.isInsightModeEnabled(.meddpicc))
+        XCTAssertEqual(state.enabledInsightModes, InsightsMode.coreModes)
+
+        state.switchInsightsMode(to: .meddpicc)
+        XCTAssertTrue(state.salesInsightsEnabled)
+        XCTAssertEqual(state.insightsMode, .meddpicc)
+
+        state.setInsightModeEnabled(.meddpicc, enabled: false)
+        XCTAssertEqual(state.insightsMode, .standard)
+    }
+
+    @MainActor
+    func testValidDocsConfigurationEnablesPlaybookAndClearingItDisablesTheView() {
+        let defaults = UserDefaults.standard
+        let previousDocsURL = defaults.object(forKey: "docsMCPURL")
+        let previousPlaybookValue = defaults.object(forKey: "playbookInsightsEnabled")
+        defer {
+            if let previousDocsURL {
+                defaults.set(previousDocsURL, forKey: "docsMCPURL")
+            } else {
+                defaults.removeObject(forKey: "docsMCPURL")
+            }
+            if let previousPlaybookValue {
+                defaults.set(previousPlaybookValue, forKey: "playbookInsightsEnabled")
+            } else {
+                defaults.removeObject(forKey: "playbookInsightsEnabled")
+            }
+        }
+
+        let state = AppState()
+        state.docsMCPURL = ""
+        state.docsMCPURL = "https://docs.lightdash.com/mcp"
+
+        XCTAssertTrue(state.playbookInsightsEnabled)
+        XCTAssertTrue(state.isInsightModeEnabled(.docs))
+
+        state.switchInsightsMode(to: .docs)
+        state.docsMCPURL = ""
+
+        XCTAssertFalse(state.playbookInsightsEnabled)
+        XCTAssertEqual(state.insightsMode, .standard)
+    }
+
+    // MARK: - Multichannel mic echo reconciliation
+
+    func testMicEchoMatcherSuppressesPartialPlaybackDuplicate() {
+        let mic = AppState.EchoComparisonSegment(
+            text: "And maybe no human ever.",
+            startTime: 24,
+            endTime: 26
+        )
+        let system = AppState.EchoComparisonSegment(
+            text: "Nobody alive today will, and maybe no human ever.",
+            startTime: 23.2,
+            endTime: 27.4
+        )
+
+        XCTAssertTrue(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: false
+            )
+        )
+    }
+
+    func testMicEchoMatcherUsesEnergyForFuzzyDuplicate() {
+        let mic = AppState.EchoComparisonSegment(
+            text: "Locked in by an invisible barrier.",
+            startTime: 29,
+            endTime: 31
+        )
+        let system = AppState.EchoComparisonSegment(
+            text: "Locked in by a nearly invisible barrier, impossible to overcome.",
+            startTime: 28.7,
+            endTime: 33
+        )
+
+        XCTAssertTrue(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: true
+            )
+        )
+    }
+
+    func testMicEchoMatcherHandlesDifferentTailAfterSharedPlaybackPhrase() {
+        let mic = AppState.EchoComparisonSegment(
+            text: "Nobody alive today, though.",
+            startTime: 24,
+            endTime: 26
+        )
+        let system = AppState.EchoComparisonSegment(
+            text: "Nobody alive today will, and maybe no human ever.",
+            startTime: 23.5,
+            endTime: 27
+        )
+
+        XCTAssertTrue(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: true
+            )
+        )
+    }
+
+    func testMicEchoMatcherPreservesGenuineOverlappingSpeech() {
+        let mic = AppState.EchoComparisonSegment(
+            text: "Can you pause there for a moment?",
+            startTime: 10,
+            endTime: 12
+        )
+        let system = AppState.EchoComparisonSegment(
+            text: "The launch is planned for the end of September.",
+            startTime: 9.5,
+            endTime: 13
+        )
+
+        XCTAssertFalse(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: true
+            )
+        )
+    }
+
+    func testMicEchoMatcherRequiresTimeOverlap() {
+        let mic = AppState.EchoComparisonSegment(text: "Same exact sentence here", startTime: 20, endTime: 22)
+        let oldSystem = AppState.EchoComparisonSegment(text: "Same exact sentence here", startTime: 2, endTime: 4)
+
+        XCTAssertFalse(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [oldSystem],
+                systemDominant: true
+            )
+        )
+    }
+
+    func testMicEchoMatcherKeepsShortPhraseWithoutSystemDominance() {
+        let mic = AppState.EchoComparisonSegment(text: "Right", startTime: 5, endTime: 5.4)
+        let system = AppState.EchoComparisonSegment(text: "Right", startTime: 5, endTime: 5.4)
+
+        XCTAssertFalse(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: false
+            )
+        )
+        XCTAssertTrue(
+            AppState.isLikelyMicEcho(
+                mic: mic,
+                systemSegments: [system],
+                systemDominant: true
+            )
+        )
+    }
 
     // MARK: - Managed Deepgram credential freshness
 
@@ -406,6 +632,27 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     @MainActor
+    func testResumeInterruptedMeetingRestoresOnlyFinalNonEmptySegments() throws {
+        let container = try Self.makeInMemoryModelContainer()
+        let context = container.mainContext
+        let recent = Meeting(title: "recent", startTime: Date().addingTimeInterval(-60))
+        recent.segments = [
+            TranscriptSegment(text: "Final words", speaker: 1, timestamp: 10, isFinal: true),
+            TranscriptSegment(text: "   ", speaker: 1, timestamp: 11, isFinal: true),
+            TranscriptSegment(text: "Interim draft", speaker: 1, timestamp: 12, isFinal: false),
+        ]
+        context.insert(recent)
+        try context.save()
+
+        let state = AppState()
+        state.modelContext = context
+        state.resumeInterruptedMeeting()
+
+        XCTAssertEqual(state.liveSegments.map(\.text), ["Final words"])
+        XCTAssertTrue(state.liveSegments.allSatisfy(\.isFinal))
+    }
+
+    @MainActor
     func testResumeInterruptedMeetingRestoresLongRunningDraftWithRecentActivity() throws {
         let now = Date()
         let container = try Self.makeInMemoryModelContainer()
@@ -782,6 +1029,61 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(segments.count, 1)
     }
 
+    func testStoppedInterimTranscriptIsPromotedWhenNoFinalExists() {
+        var segments: [AppState.LiveSegment] = []
+
+        let result = AppState.mergeStoppedInterimTranscript(
+            "  short meeting transcript  ",
+            speaker: 2,
+            timestamp: 7,
+            into: &segments
+        )
+
+        XCTAssertEqual(result, .appended)
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].text, "short meeting transcript")
+        XCTAssertEqual(segments[0].speaker, 2)
+        XCTAssertEqual(segments[0].timestamp, 7)
+        XCTAssertTrue(segments[0].isFinal)
+    }
+
+    func testStoppedInterimTranscriptDoesNotDuplicateFinalFromGracefulShutdown() {
+        let existingID = UUID()
+        var segments = [
+            AppState.LiveSegment(
+                id: existingID,
+                text: "short meeting transcript",
+                speaker: 2,
+                timestamp: 6,
+                isFinal: true
+            )
+        ]
+
+        let result = AppState.mergeStoppedInterimTranscript(
+            "short meeting transcript",
+            speaker: 2,
+            timestamp: 7,
+            into: &segments
+        )
+
+        XCTAssertEqual(result, .skippedExactDuplicate)
+        XCTAssertEqual(segments.map(\.id), [existingID])
+    }
+
+    func testStoppedInterimTranscriptIgnoresBlankText() {
+        var segments: [AppState.LiveSegment] = []
+
+        let result = AppState.mergeStoppedInterimTranscript(
+            "   \n  ",
+            speaker: 0,
+            timestamp: 1,
+            into: &segments
+        )
+
+        XCTAssertNil(result)
+        XCTAssertTrue(segments.isEmpty)
+    }
+
     // MARK: - AudioRecoveryState.label
 
     func testAudioRecoveryStateHealthy() {
@@ -1002,11 +1304,12 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     func testTranscriptRecoveryCooldownGrowsAndCaps() {
+        let maxCooldown = AppState.transcriptRecoveryMaxCooldown
         XCTAssertEqual(AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 0), 30)
         XCTAssertEqual(AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 2), 120)
         XCTAssertEqual(
             AppState.transcriptRecoveryCooldown(base: 30, consecutiveRecoveries: 99),
-            AppState.transcriptRecoveryMaxCooldown
+            maxCooldown
         )
     }
 

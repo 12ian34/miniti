@@ -92,10 +92,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var activeMicInputSampleRate: Double = 0
     private var activeMicInputChannels: AVAudioChannelCount = 0
     
-    // MARK: - Source Dominance Tracking (legacy / debug)
-    // Previously used to override Deepgram speaker IDs on a mono mix. Dual-source
-    // capture now uses Deepgram multichannel (ch0=mic, ch1=system), so tagging is
-    // channel-based. Kept for diagnostics and existing unit tests.
+    // MARK: - Source Dominance Tracking
+    // Speaker identity is channel-based in dual-source capture (ch0=mic, ch1=system).
+    // These samples are still used as corroborating evidence when AppState reconciles
+    // acoustic playback leaking into the mic channel; energy alone never assigns a
+    // remote system transcript to "You".
     
     struct SourceSample {
         let startTime: Double    // seconds from recording start
@@ -103,16 +104,54 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let micEnergy: Float     // Int16-scale RMS of mic buffer
         let sysEnergy: Float     // Int16-scale RMS of system buffer
     }
+
+    private struct SourceSampleRing {
+        private var storage: [SourceSample?]
+        private var startIndex = 0
+        private(set) var count = 0
+
+        nonisolated init(capacity: Int) {
+            storage = Array(repeating: nil, count: max(1, capacity))
+        }
+
+        nonisolated mutating func append(_ sample: SourceSample) {
+            if count < storage.count {
+                storage[(startIndex + count) % storage.count] = sample
+                count += 1
+            } else {
+                storage[startIndex] = sample
+                startIndex = (startIndex + 1) % storage.count
+            }
+        }
+
+        nonisolated mutating func removeAll() {
+            for index in storage.indices {
+                storage[index] = nil
+            }
+            startIndex = 0
+            count = 0
+        }
+
+        nonisolated func forEachChronological(_ body: (SourceSample) -> Void) {
+            guard count > 0 else { return }
+            for offset in 0..<count {
+                if let sample = storage[(startIndex + offset) % storage.count] {
+                    body(sample)
+                }
+            }
+        }
+    }
     
     /// Rolling log of per-buffer source dominance. Accessed from mic callback thread.
-    nonisolated(unsafe) private var sourceLog: [SourceSample] = []
+    private static let sourceLogCapacity = 6000
+    nonisolated(unsafe) private var sourceLog: SourceSampleRing
     private let sourceLogLock = NSLock()
     /// Cumulative frames sent to Deepgram (per channel), for stream time.
     nonisolated(unsafe) private var cumulativeSamplesSent: Int = 0
     
     /// Returns the dominant audio source for a given time range in the stream.
     /// - Returns: `.system` if system audio energy exceeded mic, `.mic` if mic was louder, `.unknown` if no data.
-    enum AudioSource { case mic, system, unknown }
+    enum AudioSource: Sendable { case mic, system, unknown }
 
     /// Whether Deepgram is receiving interleaved stereo (mic+system dual capture).
     var isSendingMultichannel: Bool {
@@ -128,12 +167,25 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         sysCount: Int
     ) -> Data {
         guard micCount > 0 else { return Data() }
-        var out = [Int16](repeating: 0, count: micCount * 2)
-        for i in 0..<micCount {
-            out[i * 2] = mic[i]
-            out[i * 2 + 1] = i < sysCount ? sys[i] : 0
+        var data = Data(count: micCount * MemoryLayout<Int16>.size * 2)
+        data.withUnsafeMutableBytes { raw in
+            let out = raw.bindMemory(to: Int16.self)
+            for i in 0..<micCount {
+                out[i * 2] = mic[i]
+                out[i * 2 + 1] = i < sysCount ? sys[i] : 0
+            }
         }
-        return Data(bytes: out, count: micCount * MemoryLayout<Int16>.size * 2)
+        return data
+    }
+
+    nonisolated static func rmsInt16(_ samples: UnsafePointer<Int16>, count: Int) -> Float {
+        guard count > 0 else { return 0 }
+        var sumSquares: Double = 0
+        for index in 0..<count {
+            let sample = Double(samples[index])
+            sumSquares += sample * sample
+        }
+        return Float(sqrt(sumSquares / Double(count)))
     }
     
     nonisolated func dominantSource(from startTime: Double, to endTime: Double) -> AudioSource {
@@ -151,7 +203,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var nearestSample: SourceSample?
         var nearestDistance = Double.greatestFiniteMagnitude
         
-        for sample in sourceLog {
+        sourceLog.forEachChronological { sample in
             let overlapStart = max(windowStart, sample.startTime)
             let overlapEnd = min(windowEnd, sample.endTime)
             if overlapEnd > overlapStart {
@@ -159,7 +211,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 micWeightedTotal += Double(sample.micEnergy) * overlapSeconds
                 sysWeightedTotal += Double(sample.sysEnergy) * overlapSeconds
                 overlapSecondsTotal += overlapSeconds
-                continue
+                return
             }
             
             let distance: Double
@@ -228,6 +280,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     #endif
     
     override init() {
+        sourceLog = SourceSampleRing(capacity: Self.sourceLogCapacity)
         super.init()
         ringBuffer = .allocate(capacity: ringCapacity)
         ringBuffer.initialize(repeating: 0, count: ringCapacity)
@@ -562,6 +615,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     deinit {
         ringBuffer?.deinitialize(count: ringCapacity)
         ringBuffer?.deallocate()
+        sysScratch.deinitialize(count: sysScratchCapacity)
+        sysScratch.deallocate()
+        systemMonoScratch.deinitialize(count: systemDSPScratchCapacity)
+        systemMonoScratch.deallocate()
+        systemScaledScratch.deinitialize(count: systemDSPScratchCapacity)
+        systemScaledScratch.deallocate()
+        systemInt16Scratch.deinitialize(count: systemDSPScratchCapacity)
+        systemInt16Scratch.deallocate()
     }
     
     private func resetRuntimeDiagnostics() {
@@ -1412,6 +1473,22 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     
     nonisolated(unsafe) private var lastSystemLevelUpdate: CFAbsoluteTime = 0
     nonisolated(unsafe) private var sysCallbackCount: Int = 0
+    private let systemDSPScratchCapacity = 65_536
+    nonisolated(unsafe) private let systemMonoScratch: UnsafeMutablePointer<Float> = {
+        let pointer = UnsafeMutablePointer<Float>.allocate(capacity: 65_536)
+        pointer.initialize(repeating: 0, count: 65_536)
+        return pointer
+    }()
+    nonisolated(unsafe) private let systemScaledScratch: UnsafeMutablePointer<Float> = {
+        let pointer = UnsafeMutablePointer<Float>.allocate(capacity: 65_536)
+        pointer.initialize(repeating: 0, count: 65_536)
+        return pointer
+    }()
+    nonisolated(unsafe) private let systemInt16Scratch: UnsafeMutablePointer<Int16> = {
+        let pointer = UnsafeMutablePointer<Int16>.allocate(capacity: 65_536)
+        pointer.initialize(repeating: 0, count: 65_536)
+        return pointer
+    }()
     
     nonisolated private func processSystemAudioCallback(
         inInputData: UnsafePointer<AudioBufferList>,
@@ -1454,6 +1531,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             ? (framesPerChannel / decimation)
             : Int(Double(framesPerChannel) * targetRate / inputFormat.sampleRate)
         guard outputFrames > 0 else { return }
+        guard framesPerChannel <= systemDSPScratchCapacity,
+              outputFrames <= systemDSPScratchCapacity else {
+            DebugLogger.shared.log(
+                .audio,
+                "System callback exceeded DSP scratch capacity: input=\(framesPerChannel), output=\(outputFrames)"
+            )
+            return
+        }
         
         // One-time format diagnostic
         if sysCallbackCount == 0 {
@@ -1464,27 +1549,25 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         
         // Step 1: Downmix to mono Float buffer. Supports float and Int16 input.
-        var mono = [Float](repeating: 0, count: framesPerChannel)
+        let mono = systemMonoScratch
         if isFloatFormat {
             let floatPtr = rawData.assumingMemoryBound(to: Float.self)
             if isInterleaved && channels >= 2 {
                 // Interleaved: [L0 R0 L1 R1 ...] — add L+R with stride, then halve
                 vDSP_vadd(floatPtr, vDSP_Stride(channels),
                           floatPtr + 1, vDSP_Stride(channels),
-                          &mono, 1, vDSP_Length(framesPerChannel))
+                          mono, 1, vDSP_Length(framesPerChannel))
                 var half: Float = 0.5
-                vDSP_vsmul(mono, 1, &half, &mono, 1, vDSP_Length(framesPerChannel))
+                vDSP_vsmul(mono, 1, &half, mono, 1, vDSP_Length(framesPerChannel))
             } else if !isInterleaved && channels >= 2 && bufferList.count >= 2,
                       let rightData = bufferList[1].mData {
                 let leftPtr = rawData.assumingMemoryBound(to: Float.self)
                 let rightPtr = rightData.assumingMemoryBound(to: Float.self)
-                vDSP_vadd(leftPtr, 1, rightPtr, 1, &mono, 1, vDSP_Length(framesPerChannel))
+                vDSP_vadd(leftPtr, 1, rightPtr, 1, mono, 1, vDSP_Length(framesPerChannel))
                 var half: Float = 0.5
-                vDSP_vsmul(mono, 1, &half, &mono, 1, vDSP_Length(framesPerChannel))
+                vDSP_vsmul(mono, 1, &half, mono, 1, vDSP_Length(framesPerChannel))
             } else {
-                mono.withUnsafeMutableBufferPointer { dst in
-                    dst.baseAddress?.update(from: floatPtr, count: framesPerChannel)
-                }
+                mono.update(from: floatPtr, count: framesPerChannel)
             }
         } else if bitsPerChannel == 16 {
             let intPtr = rawData.assumingMemoryBound(to: Int16.self)
@@ -1540,11 +1623,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         // Step 2: Resample to 16kHz and scale to Int16 range.
         // Integer ratios use cheap decimation (e.g. 48k→16k). Non-integer
         // ratios (e.g. 24k→16k on Bluetooth HFP) use linear interpolation.
-        var scaled = [Float](repeating: 0, count: outputFrames)
+        let scaled = systemScaledScratch
         let amplitudeScale: Float = isFloatFormat ? 32767.0 : 1.0
         if canUseDecimation {
             var scale = amplitudeScale
-            vDSP_vsmul(mono, vDSP_Stride(decimation), &scale, &scaled, 1, vDSP_Length(outputFrames))
+            vDSP_vsmul(mono, vDSP_Stride(decimation), &scale, scaled, 1, vDSP_Length(outputFrames))
         } else {
             let sourceStep = Float(inputFormat.sampleRate / targetRate)
             var sourcePos: Float = 0
@@ -1561,11 +1644,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         // Step 3: Clamp to Int16 range
         var lo: Float = -32768
         var hi: Float = 32767
-        vDSP_vclip(scaled, 1, &lo, &hi, &scaled, 1, vDSP_Length(outputFrames))
+        vDSP_vclip(scaled, 1, &lo, &hi, scaled, 1, vDSP_Length(outputFrames))
         
         // Step 4: Float32 → Int16
-        var int16Out = [Int16](repeating: 0, count: outputFrames)
-        vDSP_vfix16(scaled, 1, &int16Out, 1, vDSP_Length(outputFrames))
+        let int16Out = systemInt16Scratch
+        vDSP_vfix16(scaled, 1, int16Out, 1, vDSP_Length(outputFrames))
         sysOutputFrameCount += outputFrames
         
         sysCallbackCount += 1
@@ -1659,6 +1742,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
         }
         
+        // `Data` owns an immutable copy before the preallocated scratch storage is reused.
         let data = Data(bytes: int16Out, count: outputFrames * MemoryLayout<Int16>.size)
         
         if mixWithMic {
@@ -1821,27 +1905,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 }
             }
             
-            let energyCount = min(micSamples, max(sysDrained, 1))
-            var micFloat = [Float](repeating: 0, count: energyCount)
-            vDSP_vflt16(micPtr, 1, &micFloat, 1, vDSP_Length(energyCount))
-            var micMsq: Float = 0
-            vDSP_measqv(micFloat, 1, &micMsq, vDSP_Length(energyCount))
-            let micRMS = sqrt(micMsq)
-            
-            var sysRMS: Float = 0
-            if sysDrained > 0 {
-                var sysFloat = [Float](repeating: 0, count: sysDrained)
-                vDSP_vflt16(sysScratch, 1, &sysFloat, 1, vDSP_Length(sysDrained))
-                var sysMsq: Float = 0
-                vDSP_measqv(sysFloat, 1, &sysMsq, vDSP_Length(sysDrained))
-                sysRMS = sqrt(sysMsq)
-            }
+            let micRMS = Self.rmsInt16(micPtr, count: micSamples)
+            let sysRMS = Self.rmsInt16(sysScratch, count: sysDrained)
             
             let bufferStartTime = Double(cumulativeSamplesSent) / 16000.0
             let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
             sourceLog.append(SourceSample(startTime: bufferStartTime, endTime: bufferEndTime, micEnergy: micRMS, sysEnergy: sysRMS))
-            if sourceLog.count > 6000 { sourceLog.removeFirst(sourceLog.count - 6000) }
             sourceLogLock.unlock()
             
             if now - lastInterleaveDebugLog > 30.0 && (micRMS > 30 || sysRMS > 30) {
@@ -1866,7 +1936,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let bufferEndTime = bufferStartTime + (Double(micSamples) / 16000.0)
             sourceLogLock.lock()
             sourceLog.append(SourceSample(startTime: bufferStartTime, endTime: bufferEndTime, micEnergy: 1.0, sysEnergy: 0.0))
-            if sourceLog.count > 6000 { sourceLog.removeFirst(sourceLog.count - 6000) }
             sourceLogLock.unlock()
             
             cumulativeSamplesSent += micSamples

@@ -13,9 +13,42 @@ struct HistoryView_iOS: View {
 
     var filteredMeetings: [Meeting] {
         if searchText.isEmpty {
-            return Array(meetings)
+            return meetings.sorted {
+                if $0.isPinned != $1.isPinned { return $0.isPinned }
+                return $0.startTime > $1.startTime
+            }
         }
         return searchResults.map(\.meeting)
+    }
+
+    private var meetingSections: [(title: String, meetings: [Meeting])] {
+        if !searchText.isEmpty {
+            return [("Search results", filteredMeetings)]
+        }
+
+        let calendar = Calendar.current
+        let pinned = filteredMeetings.filter(\.isPinned)
+        let unpinned = filteredMeetings.filter { !$0.isPinned }
+        var sections: [(String, [Meeting])] = []
+        if !pinned.isEmpty { sections.append(("Pinned", pinned)) }
+
+        let today = unpinned.filter { calendar.isDateInToday($0.startTime) }
+        let yesterday = unpinned.filter { calendar.isDateInYesterday($0.startTime) }
+        let week = unpinned.filter {
+            !calendar.isDateInToday($0.startTime) &&
+            !calendar.isDateInYesterday($0.startTime) &&
+            calendar.isDate($0.startTime, equalTo: Date(), toGranularity: .weekOfYear)
+        }
+        let older = unpinned.filter { meeting in
+            !today.contains(where: { $0.id == meeting.id }) &&
+            !yesterday.contains(where: { $0.id == meeting.id }) &&
+            !week.contains(where: { $0.id == meeting.id })
+        }
+        if !today.isEmpty { sections.append(("Today", today)) }
+        if !yesterday.isEmpty { sections.append(("Yesterday", yesterday)) }
+        if !week.isEmpty { sections.append(("This week", week)) }
+        if !older.isEmpty { sections.append(("Older", older)) }
+        return sections
     }
 
     private var searchSnippets: [UUID: String] {
@@ -59,10 +92,10 @@ struct HistoryView_iOS: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Text("◌")
-                .font(.system(size: 48, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 48, weight: .ultraLight, design: .default))
                 .foregroundStyle(ColorPalette.Text.disabled)
             Text(searchText.isEmpty ? "No sessions yet" : "No results")
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                .font(.system(size: 14, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.muted)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -73,29 +106,54 @@ struct HistoryView_iOS: View {
     
     private var meetingsList: some View {
         List {
-            ForEach(filteredMeetings) { meeting in
-                NavigationLink {
-                    MeetingDetail_iOS(meeting: meeting)
-                } label: {
-                    MeetingRow_iOS(
-                        meeting: meeting,
-                        searchQuery: searchText.isEmpty ? nil : searchText,
-                        matchSnippet: searchSnippets[meeting.id],
-                        matchCount: searchMatchCounts[meeting.id]
-                    )
+            ForEach(meetingSections, id: \.title) { section in
+                Section(section.title) {
+                    ForEach(section.meetings) { meeting in
+                        NavigationLink {
+                            MeetingDetail_iOS(meeting: meeting)
+                        } label: {
+                            MeetingRow_iOS(
+                                meeting: meeting,
+                                searchQuery: searchText.isEmpty ? nil : searchText,
+                                matchSnippet: searchSnippets[meeting.id],
+                                matchCount: searchMatchCounts[meeting.id]
+                            )
+                        }
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                togglePin(meeting)
+                            } label: {
+                                Label(meeting.isPinned ? "Unpin" : "Pin", systemImage: meeting.isPinned ? "pin.slash" : "pin")
+                            }
+                            .tint(ColorPalette.Accent.amber)
+                        }
+                        .contextMenu {
+                            Button {
+                                togglePin(meeting)
+                            } label: {
+                                Label(meeting.isPinned ? "Unpin meeting" : "Pin meeting", systemImage: meeting.isPinned ? "pin.slash" : "pin")
+                            }
+                        }
+                    }
+                    .onDelete { offsets in
+                        deleteMeetings(offsets.map { section.meetings[$0] })
+                    }
                 }
             }
-            .onDelete(perform: deleteMeetings)
         }
         .listStyle(.plain)
     }
-    
-    private func deleteMeetings(at offsets: IndexSet) {
-        for index in offsets {
-            let meeting = filteredMeetings[index]
+
+    private func deleteMeetings(_ meetings: [Meeting]) {
+        for meeting in meetings {
             appState.noteMeetingDeleted(meeting)
             modelContext.delete(meeting)
         }
+        try? modelContext.save()
+    }
+
+    private func togglePin(_ meeting: Meeting) {
+        meeting.isPinned.toggle()
         try? modelContext.save()
     }
 }
@@ -103,6 +161,7 @@ struct HistoryView_iOS: View {
 // MARK: - Meeting Row
 
 struct MeetingRow_iOS: View {
+    @EnvironmentObject private var appState: AppState
     let meeting: Meeting
     var searchQuery: String? = nil
     var matchSnippet: String? = nil
@@ -112,18 +171,23 @@ struct MeetingRow_iOS: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
+            if meeting.isPinned {
+                Label("Pinned", systemImage: "pin.fill")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(ColorPalette.Accent.amber)
+            }
             if let query = searchQuery, !query.isEmpty {
                 highlightedText(
                     meeting.displayTitle,
                     query: query,
                     baseColor: ColorPalette.Text.primary,
                     highlightColor: highlightColor,
-                    font: .system(size: 14, weight: .medium, design: .monospaced)
+                    font: .system(size: 14, weight: .medium, design: .default)
                 )
                 .lineLimit(1)
             } else {
                 Text(meeting.displayTitle)
-                    .font(.system(size: 14, weight: .medium, design: .monospaced))
+                    .font(.system(size: 14, weight: .medium, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(1)
             }
@@ -135,35 +199,53 @@ struct MeetingRow_iOS: View {
                     query: query,
                     baseColor: ColorPalette.Text.dim,
                     highlightColor: highlightColor,
-                    font: .system(size: 11, design: .monospaced)
+                    font: .system(size: 11, design: .default)
                 )
                 .lineLimit(2)
             }
 
             HStack(spacing: 8) {
                 Text(meeting.startTime.formatted(date: .abbreviated, time: .shortened))
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 11, design: .default))
                     .foregroundStyle(ColorPalette.Text.muted)
 
                 Text("·")
                     .foregroundStyle(ColorPalette.Text.disabled)
                 Text(meeting.formattedDuration)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(.system(size: 11, design: .default))
                     .foregroundStyle(ColorPalette.Text.muted)
 
                 if let lang = TranscriptionLanguage(rawValue: meeting.language), lang != .english {
                     Text("·")
                         .foregroundStyle(ColorPalette.Text.disabled)
                     Text("\(lang.flag) \(lang.rawValue.uppercased())")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
+                }
+
+                if let provenance = meeting.provenanceDisplayName {
+                    Text("·")
+                        .foregroundStyle(ColorPalette.Text.disabled)
+                    Text(provenance.lowercased())
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+
+                if appState.finalizingInsightMeetingIDs.contains(meeting.id) {
+                    Text("·")
+                        .foregroundStyle(ColorPalette.Text.disabled)
+                    ProgressView()
+                        .controlSize(.mini)
+                    Text("insights")
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Accent.blue)
                 }
 
                 if !meeting.segments.isEmpty {
                     Text("·")
                         .foregroundStyle(ColorPalette.Text.disabled)
                     Text("\(meeting.segments.count) segments")
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 11, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
 
@@ -171,7 +253,7 @@ struct MeetingRow_iOS: View {
                     Text("·")
                         .foregroundStyle(ColorPalette.Text.disabled)
                     Text("\(count) match\(count == 1 ? "" : "es")")
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 11, design: .default))
                         .foregroundStyle(highlightColor)
                 }
             }
@@ -186,6 +268,7 @@ struct MeetingDetail_iOS: View {
     @Bindable var meeting: Meeting
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.interfaceScale) private var interfaceScale
     @EnvironmentObject var appState: AppState
     @State private var activeSection: DetailSection = .transcript
     @State private var renamingSpeaker: Int? = nil
@@ -265,6 +348,18 @@ struct MeetingDetail_iOS: View {
     var body: some View {
         VStack(spacing: 0) {
             titleEditor
+
+            if let provenance = meeting.provenanceDisplayName {
+                HStack(spacing: 5) {
+                    Image(systemName: "tray.and.arrow.down")
+                    Text("Imported from \(provenance)")
+                    Spacer()
+                }
+                .font(.system(size: 11, weight: .medium, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .padding(.horizontal)
+                .padding(.top, 6)
+            }
 
             // Custom section picker (matching recording screen style)
             sectionPicker
@@ -352,7 +447,7 @@ struct MeetingDetail_iOS: View {
     private var titleEditor: some View {
         TextField("Meeting title", text: $meeting.title)
             .textFieldStyle(.plain)
-            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+            .font(.system(size: 14, weight: .semibold, design: .default))
             .foregroundStyle(ColorPalette.Text.primary)
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -378,7 +473,7 @@ struct MeetingDetail_iOS: View {
                     activeSection = section
                 } label: {
                     Text(section.rawValue)
-                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .monospaced))
+                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .default))
                         .foregroundStyle(activeSection == section ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -410,7 +505,7 @@ struct MeetingDetail_iOS: View {
             if meeting.segments.isEmpty {
                 ScrollView {
                     Text("No transcript available")
-                        .font(.system(size: 13, design: .monospaced))
+                        .font(.system(size: 13, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .padding()
                 }
@@ -455,7 +550,11 @@ struct MeetingDetail_iOS: View {
     private var insightsContent: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
-                historicalInsightsModePicker
+                InsightsModeMenu_iOS(
+                    selection: appState.insightsMode,
+                    updatedAt: meeting.insightsUpdatedAt,
+                    onSelect: appState.switchInsightsMode
+                )
                 
                 if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
                     historicalInsightsGenerateButton
@@ -485,9 +584,9 @@ struct MeetingDetail_iOS: View {
                     if let summary = meeting.summaryText, !summary.isEmpty {
                         HistoricalDetailBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
                             Text(summary)
-                                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
                                 .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(6)
+                                .lineSpacing(interfaceScale.insightLineSpacing)
                         }
                     }
 
@@ -551,13 +650,13 @@ struct MeetingDetail_iOS: View {
                 SavedMEDDPICCContent(meeting: meeting)
             } else if !meeting.segments.isEmpty {
                 historicalEmptyState(
-                    title: "no meddpicc yet",
+                    title: "no sales insights yet",
                     subtitle: "use update above"
                 )
             } else {
                 historicalEmptyState(
                     title: "no transcript",
-                    subtitle: "record a session to generate MEDDPICC"
+                    subtitle: "record a session to generate sales qualification"
                 )
             }
         }
@@ -604,39 +703,6 @@ struct MeetingDetail_iOS: View {
         }
     }
     
-    private var historicalInsightsModePicker: some View {
-        HStack(spacing: 2) {
-            ForEach(InsightsMode.allCases, id: \.self) { mode in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        appState.switchInsightsMode(to: mode)
-                    }
-                } label: {
-                    Text(mode.displayName)
-                        .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .monospaced))
-                        .foregroundStyle(appState.insightsMode == mode ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(appState.insightsMode == mode ? ColorPalette.Accent.green.opacity(0.15) : Color.clear)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color(hex: "09090B"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                )
-        )
-    }
-    
     private var historicalInsightsGenerateButton: some View {
         HStack(spacing: 8) {
             Button {
@@ -648,14 +714,14 @@ struct MeetingDetail_iOS: View {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 10, weight: .semibold))
                     Text(meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                     if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
-                        Text("meddpicc")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        Text("sales")
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     } else if appState.insightsMode == .questions && !meeting.hasQuestions {
                         Text("questions")
-                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
                 }
@@ -680,7 +746,7 @@ struct MeetingDetail_iOS: View {
                     ProgressView()
                         .scaleEffect(0.7)
                     Text("updating...")
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
             }
@@ -701,7 +767,7 @@ struct MeetingDetail_iOS: View {
     
     private var notesContent: some View {
         TextEditor(text: $meeting.notes)
-            .font(.system(size: 14, design: .monospaced))
+            .font(.system(size: 14, design: .default))
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
             .padding()
@@ -727,13 +793,13 @@ struct MeetingDetail_iOS: View {
     private func historicalEmptyState(title: String, subtitle: String) -> some View {
         VStack(spacing: 10) {
             Text("◇")
-                .font(.system(size: 32, weight: .ultraLight, design: .monospaced))
+                .font(.system(size: 32, weight: .ultraLight, design: .default))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             Text(title)
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
+                .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.muted)
             Text(subtitle)
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(ColorPalette.Text.disabled)
         }
         .frame(maxWidth: .infinity)
@@ -852,10 +918,10 @@ struct HistoricalSavedTrainingContent_iOS: View {
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(spacing: 12) {
                                 Text("total \(speaker.totalFillers)")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "E6EDF3"))
                                 Text("per min \(String(format: "%.1f", speaker.fillersPerMinute))")
-                                    .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                    .font(.system(size: 11, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "8B949E"))
                             }
                             
@@ -864,11 +930,11 @@ struct HistoricalSavedTrainingContent_iOS: View {
                                     ForEach(speaker.fillers) { entry in
                                         HStack(spacing: 6) {
                                             Text(entry.word)
-                                                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                                                .font(.system(size: 11, weight: .medium, design: .default))
                                                 .foregroundStyle(Color(hex: "D4D4D8"))
                                                 .frame(width: 70, alignment: .trailing)
                                             Text("\(entry.count)")
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                                .font(.system(size: 11, weight: .semibold, design: .default))
                                                 .foregroundStyle(Color(hex: "F59E0B"))
                                         }
                                     }
@@ -883,12 +949,12 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 HistoricalDetailBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.primary)
                         Text("•")
                             .foregroundStyle(ColorPalette.Text.disabled)
                         Text("others \(Int((1 - metrics.talkRatioYou) * 100))%")
-                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
                 }
@@ -940,7 +1006,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                         )
                     }
                     Text("lower = clearer = better")
-                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(ColorPalette.Text.disabled)
                 }
             }
@@ -974,7 +1040,7 @@ private struct HistoricalDetailBlock_iOS<Content: View>: View {
                     .frame(width: 3, height: 12)
                     .cornerRadius(1.5)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 12, weight: .semibold, design: .default))
                     .foregroundStyle(color)
                 if let info {
                     HistoricalMetricInfoButton_iOS(info: info, accent: color)
@@ -1167,16 +1233,16 @@ private struct HistoricalTrainingMetricRow_iOS: View {
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? ColorPalette.Accent.green : ColorPalette.Text.muted)
                 .frame(width: 62, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.primary)
             Spacer(minLength: 6)
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(ColorPalette.Text.disabled)
             }
         }

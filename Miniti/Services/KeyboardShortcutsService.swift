@@ -13,11 +13,6 @@ final class KeyboardShortcutsService: ObservableObject {
     var onGenerateInsights: (() -> Void)?
     var onNewSession: (() -> Void)?
     var onGoHome: (() -> Void)?
-    var onStandardMode: (() -> Void)?
-    var onMeddpiccMode: (() -> Void)?
-    var onTrainingMode: (() -> Void)?
-    var onQuestionsMode: (() -> Void)?
-    var onDocsMode: (() -> Void)?
     var onZonedOut: (() -> Void)?
     var onToggleHelp: (() -> Void)?
     var onToggleSidebarCollapse: (() -> Void)?
@@ -105,36 +100,6 @@ final class KeyboardShortcutsService: ObservableObject {
         // ⌘] - Toggle insights collapse
         if modifiers == .command && event.keyCode == kVK_ANSI_RightBracket {
             onToggleInsightsCollapse?()
-            return nil
-        }
-        
-        // ⌘1 - Standard mode
-        if modifiers == .command && event.keyCode == kVK_ANSI_1 {
-            onStandardMode?()
-            return nil
-        }
-        
-        // ⌘2 - MEDDPICC mode
-        if modifiers == .command && event.keyCode == kVK_ANSI_2 {
-            onMeddpiccMode?()
-            return nil
-        }
-        
-        // ⌘3 - Training mode
-        if modifiers == .command && event.keyCode == kVK_ANSI_3 {
-            onTrainingMode?()
-            return nil
-        }
-        
-        // ⌘4 - Questions mode
-        if modifiers == .command && event.keyCode == kVK_ANSI_4 {
-            onQuestionsMode?()
-            return nil
-        }
-
-        // ⌘5 - Docs mode
-        if modifiers == .command && event.keyCode == kVK_ANSI_5 {
-            onDocsMode?()
             return nil
         }
         
@@ -294,11 +259,6 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "Esc", description: "Go home / Close", category: "Navigation"),
     
     // Insights
-    KeyboardShortcut(keys: "⌘1", description: "Standard mode", category: "Insights"),
-    KeyboardShortcut(keys: "⌘2", description: "MEDDPICC mode", category: "Insights"),
-    KeyboardShortcut(keys: "⌘3", description: "Training mode", category: "Insights"),
-    KeyboardShortcut(keys: "⌘4", description: "Questions mode", category: "Insights"),
-    KeyboardShortcut(keys: "⌘5", description: "Docs mode", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out — catch me up", category: "Insights"),
     
@@ -329,9 +289,6 @@ private let kVK_ANSI_N: UInt16 = 0x2D
 private let kVK_ANSI_H: UInt16 = 0x04
 private let kVK_ANSI_J: UInt16 = 0x26
 private let kVK_ANSI_K: UInt16 = 0x28
-private let kVK_ANSI_1: UInt16 = 0x12
-private let kVK_ANSI_2: UInt16 = 0x13
-private let kVK_ANSI_3: UInt16 = 0x14
 private let kVK_ANSI_Z: UInt16 = 0x06
 private let kVK_ANSI_Slash: UInt16 = 0x2C
 private let kVK_ANSI_LeftBracket: UInt16 = 0x21

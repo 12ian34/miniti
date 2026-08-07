@@ -8,7 +8,7 @@ enum OpenAIModel: String, Codable {
 
 // MARK: - Insights Mode
 
-enum InsightsMode: String, CaseIterable, Codable {
+enum InsightsMode: String, CaseIterable, Codable, Hashable {
     case standard = "standard"
     case meddpicc = "meddpicc"
     case training = "training"
@@ -17,21 +17,38 @@ enum InsightsMode: String, CaseIterable, Codable {
     
     var displayName: String {
         switch self {
-        case .standard: return "standard"
-        case .meddpicc: return "MEDDPICC"
-        case .training: return "training"
-        case .questions: return "questions"
-        case .docs: return "docs"
+        case .standard: return "Summary"
+        case .meddpicc: return "Sales"
+        case .training: return "Coaching"
+        case .questions: return "Questions"
+        case .docs: return "Playbook"
         }
     }
     
     var description: String {
         switch self {
-        case .standard: return "General meeting insights"
-        case .meddpicc: return "Sales qualification framework"
-        case .training: return "Speech pattern analysis"
+        case .standard: return "Notes, decisions, and action items"
+        case .meddpicc: return "MEDDPICC qualification"
+        case .training: return "Talk ratio, pace, and speech patterns"
         case .questions: return "Suggested questions to ask"
-        case .docs: return "Docs-grounded sales playbook"
+        case .docs: return "Answers from connected docs"
+        }
+    }
+
+    static let coreModes: [InsightsMode] = [.standard, .questions, .training]
+    static let specialistModes: [InsightsMode] = [.meddpicc, .docs]
+
+    var isSpecialist: Bool {
+        Self.specialistModes.contains(self)
+    }
+
+    var systemImage: String {
+        switch self {
+        case .standard: return "sparkles"
+        case .meddpicc: return "scope"
+        case .training: return "waveform.path.ecg"
+        case .questions: return "questionmark.bubble"
+        case .docs: return "book.closed"
         }
     }
 }
@@ -191,14 +208,14 @@ struct SuggestedQuestion: Codable, Identifiable, Equatable {
 
 // MARK: - Training Metrics (locally computed, no LLM)
 
-struct TrainingMetrics {
-    struct FillerEntry: Identifiable {
+struct TrainingMetrics: Sendable {
+    struct FillerEntry: Identifiable, Sendable {
         let id = UUID()
         let word: String
         let count: Int
     }
     
-    struct SpeakerStats: Identifiable {
+    struct SpeakerStats: Identifiable, Sendable {
         let id = UUID()
         let speakerLabel: String
         let isLocalMic: Bool
@@ -217,7 +234,7 @@ struct TrainingMetrics {
     let talkRatioYou: Double
     let durationMinutes: Double
     
-    struct Segment {
+    struct Segment: Sendable {
         let text: String
         let speaker: Int
         let isFinal: Bool

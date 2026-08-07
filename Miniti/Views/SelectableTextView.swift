@@ -10,17 +10,26 @@ import UIKit
 /// Read-only text view backed by native AppKit/UIKit so users can select and copy
 /// across multiple paragraphs/segments — something SwiftUI's `Text` cannot do
 /// when multiple `Text` views are stacked.
+struct SelectableTextMutation {
+    let revision: UInt64
+    let range: NSRange
+    let replacement: NSAttributedString
+}
+
 struct SelectableTextView: View {
     let attributed: NSAttributedString
+    let mutation: SelectableTextMutation?
     let onSelectionChange: ((NSRange?) -> Void)?
     let onDeleteSelection: (() -> Void)?
 
     init(
         _ attributed: NSAttributedString,
+        mutation: SelectableTextMutation? = nil,
         onSelectionChange: ((NSRange?) -> Void)? = nil,
         onDeleteSelection: (() -> Void)? = nil
     ) {
         self.attributed = attributed
+        self.mutation = mutation
         self.onSelectionChange = onSelectionChange
         self.onDeleteSelection = onDeleteSelection
     }
@@ -29,11 +38,16 @@ struct SelectableTextView: View {
         #if os(macOS)
         _SelectableTextViewMac(
             attributed: attributed,
+            mutation: mutation,
             onSelectionChange: onSelectionChange,
             onDeleteSelection: onDeleteSelection
         )
         #else
-        _SelectableTextViewIOS(attributed: attributed, onSelectionChange: onSelectionChange)
+        _SelectableTextViewIOS(
+            attributed: attributed,
+            mutation: mutation,
+            onSelectionChange: onSelectionChange
+        )
         #endif
     }
 }
@@ -41,19 +55,26 @@ struct SelectableTextView: View {
 #if os(macOS)
 private struct _SelectableTextViewMac: NSViewRepresentable {
     let attributed: NSAttributedString
+    let mutation: SelectableTextMutation?
     let onSelectionChange: ((NSRange?) -> Void)?
     let onDeleteSelection: (() -> Void)?
 
     func makeNSView(context: Context) -> _SelectableTextContainer {
         _SelectableTextContainer(
             attributed: attributed,
+            mutation: mutation,
             onSelectionChange: onSelectionChange,
             onDeleteSelection: onDeleteSelection
         )
     }
 
     func updateNSView(_ nsView: _SelectableTextContainer, context: Context) {
-        nsView.apply(attributed, onSelectionChange: onSelectionChange, onDeleteSelection: onDeleteSelection)
+        nsView.apply(
+            attributed,
+            mutation: mutation,
+            onSelectionChange: onSelectionChange,
+            onDeleteSelection: onDeleteSelection
+        )
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: _SelectableTextContainer, context: Context) -> CGSize? {
@@ -80,12 +101,18 @@ final class _SelectableNativeTextView: NSTextView {
 
 final class _SelectableTextContainer: NSView, NSTextViewDelegate {
     private let textView: _SelectableNativeTextView
+    private let measurementStorage: NSTextStorage
+    private let measurementLayoutManager: NSLayoutManager
+    private let measurementContainer: NSTextContainer
     private var lastMeasuredWidth: CGFloat = -1
     private var lastMeasuredHeight: CGFloat = 0
+    private var lastAppliedRevision: UInt64
+    private var lastAttributedInput: NSAttributedString
     private var onSelectionChange: ((NSRange?) -> Void)?
 
     init(
         attributed: NSAttributedString,
+        mutation: SelectableTextMutation?,
         onSelectionChange: ((NSRange?) -> Void)?,
         onDeleteSelection: (() -> Void)?
     ) {
@@ -108,7 +135,25 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
         tv.translatesAutoresizingMaskIntoConstraints = false
         tv.textStorage?.setAttributedString(attributed)
         tv.onDeleteSelection = onDeleteSelection
+
+        let measurementStorage = NSTextStorage(attributedString: attributed)
+        let measurementLayoutManager = NSLayoutManager()
+        measurementLayoutManager.allowsNonContiguousLayout = false
+        let measurementContainer = NSTextContainer(
+            size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
+        )
+        measurementContainer.lineFragmentPadding = tv.textContainer?.lineFragmentPadding ?? 0
+        measurementContainer.widthTracksTextView = false
+        measurementContainer.heightTracksTextView = false
+        measurementLayoutManager.addTextContainer(measurementContainer)
+        measurementStorage.addLayoutManager(measurementLayoutManager)
+
         self.textView = tv
+        self.measurementStorage = measurementStorage
+        self.measurementLayoutManager = measurementLayoutManager
+        self.measurementContainer = measurementContainer
+        self.lastAppliedRevision = mutation?.revision ?? 0
+        self.lastAttributedInput = attributed
         self.onSelectionChange = onSelectionChange
         super.init(frame: .zero)
         tv.delegate = self
@@ -125,13 +170,39 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
 
     func apply(
         _ attributed: NSAttributedString,
+        mutation: SelectableTextMutation?,
         onSelectionChange: ((NSRange?) -> Void)?,
         onDeleteSelection: (() -> Void)?
     ) {
         self.onSelectionChange = onSelectionChange
         textView.onDeleteSelection = onDeleteSelection
-        guard textView.textStorage?.isEqual(to: attributed) == false else { return }
-        textView.textStorage?.setAttributedString(attributed)
+        guard let displayStorage = textView.textStorage else { return }
+
+        let appliedIncrementally: Bool
+        if let mutation,
+           mutation.revision != lastAppliedRevision,
+           NSMaxRange(mutation.range) <= displayStorage.length,
+           NSMaxRange(mutation.range) <= measurementStorage.length {
+            displayStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
+            measurementStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
+            lastAppliedRevision = mutation.revision
+            lastAttributedInput = attributed
+            appliedIncrementally = true
+        } else {
+            appliedIncrementally = false
+        }
+
+        if !appliedIncrementally {
+            // NSAttributedString inputs are immutable view values. Unrelated SwiftUI
+            // updates commonly pass the exact same instance, so avoid an O(n) deep
+            // equality walk over a 45–60 minute transcript in that case.
+            guard attributed !== lastAttributedInput else { return }
+            lastAttributedInput = attributed
+            guard displayStorage.isEqual(to: attributed) == false else { return }
+            displayStorage.setAttributedString(attributed)
+            measurementStorage.setAttributedString(attributed)
+            if let mutation { lastAppliedRevision = mutation.revision }
+        }
         lastMeasuredWidth = -1
         // Do NOT call invalidateIntrinsicContentSize() or needsLayout = true here.
         // updateNSView can run inside an in-progress SwiftUI/AppKit layout pass,
@@ -152,36 +223,15 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
 
     func measuredHeight(for width: CGFloat) -> CGFloat {
         if abs(width - lastMeasuredWidth) < 0.5 { return lastMeasuredHeight }
-        guard let storage = textView.textStorage,
-              let displayContainer = textView.textContainer,
-              let displayLayoutManager = textView.layoutManager else { return 0 }
-
-        // Measure via a throwaway layout manager attached to a COPY of the real
-        // text storage. Side-effect free (does not mutate the live textView's
-        // container or layoutManager), but we must force full glyph generation
-        // before reading usedRect — ensureLayout(for:) alone under-reports on
-        // some macOS versions because glyphs are generated lazily.
-        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
-        container.lineFragmentPadding = displayContainer.lineFragmentPadding
-        container.widthTracksTextView = false
-        container.heightTracksTextView = false
-
-        let layoutManager = NSLayoutManager()
-        layoutManager.usesFontLeading = displayLayoutManager.usesFontLeading
-        layoutManager.typesetterBehavior = displayLayoutManager.typesetterBehavior
-        layoutManager.allowsNonContiguousLayout = false
-        layoutManager.addTextContainer(container)
-
-        let measurementStorage = NSTextStorage(attributedString: storage)
-        measurementStorage.addLayoutManager(layoutManager)
-
-        // Canonical force-full-layout idiom: glyphRange(for:) triggers glyph
-        // generation for the entire container, then ensureLayout guarantees
-        // layout is committed for those glyphs, then usedRect reflects the
-        // real rendered height.
-        _ = layoutManager.glyphRange(for: container)
-        layoutManager.ensureLayout(for: container)
-        let rect = layoutManager.usedRect(for: container)
+        measurementContainer.containerSize = NSSize(
+            width: width,
+            height: CGFloat.greatestFiniteMagnitude
+        )
+        // The dedicated measurement stack persists across updates, so TextKit
+        // can reuse glyph/layout work before an appended or replaced tail.
+        _ = measurementLayoutManager.glyphRange(for: measurementContainer)
+        measurementLayoutManager.ensureLayout(for: measurementContainer)
+        let rect = measurementLayoutManager.usedRect(for: measurementContainer)
 
         lastMeasuredWidth = width
         lastMeasuredHeight = ceil(rect.height)
@@ -193,6 +243,7 @@ final class _SelectableTextContainer: NSView, NSTextViewDelegate {
 
 private struct _SelectableTextViewIOS: UIViewRepresentable {
     let attributed: NSAttributedString
+    let mutation: SelectableTextMutation?
     let onSelectionChange: ((NSRange?) -> Void)?
 
     func makeCoordinator() -> Coordinator {
@@ -210,6 +261,8 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
         tv.dataDetectorTypes = []
         tv.adjustsFontForContentSizeCategory = false
         tv.attributedText = attributed
+        context.coordinator.lastAppliedRevision = mutation?.revision ?? 0
+        context.coordinator.lastAttributedInput = attributed
         tv.delegate = context.coordinator
         tv.setContentCompressionResistancePriority(.required, for: .vertical)
         tv.setContentHuggingPriority(.required, for: .vertical)
@@ -218,8 +271,18 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
 
     func updateUIView(_ uiView: UITextView, context: Context) {
         context.coordinator.onSelectionChange = onSelectionChange
-        if uiView.attributedText != attributed {
+        if let mutation,
+           mutation.revision != context.coordinator.lastAppliedRevision,
+           NSMaxRange(mutation.range) <= uiView.textStorage.length {
+            uiView.textStorage.replaceCharacters(in: mutation.range, with: mutation.replacement)
+            context.coordinator.lastAppliedRevision = mutation.revision
+            context.coordinator.lastAttributedInput = attributed
+            uiView.invalidateIntrinsicContentSize()
+        } else if attributed !== context.coordinator.lastAttributedInput {
+            context.coordinator.lastAttributedInput = attributed
+            guard uiView.attributedText != attributed else { return }
             uiView.attributedText = attributed
+            if let mutation { context.coordinator.lastAppliedRevision = mutation.revision }
             uiView.invalidateIntrinsicContentSize()
         }
     }
@@ -233,6 +296,8 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var onSelectionChange: ((NSRange?) -> Void)?
+        var lastAppliedRevision: UInt64 = 0
+        var lastAttributedInput: NSAttributedString?
 
         init(onSelectionChange: ((NSRange?) -> Void)?) {
             self.onSelectionChange = onSelectionChange
@@ -252,27 +317,56 @@ private struct _SelectableTextViewIOS: UIViewRepresentable {
 // MARK: - Attributed string builders
 
 enum SelectableAttributed {
-    /// Build an attributed transcript from segments. Each turn gets a small header
-    /// line (speaker · m:ss) in the speaker's color, then the body text in primary.
-    /// The whole thing is one attributed string so selection spans across turns.
+    struct TranscriptDocument {
+        let attributed: NSAttributedString
+        let turns: [TranscriptTurn]
+        let turnStartOffsets: [Int]
+    }
+
+    /// Build an attributed transcript from speaker turns. Transport-finalized chunks
+    /// from the same displayed speaker share one header and body paragraph.
     static func transcript(
         turns: [TranscriptTurn],
         speakerNames: [String: String]?,
         selfIDs: Set<Int>? = nil,
         bodyFontSize: CGFloat = 13,
-        headerFontSize: CGFloat = 10
+        headerFontSize: CGFloat = 10,
+        lineSpacing: CGFloat = 2
     ) -> NSAttributedString {
+        transcriptDocument(
+            turns: turns,
+            speakerNames: speakerNames,
+            selfIDs: selfIDs,
+            bodyFontSize: bodyFontSize,
+            headerFontSize: headerFontSize,
+            lineSpacing: lineSpacing
+        ).attributed
+    }
+
+    static func transcriptDocument(
+        turns: [TranscriptTurn],
+        speakerNames: [String: String]?,
+        selfIDs: Set<Int>? = nil,
+        bodyFontSize: CGFloat = 13,
+        headerFontSize: CGFloat = 10,
+        lineSpacing: CGFloat = 2,
+        startsAtDocumentBeginning: Bool = true
+    ) -> TranscriptDocument {
         let result = NSMutableAttributedString()
-        let bodyFont = monoFont(size: bodyFontSize, weight: .regular)
-        let headerFont = monoFont(size: headerFontSize, weight: .semibold)
+        let bodyFont = appFont(size: bodyFontSize, weight: .regular)
+        let headerFont = appFont(size: headerFontSize, weight: .semibold)
         let bodyPara = NSMutableParagraphStyle()
         bodyPara.paragraphSpacing = 6
-        bodyPara.lineSpacing = 2
+        bodyPara.lineSpacing = lineSpacing
         let headerPara = NSMutableParagraphStyle()
         headerPara.paragraphSpacingBefore = 10
         headerPara.paragraphSpacing = 2
 
-        for (index, turn) in turns.enumerated() {
+        let displayTurns = mergeTurns(turns, speakerNames: speakerNames, selfIDs: selfIDs)
+        var turnStartOffsets: [Int] = []
+        turnStartOffsets.reserveCapacity(displayTurns.count)
+        for (index, turn) in displayTurns.enumerated() {
+            turnStartOffsets.append(result.length)
             let speakerColor = platformColor(for: speakerColor(for: turn.speaker, selfIDs: selfIDs))
             let label = speakerLabel(for: turn.speaker, names: speakerNames, selfIDs: selfIDs)
             let timestamp = formatTimestamp(turn.timestamp)
@@ -280,19 +374,23 @@ enum SelectableAttributed {
             result.append(NSAttributedString(string: header, attributes: [
                 .font: headerFont,
                 .foregroundColor: speakerColor,
-                .paragraphStyle: index == 0 ? bodyPara : headerPara,
+                .paragraphStyle: startsAtDocumentBeginning && index == 0 ? bodyPara : headerPara,
             ]))
-            let body = turn.text + (index == turns.count - 1 ? "" : "\n")
+            let body = turn.text + (index == displayTurns.count - 1 ? "" : "\n")
             result.append(NSAttributedString(string: body, attributes: [
                 .font: bodyFont,
                 .foregroundColor: platformColor(for: Color(hex: "E6EDF3")),
                 .paragraphStyle: bodyPara,
             ]))
         }
-        return result
+        return TranscriptDocument(
+            attributed: result,
+            turns: displayTurns,
+            turnStartOffsets: turnStartOffsets
+        )
     }
 
-    /// Build a plain monospaced attributed string from a single body of text.
+    /// Build a plain attributed string from a single body of text.
     static func body(
         _ text: String,
         fontSize: CGFloat = 13,
@@ -302,7 +400,7 @@ enum SelectableAttributed {
         let para = NSMutableParagraphStyle()
         para.lineSpacing = lineSpacing
         return NSAttributedString(string: text, attributes: [
-            .font: monoFont(size: fontSize, weight: .regular),
+            .font: appFont(size: fontSize, weight: .regular),
             .foregroundColor: platformColor(for: color),
             .paragraphStyle: para,
         ])
@@ -317,8 +415,8 @@ enum SelectableAttributed {
         textColor: Color = Color(hex: "E6EDF3")
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
-        let font = monoFont(size: fontSize, weight: .regular)
-        let prefixFont = monoFont(size: fontSize, weight: .medium)
+        let font = appFont(size: fontSize, weight: .regular)
+        let prefixFont = appFont(size: fontSize, weight: .medium)
         let para = NSMutableParagraphStyle()
         para.paragraphSpacing = 6
         para.headIndent = (prefix.count == 3 ? 32 : 20) // crude indent for wrapped lines
@@ -385,32 +483,44 @@ enum SelectableAttributed {
         speakerNames: [String: String]?,
         selfIDs: Set<Int>? = nil,
         bodyFontSize: CGFloat = 13,
-        headerFontSize: CGFloat = 10
+        headerFontSize: CGFloat = 10,
+        lineSpacing: CGFloat = 2
     ) -> TranscriptRenderModel {
         let result = NSMutableAttributedString()
-        let bodyFont = monoFont(size: bodyFontSize, weight: .regular)
-        let headerFont = monoFont(size: headerFontSize, weight: .semibold)
+        let bodyFont = appFont(size: bodyFontSize, weight: .regular)
+        let headerFont = appFont(size: headerFontSize, weight: .semibold)
         let bodyPara = NSMutableParagraphStyle()
         bodyPara.paragraphSpacing = 6
-        bodyPara.lineSpacing = 2
+        bodyPara.lineSpacing = lineSpacing
         let headerPara = NSMutableParagraphStyle()
         headerPara.paragraphSpacingBefore = 10
         headerPara.paragraphSpacing = 2
 
         var spans: [TranscriptRenderSpan] = []
         spans.reserveCapacity(segments.count)
+        var previousDisplayKey: String?
         for (index, segment) in segments.enumerated() {
-            let speakerColor = platformColor(for: speakerColor(for: segment.speaker, selfIDs: selfIDs))
-            let label = speakerLabel(for: segment.speaker, names: speakerNames, selfIDs: selfIDs)
-            let timestamp = formatTimestamp(segment.timestamp)
-            let header = "\(label) · \(timestamp)\n"
+            let displayKey = turnDisplayKey(segment.speaker, names: speakerNames, selfIDs: selfIDs)
+            let startsNewTurn = displayKey != previousDisplayKey
             let headerStart = result.length
-            result.append(NSAttributedString(string: header, attributes: [
-                .font: headerFont,
-                .foregroundColor: speakerColor,
-                .paragraphStyle: index == 0 ? bodyPara : headerPara,
-            ]))
-            let headerRange = NSRange(location: headerStart, length: (header as NSString).length)
+            let headerRange: NSRange
+            if startsNewTurn {
+                let speakerColor = platformColor(for: speakerColor(for: segment.speaker, selfIDs: selfIDs))
+                let label = speakerLabel(for: segment.speaker, names: speakerNames, selfIDs: selfIDs)
+                let timestamp = formatTimestamp(segment.timestamp)
+                let header = "\(label) · \(timestamp)\n"
+                result.append(NSAttributedString(string: header, attributes: [
+                    .font: headerFont,
+                    .foregroundColor: speakerColor,
+                    .paragraphStyle: index == 0 ? bodyPara : headerPara,
+                ]))
+                headerRange = NSRange(location: headerStart, length: (header as NSString).length)
+            } else {
+                // Keep a span for every stored segment so transcript trimming can
+                // still map selections precisely, even though the repeated header
+                // is omitted from the visual speaker turn.
+                headerRange = NSRange(location: headerStart, length: 0)
+            }
 
             let bodyStart = result.length
             result.append(NSAttributedString(string: segment.text, attributes: [
@@ -420,7 +530,10 @@ enum SelectableAttributed {
             ]))
             let bodyRange = NSRange(location: bodyStart, length: (segment.text as NSString).length)
             if index != segments.count - 1 {
-                result.append(NSAttributedString(string: "\n", attributes: [
+                let next = segments[index + 1]
+                let nextKey = turnDisplayKey(next.speaker, names: speakerNames, selfIDs: selfIDs)
+                let separator = nextKey == displayKey ? " " : "\n"
+                result.append(NSAttributedString(string: separator, attributes: [
                     .font: bodyFont,
                     .foregroundColor: platformColor(for: ColorPalette.Text.secondary),
                     .paragraphStyle: bodyPara,
@@ -435,15 +548,14 @@ enum SelectableAttributed {
                 headerRange: headerRange,
                 bodyRange: bodyRange
             ))
+            previousDisplayKey = displayKey
         }
         return TranscriptRenderModel(attributed: result, spans: spans)
     }
 
-    /// Merge consecutive turns that would render as the same on-screen speaker, unless
-    /// the previous turn ended with a sentence terminator. Groups all self-IDs into
-    /// one "you" bucket and collapses IDs that share an inferred/manual name, so
-    /// diarization drift across IDs doesn't fragment a single speaker into multiple
-    /// visual blocks in saved transcripts.
+    /// Merge consecutive chunks that render as the same on-screen speaker into one
+    /// visual turn. Sentence punctuation affects prose, not speaker identity. Groups
+    /// all self IDs and IDs sharing an inferred/manual name into the same turn.
     static func mergeTurns(
         _ turns: [TranscriptTurn],
         speakerNames: [String: String]?,
@@ -454,8 +566,7 @@ enum SelectableAttributed {
         for turn in turns {
             if let last = merged.last,
                turnDisplayKey(last.speaker, names: speakerNames, selfIDs: selfIDs)
-                == turnDisplayKey(turn.speaker, names: speakerNames, selfIDs: selfIDs),
-               !endsSentence(last.text) {
+                == turnDisplayKey(turn.speaker, names: speakerNames, selfIDs: selfIDs) {
                 merged[merged.count - 1] = TranscriptTurn(
                     speaker: last.speaker,
                     timestamp: last.timestamp,
@@ -482,17 +593,6 @@ enum SelectableAttributed {
         return "id:\(speaker)"
     }
 
-    private static func endsSentence(_ text: String) -> Bool {
-        let trailingClosers = CharacterSet(charactersIn: "\"'”’)]}")
-        let sentenceTerminators: Set<Character> = [".", "!", "?", "…"]
-        var trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        while let scalar = trimmed.unicodeScalars.last, trailingClosers.contains(scalar) {
-            trimmed.removeLast()
-        }
-        guard let last = trimmed.last else { return false }
-        return sentenceTerminators.contains(last)
-    }
-
     private static func joinTranscriptFragments(_ lhs: String, _ rhs: String) -> String {
         let left = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
         let right = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -510,12 +610,12 @@ enum SelectableAttributed {
     }
 
     #if os(macOS)
-    private static func monoFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
-        NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    private static func appFont(size: CGFloat, weight: NSFont.Weight) -> NSFont {
+        NSFont.systemFont(ofSize: size, weight: weight)
     }
     #else
-    private static func monoFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
-        UIFont.monospacedSystemFont(ofSize: size, weight: weight)
+    private static func appFont(size: CGFloat, weight: UIFont.Weight) -> UIFont {
+        UIFont.systemFont(ofSize: size, weight: weight)
     }
     #endif
 
@@ -532,31 +632,25 @@ enum SelectableAttributed {
 
 struct TranscriptTrimView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.undoManager) private var undoManager
     @Bindable var meeting: Meeting
     @State private var selectedRange: NSRange?
     @State private var undoSnapshots: [TranscriptSegmentSnapshot]?
     @State private var pendingTrimOperation: TranscriptTrimOperation?
     @State private var pendingTrimSnapshots: [TranscriptSegmentSnapshot] = []
     @State private var isConfirmingTrim = false
-
-    private var sortedSegments: [TranscriptSegment] {
-        meeting.segments
-            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            .sorted { $0.timestamp < $1.timestamp }
-    }
-
-    private var renderModel: SelectableAttributed.TranscriptRenderModel {
-        SelectableAttributed.transcriptRenderModel(
-            segments: sortedSegments.map {
-                .init(id: $0.id, speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-            },
-            speakerNames: meeting.speakerNames,
-            selfIDs: meeting.selfSpeakerIDs
-        )
-    }
+    @State private var cachedSortedSegments: [TranscriptSegment] = []
+    @State private var cachedRenderModel = SelectableAttributed.TranscriptRenderModel(
+        attributed: NSAttributedString(),
+        spans: []
+    )
+    @State private var cachedRenderMutation: SelectableTextMutation?
+    @State private var renderRevision: UInt64 = 0
+    @State private var renderCacheTask: Task<Void, Never>?
 
     private var selectedTextSelections: [TranscriptTextSelection] {
-        renderModel.textSelections(overlapping: selectedRange)
+        cachedRenderModel.textSelections(overlapping: selectedRange)
     }
 
     private var hasSelectedTranscriptText: Bool {
@@ -564,7 +658,7 @@ struct TranscriptTrimView: View {
     }
 
     private var currentSnapshots: [TranscriptSegmentSnapshot] {
-        sortedSegments.map {
+        cachedSortedSegments.map {
             TranscriptSegmentSnapshot(
                 id: $0.id,
                 speaker: $0.speaker,
@@ -586,7 +680,8 @@ struct TranscriptTrimView: View {
 
             ScrollView {
                 SelectableTextView(
-                    renderModel.attributed,
+                    cachedRenderModel.attributed,
+                    mutation: cachedRenderMutation,
                     onSelectionChange: { range in
                         selectedRange = range
                     },
@@ -607,7 +702,73 @@ struct TranscriptTrimView: View {
                 applyPendingTrim()
             }
         } message: {
-            Text("this will clear standard, meddpicc, questions, and docs insights. regenerate insights after trimming. undo restores transcript text only - it does not restore the old insights.")
+            Text("this will clear summary, sales, questions, and playbook insights. regenerate insights after trimming. undo restores transcript text only — it does not restore the old insights.")
+        }
+        .onAppear {
+            rebuildRenderCache()
+        }
+        .onChange(of: meeting.segments.count) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onChange(of: meeting.transcriptRevision) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onChange(of: meeting.speakerNamesJSON) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onChange(of: meeting.selfSpeakerIDsJSON) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onChange(of: meeting.selfSpeakerID) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onChange(of: interfaceScale) { _, _ in
+            scheduleRenderCacheRebuild()
+        }
+        .onDisappear {
+            renderCacheTask?.cancel()
+            renderCacheTask = nil
+        }
+    }
+
+    private func scheduleRenderCacheRebuild() {
+        renderCacheTask?.cancel()
+        renderCacheTask = Task { @MainActor in
+            // Coalesce SwiftData relationship/member notifications from one save.
+            try? await Task.sleep(for: .milliseconds(75))
+            guard !Task.isCancelled else { return }
+            rebuildRenderCache()
+        }
+    }
+
+    private func rebuildRenderCache() {
+        renderCacheTask?.cancel()
+        renderCacheTask = nil
+
+        let segments = meeting.segments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        let nextModel = SelectableAttributed.transcriptRenderModel(
+            segments: segments.map {
+                .init(id: $0.id, speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+            },
+            speakerNames: meeting.speakerNames,
+            selfIDs: meeting.selfSpeakerIDs,
+            bodyFontSize: interfaceScale.transcriptBodySize,
+            headerFontSize: interfaceScale.transcriptHeaderSize,
+            lineSpacing: interfaceScale.transcriptLineSpacing
+        )
+
+        renderRevision &+= 1
+        cachedRenderMutation = SelectableTextMutation(
+            revision: renderRevision,
+            range: NSRange(location: 0, length: cachedRenderModel.attributed.length),
+            replacement: nextModel.attributed
+        )
+        cachedSortedSegments = segments
+        cachedRenderModel = nextModel
+        if let selectedRange, NSMaxRange(selectedRange) > nextModel.attributed.length {
+            self.selectedRange = nil
         }
     }
 
@@ -617,7 +778,7 @@ struct TranscriptTrimView: View {
                 deleteSelectedText()
             } label: {
                 Label("delete selection", systemImage: "scissors")
-                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 10, weight: .semibold, design: .default))
             }
             .buttonStyle(.plain)
             .disabled(!hasSelectedTranscriptText)
@@ -631,7 +792,7 @@ struct TranscriptTrimView: View {
                     }
                 } label: {
                     Label("undo trim", systemImage: "arrow.uturn.backward")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(ColorPalette.Text.muted)
@@ -639,7 +800,7 @@ struct TranscriptTrimView: View {
 
             if let selectedRange, selectedRange.length > 0, selectedTextSelections.isEmpty {
                 Text("selection includes only speaker labels")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(ColorPalette.Text.meta)
             }
         }
@@ -653,10 +814,10 @@ struct TranscriptTrimView: View {
                 .foregroundStyle(ColorPalette.Status.warning)
             VStack(alignment: .leading, spacing: 2) {
                 Text("transcript edited")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
-                Text("standard, meddpicc, questions, and docs insights were cleared; regenerate after trimming")
-                    .font(.system(size: 10, weight: .regular, design: .monospaced))
+                Text("summary, sales, questions, and playbook insights were cleared; regenerate after trimming")
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(ColorPalette.Text.meta)
             }
         }
@@ -698,6 +859,15 @@ struct TranscriptTrimView: View {
         if appState.applyTranscriptTrim(operation, to: meeting) {
             undoSnapshots = snapshots
             selectedRange = nil
+            registerSystemUndo(for: snapshots)
         }
+    }
+
+    private func registerSystemUndo(for snapshots: [TranscriptSegmentSnapshot]) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: appState) { target in
+            _ = target.restoreTranscriptSnapshots(snapshots, to: meeting)
+        }
+        undoManager.setActionName("Trim Transcript")
     }
 }

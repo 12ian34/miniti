@@ -3,6 +3,7 @@ import SwiftData
 import ServiceManagement
 import AppKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
@@ -174,7 +175,7 @@ struct AccountSettingsView: View {
                     Spacer()
                     Text(DeviceIdentifier.getOrCreateDeviceId())
                         .foregroundStyle(.secondary)
-                        .font(.system(.caption, design: .monospaced))
+                        .font(.system(.caption, design: .default))
                         .textSelection(.enabled)
                 }
             }
@@ -614,7 +615,7 @@ struct APISettingsView: View {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("OpenAI")
                                     .font(.headline)
-                                Text("Powers meeting insights — summaries, action items, key topics, and MEDDPICC analysis.")
+                                Text("Powers summaries, action items, questions, and any specialist insights you enable.")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 
@@ -829,6 +830,8 @@ struct GeneralSettingsView: View {
                      : "Turn this back on to restore the Miniti menu bar icon.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                InterfaceScaleSlider()
             }
 
             Section("Recording") {
@@ -928,13 +931,59 @@ struct IntegrationsSettingsView: View {
     @AppStorage("generateAgentsMd") private var generateAgentsMd: Bool = false
     @State private var isExportingAll = false
     @State private var exportAllCount: Int?
+    @State private var isGranolaImporterPresented = false
+    @State private var isImportingGranola = false
+    @State private var granolaImportMessage: String?
+    @State private var granolaImportFailed = false
 
     var body: some View {
         Form {
+            Section("Import from Granola") {
+                Text("Generate a CSV from Granola, then import it into Miniti. Imported meetings keep their Granola provenance, and importing the same export again skips duplicates.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Link(destination: GranolaCSVImporter.exportURL) {
+                        Label("Export meetings in Granola", systemImage: "arrow.up.right.square")
+                    }
+
+                    Spacer()
+
+                    Button {
+                        isGranolaImporterPresented = true
+                    } label: {
+                        if isImportingGranola {
+                            HStack(spacing: 6) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text("importing…")
+                            }
+                        } else {
+                            Label("Import CSV…", systemImage: "tray.and.arrow.down")
+                        }
+                    }
+                    .disabled(isImportingGranola)
+                }
+
+                if let granolaImportMessage {
+                    Label(
+                        granolaImportMessage,
+                        systemImage: granolaImportFailed ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+                    )
+                    .font(.caption)
+                    .foregroundStyle(granolaImportFailed ? ColorPalette.Status.error : ColorPalette.Accent.green)
+                }
+
+                Text("Granola opens Profile → Account management. Choose Generate CSV; Granola emails the download when it is ready.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("Markdown Export") {
                 HStack {
                     Text(resolvedExportPath)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(.system(size: 11, design: .default))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -992,16 +1041,16 @@ struct IntegrationsSettingsView: View {
                         if appState.isGoogleCalendarConnected {
                             if let email = appState.googleCalendarEmail {
                                 Text(email)
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 12, design: .default))
                                     .foregroundStyle(.primary)
                             } else {
                                 Text("connected")
-                                    .font(.system(size: 12, design: .monospaced))
+                                    .font(.system(size: 12, design: .default))
                                     .foregroundStyle(.secondary)
                             }
                         } else {
                             Text("not connected")
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.system(size: 12, design: .default))
                                 .foregroundStyle(.secondary)
                         }
                         
@@ -1078,6 +1127,17 @@ struct IntegrationsSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .fileImporter(
+            isPresented: $isGranolaImporterPresented,
+            allowedContentTypes: [.commaSeparatedText, .plainText]
+        ) { result in
+            if case .success(let url) = result {
+                importGranolaCSV(from: url)
+            } else if case .failure(let error) = result {
+                granolaImportFailed = true
+                granolaImportMessage = error.localizedDescription
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
             guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
             Task { @MainActor in
@@ -1090,6 +1150,31 @@ struct IntegrationsSettingsView: View {
         markdownExportFolderPath.isEmpty
             ? NSString("~/Documents/miniti").expandingTildeInPath
             : markdownExportFolderPath
+    }
+
+    private func importGranolaCSV(from url: URL) {
+        isImportingGranola = true
+        granolaImportMessage = nil
+        granolaImportFailed = false
+        Task {
+            do {
+                let parsed = try await GranolaCSVImporter.load(from: url)
+                let result = try GranolaCSVImporter.importMeetings(
+                    parsed,
+                    into: modelContext,
+                    defaultLanguage: appState.defaultLanguage
+                )
+                granolaImportMessage = result.message
+                if result.imported > 0 {
+                    NotificationCenter.default.post(name: .minitiMeetingsImported, object: nil)
+                }
+            } catch {
+                granolaImportFailed = true
+                granolaImportMessage = error.localizedDescription
+                DebugLogger.shared.log(.app, "Granola CSV import FAILED: \(error.localizedDescription)")
+            }
+            isImportingGranola = false
+        }
     }
 
     private func chooseExportFolder() {
@@ -1161,7 +1246,7 @@ private struct DocsMCPSettingsSection: View {
                         .lineLimit(2)
                 }
             }
-            Text("HTTPS Streamable HTTP MCP server for product docs. In the Docs insights tab, tap look up when you want answers with citations. Example: https://docs.lightdash.com/mcp")
+            Text("HTTPS Streamable HTTP MCP server for product docs. In the Playbook insight view, choose a topic when you want an answer with citations. Example: https://docs.lightdash.com/mcp")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("Looking up docs sends recent transcript text from the meeting to this docs host to search for relevant pages.")

@@ -2,12 +2,20 @@ import SwiftUI
 
 struct TranscriptView: View {
     @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
     @State private var isAutoScrollEnabled = true
     @State private var previousBottomDistance: CGFloat = 0
     @State private var hasCapturedInitialBottomDistance = false
     @State private var suppressAutoScrollLockUntil = Date.distantPast
-    @State private var cachedVisibleSegments: [AppState.LiveSegment] = []
-    @State private var cachedDisplaySegments: [AppState.LiveSegment] = []
+    @State private var cachedSourceSegments: [AppState.LiveSegment] = []
+    @State private var cachedVisibleSegmentCount = 0
+    @State private var cachedVisibleSpeakers: Set<Int> = []
+    @State private var cachedDisplayTurns: [SelectableAttributed.TranscriptTurn] = []
+    @State private var cachedTurnStartOffsets: [Int] = []
+    @State private var cachedTranscript = NSAttributedString()
+    @State private var cachedTranscriptMutation: SelectableTextMutation?
+    @State private var cachedTranscriptRevision: UInt64 = 0
+    @State private var cachedLastDisplaySpeaker: Int?
     @State private var cachedUniqueSpeakers: [Int] = []
     @State private var interimText: String = ""
     @State private var currentSpeaker: Int = 0
@@ -20,33 +28,115 @@ struct TranscriptView: View {
 
     private func rebuildSegmentCaches(
         liveSegments: [AppState.LiveSegment],
-        detectedSpeakers: Set<Int>
+        detectedSpeakers: Set<Int>,
+        forceFullRebuild: Bool = false
     ) {
-        let visible = liveSegments.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let names = appState.liveSpeakerNames
         let selfIDs = appState.liveSelfSpeakerIDs
+        let canAppend = !forceFullRebuild
+            && !cachedSourceSegments.isEmpty
+            && liveSegments.count > cachedSourceSegments.count
+            && liveSegments.first == cachedSourceSegments.first
+            && liveSegments[cachedSourceSegments.count - 1] == cachedSourceSegments.last
 
-        let turns: [SelectableAttributed.TranscriptTurn] = visible.map {
-            .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-        }
-        let mergedTurns = SelectableAttributed.mergeTurns(turns, speakerNames: names, selfIDs: selfIDs)
-        let mergedSegments: [AppState.LiveSegment] = mergedTurns.map { turn in
-            AppState.LiveSegment(
-                id: UUID(),
-                text: turn.text,
-                speaker: turn.speaker,
-                timestamp: turn.timestamp,
-                isFinal: true
-            )
+        if canAppend {
+            let appended = liveSegments.dropFirst(cachedSourceSegments.count).filter {
+                !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if !appended.isEmpty, !cachedDisplayTurns.isEmpty,
+               let replacementStart = cachedTurnStartOffsets.last {
+                let oldTurnCount = cachedDisplayTurns.count
+                var updatedTurns = cachedDisplayTurns
+                for segment in appended {
+                    let next = SelectableAttributed.TranscriptTurn(
+                        speaker: segment.speaker,
+                        timestamp: segment.timestamp,
+                        text: segment.text
+                    )
+                    let mergedTail = SelectableAttributed.mergeTurns(
+                        [updatedTurns[updatedTurns.count - 1], next],
+                        speakerNames: names,
+                        selfIDs: selfIDs
+                    )
+                    if mergedTail.count == 1 {
+                        updatedTurns[updatedTurns.count - 1] = mergedTail[0]
+                    } else {
+                        updatedTurns.append(next)
+                    }
+                }
+
+                let tailStartIndex = oldTurnCount - 1
+                let tailDocument = SelectableAttributed.transcriptDocument(
+                    turns: Array(updatedTurns[tailStartIndex...]),
+                    speakerNames: names,
+                    selfIDs: selfIDs,
+                    bodyFontSize: interfaceScale.transcriptBodySize,
+                    headerFontSize: interfaceScale.transcriptHeaderSize,
+                    lineSpacing: interfaceScale.transcriptLineSpacing,
+                    startsAtDocumentBeginning: tailStartIndex == 0
+                )
+                let replacementRange = NSRange(
+                    location: replacementStart,
+                    length: cachedTranscript.length - replacementStart
+                )
+                let updatedTranscript = NSMutableAttributedString(attributedString: cachedTranscript)
+                updatedTranscript.replaceCharacters(
+                    in: replacementRange,
+                    with: tailDocument.attributed
+                )
+
+                cachedTranscriptRevision &+= 1
+                cachedTranscriptMutation = SelectableTextMutation(
+                    revision: cachedTranscriptRevision,
+                    range: replacementRange,
+                    replacement: tailDocument.attributed
+                )
+                cachedTranscript = NSAttributedString(attributedString: updatedTranscript)
+                cachedDisplayTurns = Array(updatedTurns[..<tailStartIndex]) + tailDocument.turns
+                cachedTurnStartOffsets = Array(cachedTurnStartOffsets[..<tailStartIndex])
+                    + tailDocument.turnStartOffsets.map { replacementStart + $0 }
+                cachedVisibleSegmentCount += appended.count
+                for segment in appended { cachedVisibleSpeakers.insert(segment.speaker) }
+            } else if !appended.isEmpty {
+                rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
+            }
+        } else {
+            rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
         }
 
-        var speakers = detectedSpeakers
-        for segment in visible {
-            speakers.insert(segment.speaker)
-        }
+        cachedSourceSegments = liveSegments
+        cachedLastDisplaySpeaker = cachedDisplayTurns.last?.speaker
+        updateUniqueSpeakers(detectedSpeakers)
+    }
 
-        cachedVisibleSegments = visible
-        cachedDisplaySegments = mergedSegments
+    private func rebuildAllSegments(
+        _ liveSegments: [AppState.LiveSegment],
+        names: [String: String],
+        selfIDs: Set<Int>
+    ) {
+        let visible = liveSegments.filter {
+            !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        let document = SelectableAttributed.transcriptDocument(
+            turns: visible.map {
+                .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+            },
+            speakerNames: names,
+            selfIDs: selfIDs,
+            bodyFontSize: interfaceScale.transcriptBodySize,
+            headerFontSize: interfaceScale.transcriptHeaderSize,
+            lineSpacing: interfaceScale.transcriptLineSpacing
+        )
+        cachedVisibleSegmentCount = visible.count
+        cachedVisibleSpeakers = Set(visible.map(\.speaker))
+        cachedDisplayTurns = document.turns
+        cachedTurnStartOffsets = document.turnStartOffsets
+        cachedTranscript = document.attributed
+        cachedTranscriptMutation = nil
+    }
+
+    private func updateUniqueSpeakers(_ detectedSpeakers: Set<Int>) {
+        let speakers = detectedSpeakers.union(cachedVisibleSpeakers)
         let effectiveSelves = appState.effectiveLiveSelfSpeakerIDs
         cachedUniqueSpeakers = speakers.sorted { a, b in
             let aSelf = effectiveSelves.contains(a)
@@ -138,12 +228,12 @@ struct TranscriptView: View {
 
     var body: some View {
         Group {
-            if cachedVisibleSegments.isEmpty && !hasInterimText && !appState.isRecording {
+            if cachedVisibleSegmentCount == 0 && !hasInterimText && !appState.isRecording {
                 EmptyTranscriptView()
             } else {
                 VStack(spacing: 0) {
                     // Speaker legend (show when recording or has segments)
-                    if appState.isRecording || !cachedVisibleSegments.isEmpty {
+                    if appState.isRecording || cachedVisibleSegmentCount > 0 {
                         SpeakerLegend(
                             speakers: cachedUniqueSpeakers,
                             isRecording: appState.isRecording,
@@ -175,15 +265,10 @@ struct TranscriptView: View {
                             ZStack(alignment: .bottomTrailing) {
                                 ScrollView {
                                     VStack(alignment: .leading, spacing: 6) {
-                                        if !cachedDisplaySegments.isEmpty {
+                                        if cachedTranscript.length > 0 {
                                             SelectableTextView(
-                                                SelectableAttributed.transcript(
-                                                    turns: cachedDisplaySegments.map {
-                                                        .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-                                                    },
-                                                    speakerNames: appState.liveSpeakerNames,
-                                                    selfIDs: appState.liveSelfSpeakerIDs
-                                                )
+                                                cachedTranscript,
+                                                mutation: cachedTranscriptMutation
                                             )
                                             .id("transcript")
                                         }
@@ -194,8 +279,8 @@ struct TranscriptView: View {
                                             TerminalInterimRow(
                                                 text: interimText,
                                                 speaker: interimSpeakerValue,
-                                                isNewTurn: cachedDisplaySegments.last.map {
-                                                    SelectableAttributed.displayGroupKey(speaker: $0.speaker, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
+                                                isNewTurn: cachedLastDisplaySpeaker.map {
+                                                    SelectableAttributed.displayGroupKey(speaker: $0, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
                                                     != SelectableAttributed.displayGroupKey(speaker: interimSpeakerValue, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
                                                 } ?? true,
                                                 speakerNames: appState.liveSpeakerNames,
@@ -248,7 +333,7 @@ struct TranscriptView: View {
                                         viewportHeight: scrollGeometry.size.height
                                     )
                                 }
-                                .onChange(of: cachedVisibleSegments.count) { _, newCount in
+                                .onChange(of: cachedVisibleSegmentCount) { _, newCount in
                                     if newCount == 0 {
                                         isAutoScrollEnabled = true
                                         previousBottomDistance = 0
@@ -273,7 +358,7 @@ struct TranscriptView: View {
                                 
                                 if !isAutoScrollEnabled {
                                     Text("resume auto-scroll")
-                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .font(.system(size: 10, weight: .semibold, design: .default))
                                         .foregroundStyle(Color(hex: "E6EDF3"))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
@@ -297,7 +382,8 @@ struct TranscriptView: View {
         .onAppear {
             rebuildSegmentCaches(
                 liveSegments: appState.liveSegments,
-                detectedSpeakers: appState.detectedSpeakers
+                detectedSpeakers: appState.detectedSpeakers,
+                forceFullRebuild: true
             )
             syncRuntimeSnapshot()
         }
@@ -308,21 +394,27 @@ struct TranscriptView: View {
             )
         }
         .onChange(of: appState.detectedSpeakers) { _, newSpeakers in
-            rebuildSegmentCaches(
-                liveSegments: appState.liveSegments,
-                detectedSpeakers: newSpeakers
-            )
+            updateUniqueSpeakers(newSpeakers)
         }
         .onChange(of: appState.liveSpeakerNames) { _, _ in
             rebuildSegmentCaches(
                 liveSegments: appState.liveSegments,
-                detectedSpeakers: appState.detectedSpeakers
+                detectedSpeakers: appState.detectedSpeakers,
+                forceFullRebuild: true
             )
         }
         .onChange(of: appState.liveSelfSpeakerIDs) { _, _ in
             rebuildSegmentCaches(
                 liveSegments: appState.liveSegments,
-                detectedSpeakers: appState.detectedSpeakers
+                detectedSpeakers: appState.detectedSpeakers,
+                forceFullRebuild: true
+            )
+        }
+        .onChange(of: interfaceScale) { _, _ in
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: appState.detectedSpeakers,
+                forceFullRebuild: true
             )
         }
         .onReceive(appState.transcriptRuntime.$interimText) { value in
@@ -432,18 +524,18 @@ struct SpeakerLegend: View {
                         .fill(Color(hex: "F85149"))
                         .frame(width: 6, height: 6)
                     Text("live")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F85149"))
                 }
             }
 
             Text("speakers:")
-                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
 
             if speakers.isEmpty {
                 Text("detecting...")
-                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             } else {
                 let uniqueSpeakers: [Int] = {
@@ -463,7 +555,7 @@ struct SpeakerLegend: View {
                             .fill(color)
                             .frame(width: 6, height: 6)
                         Text(label)
-                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 10, weight: .semibold, design: .default))
                             .foregroundStyle(color)
                     }
                     if let onRename {
@@ -490,11 +582,11 @@ struct SpeakerLegend: View {
             if speakers.count == 1 && !speakers.isEmpty {
                 let isSelf = effectiveSelves.contains(speakers[0])
                 Text(isSelf ? "(you only)" : "(single speaker)")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             } else if selfCount >= 1 && remoteCount == 1 {
                 Text(selfCount > 1 ? "(you ×\(selfCount) + 1 remote)" : "(you + 1 remote)")
-                    .font(.system(size: 9, weight: .regular, design: .monospaced))
+                    .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -545,6 +637,7 @@ func speakerDisplayName(for speaker: Int, names: [String: String]? = nil, selfID
 // MARK: - Terminal Style Components
 
 struct TerminalSegmentRow: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let segment: AppState.LiveSegment
     var isNewTurn: Bool = true
     var isFirst: Bool = false
@@ -564,14 +657,14 @@ struct TerminalSegmentRow: View {
                         .cornerRadius(1.5)
 
                     Text(speakerDisplayName(for: segment.speaker, names: speakerNames, selfIDs: selfIDs))
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(color)
 
                     Text("•")
                         .foregroundStyle(Color(hex: "1C1C1F"))
 
                     Text(formatTimestamp(segment.timestamp))
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
                 }
                 .padding(.top, isNewTurn && !isFirst ? 12 : 0)
@@ -588,8 +681,9 @@ struct TerminalSegmentRow: View {
                 
                 // Message text
                 Text(segment.text)
-                    .font(.system(size: 13, weight: .regular, design: .monospaced))
+                    .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
+                    .lineSpacing(interfaceScale.transcriptLineSpacing)
                     .textSelection(.enabled)
                     .padding(.leading, 12)
                     .padding(.vertical, 4)
@@ -609,6 +703,7 @@ struct TerminalSegmentRow: View {
 }
 
 struct TerminalInterimRow: View {
+    @Environment(\.interfaceScale) private var interfaceScale
     let text: String
     let speaker: Int
     var isNewTurn: Bool = true
@@ -630,14 +725,14 @@ struct TerminalInterimRow: View {
                         .cornerRadius(1.5)
 
                     Text(speakerDisplayName(for: speaker, names: speakerNames, selfIDs: selfIDs))
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(color.opacity(0.7))
                     
                     Text("•")
                         .foregroundStyle(Color(hex: "1C1C1F"))
                     
                     Text("listening...")
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "3FB950").opacity(0.7))
                 }
                 .padding(.top, 12)
@@ -654,12 +749,13 @@ struct TerminalInterimRow: View {
                 // Live text with cursor
                 HStack(spacing: 0) {
                     Text(text)
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
+                        .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "8B949E"))
+                        .lineSpacing(interfaceScale.transcriptLineSpacing)
                     
                     // Blinking cursor
                     Text("▊")
-                        .font(.system(size: 13, weight: .regular, design: .monospaced))
+                        .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
                         .foregroundStyle(color)
                         .opacity(cursorVisible ? 1 : 0)
                 }
@@ -682,11 +778,11 @@ struct EmptyTranscriptView: View {
         VStack(spacing: 16) {
             // ASCII art style icon
             Text("⬢")
-                .font(.system(size: 48, weight: .light, design: .monospaced))
+                .font(.system(size: 48, weight: .light, design: .default))
                 .foregroundStyle(Color(hex: "1C1C1F"))
             
             Text("ready to transcribe")
-                .font(.system(size: 14, weight: .medium, design: .monospaced))
+                .font(.system(size: 14, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             
             if appState.appMode == .byok && appState.deepgramApiKey.isEmpty {
@@ -697,13 +793,13 @@ struct EmptyTranscriptView: View {
                         Text("error: deepgram_api_key not set")
                             .foregroundStyle(Color(hex: "F85149"))
                     }
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: .medium, design: .default))
                     
                     Button {
                         appState.showSettings = true
                     } label: {
                         Text("[ configure ]")
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 12, weight: .semibold, design: .default))
                             .foregroundStyle(Color(hex: "58A6FF"))
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
@@ -732,6 +828,7 @@ struct SpeakerRenameTarget: Identifiable, Equatable {
 /// On save, calls `onSave` with a trimmed non-empty name. On clear, calls `onClear`
 /// (which should remove the user override so automatic inference can refill).
 struct RenameSpeakerView: View {
+    @Environment(\.undoManager) private var undoManager
     let speakerID: Int
     let currentName: String?
     let defaultName: String
@@ -757,14 +854,14 @@ struct RenameSpeakerView: View {
                     .fill(color)
                     .frame(width: 8, height: 8)
                 Text("rename speaker")
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.muted)
                 Spacer()
             }
 
             TextField(defaultName, text: $draft)
                 .textFieldStyle(.plain)
-                .font(.system(size: 13, weight: .regular, design: .monospaced))
+                .font(.system(size: 13, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
@@ -779,18 +876,18 @@ struct RenameSpeakerView: View {
             Text(currentName == nil
                  ? "automatic name will appear when detected."
                  : "currently: \(currentName!)")
-                .font(.system(size: 10, weight: .regular, design: .monospaced))
+                .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
 
             VStack(alignment: .leading, spacing: 4) {
                 Button {
-                    if isSelf { onUnmarkAsSelf() } else { onMarkAsSelf() }
+                    toggleSelfIdentification()
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: isSelf ? "person.fill.checkmark" : "person.crop.circle.badge.plus")
                             .font(.system(size: 11))
                         Text(isSelf ? "unmark as me" : (hasOtherSelves ? "also mark as me" : "this is me"))
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                            .font(.system(size: 11, weight: .semibold, design: .default))
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
@@ -809,17 +906,17 @@ struct RenameSpeakerView: View {
 
                 if !isSelf && hasOtherSelves {
                     Text("diarization sometimes splits one person across IDs — mark each one.")
-                        .font(.system(size: 9, weight: .regular, design: .monospaced))
+                        .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
                 }
             }
 
             HStack(spacing: 8) {
                 Button(role: .destructive) {
-                    onClear()
+                    clearName()
                 } label: {
                     Text("clear")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                 }
                 .disabled(currentName == nil)
 
@@ -829,7 +926,7 @@ struct RenameSpeakerView: View {
                     onCancel()
                 } label: {
                     Text("cancel")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                 }
                 .keyboardShortcut(.cancelAction)
 
@@ -837,7 +934,7 @@ struct RenameSpeakerView: View {
                     commit()
                 } label: {
                     Text("save")
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(.system(size: 11, weight: .semibold, design: .default))
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -855,7 +952,49 @@ struct RenameSpeakerView: View {
     private func commit() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
+        guard trimmed != currentName else {
+            onCancel()
+            return
+        }
+        registerUndo(actionName: "Rename Speaker") {
+            if let currentName, !currentName.isEmpty {
+                onSave(currentName)
+            } else {
+                onClear()
+            }
+        }
         onSave(trimmed)
+    }
+
+    private func clearName() {
+        guard let currentName, !currentName.isEmpty else { return }
+        registerUndo(actionName: "Clear Speaker Name") {
+            onSave(currentName)
+        }
+        onClear()
+    }
+
+    private func toggleSelfIdentification() {
+        registerUndo(actionName: isSelf ? "Unmark Speaker as Me" : "Mark Speaker as Me") {
+            if isSelf {
+                onMarkAsSelf()
+            } else {
+                onUnmarkAsSelf()
+            }
+        }
+        if isSelf {
+            onUnmarkAsSelf()
+        } else {
+            onMarkAsSelf()
+        }
+    }
+
+    private func registerUndo(actionName: String, action: @escaping () -> Void) {
+        guard let undoManager else { return }
+        undoManager.registerUndo(withTarget: undoManager) { _ in
+            action()
+        }
+        undoManager.setActionName(actionName)
     }
 }
 
