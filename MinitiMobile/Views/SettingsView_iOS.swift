@@ -364,8 +364,15 @@ private struct SettingsDetailView_iOS: View {
                     HStack {
                         Text("Insights")
                         Spacer()
-                        Text("GPT-5 Mini")
-                            .foregroundStyle(.secondary)
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Text("gpt-5-mini-2025-08-07")
+                            if appState.appMode == .managed {
+                                Text("gpt-5.4-mini-2026-03-17")
+                            }
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.trailing)
                     }
                 }
                 }

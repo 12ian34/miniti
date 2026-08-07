@@ -359,7 +359,7 @@ wss://api.deepgram.com/v1/listen?model=nova-3&language={lang}&punctuate=true&dia
 ```
 Auth via `Authorization: Token {deepgram_api_key}` header for BYOK. Managed mode uses `Authorization: Bearer {access_token}` from `/api/session` (never Token for JWTs).
 
-OpenAI for BYOK: `POST https://api.openai.com/v1/chat/completions` with `Authorization: Bearer {openai_api_key}`. Model: `gpt-5-mini`. System prompts must match the managed backend's prompts so output is consistent across modes. (Get the exact prompts from the `miniti-api` repo — they live in `app/api/insights/route.ts`.)
+OpenAI for BYOK: `POST https://api.openai.com/v1/chat/completions` with `Authorization: Bearer {openai_api_key}`. Model: pinned `gpt-5-mini-2025-08-07`. System prompts must match the managed backend's prompts. Managed mode selects models server-side: incremental requests, speaker naming, catch-up, and Playbook topic extraction use pinned `gpt-5-mini-2025-08-07`; non-incremental summaries, MEDDPICC, questions, and grounded Playbook answers use pinned `gpt-5.4-mini-2026-03-17`. (Get the exact prompts and routing from the `miniti-api` repo — they live in `app/api/insights/route.ts`.)
 
 ---
 
@@ -908,7 +908,7 @@ Match iOS. Sections in order:
 
 Hide Pro/subscription section entirely in v1 (no Google Play Billing).
 
-No model selectors — transcription is hardcoded to Nova-3, insights hardcoded to gpt-5-mini. Settings shows them read-only for transparency.
+No model selectors — transcription is fixed to Nova-3. BYOK insights use pinned `gpt-5-mini-2025-08-07`; managed insights show both server-selected models, pinned `gpt-5-mini-2025-08-07` and pinned `gpt-5.4-mini-2026-03-17`. Settings shows the exact models read-only for transparency.
 
 ---
 

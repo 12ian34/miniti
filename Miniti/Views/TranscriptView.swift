@@ -12,17 +12,11 @@ struct TranscriptView: View {
     @Environment(\.interfaceScale) private var interfaceScale
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isAutoScrollEnabled = true
-    @State private var previousBottomDistance: CGFloat = 0
-    @State private var hasCapturedInitialBottomDistance = false
     @State private var suppressAutoScrollLockUntil = Date.distantPast
     @State private var cachedSourceSegments: [AppState.LiveSegment] = []
     @State private var cachedVisibleSegmentCount = 0
     @State private var cachedVisibleSpeakers: Set<Int> = []
     @State private var cachedDisplayTurns: [SelectableAttributed.TranscriptTurn] = []
-    @State private var cachedTurnStartOffsets: [Int] = []
-    @State private var cachedTranscript = NSAttributedString()
-    @State private var cachedTranscriptMutation: SelectableTextMutation?
-    @State private var cachedTranscriptRevision: UInt64 = 0
     @State private var cachedLastDisplaySpeaker: Int?
     @State private var cachedUniqueSpeakers: [Int] = []
     @State private var runtimeSnapshot = TranscriptRuntimeState.Snapshot.zero
@@ -76,9 +70,7 @@ struct TranscriptView: View {
             let appended = liveSegments.dropFirst(cachedSourceSegments.count).filter {
                 !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
-            if !appended.isEmpty, !cachedDisplayTurns.isEmpty,
-               let replacementStart = cachedTurnStartOffsets.last {
-                let oldTurnCount = cachedDisplayTurns.count
+            if !appended.isEmpty, !cachedDisplayTurns.isEmpty {
                 var updatedTurns = cachedDisplayTurns
                 for segment in appended {
                     let next = SelectableAttributed.TranscriptTurn(
@@ -97,37 +89,7 @@ struct TranscriptView: View {
                         updatedTurns.append(next)
                     }
                 }
-
-                let tailStartIndex = oldTurnCount - 1
-                let tailDocument = SelectableAttributed.transcriptDocument(
-                    turns: Array(updatedTurns[tailStartIndex...]),
-                    speakerNames: names,
-                    selfIDs: selfIDs,
-                    bodyFontSize: interfaceScale.transcriptBodySize,
-                    headerFontSize: interfaceScale.transcriptHeaderSize,
-                    lineSpacing: interfaceScale.transcriptLineSpacing,
-                    startsAtDocumentBeginning: tailStartIndex == 0
-                )
-                let replacementRange = NSRange(
-                    location: replacementStart,
-                    length: cachedTranscript.length - replacementStart
-                )
-                let updatedTranscript = NSMutableAttributedString(attributedString: cachedTranscript)
-                updatedTranscript.replaceCharacters(
-                    in: replacementRange,
-                    with: tailDocument.attributed
-                )
-
-                cachedTranscriptRevision &+= 1
-                cachedTranscriptMutation = SelectableTextMutation(
-                    revision: cachedTranscriptRevision,
-                    range: replacementRange,
-                    replacement: tailDocument.attributed
-                )
-                cachedTranscript = NSAttributedString(attributedString: updatedTranscript)
-                cachedDisplayTurns = Array(updatedTurns[..<tailStartIndex]) + tailDocument.turns
-                cachedTurnStartOffsets = Array(cachedTurnStartOffsets[..<tailStartIndex])
-                    + tailDocument.turnStartOffsets.map { replacementStart + $0 }
+                cachedDisplayTurns = updatedTurns
                 cachedVisibleSegmentCount += appended.count
                 for segment in appended { cachedVisibleSpeakers.insert(segment.speaker) }
             } else if !appended.isEmpty {
@@ -150,22 +112,15 @@ struct TranscriptView: View {
         let visible = liveSegments.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
-        let document = SelectableAttributed.transcriptDocument(
-            turns: visible.map {
+        cachedDisplayTurns = SelectableAttributed.mergeTurns(
+            visible.map {
                 .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
             },
             speakerNames: names,
-            selfIDs: selfIDs,
-            bodyFontSize: interfaceScale.transcriptBodySize,
-            headerFontSize: interfaceScale.transcriptHeaderSize,
-            lineSpacing: interfaceScale.transcriptLineSpacing
+            selfIDs: selfIDs
         )
         cachedVisibleSegmentCount = visible.count
         cachedVisibleSpeakers = Set(visible.map(\.speaker))
-        cachedDisplayTurns = document.turns
-        cachedTurnStartOffsets = document.turnStartOffsets
-        cachedTranscript = document.attributed
-        cachedTranscriptMutation = nil
     }
 
     private func updateUniqueSpeakers(_ detectedSpeakers: Set<Int>) {
@@ -211,32 +166,6 @@ struct TranscriptView: View {
 
     private func suppressAutoScrollLockBriefly(_ duration: TimeInterval = 0.25) {
         suppressAutoScrollLockUntil = Date().addingTimeInterval(duration)
-    }
-
-    private func updateAutoScrollLock(bottomAnchorMaxY: CGFloat, viewportHeight: CGFloat) {
-        let distanceFromBottom = max(0, bottomAnchorMaxY - viewportHeight)
-
-        guard hasCapturedInitialBottomDistance else {
-            previousBottomDistance = distanceFromBottom
-            hasCapturedInitialBottomDistance = true
-            return
-        }
-
-        let movedAwayFromBottom = distanceFromBottom - previousBottomDistance
-        if isAutoScrollEnabled,
-           Date() >= suppressAutoScrollLockUntil,
-           movedAwayFromBottom > 0.5,
-           distanceFromBottom > 24 {
-            isAutoScrollEnabled = false
-        }
-
-        previousBottomDistance = distanceFromBottom
-    }
-    
-    // Check if this segment starts a new speaker turn
-    private func isNewSpeakerTurn(at index: Int, in segments: [AppState.LiveSegment]) -> Bool {
-        guard index > 0 else { return true }
-        return segments[index].speaker != segments[index - 1].speaker
     }
 
     @ViewBuilder
@@ -312,13 +241,15 @@ struct TranscriptView: View {
                         GeometryReader { scrollGeometry in
                             ZStack(alignment: .bottomTrailing) {
                                 ScrollView {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        if cachedTranscript.length > 0 {
-                                            SelectableTextView(
-                                                cachedTranscript,
-                                                mutation: cachedTranscriptMutation
+                                    LazyVStack(alignment: .leading, spacing: 6) {
+                                        ForEach(cachedDisplayTurns.indices, id: \.self) { index in
+                                            TerminalTranscriptTurnRow(
+                                                turn: cachedDisplayTurns[index],
+                                                isFirst: index == cachedDisplayTurns.startIndex,
+                                                speakerNames: appState.liveSpeakerNames,
+                                                selfIDs: appState.liveSelfSpeakerIDs
                                             )
-                                            .id("transcript")
+                                            .id("turn-\(index)")
                                         }
 
                                         // Interim (live typing) text
@@ -341,14 +272,6 @@ struct TranscriptView: View {
                                         Color.clear
                                             .frame(height: 20)
                                             .id("bottom")
-                                            .background(
-                                                GeometryReader { geo in
-                                                    Color.clear.preference(
-                                                        key: TranscriptBottomAnchorMaxYPreferenceKey.self,
-                                                        value: geo.frame(in: .named("transcript-scroll")).maxY
-                                                    )
-                                                }
-                                            )
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
@@ -366,7 +289,6 @@ struct TranscriptView: View {
                                     )
                                     #endif
                                 }
-                                .coordinateSpace(name: "transcript-scroll")
                                 .scrollIndicators(.hidden)
                                 .simultaneousGesture(
                                     DragGesture(minimumDistance: 4)
@@ -377,16 +299,9 @@ struct TranscriptView: View {
                                             }
                                         }
                                 )
-                                .onPreferenceChange(TranscriptBottomAnchorMaxYPreferenceKey.self) { bottomAnchorMaxY in
-                                    updateAutoScrollLock(
-                                        bottomAnchorMaxY: bottomAnchorMaxY,
-                                        viewportHeight: scrollGeometry.size.height
-                                    )
-                                }
                                 .onChange(of: cachedVisibleSegmentCount) { _, newCount in
                                     if newCount == 0 {
                                         isAutoScrollEnabled = true
-                                        previousBottomDistance = 0
                                     }
                                     guard isAutoScrollEnabled else { return }
                                     suppressAutoScrollLockBriefly()
@@ -400,7 +315,6 @@ struct TranscriptView: View {
                                 .onChange(of: appState.isRecording) { _, isRecording in
                                     if isRecording {
                                         isAutoScrollEnabled = true
-                                        previousBottomDistance = 0
                                         suppressAutoScrollLockBriefly()
                                         scrollToBottom(proxy: proxy)
                                     }
@@ -416,12 +330,14 @@ struct TranscriptView: View {
                                         .clipShape(Capsule())
                                         .onTapGesture {
                                             isAutoScrollEnabled = true
-                                            previousBottomDistance = 0
                                             suppressAutoScrollLockBriefly(1.0)
                                             scrollToBottom(proxy: proxy)
                                         }
-                                        .padding(.trailing, 16)
-                                        .padding(.bottom, 12)
+                                        // Keep the pill visually separate from the transient
+                                        // macOS overlay scrollbar at the trailing edge.
+                                        .padding(.trailing, 32)
+                                        .padding(.bottom, 16)
+                                        .zIndex(1)
                                 }
                             }
                         }
@@ -491,14 +407,6 @@ struct TranscriptView: View {
     }
 }
 
-private struct TranscriptBottomAnchorMaxYPreferenceKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 // MARK: - macOS Scroll Wheel Observer
 
 #if os(macOS)
@@ -517,49 +425,78 @@ private struct TranscriptScrollWheelObserver: NSViewRepresentable {
 
     private class ScrollWheelPassthroughView: NSView {
         var onScrolledAwayFromBottom: (() -> Void)?
-        private var boundsObserver: NSObjectProtocol?
+        private var scrollEventMonitor: Any?
         private var didSetupObserver = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard !didSetupObserver, window != nil else { return }
             DispatchQueue.main.async { [weak self] in
-                self?.setupBoundsObserver()
+                self?.setupScrollEventMonitor()
             }
         }
 
-        private func setupBoundsObserver() {
+        private func setupScrollEventMonitor() {
             guard let scrollView = enclosingScrollView else { return }
             didSetupObserver = true
-            scrollView.contentView.postsBoundsChangedNotifications = true
-            let clipView = scrollView.contentView
-            boundsObserver = NotificationCenter.default.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self, weak scrollView] _ in
-                let shouldNotify = MainActor.assumeIsolated { () -> Bool in
-                    guard let scrollView else { return false }
+            // Observe actual wheel input instead of every clip-view bounds
+            // change. Layout, pane resizing, and programmatic scroll-to-bottom
+            // all move the clip view and must not disable auto-scroll.
+            scrollEventMonitor = NSEvent.addLocalMonitorForEvents(
+                matching: [.scrollWheel, .leftMouseDragged]
+            ) {
+                [weak self, weak scrollView] event in
+                guard let self,
+                      let scrollView,
+                      event.window === self.window else { return event }
+                let location = scrollView.convert(event.locationInWindow, from: nil)
+                guard scrollView.bounds.contains(location) else { return event }
+
+                if event.type == .leftMouseDragged {
+                    var hitView = scrollView.hitTest(location)
+                    var isDraggingScroller = false
+                    while let candidate = hitView {
+                        if candidate is NSScroller {
+                            isDraggingScroller = true
+                            break
+                        }
+                        hitView = candidate.superview
+                    }
+                    guard isDraggingScroller else { return event }
+                }
+
+                DispatchQueue.main.async { [weak self, weak scrollView] in
+                    guard let self, let scrollView else { return }
                     let contentHeight = scrollView.documentView?.frame.height ?? 0
                     let viewportHeight = scrollView.contentView.bounds.height
                     let scrollY = scrollView.contentView.bounds.origin.y
                     let distanceFromBottom = contentHeight - viewportHeight - scrollY
-                    return distanceFromBottom > 30
-                }
-                if shouldNotify {
-                    DispatchQueue.main.async { [weak self] in
-                        self?.onScrolledAwayFromBottom?()
+                    if distanceFromBottom > 30 {
+                        self.onScrolledAwayFromBottom?()
                     }
                 }
+                return event
             }
         }
 
         override func removeFromSuperview() {
-            if let obs = boundsObserver {
-                NotificationCenter.default.removeObserver(obs)
-                boundsObserver = nil
-            }
+            removeScrollEventMonitor()
             super.removeFromSuperview()
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil {
+                removeScrollEventMonitor()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        private func removeScrollEventMonitor() {
+            if let scrollEventMonitor {
+                NSEvent.removeMonitor(scrollEventMonitor)
+                self.scrollEventMonitor = nil
+            }
+            didSetupObserver = false
         }
 
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -577,7 +514,7 @@ struct SpeakerLegend: View {
     var onRename: ((Int) -> Void)? = nil
 
     var body: some View {
-        HStack(spacing: 16) {
+        FlowLayout(spacing: 12) {
             // Recording indicator
             if isRecording {
                 HStack(spacing: 4) {
@@ -588,16 +525,19 @@ struct SpeakerLegend: View {
                         .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(Color(hex: "F85149"))
                 }
+                .fixedSize()
             }
 
             Text("speakers:")
                 .font(.system(size: 10, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
+                .fixedSize()
 
             if speakers.isEmpty {
                 Text("detecting...")
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
+                    .fixedSize()
             } else {
                 let uniqueSpeakers: [Int] = {
                     var seen = Set<String>()
@@ -628,14 +568,13 @@ struct SpeakerLegend: View {
                         .buttonStyle(.plain)
                         .focusable(false)
                         .help("rename speaker")
+                        .fixedSize()
                     } else {
-                        chip
+                        chip.fixedSize()
                     }
                 }
             }
-            
-            Spacer()
-            
+
             // Show count
             let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
             let selfCount = speakers.filter { effectiveSelves.contains($0) }.count
@@ -645,12 +584,15 @@ struct SpeakerLegend: View {
                 Text(isSelf ? "(you only)" : "(single speaker)")
                     .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
+                    .fixedSize()
             } else if selfCount >= 1 && remoteCount == 1 {
                 Text(selfCount > 1 ? "(you ×\(selfCount) + 1 remote)" : "(you + 1 remote)")
                     .font(.system(size: 10, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
+                    .fixedSize()
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .background(Color(hex: "0F0F11"))
@@ -697,63 +639,28 @@ func speakerDisplayName(for speaker: Int, names: [String: String]? = nil, selfID
 
 // MARK: - Terminal Style Components
 
-struct TerminalSegmentRow: View {
+struct TerminalTranscriptTurnRow: View {
     @Environment(\.interfaceScale) private var interfaceScale
-    let segment: AppState.LiveSegment
-    var isNewTurn: Bool = true
+    let turn: SelectableAttributed.TranscriptTurn
     var isFirst: Bool = false
     var speakerNames: [String: String]? = nil
     var selfIDs: Set<Int>? = nil
 
-    private var color: Color { speakerColor(for: segment.speaker, selfIDs: selfIDs) }
+    private var color: Color { speakerColor(for: turn.speaker, selfIDs: selfIDs) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Speaker turn indicator
-            if isNewTurn {
-                HStack(spacing: 6) {
-                    Rectangle()
-                        .fill(color)
-                        .frame(width: 3, height: 12)
-                        .cornerRadius(1.5)
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(speakerLabel(for: turn.speaker, names: speakerNames, selfIDs: selfIDs)) · \(formatTimestamp(turn.timestamp))")
+                .font(.system(size: interfaceScale.transcriptHeaderSize, weight: .semibold, design: .default))
+                .foregroundStyle(color)
 
-                    Text(speakerDisplayName(for: segment.speaker, names: speakerNames, selfIDs: selfIDs))
-                        .font(.system(size: 10, weight: .semibold, design: .default))
-                        .foregroundStyle(color)
-
-                    Text("•")
-                        .foregroundStyle(Color(hex: "1C1C1F"))
-
-                    Text(formatTimestamp(segment.timestamp))
-                        .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(Color(hex: "484F58"))
-                }
-                .padding(.top, isNewTurn && !isFirst ? 12 : 0)
-                .padding(.bottom, 4)
-            }
-            
-            // Message content
-            HStack(alignment: .top, spacing: 0) {
-                // Left border indicator
-                Rectangle()
-                    .fill(color.opacity(0.3))
-                    .frame(width: 2)
-                    .padding(.leading, 0)
-                
-                // Message text
-                Text(segment.text)
-                    .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(interfaceScale.transcriptLineSpacing)
-                    .textSelection(.enabled)
-                    .padding(.leading, 12)
-                    .padding(.vertical, 4)
-            }
+            Text(turn.text)
+                .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
+                .foregroundStyle(Color(hex: "E6EDF3"))
+                .lineSpacing(interfaceScale.transcriptLineSpacing)
         }
-        .transition(.asymmetric(
-            insertion: .opacity.combined(with: .offset(y: 10)),
-            removal: .opacity
-        ))
+        .padding(.top, isFirst ? 0 : 10)
+        .textSelection(.enabled)
     }
     
     private func formatTimestamp(_ timestamp: TimeInterval) -> String {

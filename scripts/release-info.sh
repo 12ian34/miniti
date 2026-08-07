@@ -43,10 +43,10 @@ else
     echo "  [FAIL] nested signature verification failed"
 fi
 
-if xcrun stapler validate "$DMG" 2>&1 | grep -q "validates"; then
+if xcrun stapler validate "$DMG" 2>&1 | grep -Eq "validates|validate action worked"; then
     echo "  [ok] DMG notarization stapled"
 else
-    echo "  [warn] DMG notarization not stapled - check notarize step"
+    echo "  [FAIL] DMG notarization not stapled - DO NOT SHIP"
 fi
 
 URL="https://miniti.app/dmg/miniti-$SHORT.dmg"

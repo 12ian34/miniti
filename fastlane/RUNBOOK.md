@@ -182,6 +182,10 @@ Expected output includes:
 What it does:
 - runs `./scripts/build-dmg.sh`
 - packages a notarized app into `miniti.dmg`
+- signs the disk image with the Developer ID Application identity
+- submits the completed DMG to Apple's notary service
+- staples and validates the DMG ticket, then verifies Gatekeeper accepts the disk image
+- runs `sign_update` only after stapling so Sparkle signs the final bytes
 
 Optional:
 
@@ -200,7 +204,10 @@ What it does:
 - **verifies entitlements survived** via `verify_mac_signing_for_notarization` before submitting to notarytool. If `com.apple.security.app-sandbox` is missing from the signed binary, the lane fails fast with a clear error instead of producing a broken DMG.
 - notarizes the app
 - staples the app
-- creates `miniti.dmg` (and runs `sign_update` if on PATH to produce the `sparkle:edSignature` for the appcast)
+- creates `miniti.dmg`
+- signs the disk image with the Developer ID Application identity
+- notarizes and staples the DMG, then validates both the ticket and Gatekeeper assessment
+- runs `sign_update` against the final stapled DMG to produce the `sparkle:edSignature` for the appcast
 
 After `fastlane mac release` succeeds, always run `bash scripts/release-info.sh` to collect appcast values and re-verify sandbox/signature state.
 

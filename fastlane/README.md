@@ -98,7 +98,7 @@ Notarize the exported macOS app in build/macos/miniti.app
 [bundle exec] fastlane mac dmg
 ```
 
-Build a DMG from a notarized macOS app
+Build, notarize, staple, and Sparkle-sign a DMG from a notarized macOS app
 
 ### mac release
 
@@ -106,7 +106,7 @@ Build a DMG from a notarized macOS app
 [bundle exec] fastlane mac release
 ```
 
-Build, notarize, and package the macOS app as miniti.dmg
+Build and notarize the macOS app, then package, notarize, and Sparkle-sign miniti.dmg
 
 ----
 

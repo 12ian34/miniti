@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-dmg.sh — Package a notarized miniti.app into a distributable DMG.
+# build-dmg.sh — Package a notarized miniti.app into a DMG ready for notarization.
 #
 # Usage:
 #   ./scripts/build-dmg.sh /path/to/notarized/miniti.app
@@ -8,7 +8,7 @@
 # Prerequisites:
 #   - Homebrew installed
 #   - create-dmg (installed automatically if missing)
-#   - The .app must already be signed & notarized via Xcode
+#   - The .app must already be signed and notarized
 #
 # Output:
 #   miniti.dmg in the repo root
@@ -127,47 +127,6 @@ if [[ ! -f "$DMG_PATH" ]]; then
     exit 1
 fi
 
-# ─── Staple the notarization ticket to the DMG ──────────────────────────────
-echo ""
-echo "Stapling notarization ticket to DMG..."
-if xcrun stapler staple "$DMG_PATH" 2>&1; then
-    echo "  Staple: OK"
-else
-    echo "  Warning: Stapling failed. This is expected if the app was not notarized."
-fi
-
-# ─── Final verification ─────────────────────────────────────────────────────
-echo ""
-echo "Verifying DMG..."
-if spctl --assess --type open --context context:primary-signature "$DMG_PATH" 2>&1; then
-    echo "  DMG verification: OK"
-else
-    echo "  Warning: DMG verification returned non-zero (may be fine for non-notarized builds)."
-fi
-
-# ─── Sparkle EdDSA signature (for appcast) ──────────────────────────────────
-# If Sparkle's `sign_update` is on PATH, emit the EdDSA signature + byte length
-# needed for the appcast enclosure. The private key must be in Keychain (set up
-# once via `generate_keys`).
-echo ""
-if command -v sign_update &>/dev/null; then
-    echo "Generating Sparkle signature..."
-    SIGN_OUTPUT=$(sign_update "$DMG_PATH" 2>&1 || true)
-    if [[ -n "$SIGN_OUTPUT" ]]; then
-        echo "  $SIGN_OUTPUT"
-        echo ""
-        echo "  Paste the above attributes into the appcast enclosure, e.g.:"
-        echo "    <enclosure url=\"https://miniti.app/dmg/miniti-${VERSION}.dmg\""
-        echo "               $SIGN_OUTPUT"
-        echo "               type=\"application/octet-stream\" />"
-    else
-        echo "  Warning: sign_update produced no output — skipping Sparkle signature."
-    fi
-else
-    echo "Note: Sparkle's sign_update not on PATH — skipping appcast signature generation."
-    echo "      Install with: brew install --cask sparkle  (or use the SPM-vendored binary)"
-fi
-
 # ─── Done ────────────────────────────────────────────────────────────────────
 DMG_SIZE=$(du -h "$DMG_PATH" | cut -f1 | xargs)
 DMG_SIZE_BYTES=$(stat -f%z "$DMG_PATH" 2>/dev/null || wc -c < "$DMG_PATH" | xargs)
@@ -178,4 +137,5 @@ echo "  File: $DMG_PATH"
 echo "  Size: $DMG_SIZE ($DMG_SIZE_BYTES bytes)"
 echo "  Version: $VERSION"
 echo "  Contents: miniti.app"
+echo "  Next: notarize and staple this DMG, then generate its Sparkle signature"
 echo "================================================"

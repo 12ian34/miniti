@@ -538,5 +538,53 @@ final class DeepgramParsingTests: XCTestCase {
         let samples = data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }
         XCTAssertEqual(samples, [1, 3, 2, 4])
     }
+
+    func testSystemCallbackWatchdogRecoversSystemOnlyStall() {
+        XCTAssertTrue(AudioCaptureService.shouldRecoverSystemCallbackStall(
+            expectsSystemAudio: true,
+            isSystemAudioActive: true,
+            isRecoveryInProgress: false,
+            callbackGap: 9,
+            timeSinceWatchdogArmed: 9,
+            callbackCount: 0,
+            timeSinceLastRestart: .infinity
+        ))
+    }
+
+    func testSystemCallbackWatchdogUsesPriorCallbacksBeforeStartupGrace() {
+        XCTAssertTrue(AudioCaptureService.shouldRecoverSystemCallbackStall(
+            expectsSystemAudio: true,
+            isSystemAudioActive: true,
+            isRecoveryInProgress: false,
+            callbackGap: 7,
+            timeSinceWatchdogArmed: 7,
+            callbackCount: 11,
+            timeSinceLastRestart: .infinity
+        ))
+    }
+
+    func testSystemCallbackWatchdogHonorsRestartCooldown() {
+        XCTAssertFalse(AudioCaptureService.shouldRecoverSystemCallbackStall(
+            expectsSystemAudio: true,
+            isSystemAudioActive: true,
+            isRecoveryInProgress: false,
+            callbackGap: 20,
+            timeSinceWatchdogArmed: 20,
+            callbackCount: 100,
+            timeSinceLastRestart: 10
+        ))
+    }
+
+    func testSystemCallbackWatchdogSuppressesConcurrentRecovery() {
+        XCTAssertFalse(AudioCaptureService.shouldRecoverSystemCallbackStall(
+            expectsSystemAudio: true,
+            isSystemAudioActive: true,
+            isRecoveryInProgress: true,
+            callbackGap: 20,
+            timeSinceWatchdogArmed: 20,
+            callbackCount: 100,
+            timeSinceLastRestart: .infinity
+        ))
+    }
     #endif
 }

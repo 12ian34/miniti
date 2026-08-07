@@ -62,8 +62,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastNoSystemInterleaveWarning: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var systemCallbackWatchdogArmedAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
-    nonisolated(unsafe) private var lastSystemCallbackStallCheck: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemInputRMS: Float = 0
     // Post-recovery health tracking. After any system-tap recovery we watch the
     // next few heartbeats for the new tap being alive but silent (inRMS≈0 with
@@ -83,6 +83,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var micRetryAttempt = 0
     private let maxMicRetryAttempts = 3
     private var pendingSystemRetryTask: Task<Void, Never>?
+    private var systemCallbackWatchdogTask: Task<Void, Never>?
     private var systemRetryAttempt = 0
     private let maxSystemRetryAttempts = 4
     nonisolated(unsafe) private var expectsMicAudio = false
@@ -639,8 +640,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastNoSystemInterleaveWarning = 0
         lastSystemNonSilentAt = lastSystemHeartbeat
         lastSystemAutoRestartAt = 0
+        systemCallbackWatchdogArmedAt = lastSystemHeartbeat
         lastSilenceCheck = 0
-        lastSystemCallbackStallCheck = 0
         sysCallbackCount = 0
         postRecoveryHeartbeatsRemaining = 0
         postRecoveryDegradedHeartbeats = 0
@@ -731,6 +732,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         
         isCapturing = capturedAny
+        startSystemCallbackWatchdogIfNeeded()
         DebugLogger.shared.log(.audio, "Capture result: mic=\(isMicActive), sys=\(isSystemAudioActive)")
     }
     
@@ -751,6 +753,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         micRetryAttempt = 0
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
+        systemCallbackWatchdogTask?.cancel()
+        systemCallbackWatchdogTask = nil
         systemRetryAttempt = 0
         expectsMicAudio = false
         expectsSystemAudio = false
@@ -777,6 +781,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         micRetryAttempt = 0
         pendingSystemRetryTask?.cancel()
         pendingSystemRetryTask = nil
+        systemCallbackWatchdogTask?.cancel()
+        systemCallbackWatchdogTask = nil
         systemRetryAttempt = 0
         expectsMicAudio = false
         expectsSystemAudio = false
@@ -1068,6 +1074,70 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
             scheduleSystemTapRetry(reason: "mix-mode restart failed", mixWithMic: true)
         }
+    }
+
+    nonisolated static func shouldRecoverSystemCallbackStall(
+        expectsSystemAudio: Bool,
+        isSystemAudioActive: Bool,
+        isRecoveryInProgress: Bool,
+        callbackGap: CFAbsoluteTime,
+        timeSinceWatchdogArmed: CFAbsoluteTime,
+        callbackCount: Int,
+        timeSinceLastRestart: CFAbsoluteTime
+    ) -> Bool {
+        guard expectsSystemAudio, isSystemAudioActive, !isRecoveryInProgress else { return false }
+        guard callbackGap > 6, timeSinceLastRestart > 45 else { return false }
+        return callbackCount > 10 || timeSinceWatchdogArmed > 8
+    }
+
+    private func startSystemCallbackWatchdogIfNeeded() {
+        systemCallbackWatchdogTask?.cancel()
+        systemCallbackWatchdogTask = nil
+        guard isCapturing, expectsSystemAudio else { return }
+
+        systemCallbackWatchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled,
+                      let self,
+                      self.isCapturing,
+                      self.expectsSystemAudio else { break }
+                await self.checkSystemCallbackWatchdog()
+            }
+        }
+    }
+
+    private func checkSystemCallbackWatchdog() async {
+        let now = CFAbsoluteTimeGetCurrent()
+        let callbackGap = now - lastSystemCallbackAt
+        let timeSinceRestart = lastSystemAutoRestartAt > 0
+            ? now - lastSystemAutoRestartAt
+            : .infinity
+        let recoveryInProgress = isRestartingSystemAfterOutputChange
+            || isEscalatingFullRestart
+            || pendingSystemRetryTask != nil
+
+        guard Self.shouldRecoverSystemCallbackStall(
+            expectsSystemAudio: expectsSystemAudio,
+            isSystemAudioActive: isSystemAudioActiveForWatchdog,
+            isRecoveryInProgress: recoveryInProgress,
+            callbackGap: callbackGap,
+            timeSinceWatchdogArmed: now - systemCallbackWatchdogArmedAt,
+            callbackCount: sysCallbackCount,
+            timeSinceLastRestart: timeSinceRestart
+        ) else { return }
+
+        // Claim the shared cooldown before suspending so the silent-buffer detector cannot
+        // schedule a second recovery for the same Core Audio failure.
+        lastSystemAutoRestartAt = now
+        DebugLogger.shared.log(
+            .audio,
+            "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks) — scheduling restart"
+        )
+        await recoverSystemTapAfterCallbackStall(
+            mixWithMic: isMicActiveForWatchdog,
+            callbackGap: callbackGap
+        )
     }
     
     private func recoverSystemTapAfterSilentStall(
@@ -1402,6 +1472,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         let targetRate = targetSampleRate
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
         lastSystemCallbackAt = lastSystemHeartbeat
+        systemCallbackWatchdogArmedAt = lastSystemHeartbeat
         DebugLogger.shared.log(.audio, "System path routing: mixWithMic=\(mixWithMic), directCallback=\(directCallback != nil)")
         
         // 6. IO proc callback on a custom dispatch queue. Uses direct vDSP
@@ -1831,30 +1902,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         // Update mic level with vDSP (throttled to ~20Hz)
         let now = CFAbsoluteTimeGetCurrent()
-        
-        // Callback-stall watchdog: detect when system callbacks stop entirely
-        // (different failure mode from silent-buffer stalls).
-        if expectsSystemAudio && isSystemAudioActiveForWatchdog && now - lastSystemCallbackStallCheck > 2.0 {
-            lastSystemCallbackStallCheck = now
-            let callbackGap = now - lastSystemCallbackAt
-            let startupGraceElapsed = (now - lastSystemHeartbeat) > 8.0
-            let hadPriorCallbacks = sysCallbackCount > 10
-            let cooldownElapsed = (now - lastSystemAutoRestartAt) > 45.0
-            if callbackGap > 6.0 && cooldownElapsed && (hadPriorCallbacks || startupGraceElapsed) {
-                lastSystemAutoRestartAt = now
-                DebugLogger.shared.log(
-                    .audio,
-                    "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks) — scheduling restart"
-                )
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    await self.recoverSystemTapAfterCallbackStall(
-                        mixWithMic: self.isMicActiveForWatchdog,
-                        callbackGap: callbackGap
-                    )
-                }
-            }
-        }
         
         if now - lastMicLevelUpdate > 0.05 {
             lastMicLevelUpdate = now

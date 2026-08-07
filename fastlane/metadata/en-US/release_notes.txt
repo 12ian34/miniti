@@ -8,6 +8,7 @@ NEW
 IMPROVED
 
 - When several people are grouped as “Others” in Coaching, expand the filler section to see each person’s totals and filler-word detail.
+- Speaker names remain readable when a meeting has many detected speakers.
 - Clearer system typography and roomier transcript lines make meetings easier to read.
 - On iPad, regular-width layouts use adaptive sidebar navigation while iPhone keeps its compact tab bar.
 - Navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface.
@@ -22,11 +23,14 @@ IMPROVED
 - Consecutive transcript chunks from the same speaker appear as one clean turn with a single speaker label and timestamp.
 - Meeting finalization is shown as non-interactive progress, with completion guidance only when its action is available.
 - Longer meetings stay more responsive as transcription, coaching, rendering, and audio meters do less work on the interface thread.
+- Live transcript fragments and follow-to-bottom scrolling update at a steadier, power-efficient pace without overriding manual scrolling.
+- Live AI insights refresh less often during long meetings while still updating promptly when enough new conversation arrives.
 - Saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details.
 - Recovery autosaves run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately.
 - Managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows.
 
 FIXED
 
+- Finalized transcript and insight changes are more reliably saved when the app backgrounds or a meeting stops.
 - Resumed interrupted meetings no longer restore unfinished or blank transcript fragments.
 - Stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it.
