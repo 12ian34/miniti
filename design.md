@@ -589,14 +589,14 @@ Any *new* component must clear 4.5:1. These two are pinned to the in-code palett
 
 ## Typography
 
-Miniti uses the platform's Apple system font for prose and controls. Its open forms, proportional spacing, native hinting, and accessibility behavior make transcripts and AI insights easier to read at deliberately compact sizes. The `miniti` wordmark and primary Home / Training / History navigation retain the original monospaced identity; recording timers and other changing numerical readouts use monospaced digits.
+Miniti uses the platform's Apple system font for prose, controls, and primary Home / Coaching / History navigation. Its open forms, proportional spacing, native hinting, and accessibility behavior make transcripts and AI insights easier to read at deliberately compact sizes. The `miniti` wordmark retains the original monospaced identity; recording timers and other changing numerical readouts use monospaced digits.
 
 Settings offers three discrete interface scales. **Compact** exactly preserves the original type metrics and the user's system Dynamic Type setting. **Standard** is the default restrained readability pass and adds one Dynamic Type step. **Large** adds two steps and roomier prose metrics. This is not a blanket view transform: important prose uses platform-specific metrics, existing accessibility sizes are never reduced, and the compact insight selector keeps Summary / Questions / Coaching visible while Sales / Playbook live in its More menu.
 
 - **Transcript, macOS:** Compact 13px / 2px leading; Standard 14px / 4px; Large 15px / 5px.
 - **Transcript, iOS:** Compact 13px / 2px leading; Standard 15px / 5px; Large 17px / 6px.
-- **Insight body, macOS:** Compact 12px; Standard 13px; Large 14px.
-- **Insight body, iOS:** Compact 13px; Standard 14.5px; Large 16px.
+- **Insight body, macOS:** matches transcript — Compact 13px; Standard 14px; Large 15px.
+- **Insight body, iOS:** matches transcript — Compact 13px; Standard 15px; Large 17px.
 
 The supporting scale remains narrow and dense:
 
@@ -650,6 +650,7 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 
 - **button-primary** — the "start", "save", and "upgrade to pro" CTAs. Green fill, 8px radius, 14px padding.
 - **button-secondary** — neutral terminal-style buttons (tabs, "update", "copy").
+- **button-vibey** — compact accent-tinted actions used for recording controls, home utilities, post-meeting navigation, and macOS insight modes. All variants share a 30px height, 6px radius, tinted fill, and 1px accent border; semantic accent color and selected emphasis are the only differences.
 - **button-destructive** — discard, cancel, "disconnect" in Settings. Error-colored text on a neutral ground until hover, then the red fill flips in.
 - **button-ghost** — in-content affordances (e.g. rename speaker), no fill until hover.
 - **card / panel** — the live insights panel, history detail panes, onboarding cards. `panel` is slightly darker than `card`.

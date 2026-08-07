@@ -161,15 +161,23 @@ private struct PostMeetingReviewBar: View {
             Spacer(minLength: 8)
 
             if !appState.isFinalizingMeeting {
-                Button(appState.isCurrentMeetingGeneratingFinalInsights ? "Back to meetings" : "Open in History") {
+                Button {
                     if appState.isCurrentMeetingGeneratingFinalInsights {
                         appState.goHome()
                     } else {
                         appState.saveAndOpenCurrentMeeting()
                     }
+                } label: {
+                    VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
+                        HStack(spacing: 6) {
+                            Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "rectangle.stack" : "clock.arrow.circlepath")
+                                .font(.system(size: 10, weight: .semibold))
+                            Text(appState.isCurrentMeetingGeneratingFinalInsights ? "back to meetings" : "open in history")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                    }
                 }
-                .buttonStyle(.borderedProminent)
-                .tint(ColorPalette.Accent.blue)
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)
@@ -203,64 +211,27 @@ struct HomeActionButton: View {
     let accentColor: Color
     let action: () -> Void
 
-    @State private var isHovered = false
-
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                Image(systemName: icon)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isHovered ? accentColor : ColorPalette.Text.dim)
+            VibeyButtonLabel(accent: accentColor) {
+                HStack(spacing: 7) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
 
-                Text(label)
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(isHovered ? ColorPalette.Text.secondary : ColorPalette.Text.dim)
-                    .lineLimit(1)
+                    Text(label)
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .lineLimit(1)
 
-                Text(shortcut)
-                    .font(.system(size: 10, weight: .semibold, design: .default))
-                    .foregroundStyle(isHovered ? accentColor.opacity(0.8) : ColorPalette.Text.disabled)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(isHovered ? accentColor.opacity(0.1) : ColorPalette.Background.card.opacity(0.5))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(isHovered ? accentColor.opacity(0.25) : ColorPalette.Border.primary, lineWidth: 0.5)
-                    )
+                    Text(shortcut)
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(accentColor.opacity(0.55))
+                        .lineLimit(1)
+                }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(
-                        isHovered
-                            ? accentColor.opacity(0.06)
-                            : ColorPalette.Background.card
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 7)
-                    .stroke(
-                        isHovered ? accentColor.opacity(0.3) : ColorPalette.Border.light,
-                        lineWidth: isHovered ? 1 : 0.5
-                    )
-            )
-            .shadow(
-                color: isHovered ? accentColor.opacity(0.15) : .clear,
-                radius: 8, x: 0, y: 2
-            )
         }
         .buttonStyle(.plain)
         .focusable(false)
         .fixedSize()
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) {
-                isHovered = hovering
-            }
-        }
     }
 }
 
@@ -2129,38 +2100,28 @@ struct TerminalHeader: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 6) {
-                        if isResumePending {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color(hex: "3FB950"))
-                                .frame(width: 11)
-                        } else {
-                            Image(systemName: appState.isRecording ? "stop.fill" : "record.circle")
-                                .font(.system(size: 11, weight: .semibold))
-                                .frame(width: 11)
+                    let accent = appState.isRecording ? ColorPalette.Accent.redGitHub : ColorPalette.Accent.greenGitHub
+                    VibeyButtonLabel(accent: accent, isEmphasized: appState.isRecording) {
+                        HStack(spacing: 6) {
+                            if isResumePending {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(accent)
+                                    .frame(width: 11)
+                            } else {
+                                Image(systemName: appState.isRecording ? "stop.fill" : "record.circle")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .frame(width: 11)
+                            }
+                            Text(isResumePending ? "starting..." : (appState.isRecording ? "stop" : "resume"))
+                                .font(.system(size: 12, weight: .semibold, design: .default))
+                                .lineLimit(1)
+                            Text("⌘⇧R")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(accent.opacity(0.55))
+                                .lineLimit(1)
                         }
-                        Text(isResumePending ? "starting..." : (appState.isRecording ? "stop" : "resume"))
-                            .font(.system(size: 12, weight: .semibold, design: .default))
-                            .lineLimit(1)
-                        Text("⌘⇧R")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                            .foregroundStyle(appState.isRecording ? Color(hex: "F85149").opacity(0.5) : Color(hex: "3FB950").opacity(0.5))
-                            .lineLimit(1)
                     }
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .foregroundStyle(appState.isRecording ? Color(hex: "F85149") : Color(hex: "3FB950"))
-                    .frame(height: headerActionHeight)
-                    .padding(.horizontal, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(appState.isRecording ? Color(hex: "F85149").opacity(0.15) : Color(hex: "3FB950").opacity(0.15))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(appState.isRecording ? Color(hex: "F85149").opacity(0.3) : Color(hex: "3FB950").opacity(0.3), lineWidth: 1)
-                    )
                 }
                 .buttonStyle(.plain)
                 .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights)
@@ -2194,24 +2155,15 @@ struct TerminalHeader: View {
                         Button {
                             appState.goHome()
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "rectangle.stack")
-                                    .font(.system(size: 10, weight: .semibold))
-                                    .frame(width: 11)
-                                Text("meetings")
-                                    .font(.system(size: 11, weight: .medium, design: .default))
+                            VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "rectangle.stack")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .frame(width: 11)
+                                    Text("back to meetings")
+                                        .font(.system(size: 11, weight: .semibold, design: .default))
+                                }
                             }
-                            .foregroundStyle(ColorPalette.Accent.blue)
-                            .frame(height: headerActionHeight)
-                            .padding(.horizontal, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(ColorPalette.Accent.blue.opacity(0.1))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(ColorPalette.Accent.blue.opacity(0.2), lineWidth: 1)
-                            )
                         }
                         .buttonStyle(.plain)
                         .accessibilityHint("Returns home while insights finish in History")
@@ -2221,33 +2173,19 @@ struct TerminalHeader: View {
                                 appState.saveAndOpenCurrentMeeting()
                             }
                         } label: {
-                            HStack(spacing: 6) {
+                            VibeyButtonLabel(accent: ColorPalette.Accent.blueGitHub, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
                                         .frame(width: 11)
                                     Text("done")
-                                        .font(.system(size: 11, weight: .medium, design: .default))
+                                        .font(.system(size: 11, weight: .semibold, design: .default))
+                                    Text("⌘S")
+                                        .font(.system(size: 10, weight: .medium, design: .default))
+                                        .foregroundStyle(ColorPalette.Accent.blueGitHub.opacity(0.55))
+                                        .lineLimit(1)
                                 }
-
-                                Text("⌘S")
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(Color(hex: "58A6FF").opacity(0.5))
-                                    .lineLimit(1)
                             }
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                            .foregroundStyle(Color(hex: "58A6FF"))
-                            .frame(height: headerActionHeight)
-                            .padding(.horizontal, 10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(Color(hex: "58A6FF").opacity(0.1))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(Color(hex: "58A6FF").opacity(0.2), lineWidth: 1)
-                            )
                         }
                         .buttonStyle(.plain)
                         .keyboardShortcut("s", modifiers: .command)
@@ -2923,32 +2861,19 @@ struct ZonedOutButton: View {
                 appState.triggerZonedOutCatchUp()
             }
         } label: {
-            HStack(spacing: 6) {
+            VibeyButtonLabel(accent: accent) {
                 HStack(spacing: 6) {
                     Text("😶")
                         .font(.system(size: 12))
                         .frame(width: 11)
                     Text("zoned out")
                         .font(.system(size: 11, weight: .medium, design: .default))
+                    Text("⌘⇧Z")
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(accent.opacity(0.55))
+                        .lineLimit(1)
                 }
-                Text("⌘⇧Z")
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(accent.opacity(0.5))
-                    .lineLimit(1)
             }
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-            .foregroundStyle(accent)
-            .frame(height: 30)
-            .padding(.horizontal, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(accent.opacity(0.12))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(accent.opacity(0.28), lineWidth: 1)
-            )
         }
         .buttonStyle(.plain)
         .focusable(false)

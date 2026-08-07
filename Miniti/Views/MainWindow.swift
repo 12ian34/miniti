@@ -43,6 +43,7 @@ struct MainWindow: View {
     @State private var isSearchActive = false
     @State private var searchFocusRequest = 0
     @State private var showTraining = false
+    @State private var coachingOriginMeetingID: UUID?
     @State private var searchDebounceTask: Task<Void, Never>?
 
     private var selectedMeeting: Meeting? {
@@ -136,10 +137,17 @@ struct MainWindow: View {
                 
                 // Main content
                 if let meeting = selectedMeeting {
-                    MeetingDetailView(meeting: meeting)
+                    MeetingDetailView(
+                        meeting: meeting,
+                        showsBackToCoaching: coachingOriginMeetingID == meeting.id,
+                        onBackToCoaching: backToCoaching
+                    )
                         .id(meeting.id)
                 } else if showTraining {
-                    TrainingMainView(meetings: meetings)
+                    TrainingMainView(meetings: meetings) { meetingID in
+                        coachingOriginMeetingID = meetingID
+                        selectedMeetingID = meetingID
+                    }
                 } else {
                     MeetingView(meetings: meetings)
                 }
@@ -181,6 +189,11 @@ struct MainWindow: View {
         }
         .onChange(of: meetings.map(\.id)) { _, _ in
             selectPendingSavedMeetingIfNeeded()
+        }
+        .onChange(of: selectedMeetingID) { _, newValue in
+            if newValue != coachingOriginMeetingID {
+                coachingOriginMeetingID = nil
+            }
         }
         .onChange(of: searchText) { _, newValue in
             scheduleSearchDebounce(for: newValue)
@@ -281,6 +294,12 @@ struct MainWindow: View {
                 selectedMeetingID = navMeetings.last?.id
             }
         }
+    }
+
+    private func backToCoaching() {
+        coachingOriginMeetingID = nil
+        selectedMeetingID = nil
+        showTraining = true
     }
     
     private func deleteMeeting(_ meeting: Meeting) {
@@ -412,7 +431,7 @@ struct TerminalSidebar: View {
                     selectedMeetingID = nil
                 }
 
-                // Training
+                // Coaching
                 collapsedNavButton(
                     icon: "chart.bar.fill",
                     color: ColorPalette.Accent.amber,
@@ -524,7 +543,7 @@ struct TerminalSidebar: View {
 
                 SidebarIconItem(
                     systemIcon: "chart.bar.fill",
-                    label: "training",
+                    label: "coaching",
                     isSelected: showTraining && selectedMeetingID == nil,
                     accentColor: ColorPalette.Accent.amber
                 ) {
@@ -1004,7 +1023,7 @@ struct SidebarIconItem: View {
                     .frame(width: 20)
 
                 Text(label)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .monospaced))
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .medium, design: .default))
                     .foregroundStyle(isSelected ? Theme.text : Theme.textMuted)
 
                 Spacer()
@@ -1086,6 +1105,8 @@ struct SidebarSessionItem: View {
 
 struct MeetingDetailView: View {
     @Bindable var meeting: Meeting
+    var showsBackToCoaching = false
+    var onBackToCoaching: () -> Void = {}
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Environment(\.interfaceScale) private var interfaceScale
@@ -1108,7 +1129,7 @@ struct MeetingDetailView: View {
             // Header
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) {
-                    meetingTitleField
+                    meetingTitleNavigation
                         .frame(minWidth: 140)
                     Spacer(minLength: 0)
                     meetingMetadata(compact: false)
@@ -1116,7 +1137,7 @@ struct MeetingDetailView: View {
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
-                    meetingTitleField
+                    meetingTitleNavigation
                     ViewThatFits(in: .horizontal) {
                         HStack(spacing: 12) {
                             meetingMetadata(compact: false)
@@ -1249,6 +1270,27 @@ struct MeetingDetailView: View {
                     renamingSpeaker = nil
                 }
             )
+        }
+    }
+
+    private var meetingTitleNavigation: some View {
+        HStack(spacing: 10) {
+            if showsBackToCoaching {
+                Button(action: onBackToCoaching) {
+                    VibeyButtonLabel(accent: ColorPalette.Accent.amber) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 9, weight: .bold))
+                            Text("coaching")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Back to Coaching")
+            }
+
+            meetingTitleField
         }
     }
 
@@ -1614,7 +1656,7 @@ struct MeetingDetailView: View {
                     Text("no transcript")
                         .font(.system(size: 11, weight: .medium, design: .default))
                         .foregroundStyle(Theme.textMuted)
-                    Text("record a meeting to see training stats")
+                    Text("record a meeting to see coaching stats")
                         .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Theme.textDim)
                     Spacer()

@@ -11,10 +11,11 @@ struct MainTabView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var selectedTab: MobileTab = .record
+    @State private var coachingPath: [UUID] = []
 
     enum MobileTab: String, CaseIterable, Identifiable {
         case record = "Record"
-        case training = "Training"
+        case training = "Coaching"
         case history = "History"
 
         var id: Self { self }
@@ -126,7 +127,18 @@ struct MainTabView: View {
         case .record:
             MeetingView_iOS()
         case .training:
-            TrainingMainView(meetings: meetings)
+            NavigationStack(path: $coachingPath) {
+                TrainingMainView(meetings: meetings) { meetingID in
+                    coachingPath.append(meetingID)
+                }
+                .navigationDestination(for: UUID.self) { meetingID in
+                    if let meeting = meetings.first(where: { $0.id == meetingID }) {
+                        MeetingDetail_iOS(meeting: meeting, backLabel: "Coaching")
+                    } else {
+                        ContentUnavailableView("Meeting unavailable", systemImage: "clock.badge.questionmark")
+                    }
+                }
+            }
         case .history:
             HistoryView_iOS()
         }

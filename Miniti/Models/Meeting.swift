@@ -529,7 +529,7 @@ final class Meeting {
         )
         guard !metrics.speakers.isEmpty else { return "" }
 
-        var md = "## Training\n\n"
+        var md = "## Coaching\n\n"
         md += "**Duration:** \(String(format: "%.1f", metrics.durationMinutes)) min"
         if let you = metrics.speakers.first(where: { $0.isLocalMic }) {
             let totalWords = metrics.speakers.reduce(0) { $0 + $1.wordCount }
