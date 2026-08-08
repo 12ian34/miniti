@@ -1,36 +1,7 @@
 NEW
 
-- Pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups.
-- Import your Granola meeting history from its CSV export, with duplicate protection and clear source labels.
-- Choose a Compact, Standard, or Large interface scale in Settings.
-- Choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tap the activity to return to your active meeting.
+- A new Coaching overview highlights your strengths, tracks trends across recent meetings, and suggests one practical focus for your next meeting, backed by examples from your transcripts.
 
 IMPROVED
 
-- When several people are grouped as “Others” in Coaching, expand the filler section to see each person’s totals and filler-word detail.
-- Speaker names remain readable when a meeting has many detected speakers.
-- Clearer system typography and roomier transcript lines make meetings easier to read.
-- On iPad, regular-width layouts use adaptive sidebar navigation while iPhone keeps its compact tab bar.
-- Navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface.
-- Reduce Motion now applies consistently across app transitions and animated status elements.
-- Starting, stopping, recovery, and post-meeting review explain what is happening and offer clear next actions.
-- First-run setup is shorter, adapts to small screens, and includes a live microphone check.
-- Insights use one descriptive mode menu with update timing, and Settings opens into searchable task-based categories.
-- Summary, Questions, and Coaching stay prominent while optional Sales and Playbook views live in a specialist menu; Sales only runs after you enable it.
-- Start meeting always begins a fresh meeting, while calendar meetings remain explicit choices in the upcoming list.
-- Return to meetings and start another recording while final insights finish safely in the background.
-- Transcript trims and speaker edits work with the system Undo command, while save, copy, and export confirmations stay inline.
-- Consecutive transcript chunks from the same speaker appear as one clean turn with a single speaker label and timestamp.
-- Meeting finalization is shown as non-interactive progress, with completion guidance only when its action is available.
-- Longer meetings stay more responsive as transcription, coaching, rendering, and audio meters do less work on the interface thread.
-- Live transcript fragments and follow-to-bottom scrolling update at a steadier, power-efficient pace without overriding manual scrolling.
-- Live AI insights refresh less often during long meetings while still updating promptly when enough new conversation arrives.
-- Saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details.
-- Recovery autosaves run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately.
-- Managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows.
-
-FIXED
-
-- Finalized transcript and insight changes are more reliably saved when the app backgrounds or a meeting stops.
-- Resumed interrupted meetings no longer restore unfinished or blank transcript fragments.
-- Stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it.
+- Refreshed styling makes Coaching, insights, actions, and recording controls clearer and more consistent across the app.

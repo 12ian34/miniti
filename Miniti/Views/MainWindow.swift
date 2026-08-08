@@ -27,12 +27,89 @@ struct Theme {
     static let accentBlue = ColorPalette.Accent.blue
 }
 
+enum MainNavigationDestination: Equatable {
+    case home
+    case coaching
+    case meeting(UUID)
+}
+
+struct MainNavigationHistory: Equatable {
+    private(set) var current: MainNavigationDestination
+    private(set) var backStack: [MainNavigationDestination] = []
+    private(set) var forwardStack: [MainNavigationDestination] = []
+
+    mutating func visit(_ destination: MainNavigationDestination) {
+        guard destination != current else { return }
+        backStack.append(current)
+        current = destination
+        forwardStack.removeAll()
+    }
+
+    mutating func goBack() -> MainNavigationDestination? {
+        guard let destination = backStack.popLast() else { return nil }
+        forwardStack.append(current)
+        current = destination
+        return destination
+    }
+
+    mutating func goForward() -> MainNavigationDestination? {
+        guard let destination = forwardStack.popLast() else { return nil }
+        backStack.append(current)
+        current = destination
+        return destination
+    }
+
+    mutating func retainMeetings(_ availableMeetingIDs: Set<UUID>) {
+        backStack.removeAll { $0.referencesMissingMeeting(in: availableMeetingIDs) }
+        forwardStack.removeAll { $0.referencesMissingMeeting(in: availableMeetingIDs) }
+        if current.referencesMissingMeeting(in: availableMeetingIDs) {
+            current = .home
+        }
+    }
+}
+
+struct MainWindowNavigationSwipePolicy {
+    private static let presentationDominanceRatio: CGFloat = 1.15
+    private static let minimumPresentationTravel: CGFloat = 6
+
+    static func presentationProgress(horizontal: CGFloat, vertical: CGFloat) -> CGFloat? {
+        let horizontalTravel = abs(horizontal)
+        let verticalTravel = abs(vertical)
+        guard horizontalTravel >= minimumPresentationTravel,
+              horizontalTravel > verticalTravel * presentationDominanceRatio else { return nil }
+        let distanceProgress = horizontalTravel / MinitiDesignSystem.NavigationGesture.commitDistance
+        let dominanceDistance = max(
+            verticalTravel * MinitiDesignSystem.NavigationGesture.horizontalDominanceRatio,
+            1
+        )
+        let dominanceProgress = horizontalTravel / dominanceDistance
+        let readiness = min(distanceProgress, dominanceProgress)
+        let signedReadiness = horizontal < 0 ? -readiness : readiness
+        return min(max(signedReadiness, -1.12), 1.12)
+    }
+
+    static func shouldCommit(horizontal: CGFloat, vertical: CGFloat) -> Bool {
+        let horizontalTravel = abs(horizontal)
+        let verticalTravel = abs(vertical)
+        return horizontalTravel >= MinitiDesignSystem.NavigationGesture.commitDistance
+            && horizontalTravel >= verticalTravel * MinitiDesignSystem.NavigationGesture.horizontalDominanceRatio
+    }
+}
+
+private extension MainNavigationDestination {
+    func referencesMissingMeeting(in availableMeetingIDs: Set<UUID>) -> Bool {
+        guard case .meeting(let id) = self else { return false }
+        return !availableMeetingIDs.contains(id)
+    }
+}
+
 struct MainWindow: View {
     private static let historySearchDebounceNanoseconds: UInt64 = 200_000_000
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var keyboardService: KeyboardShortcutsService
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var meetings: [Meeting] = []
     @State private var selectedMeetingID: UUID?
     @AppStorage("mainWindow.sidebarCollapsed") private var sidebarCollapsed = false
@@ -45,11 +122,23 @@ struct MainWindow: View {
     @State private var showTraining = false
     @State private var coachingOriginMeetingID: UUID?
     @State private var searchDebounceTask: Task<Void, Never>?
+    @State private var navigationHistory = MainNavigationHistory(current: .home)
+    @State private var isApplyingNavigationHistory = false
+    @State private var navigationSwipeProgress: CGFloat = 0
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
         return meetings.first(where: { $0.id == selectedMeetingID })
     }
+
+    private var currentNavigationDestination: MainNavigationDestination {
+        if let selectedMeetingID { return .meeting(selectedMeetingID) }
+        if showTraining { return .coaching }
+        return .home
+    }
+
+    private var canNavigateBack: Bool { !navigationHistory.backStack.isEmpty }
+    private var canNavigateForward: Bool { !navigationHistory.forwardStack.isEmpty }
 
     private var historicalMeetings: [Meeting] {
         meetings
@@ -157,9 +246,24 @@ struct MainWindow: View {
             if keyboardService.showingHelp {
                 KeyboardShortcutsOverlay()
             }
+
+            if abs(navigationSwipeProgress) > 0.01 {
+                MainWindowNavigationSwipeCue(signedProgress: navigationSwipeProgress)
+                    .allowsHitTesting(false)
+                    .zIndex(10)
+            }
         }
         .frame(minWidth: 760, minHeight: 520)
         .background(Theme.bg)
+        .background(
+            MainWindowNavigationSwipeObserver(
+                canGoBack: canNavigateBack,
+                canGoForward: canNavigateForward,
+                onProgress: updateNavigationSwipeProgress,
+                onBack: navigateBack,
+                onForward: navigateForward
+            )
+        )
         .onAppear {
             initializeIfNeeded()
             refreshMeetings()
@@ -194,6 +298,10 @@ struct MainWindow: View {
             if newValue != coachingOriginMeetingID {
                 coachingOriginMeetingID = nil
             }
+            recordNavigationDestinationChange()
+        }
+        .onChange(of: showTraining) { _, _ in
+            recordNavigationDestinationChange()
         }
         .onChange(of: searchText) { _, newValue in
             scheduleSearchDebounce(for: newValue)
@@ -233,6 +341,7 @@ struct MainWindow: View {
         didInitialize = true
         appState.modelContext = modelContext
         appState.resumeInterruptedMeeting()
+        navigationHistory = MainNavigationHistory(current: currentNavigationDestination)
         setupNavigationHandlers()
     }
     
@@ -296,7 +405,63 @@ struct MainWindow: View {
         }
     }
 
+    private func recordNavigationDestinationChange() {
+        guard !isApplyingNavigationHistory else { return }
+        navigationHistory.visit(currentNavigationDestination)
+    }
+
+    private func navigateBack() {
+        guard let destination = navigationHistory.goBack() else { return }
+        applyNavigationDestination(destination)
+    }
+
+    private func navigateForward() {
+        guard let destination = navigationHistory.goForward() else { return }
+        applyNavigationDestination(destination)
+    }
+
+    private func updateNavigationSwipeProgress(_ progress: CGFloat) {
+        if progress == 0, !reduceMotion {
+            withAnimation(.easeOut(duration: MinitiDesignSystem.Motion.navigationCueDismissDuration)) {
+                navigationSwipeProgress = 0
+            }
+        } else {
+            navigationSwipeProgress = progress
+        }
+    }
+
+    private func applyNavigationDestination(_ destination: MainNavigationDestination) {
+        if case .meeting(let id) = destination,
+           !meetings.contains(where: { $0.id == id }) {
+            navigationHistory.retainMeetings(Set(meetings.map(\.id)))
+            return
+        }
+
+        isApplyingNavigationHistory = true
+        coachingOriginMeetingID = nil
+
+        switch destination {
+        case .home:
+            showTraining = false
+            selectedMeetingID = nil
+        case .coaching:
+            selectedMeetingID = nil
+            showTraining = true
+        case .meeting(let id):
+            showTraining = false
+            selectedMeetingID = id
+        }
+
+        DispatchQueue.main.async {
+            isApplyingNavigationHistory = false
+        }
+    }
+
     private func backToCoaching() {
+        if navigationHistory.backStack.last == .coaching {
+            navigateBack()
+            return
+        }
         coachingOriginMeetingID = nil
         selectedMeetingID = nil
         showTraining = true
@@ -326,6 +491,7 @@ struct MainWindow: View {
         let descriptor = FetchDescriptor<Meeting>()
         guard let fetched = try? modelContext.fetch(descriptor) else { return }
         meetings = fetched.sorted { $0.startTime > $1.startTime }
+        navigationHistory.retainMeetings(Set(fetched.map(\.id)))
 
         if let selectedMeetingID, !fetched.contains(where: { $0.id == selectedMeetingID }) {
             self.selectedMeetingID = nil
@@ -347,6 +513,212 @@ struct MainWindow: View {
             guard isSearchActive else { return }
             debouncedSearchText = trimmed
         }
+    }
+}
+
+private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
+    let canGoBack: Bool
+    let canGoForward: Bool
+    let onProgress: (CGFloat) -> Void
+    let onBack: () -> Void
+    let onForward: () -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = SwipePassthroughView()
+        view.canGoBack = canGoBack
+        view.canGoForward = canGoForward
+        view.onProgress = onProgress
+        view.onBack = onBack
+        view.onForward = onForward
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        guard let view = nsView as? SwipePassthroughView else { return }
+        view.canGoBack = canGoBack
+        view.canGoForward = canGoForward
+        view.onProgress = onProgress
+        view.onBack = onBack
+        view.onForward = onForward
+    }
+
+    private final class SwipePassthroughView: NSView {
+        var canGoBack = false
+        var canGoForward = false
+        var onProgress: ((CGFloat) -> Void)?
+        var onBack: (() -> Void)?
+        var onForward: (() -> Void)?
+
+        private var scrollEventMonitor: Any?
+        private var accumulatedX: CGFloat = 0
+        private var accumulatedY: CGFloat = 0
+        private var isTrackingGesture = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard scrollEventMonitor == nil, window != nil else { return }
+            DispatchQueue.main.async { [weak self] in
+                self?.installScrollEventMonitor()
+            }
+        }
+
+        override func viewWillMove(toWindow newWindow: NSWindow?) {
+            if newWindow == nil {
+                removeScrollEventMonitor()
+            }
+            super.viewWillMove(toWindow: newWindow)
+        }
+
+        override func removeFromSuperview() {
+            removeScrollEventMonitor()
+            super.removeFromSuperview()
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        private func installScrollEventMonitor() {
+            guard scrollEventMonitor == nil else { return }
+            scrollEventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                handleScrollEvent(event)
+                return event
+            }
+        }
+
+        private func handleScrollEvent(_ event: NSEvent) {
+            guard event.window?.attachedSheet == nil,
+                  event.window?.sheetParent == nil,
+                  event.hasPreciseScrollingDeltas,
+                  event.momentumPhase.isEmpty,
+                  !event.phase.isEmpty,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+                  !isEditingText(in: event.window) else {
+                resetGesture()
+                return
+            }
+
+            if event.phase.contains(.mayBegin) || event.phase.contains(.began) {
+                resetGesture()
+                isTrackingGesture = true
+            }
+
+            if isTrackingGesture &&
+               (event.phase.contains(.began) || event.phase.contains(.changed)) {
+                // Normalize natural/reversed scrolling so physical swipe direction
+                // remains stable: right goes back and left goes forward.
+                let deviceDirection: CGFloat = event.isDirectionInvertedFromDevice ? -1 : 1
+                accumulatedX += event.scrollingDeltaX * deviceDirection
+                accumulatedY += event.scrollingDeltaY * deviceDirection
+                presentGestureProgress()
+            }
+
+            if event.phase.contains(.cancelled) {
+                resetGesture()
+            } else if event.phase.contains(.ended) {
+                finishGesture()
+            }
+        }
+
+        private func finishGesture() {
+            defer { resetGesture() }
+            guard MainWindowNavigationSwipePolicy.shouldCommit(
+                horizontal: accumulatedX,
+                vertical: accumulatedY
+            ) else { return }
+
+            if accumulatedX < 0 {
+                guard canGoBack else { return }
+                onBack?()
+            } else {
+                guard canGoForward else { return }
+                onForward?()
+            }
+        }
+
+        private func presentGestureProgress() {
+            guard let progress = MainWindowNavigationSwipePolicy.presentationProgress(
+                horizontal: accumulatedX,
+                vertical: accumulatedY
+            ) else {
+                onProgress?(0)
+                return
+            }
+
+            let isAvailable = progress < 0 ? canGoBack : canGoForward
+            onProgress?(isAvailable ? progress : 0)
+        }
+
+        private func resetGesture() {
+            accumulatedX = 0
+            accumulatedY = 0
+            isTrackingGesture = false
+            onProgress?(0)
+        }
+
+        private func isEditingText(in window: NSWindow?) -> Bool {
+            guard let textView = window?.firstResponder as? NSTextView else { return false }
+            return textView.isEditable || textView.isFieldEditor
+        }
+
+        private func removeScrollEventMonitor() {
+            if let scrollEventMonitor {
+                NSEvent.removeMonitor(scrollEventMonitor)
+                self.scrollEventMonitor = nil
+            }
+            resetGesture()
+        }
+    }
+}
+
+private struct MainWindowNavigationSwipeCue: View {
+    let signedProgress: CGFloat
+
+    private var isBack: Bool { signedProgress < 0 }
+    private var progress: CGFloat { min(abs(signedProgress), 1) }
+    private var opacity: Double {
+        Double(min(max((progress - 0.06) / 0.24, 0), 1))
+    }
+    private var horizontalOffset: CGFloat {
+        let remainingTravel = MinitiDesignSystem.NavigationGesture.cueTravel * (1 - progress)
+        return isBack ? -remainingTravel : remainingTravel
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if !isBack { Spacer(minLength: 0) }
+
+            ZStack {
+                Circle()
+                    .fill(ColorPalette.Background.card)
+                    .overlay(
+                        Circle()
+                            .stroke(ColorPalette.Border.light, lineWidth: 1)
+                    )
+
+                Circle()
+                    .trim(from: 0, to: progress)
+                    .stroke(
+                        progress >= 1 ? ColorPalette.Text.primary : ColorPalette.Text.muted,
+                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                    )
+                    .rotationEffect(.degrees(-90))
+
+                Image(systemName: isBack ? "arrow.left" : "arrow.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(progress >= 1 ? ColorPalette.Text.primary : ColorPalette.Text.muted)
+            }
+            .frame(
+                width: MinitiDesignSystem.NavigationGesture.cueDiameter,
+                height: MinitiDesignSystem.NavigationGesture.cueDiameter
+            )
+            .scaleEffect(0.84 + (0.16 * progress))
+            .offset(x: horizontalOffset)
+            .opacity(opacity)
+
+            if isBack { Spacer(minLength: 0) }
+        }
+        .padding(.horizontal, MinitiDesignSystem.NavigationGesture.cueEdgeInset)
+        .accessibilityHidden(true)
     }
 }
 
@@ -434,7 +806,7 @@ struct TerminalSidebar: View {
                 // Coaching
                 collapsedNavButton(
                     icon: "chart.bar.fill",
-                    color: ColorPalette.Accent.amber,
+                    color: ColorPalette.Text.primary,
                     isSelected: showTraining && selectedMeetingID == nil
                 ) {
                     showTraining = true
@@ -533,7 +905,6 @@ struct TerminalSidebar: View {
                         systemIcon: "house.fill",
                         label: "home",
                         isSelected: selectedMeetingID == nil && !showTraining,
-                        accentColor: Theme.accent,
                         shortcut: "⌘N"
                     ) {
                         showTraining = false
@@ -544,8 +915,7 @@ struct TerminalSidebar: View {
                 SidebarIconItem(
                     systemIcon: "chart.bar.fill",
                     label: "coaching",
-                    isSelected: showTraining && selectedMeetingID == nil,
-                    accentColor: ColorPalette.Accent.amber
+                    isSelected: showTraining && selectedMeetingID == nil
                 ) {
                     showTraining = true
                     selectedMeetingID = nil
@@ -556,7 +926,6 @@ struct TerminalSidebar: View {
                         systemIcon: "clock.fill",
                         label: "history",
                         isSelected: selectedMeetingID != nil,
-                        accentColor: Theme.textMuted,
                         trailing: {
                             AnyView(
                                 HStack(spacing: 4) {
@@ -1009,7 +1378,6 @@ struct SidebarIconItem: View {
     let systemIcon: String
     let label: String
     let isSelected: Bool
-    let accentColor: Color
     var shortcut: String? = nil
     var trailing: (() -> AnyView)? = nil
     let action: () -> Void
@@ -1019,7 +1387,7 @@ struct SidebarIconItem: View {
             HStack(spacing: 10) {
                 Image(systemName: systemIcon)
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(isSelected ? accentColor : Theme.textDim)
+                    .foregroundStyle(isSelected ? ColorPalette.Text.primary : Theme.textDim)
                     .frame(width: 20)
 
                 Text(label)
@@ -1277,7 +1645,7 @@ struct MeetingDetailView: View {
         HStack(spacing: 10) {
             if showsBackToCoaching {
                 Button(action: onBackToCoaching) {
-                    MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.coaching) {
+                    MinitiControlLabel(role: .secondary) {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 9, weight: .bold))
@@ -1929,7 +2297,7 @@ struct SavedTrainingSection: View {
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     DetailInsightBlock(
                         title: "fillers: \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? ColorPalette.Accent.amber : Color(hex: "8B949E"),
+                        color: speaker.isLocalMic ? ColorPalette.Coaching.fillers : ColorPalette.Text.meta,
                         info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -1972,7 +2340,7 @@ struct SavedTrainingSection: View {
             }
             
             if metrics.speakers.count > 1 {
-                DetailInsightBlock(title: "talk ratio", color: ColorPalette.Accent.blue, info: .talkRatio) {
+                DetailInsightBlock(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 10, weight: .medium, design: .default))
@@ -1986,7 +2354,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "pace", color: ColorPalette.Accent.purple, info: .pace) {
+            DetailInsightBlock(title: "pace", color: ColorPalette.Coaching.pace, info: .pace) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -1998,7 +2366,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "longest monologue", color: ColorPalette.Accent.pink, info: .longestMonologue) {
+            DetailInsightBlock(title: "longest monologue", color: ColorPalette.Coaching.monologue, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -2011,7 +2379,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "questions asked", color: ColorPalette.Accent.green, info: .questionsAsked) {
+            DetailInsightBlock(title: "questions asked", color: ColorPalette.Coaching.questions, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -2022,7 +2390,7 @@ struct SavedTrainingSection: View {
                 }
             }
             
-            DetailInsightBlock(title: "clarity", color: ColorPalette.Accent.yellow, info: .clarity) {
+            DetailInsightBlock(title: "clarity", color: ColorPalette.Coaching.clarity, info: .clarity) {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(displaySpeakers) { speaker in
                         SavedTrainingMetricRow(
@@ -2072,7 +2440,7 @@ struct SavedTrainingSection: View {
                         .frame(width: 60, alignment: .trailing)
                     Text("\(entry.count)")
                         .font(.system(size: 10, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Accent.amber)
+                        .foregroundStyle(ColorPalette.Coaching.fillers)
                 }
             }
         }
@@ -2387,10 +2755,13 @@ struct AttioSendSheet: View {
                 .font(.system(size: 13, weight: .bold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer()
-            Button("close") { dismiss() }
-                .font(.system(size: 11, weight: .medium, design: .default))
+            Button { dismiss() } label: {
+                MinitiControlLabel(role: .secondary, height: 26, horizontalPadding: 8) {
+                    Text("close")
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                }
+            }
                 .buttonStyle(.plain)
-                .foregroundStyle(Color(hex: "8B949E"))
                 .focusable(false)
                 .keyboardShortcut(.cancelAction)
         }
@@ -2416,13 +2787,10 @@ struct AttioSendSheet: View {
                 Button {
                     Task { await startOAuth() }
                 } label: {
-                    Text((status?.connected ?? false) ? "reconnect" : "connect")
-                        .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Integrations.attio)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(ColorPalette.Integrations.attio.opacity(0.08))
-                        .cornerRadius(6)
+                    MinitiControlLabel(role: .secondary, height: 28) {
+                        Text((status?.connected ?? false) ? "reconnect" : "connect")
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                    }
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -2446,22 +2814,23 @@ struct AttioSendSheet: View {
             sectionTitle("find attio record")
 
             HStack(spacing: 8) {
-                ForEach(AttioSearchScope.allCases, id: \.self) { scope in
-                    Button {
-                        selectedScope = scope
-                    } label: {
-                        Text(scope.label)
-                            .font(.system(size: 11, weight: selectedScope == scope ? .semibold : .medium, design: .default))
-                            .foregroundStyle(selectedScope == scope ? Color(hex: "E6EDF3") : Color(hex: "8B949E"))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(selectedScope == scope ? Color(hex: "18181B") : Color.clear)
-                            )
+                MinitiTabStripSurface {
+                    HStack(spacing: 0) {
+                        ForEach(AttioSearchScope.allCases, id: \.self) { scope in
+                            Button {
+                                selectedScope = scope
+                            } label: {
+                                MinitiTabLabel(
+                                    title: scope.label,
+                                    isSelected: selectedScope == scope,
+                                    height: 26
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .accessibilityAddTraits(selectedScope == scope ? .isSelected : [])
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
                 }
                 Spacer()
             }
@@ -2508,23 +2877,19 @@ struct AttioSendSheet: View {
                 Button {
                     Task { await runSearch() }
                 } label: {
-                    HStack(spacing: 6) {
-                        if isSearching {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(ColorPalette.Background.primary)
-                        } else {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 10, weight: .bold))
+                    MinitiControlLabel(role: .secondary, isEmphasized: searchIsEnabled, height: 30) {
+                        HStack(spacing: 6) {
+                            if isSearching {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "magnifyingglass")
+                                    .font(.system(size: 10, weight: .bold))
+                            }
+                            Text(isSearching ? "searching..." : "search attio")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
                         }
-                        Text(isSearching ? "searching..." : "search attio")
-                            .font(.system(size: 11, weight: .semibold, design: .default))
                     }
-                    .foregroundStyle(ColorPalette.Background.primary)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(ColorPalette.Accent.blueGitHub)
-                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -2630,13 +2995,14 @@ struct AttioSendSheet: View {
                 Button {
                     showPayloadDetails.toggle()
                 } label: {
-                    HStack(spacing: 5) {
-                        Text(showPayloadDetails ? "hide details" : "review details")
-                        Image(systemName: showPayloadDetails ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 8, weight: .bold))
+                    MinitiControlLabel(role: .secondary, height: 26, horizontalPadding: 8) {
+                        HStack(spacing: 5) {
+                            Text(showPayloadDetails ? "hide details" : "review details")
+                            Image(systemName: showPayloadDetails ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 8, weight: .bold))
+                        }
+                        .font(.system(size: 10, weight: .semibold, design: .default))
                     }
-                    .font(.system(size: 10, weight: .semibold, design: .default))
-                    .foregroundStyle(ColorPalette.Accent.blueGitHub)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
@@ -2699,23 +3065,19 @@ struct AttioSendSheet: View {
                 Button {
                     Task { await sendToAttio() }
                 } label: {
-                    HStack(spacing: 8) {
-                        if isSending {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(ColorPalette.Background.primary)
-                        } else {
-                            Image(systemName: "paperplane.fill")
-                                .font(.system(size: 11, weight: .bold))
+                    MinitiControlLabel(role: .primary, isEmphasized: true, height: 34, horizontalPadding: 14) {
+                        HStack(spacing: 8) {
+                            if isSending {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "paperplane.fill")
+                                    .font(.system(size: 11, weight: .bold))
+                            }
+                            Text(isSending ? "sending..." : "send meeting to attio")
+                                .font(.system(size: 12, weight: .bold, design: .default))
                         }
-                        Text(isSending ? "sending..." : "send meeting to attio")
-                            .font(.system(size: 12, weight: .bold, design: .default))
                     }
-                    .foregroundStyle(ColorPalette.Background.primary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(ColorPalette.Integrations.attio)
-                    .cornerRadius(6)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)

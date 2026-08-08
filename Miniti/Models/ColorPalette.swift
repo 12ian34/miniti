@@ -266,6 +266,18 @@ struct ColorPalette {
         static let zonedOut = Color(hex: "D2A8FF")     // Zoned Out catch-up
     }
 
+    // MARK: - Coaching Metric Colors
+    /// Stable content taxonomy for coaching metrics. These deliberately do not
+    /// reuse control-role or trend-status tokens, even when the hue is related.
+    struct Coaching {
+        static let fillers = Color(hex: "E3B341")       // Gold
+        static let pace = Color(hex: "79C0FF")          // Periwinkle blue
+        static let clarity = Color(hex: "BC8CFF")       // Lavender
+        static let questions = Color(hex: "FF9B71")     // Warm coral
+        static let talkRatio = Color(hex: "39C5CF")     // Cyan
+        static let monologue = Color(hex: "F778BA")     // Rose
+    }
+
     // MARK: - Integration Colors
     struct Integrations {
         static let attio = Color(hex: "F97316")

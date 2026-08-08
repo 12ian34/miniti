@@ -72,6 +72,34 @@ colors:
   insight-topics: "#A371F7"
   insight-meddpicc: "#F59E0B"
 
+  coaching-fillers: "#E3B341"
+  coaching-pace: "#79C0FF"
+  coaching-clarity: "#BC8CFF"
+  coaching-questions: "#FF9B71"
+  coaching-talk-ratio: "#39C5CF"
+  coaching-monologue: "#F778BA"
+
+colorRoles:
+  principle: "Control chrome communicates action and state; category color belongs inside content."
+  controls:
+    primary-navigation: "{colors.info}"
+    secondary-utility: "neutral surfaces and text"
+    start-resume-success: "{colors.success}"
+    stop-discard-error: "{colors.error}"
+    warning: "{colors.warning}"
+  content:
+    summary: "{colors.insight-summary}"
+    questions: "{colors.tertiary-container}"
+    coaching-metrics: "{colors.coaching-*}"
+    sales: "{colors.meddpicc-decision-criteria}"
+    playbook: "{colors.insight-topics}"
+  rules:
+    - "Tabs and ordinary utility buttons are neutral, including when selected."
+    - "Product-authored tab labels are always lowercase; MinitiTabLabel owns this transformation."
+    - "Do not pass arbitrary feature colors into controls; use MinitiControlRole."
+    - "Use ContentAccent only for section headers, charts, transcript markers, and insight content."
+    - "Within Coaching, each metric keeps its named coaching color everywhere; metric colors never double as CTA or trend-status tokens."
+
 typography:
   display:
     fontFamily: "SF Pro, -apple-system, BlinkMacSystemFont, sans-serif"
@@ -175,6 +203,29 @@ components:
     rounded: "{rounded.lg}"
     padding: "12px"
 
+  card-surface:
+    implementation: "MinitiCardSurface"
+    variants: "standard, inset, accented"
+    rounded: "{rounded.lg}"
+    padding: "12px"
+    sizing: "content-driven by default; explicit height only for components whose contract requires it"
+    note: "Use for Miniti-owned cards so fill, border, radius, and content padding remain consistent."
+
+  tab-strip:
+    implementation: "MinitiTabLabel + MinitiTabStripSurface"
+    backgroundColor: "{colors.background}"
+    selectedBackgroundColor: "{colors.surface-card}"
+    selectedTextColor: "{colors.text-primary}"
+    unselectedTextColor: "{colors.text-muted}"
+    rounded: "{rounded.lg}"
+    note: "Use neutral contrast—not category color—for mutually exclusive views. Labels render lowercase through NavigationCopy."
+
+  compact-control:
+    implementation: "MinitiControlLabel + MinitiControlRole"
+    roles: "primary, secondary, positive, recording, destructive, warning"
+    rounded: "{rounded.md}"
+    note: "Native Button and Menu own interaction semantics; the label owns shared chrome."
+
   terminal-header:
     backgroundColor: "{colors.surface-panel}"
     textColor: "{colors.text-muted}"
@@ -183,14 +234,14 @@ components:
     padding: "6px"
 
   button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
+    backgroundColor: "{colors.info}"
+    textColor: "{colors.on-secondary}"
     typography: "{typography.body-emphasis}"
     rounded: "{rounded.lg}"
     padding: "14px"
   button-primary-hover:
-    backgroundColor: "{colors.primary-container}"
-    textColor: "{colors.on-primary-container}"
+    backgroundColor: "{colors.secondary}"
+    textColor: "{colors.on-secondary}"
   button-primary-disabled:
     backgroundColor: "{colors.surface-card}"
     textColor: "{colors.text-dim}"
@@ -204,6 +255,20 @@ components:
   button-secondary-hover:
     backgroundColor: "{colors.border-light}"
     textColor: "{colors.text-primary}"
+
+  button-positive:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.success}"
+    typography: "{typography.label}"
+    rounded: "{rounded.md}"
+    padding: "7px"
+
+  button-recording:
+    backgroundColor: "{colors.surface-card}"
+    textColor: "{colors.recording}"
+    typography: "{typography.label}"
+    rounded: "{rounded.md}"
+    padding: "7px"
 
   button-destructive:
     backgroundColor: "{colors.surface-card}"
@@ -580,6 +645,8 @@ The palette is derived from `Miniti/Models/ColorPalette.swift` and is the single
 
 **Insight sections** (`insight-summary`, `insight-discussion`, `insight-actions`, `insight-topics`, `insight-meddpicc`) alias back to accents so every section header in the live insights panel has a stable, predictable color cue.
 
+**Coaching metrics** use a separate six-color taxonomy owned by `ColorPalette.Coaching`: fillers gold, pace periwinkle, clarity lavender, questions warm coral, talk ratio cyan, and longest monologue rose. The mapping is identical in live coaching, saved meeting detail, trend cards, and overview tables. These hues are content labels only and deliberately differ from primary, positive, recording, warning, and trend-status tokens. “You” remains green as speaker identity; question-frequency content never reuses that green.
+
 **Known WCAG AA exceptions.** Two component pairings ship below the 4.5:1 threshold and are called out explicitly rather than papered over:
 
 - `input-field-empty` — `text-placeholder` (`#52525B`) on `surface-panel`. Placeholders are intentionally dim so they read as ghosted rather than as real content; WCAG AA explicitly exempts inactive/placeholder text.
@@ -591,7 +658,9 @@ Any *new* component must clear 4.5:1. These two are pinned to the in-code palett
 
 Miniti uses the platform's Apple system font for prose, controls, and primary Home / Coaching / History navigation. Its open forms, proportional spacing, native hinting, and accessibility behavior make transcripts and AI insights easier to read at deliberately compact sizes. The `miniti` wordmark retains the original monospaced identity; recording timers and other changing numerical readouts use monospaced digits.
 
-Settings offers three discrete interface scales. **Compact** exactly preserves the original type metrics and the user's system Dynamic Type setting. **Standard** is the default restrained readability pass and adds one Dynamic Type step. **Large** adds two steps and roomier prose metrics. This is not a blanket view transform: important prose uses platform-specific metrics, existing accessibility sizes are never reduced, and the compact insight selector keeps Summary / Questions / Coaching visible while Sales / Playbook live in its More menu.
+Settings offers three discrete interface scales. **Compact** exactly preserves the original type metrics and the user's system Dynamic Type setting. **Standard** is the default restrained readability pass and adds one Dynamic Type step. **Large** adds two steps and roomier prose metrics. This is not a blanket view transform: important prose uses platform-specific metrics, existing accessibility sizes are never reduced, and the compact insight selector keeps lowercase summary / questions / coaching visible while Sales / Playbook live in its More menu.
+
+The Coaching overview is a reading-heavy exception to the app's compact desktop chrome: `MinitiDesignSystem.CoachingTypography` adds two points to its fixed macOS type roles while leaving iPhone sizes unchanged. A neutral lowercase `focus` / `stats` / `history` tab strip separates personalized guidance and trends, aggregate comparisons across all six Coaching metrics, and the sortable meeting table. Each segment occupies exactly one third of the strip, including its selection surface and hit target. `MinitiDesignSystem.CoachingLayout` keeps the strip at a 480px compact-column maximum and gives both the stats table and trend cards a 720px maximum on desktop; all become fluid on narrower iPhone/iPad layouts. The stats metric column is deliberately wide enough to keep every metric and unit—including `longest monologue words`—on one line. Each row then uses the remaining width for a visible plain-language explanation beneath the comparisons; stats do not hide this copy behind info icons. Charts do not interrupt those rows: the complete comparison table is followed directly by an always-visible card for each metric, with no extra section heading or disclosure. Each chart uses the metric's established content colour, a low-opacity area fade, quiet dashed grid lines, and a ringed latest point. Horizontal positions are categorical meeting-sequence indices, so every meeting receives equal spacing regardless of calendar gaps; unavailable metric values retain their position rather than compressing time. Axes stay visually hidden because the aligned all/recent/latest values already provide the numerical frame; VoiceOver receives the latest value, date, unit, and eligible meeting count. Empty talk-ratio history uses a neutral placeholder instead of inventing data. Comparison arrows use status green/red/neutral only after metric meaning is considered: directional measures use their established better direction, range-based measures use movement toward or away from the broad coaching range, and unavailable or inconclusive comparisons remain neutral. Cards and nested evidence surfaces size to their content, without filler gaps or prose truncation. Source-example labels wrap, and every source shows its meeting title with a locale-formatted date but no time.
 
 - **Transcript, macOS:** Compact 13px / 2px leading; Standard 14px / 4px; Large 15px / 5px.
 - **Transcript, iOS:** Compact 13px / 2px leading; Standard 15px / 5px; Large 17px / 6px.
@@ -620,7 +689,7 @@ Containers follow the same small-step rhythm:
 
 - The meeting view splits horizontally into a transcript + notes column and an insights rail. Both use `surface-panel` for the background and `border` for the 1px divider.
 - On macOS, the sidebar collapses to a compact icon rail via `⌘[`; the insights pane collapses via `⌘]`. Collapsed states share the `sidebar` component tokens.
-- On iOS, the recording view places the primary button bottom-center and uses native toolbar slots for home / timer / share. There is no tab bar during recording.
+- On iOS, the recording view keeps share in the native trailing toolbar slot and places the labelled neutral `catch me up` action immediately left of the red Stop action in the bottom control bar. The catch-up action uses an SF Symbol rather than an emoji. There is no tab bar during recording.
 
 ## Elevation & Depth
 
@@ -648,15 +717,20 @@ Rectangular (0px) corners are reserved for full-bleed dividers and the app backg
 
 Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 
-- **button-primary** — the "start", "save", and "upgrade to pro" CTAs. Green fill, 8px radius, 14px padding.
-- **button-secondary** — neutral terminal-style buttons (tabs, "update", "copy").
-- **button-vibey** — compact accent-tinted actions used for recording controls, home utilities, post-meeting navigation, and macOS insight modes. All variants share a 30px height, 10px horizontal padding, 6px radius, tinted fill, and 1px accent border; semantic accent color and selected emphasis are the only differences. Insight-mode peers use 4px gaps. Enabled Sales and Playbook become matching direct mode buttons when width permits; narrow panes retain the compact selected-specialist More label.
+- **button-primary** — blue navigation and completion CTAs such as Done, Meetings, Save, and Upgrade.
+- **button-positive** — green Start and Resume actions plus explicit success affordances.
+- **button-recording** — red Stop control while capture is active.
+- **button-secondary** — neutral terminal-style utilities such as Settings, Shortcuts, Zoned Out, Update, and Copy.
+- **compact-control** — `MinitiControlLabel` renders the shared compact chrome from a semantic `MinitiControlRole`; feature views never provide an arbitrary accent.
+- **tab-strip** — persistent neutral navigation for transcript / insights / notes, summary / questions / coaching, and Coaching's focus / stats / history sections. Sales and Playbook live under More. Product-authored tab labels are lowercased by the component; selection is shown through surface and text contrast, never category color. Equal-width segmented strips use `fillsAvailableWidth` on every label, Button, and Menu so each selected surface and hit target fills its complete divided share of the container.
 - **button-destructive** — discard, cancel, "disconnect" in Settings. Error-colored text on a neutral ground until hover, then the red fill flips in.
 - **button-ghost** — in-content affordances (e.g. rename speaker), no fill until hover.
 - **card / panel** — the live insights panel, history detail panes, onboarding cards. `panel` is slightly darker than `card`.
+- **coaching-trend-card** — one-column, content-sized personalized metric card with untruncated copy, a source-meeting title and date, and the stable Coaching metric accent.
+- **navigation-swipe-cue** — neutral edge dial driven directly by a macOS two-finger back/forward gesture. Its progress ring reaches full exactly at the commit threshold and only appears when history exists in that direction.
 
 - **terminal-header** — the red-dot + timer strip at the top of the recording view.
-- **input-field** — note textarea, search, webhook URL, Attio search. Always system 13px.
+- **input-field** — note textarea, search, webhook URL, Attio search. Always system 13px. Attio modal actions use the same semantic compact controls as the rest of the app; Attio orange identifies the integration, not its buttons.
 - **pill-tag** — topic tags, language badge, usage pill.
 - **pill-status-recording** / **pill-status-pro** — live indicators; color is the only variance.
 - **update-banner** / **limit-banner** — home-screen banners; blue for update available, amber for usage warning.
@@ -669,7 +743,7 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 
 ### Implementation contract
 
-The design system has three code-level layers: `ColorPalette` owns colors, `InterfaceScale` owns platform-specific readable typography, and `MinitiDesignSystem` owns shared spacing, radii, control metrics, motion, opacity states, and semantic accent roles. `MinitiVibeyLabel` is the first reusable component built on those tokens. It styles label content only: the enclosing native `Button` or `Menu` continues to own actions, keyboard shortcuts, focus, disabled state, menus, and accessibility so adopting the design system cannot silently change behaviour.
+The design system has three code-level layers: `ColorPalette` owns colors—including the stable Coaching metric palette—`InterfaceScale` owns platform-specific readable typography, and `MinitiDesignSystem` owns shared spacing, radii, control metrics, Coaching's desktop reading scale and overview column bounds, motion, opacity states, semantic control roles, navigation copy, and content accents. `MinitiControlLabel` owns compact action chrome; `MinitiTabLabel` and `MinitiTabStripSurface` own lowercase, neutral mutually-exclusive navigation; `MinitiCardSurface` owns card chrome. These components style content only: the enclosing native `Button` or `Menu` continues to own actions, keyboard shortcuts, focus, disabled state, menus, and accessibility.
 
 Feature views must consume these semantic contracts rather than copy their measurements. Existing native controls are migrated only when their visual contract is being changed; the presence of a design system is not permission for a broad restyle.
 
@@ -681,6 +755,8 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 
 - Use semantic tokens over hex. `colors.recording`, not `#F85149`.
 - Pin green to "you" / success. If a future feature needs a new positive signal, alias it to `colors.success` rather than introducing a new green.
+- Keep category color in content. Tabs, Settings, Shortcuts, and other utilities stay neutral.
+- Keep each Coaching metric on its named palette token across live, history, overview, and examples; never substitute a CTA or trend color.
 - Keep every text/background pair above WCAG AA (4.5:1). The palette is tuned for this; verify with the linter after any color change.
 - Prefer surface stacking (bump to `surface-card`) over shadows to indicate elevation.
 - Use the `pill` radius for anything carrying identity (speaker, status, pro); use `rounded.md` for anything carrying an action.
@@ -691,6 +767,7 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 - Don't introduce custom display fonts or switch prose back to monospaced. The system font is the readability baseline; monospaced type is reserved for the existing wordmark, primary navigation identity, and changing numeric readouts.
 - Don't ship a light-mode variant of a screen. The product is dark-only; there is no light token set.
 - Don't add drop shadows or blurs to simulate depth. Use surface stacking and borders instead.
+- Don't pass a Questions, Coaching, Sales, Playbook, speaker, or metric accent into ordinary button chrome.
 - Don't apply glass broadly. On current iOS, reserve native material for small functional utility surfaces and keep core transcript and insight panels opaque.
 - Don't reassign MEDDPICC letter colors ad-hoc in a view — route through `ColorPalette.MEDDPICC` so a retune stays atomic.
 - Don't hardcode a speaker color — always call `ColorPalette.Speaker.color(for:micSpeakerID:)` so the mic speaker stays green.

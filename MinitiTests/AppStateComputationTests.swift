@@ -1730,6 +1730,74 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertTrue(result.isEmpty)
     }
 
+    #if !IOS_TEST_TARGET
+    func testMainNavigationHistoryMovesBackAndForwardInVisitOrder() {
+        let meetingID = UUID()
+        var history = MainNavigationHistory(current: .home)
+
+        history.visit(.coaching)
+        history.visit(.meeting(meetingID))
+
+        XCTAssertEqual(history.goBack(), .coaching)
+        XCTAssertEqual(history.goBack(), .home)
+        XCTAssertNil(history.goBack())
+        XCTAssertEqual(history.goForward(), .coaching)
+        XCTAssertEqual(history.goForward(), .meeting(meetingID))
+        XCTAssertNil(history.goForward())
+    }
+
+    func testMainNavigationHistoryClearsForwardStackAfterNewVisit() {
+        let firstMeetingID = UUID()
+        let secondMeetingID = UUID()
+        var history = MainNavigationHistory(current: .home)
+
+        history.visit(.meeting(firstMeetingID))
+        XCTAssertEqual(history.goBack(), .home)
+        history.visit(.meeting(secondMeetingID))
+
+        XCTAssertNil(history.goForward())
+        XCTAssertEqual(history.goBack(), .home)
+    }
+
+    func testMainNavigationHistoryPrunesDeletedMeetings() {
+        let retainedMeetingID = UUID()
+        let deletedMeetingID = UUID()
+        var history = MainNavigationHistory(current: .home)
+
+        history.visit(.meeting(retainedMeetingID))
+        history.visit(.meeting(deletedMeetingID))
+        history.retainMeetings([retainedMeetingID])
+
+        XCTAssertEqual(history.current, .home)
+        XCTAssertTrue(history.forwardStack.isEmpty)
+        XCTAssertEqual(history.goBack(), .meeting(retainedMeetingID))
+    }
+
+    func testMainNavigationSwipeRequiresDeliberateHorizontalTravel() {
+        XCTAssertFalse(MainWindowNavigationSwipePolicy.shouldCommit(horizontal: 72, vertical: 4))
+        XCTAssertTrue(MainWindowNavigationSwipePolicy.shouldCommit(horizontal: 84, vertical: 4))
+        XCTAssertFalse(MainWindowNavigationSwipePolicy.shouldCommit(horizontal: 100, vertical: 80))
+    }
+
+    func testMainNavigationSwipeProgressTracksDirectionAndThreshold() throws {
+        let backProgress = try XCTUnwrap(
+            MainWindowNavigationSwipePolicy.presentationProgress(horizontal: -42, vertical: 2)
+        )
+        let forwardProgress = try XCTUnwrap(
+            MainWindowNavigationSwipePolicy.presentationProgress(horizontal: 84, vertical: 2)
+        )
+
+        XCTAssertEqual(backProgress, -0.5, accuracy: 0.001)
+        XCTAssertEqual(forwardProgress, 1, accuracy: 0.001)
+        XCTAssertNil(MainWindowNavigationSwipePolicy.presentationProgress(horizontal: 8, vertical: 20))
+
+        let diagonalProgress = try XCTUnwrap(
+            MainWindowNavigationSwipePolicy.presentationProgress(horizontal: 84, vertical: 70)
+        )
+        XCTAssertLessThan(diagonalProgress, 1)
+    }
+    #endif
+
     // MARK: - UsageInfo helper
 
     private static func makeUsageInfo(

@@ -11,6 +11,19 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-08 - v2.1.0 (macOS; iOS coming later)
+
+This release is available on macOS now. The currently pending iOS release is unchanged; these iPhone and iPad updates will follow in a later App Store release.
+
+#### New
+
+- new: (macOS now; iOS later) A new Coaching overview highlights your strengths, tracks trends across recent meetings, and suggests one practical focus for your next meeting, backed by examples from your transcripts
+- new: (macOS) Swipe with two fingers to move backward and forward between Home, Coaching, and meetings you have visited
+
+#### Design improvements
+
+- improvement: (macOS now; iOS later) Refreshed styling makes Coaching, insights, actions, and recording controls clearer and more consistent across the app
+
 ### 2026-08-07 - v2.0.4 (macOS; iOS remains v2.0.3 pending App Store review)
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.3.

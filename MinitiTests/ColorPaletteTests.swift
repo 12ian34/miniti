@@ -107,11 +107,70 @@ final class ColorPaletteTests: XCTestCase {
         XCTAssertEqual(MinitiDesignSystem.Radius.control, 6)
     }
 
-    func testInsightModesUseTheirSemanticAccents() {
-        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.standard), ColorPalette.Accent.blueGitHub)
-        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.questions), ColorPalette.Accent.purpleLight)
-        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.training), ColorPalette.Accent.amber)
-        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.meddpicc), ColorPalette.Accent.pink)
-        XCTAssertEqual(MinitiDesignSystem.Accent.insightMode(.docs), ColorPalette.Accent.purpleSoft)
+    func testInsightContentAccentsUseSemanticTokens() {
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.summary, ColorPalette.Accent.blueGitHub)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.questions, ColorPalette.Accent.purpleLight)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.sales, ColorPalette.Accent.pink)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.playbook, ColorPalette.Accent.purpleSoft)
+    }
+
+    func testControlRolesUseActionSemanticsInsteadOfContentCategories() {
+        XCTAssertEqual(MinitiControlRole.primary.accent, ColorPalette.Accent.blueGitHub)
+        XCTAssertEqual(MinitiControlRole.positive.accent, ColorPalette.Accent.greenGitHub)
+        XCTAssertEqual(MinitiControlRole.recording.accent, ColorPalette.Accent.redGitHub)
+        XCTAssertEqual(MinitiControlRole.destructive.accent, ColorPalette.Accent.redGitHub)
+        XCTAssertEqual(MinitiControlRole.warning.accent, ColorPalette.Accent.amber)
+    }
+
+    func testProductTabTitlesAreLowercase() {
+        XCTAssertEqual(MinitiDesignSystem.NavigationCopy.tabTitle("Summary"), "summary")
+        XCTAssertEqual(MinitiDesignSystem.NavigationCopy.tabTitle("Questions"), "questions")
+        XCTAssertEqual(MinitiDesignSystem.NavigationCopy.tabTitle("Coaching"), "coaching")
+        XCTAssertEqual(CoachingOverviewTab.allCases.map(\.rawValue), ["focus", "stats", "history"])
+    }
+
+    func testCoachingReadingTypeAdaptsByPlatform() {
+        #if IOS_TEST_TARGET
+        XCTAssertEqual(MinitiDesignSystem.CoachingTypography.size(12), 12)
+        #else
+        XCTAssertEqual(MinitiDesignSystem.CoachingTypography.size(12), 14)
+        #endif
+    }
+
+    func testCoachingLayoutUsesSharedColumnBounds() {
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, 720)
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.compactColumnMaxWidth, 480)
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsColumnMaxWidth, 720)
+        #if IOS_TEST_TARGET
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 64)
+        #else
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 76)
+        #endif
+    }
+
+    func testCoachingMetricsUseStableNonCTAAccents() {
+        let metricColors = CoachingMetric.allCases.map(MinitiDesignSystem.ContentAccent.coachingMetric)
+        let controlColors = [
+            MinitiControlRole.primary.accent,
+            MinitiControlRole.secondary.accent,
+            MinitiControlRole.positive.accent,
+            MinitiControlRole.recording.accent,
+            MinitiControlRole.destructive.accent,
+            MinitiControlRole.warning.accent,
+        ]
+
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.coachingMetric(.fillers), ColorPalette.Coaching.fillers)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.coachingMetric(.pace), ColorPalette.Coaching.pace)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.coachingMetric(.clarity), ColorPalette.Coaching.clarity)
+        XCTAssertEqual(MinitiDesignSystem.ContentAccent.coachingMetric(.questions), ColorPalette.Coaching.questions)
+
+        for (index, metricColor) in metricColors.enumerated() {
+            for otherColor in metricColors.dropFirst(index + 1) {
+                XCTAssertNotEqual(metricColor, otherColor)
+            }
+            for controlColor in controlColors {
+                XCTAssertNotEqual(metricColor, controlColor)
+            }
+        }
     }
 }

@@ -358,6 +358,232 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertTrue(others.hasMultipleDetails)
     }
 
+    // MARK: - Personalized coaching guidance
+
+    func testCoachingAdvisorNeedsAtLeastOneSnapshot() {
+        XCTAssertNil(CoachingAdvisor.analyze([]))
+    }
+
+    func testCoachingAdvisorBuildsBaselineBeforeFourMeetings() throws {
+        let report = try XCTUnwrap(CoachingAdvisor.analyze([
+            coachingSnapshot(day: 1),
+            coachingSnapshot(day: 2),
+            coachingSnapshot(day: 3),
+        ]))
+
+        XCTAssertEqual(report.meetingCount, 3)
+        XCTAssertTrue(report.summaries.allSatisfy { $0.trend == .buildingBaseline })
+        XCTAssertFalse(report.summaries.contains { $0.metric == .talkRatio })
+    }
+
+    func testCoachingAdvisorComparesDistinctRecentAndPreviousWindows() throws {
+        let report = try XCTUnwrap(CoachingAdvisor.analyze([
+            coachingSnapshot(day: 1, fillers: 8),
+            coachingSnapshot(day: 2, fillers: 8),
+            coachingSnapshot(day: 3, fillers: 2),
+            coachingSnapshot(day: 4, fillers: 2),
+        ]))
+        let fillers = try XCTUnwrap(report.summaries.first { $0.metric == .fillers })
+
+        XCTAssertEqual(fillers.recentValue, "2.0 / min")
+        XCTAssertEqual(fillers.previousValue, "8.0 / min")
+        XCTAssertEqual(fillers.trend, .improving)
+        XCTAssertEqual(fillers.status, .strong)
+    }
+
+    func testCoachingComparisonToneUsesMetricMeaning() {
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .fillers, latest: 2, baseline: 4), .positive)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .monologue, latest: 300, baseline: 150), .negative)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .questions, latest: 8, baseline: 4), .positive)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .pace, latest: 120, baseline: 90), .positive)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .pace, latest: 220, baseline: 150), .negative)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .clarity, latest: 8, baseline: 12), .neutral)
+        XCTAssertEqual(CoachingAdvisor.comparisonTone(for: .talkRatio, latest: nil, baseline: 0.5), .neutral)
+    }
+
+    func testCoachingAdvisorPrioritizesAnExtremePace() throws {
+        let report = try XCTUnwrap(CoachingAdvisor.analyze([
+            coachingSnapshot(day: 1, pace: 230, talkRatio: 0.5),
+        ]))
+
+        XCTAssertEqual(report.focus.metric, .pace)
+        XCTAssertEqual(report.focus.status, .focus)
+        XCTAssertEqual(report.focus.headline, "Give ideas room to land")
+        XCTAssertTrue(report.strengths.contains { $0.metric == .fillers })
+    }
+
+    func testCoachingAdvisorIncludesFillerSuggestion() throws {
+        let report = try XCTUnwrap(CoachingAdvisor.analyze([
+            coachingSnapshot(day: 1, fillers: 8, topFiller: "um"),
+        ]))
+        let fillers = try XCTUnwrap(report.summaries.first { $0.metric == .fillers })
+
+        XCTAssertEqual(fillers.headline, "Make pauses do the work")
+        XCTAssertTrue(fillers.tip.contains("one filler"))
+    }
+
+    func testCoachingAdvisorCarriesGroundedExampleIntoFocus() throws {
+        let meetingID = UUID()
+        let example = CoachingExample(
+            meetingID: meetingID,
+            meetingTitle: "Product review",
+            meetingDate: Date(timeIntervalSince1970: 86_400),
+            label: "A recent passage behind this pattern",
+            excerpt: "I want to walk through the whole plan before we decide."
+        )
+        let report = try XCTUnwrap(CoachingAdvisor.analyze([
+            coachingSnapshot(day: 1, pace: 230, examples: [.pace: example]),
+        ]))
+
+        XCTAssertEqual(report.focus.metric, .pace)
+        XCTAssertEqual(report.focus.example, example)
+    }
+
+    func testCoachingExampleExtractorFindsFillerInUserSpeech() throws {
+        let meetingID = UUID()
+        let examples = CoachingExampleExtractor.examples(
+            meetingID: meetingID,
+            meetingTitle: "Weekly review",
+            meetingDate: Date(timeIntervalSince1970: 172_800),
+            segments: [
+                TrainingMetrics.Segment(
+                    text: "Um, I think the launch plan is ready.",
+                    speaker: DeepgramService.micSpeakerID,
+                    isFinal: true,
+                    timestamp: 1
+                ),
+                TrainingMetrics.Segment(text: "Great, let's ship it.", speaker: 0, isFinal: true, timestamp: 2),
+            ],
+            selfIDs: [],
+            detectedFillers: ["um"],
+            topFiller: "um",
+            talkRatio: 0.6
+        )
+        let filler = try XCTUnwrap(examples[.fillers])
+
+        XCTAssertEqual(filler.meetingID, meetingID)
+        XCTAssertEqual(filler.meetingTitle, "Weekly review")
+        XCTAssertEqual(filler.meetingDate, Date(timeIntervalSince1970: 172_800))
+        XCTAssertEqual(filler.label, "A filler in context")
+        XCTAssertTrue(filler.excerpt.hasPrefix("Um,"))
+    }
+
+    func testCoachingExampleExtractorUsesRemoteMomentWhenNoQuestionWasAsked() throws {
+        let examples = CoachingExampleExtractor.examples(
+            meetingID: UUID(),
+            meetingTitle: "Customer call",
+            meetingDate: Date(timeIntervalSince1970: 259_200),
+            segments: [
+                TrainingMetrics.Segment(text: "Here is the rollout plan.", speaker: 2, isFinal: true, timestamp: 1),
+                TrainingMetrics.Segment(
+                    text: "Onboarding takes longer because our data is spread across three systems.",
+                    speaker: 0,
+                    isFinal: true,
+                    timestamp: 2
+                ),
+            ],
+            selfIDs: [2],
+            detectedFillers: [],
+            topFiller: nil,
+            talkRatio: 0.4
+        )
+        let question = try XCTUnwrap(examples[.questions])
+
+        XCTAssertEqual(question.label, "A moment you could explore further")
+        XCTAssertTrue(question.excerpt.contains("three systems"))
+    }
+
+    func testCoachingExampleExtractorClipsLongEvidenceAtWordBoundary() {
+        let text = Array(repeating: "thoughtful", count: 30).joined(separator: "   ")
+        let clipped = CoachingExampleExtractor.clipped(text, limit: 40)
+
+        XCTAssertLessThanOrEqual(clipped.count, 41)
+        XCTAssertTrue(clipped.hasSuffix("…"))
+        XCTAssertFalse(clipped.contains("  "))
+    }
+
+    func testTrainingRowNormalizesQuestionsAndCarriesConversationMetrics() {
+        let row = TrainingRow(
+            id: UUID(),
+            date: Date(),
+            dateString: "26-08-08",
+            title: "Short meeting",
+            fillers: 1,
+            pace: 140,
+            clarity: 10,
+            questions: 1,
+            durationMinutes: 2,
+            talkRatio: 0.6,
+            longestMonologue: 80,
+            topFiller: "um",
+            examples: [:]
+        )
+
+        XCTAssertEqual(row.coachingSnapshot.questionsPer30Minutes, 6, accuracy: 0.001)
+        XCTAssertEqual(row.coachingSnapshot.talkRatio, 0.6)
+        XCTAssertEqual(row.coachingSnapshot.longestMonologueWords, 80)
+    }
+
+    @MainActor
+    func testCoachingChartPointsUseMeetingSequenceAndPreserveMissingMetricGaps() {
+        let rows = [
+            trainingRow(day: 3, talkRatio: 0.55),
+            trainingRow(day: 2, talkRatio: nil),
+            trainingRow(day: 1, talkRatio: 0.45),
+        ]
+
+        let points = TrainingStatsOverview.chartPoints(from: rows) { $0.talkRatio }
+
+        XCTAssertEqual(points.map(\.meetingIndex), [1, 3])
+        XCTAssertEqual(points.map(\.value), [0.45, 0.55])
+        XCTAssertEqual(points.map(\.date), [
+            Date(timeIntervalSince1970: 86_400),
+            Date(timeIntervalSince1970: 3 * 86_400),
+        ])
+    }
+
+    private func trainingRow(day: TimeInterval, talkRatio: Double?) -> TrainingRow {
+        TrainingRow(
+            id: UUID(),
+            date: Date(timeIntervalSince1970: day * 86_400),
+            dateString: "",
+            title: "Meeting",
+            fillers: 1,
+            pace: 140,
+            clarity: 10,
+            questions: 1,
+            durationMinutes: 30,
+            talkRatio: talkRatio,
+            longestMonologue: 80,
+            topFiller: nil,
+            examples: [:]
+        )
+    }
+
+    private func coachingSnapshot(
+        day: TimeInterval,
+        fillers: Double = 1,
+        pace: Double = 145,
+        clarity: Double = 10,
+        questions: Double = 4,
+        talkRatio: Double? = nil,
+        monologue: Double = 100,
+        topFiller: String? = nil,
+        examples: [CoachingMetric: CoachingExample] = [:]
+    ) -> CoachingSnapshot {
+        CoachingSnapshot(
+            date: Date(timeIntervalSince1970: day * 86_400),
+            fillersPerMinute: fillers,
+            wordsPerMinute: pace,
+            avgWordsPerTurn: clarity,
+            questionsPer30Minutes: questions,
+            talkRatio: talkRatio,
+            longestMonologueWords: monologue,
+            topFiller: topFiller,
+            examples: examples
+        )
+    }
+
     private func speakerStats(
         label: String,
         isLocal: Bool = false,
