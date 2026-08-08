@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 struct InsightsView: View {
     @EnvironmentObject var appState: AppState
@@ -47,62 +48,43 @@ struct InsightsModeTabs: View {
         appState.insightsMode.isSpecialist ? appState.insightsMode : nil
     }
 
-    private var enabledSpecialists: [InsightsMode] {
-        var modes: [InsightsMode] = []
-        if appState.salesInsightsEnabled { modes.append(.meddpicc) }
-        if appState.playbookInsightsEnabled { modes.append(.docs) }
-        return modes
-    }
-
     var body: some View {
-        ViewThatFits(in: .horizontal) {
-            modeStrip(showsEnabledSpecialists: true)
-            modeStrip(showsEnabledSpecialists: false)
+        HStack {
+            MinitiTabStripSurface {
+                HStack(spacing: 0) {
+                    ForEach(InsightsMode.coreModes, id: \.self) { mode in
+                        modeButton(mode)
+                    }
+
+                    Rectangle()
+                        .fill(ColorPalette.Border.primary)
+                        .frame(width: 1, height: 18)
+                        .padding(.horizontal, MinitiDesignSystem.Spacing.compact)
+
+                    specialistMenu
+                }
+            }
+
+            Spacer(minLength: 0)
         }
         .padding(.horizontal, MinitiDesignSystem.Spacing.standard)
         .padding(.vertical, MinitiDesignSystem.Spacing.standard)
     }
 
-    private func modeStrip(showsEnabledSpecialists: Bool) -> some View {
-        HStack(spacing: MinitiDesignSystem.Control.modeSpacing) {
-            ForEach(InsightsMode.coreModes, id: \.self) { mode in
-                modeButton(mode)
-            }
-
-            if showsEnabledSpecialists {
-                ForEach(enabledSpecialists, id: \.self) { mode in
-                    modeButton(mode)
-                }
-            }
-
-            specialistMenu(replacesSelectedSpecialist: !showsEnabledSpecialists)
-
-            Spacer()
-        }
-    }
-
     private func modeButton(_ mode: InsightsMode) -> some View {
-        Button {
+        let isSelected = appState.insightsMode == mode
+        return Button {
             appState.switchInsightsMode(to: mode)
         } label: {
-            MinitiVibeyLabel(
-                accent: MinitiDesignSystem.Accent.insightMode(mode),
-                isEmphasized: appState.insightsMode == mode,
-                horizontalPadding: MinitiDesignSystem.Control.modeHorizontalPadding
-            ) {
-                Text(mode.displayName)
-                    .font(.system(size: 11, weight: appState.insightsMode == mode ? .semibold : .medium, design: .default))
-                    .lineLimit(1)
-            }
+            MinitiTabLabel(title: mode.displayName, isSelected: isSelected)
         }
         .buttonStyle(.plain)
         .help(mode.description)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 
-    private func specialistMenu(replacesSelectedSpecialist: Bool) -> some View {
-        let displayedSpecialist = replacesSelectedSpecialist ? selectedSpecialist : nil
-
-        return Menu {
+    private var specialistMenu: some View {
+        Menu {
             Section("Specialist views") {
                 specialistButton(.meddpicc)
 
@@ -139,19 +121,15 @@ struct InsightsModeTabs: View {
                 }
             }
         } label: {
-            MinitiVibeyLabel(
-                accent: displayedSpecialist.map { MinitiDesignSystem.Accent.insightMode($0) } ?? ColorPalette.Accent.purpleSoft,
-                isEmphasized: displayedSpecialist != nil,
-                horizontalPadding: MinitiDesignSystem.Control.modeHorizontalPadding
-            ) {
-                Text(displayedSpecialist?.displayName ?? "More")
-                    .font(.system(size: 11, weight: displayedSpecialist == nil ? .medium : .semibold, design: .default))
-                    .lineLimit(1)
-            }
+            MinitiTabLabel(
+                title: selectedSpecialist?.displayName ?? "More",
+                isSelected: selectedSpecialist != nil
+            )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Specialist insight views")
+        .accessibilityLabel(selectedSpecialist.map { "Specialist view: \($0.displayName), selected" } ?? "More insight views")
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {
@@ -475,7 +453,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     InsightsPlainBlock_iOS(
                         title: "fillers: \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+                        color: speaker.isLocalMic ? ColorPalette.Coaching.fillers : ColorPalette.Text.meta,
                         info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -498,7 +476,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                                                 .frame(width: 70, alignment: .trailing)
                                             Text("\(entry.count)")
                                                 .font(.system(size: 11, weight: .semibold, design: .default))
-                                                .foregroundStyle(Color(hex: "F59E0B"))
+                                                .foregroundStyle(ColorPalette.Coaching.fillers)
                                         }
                                     }
                                 }
@@ -509,7 +487,7 @@ private struct LiveTrainingContent_iOSPlain: View {
             }
             
             if metrics.speakers.count > 1 {
-                InsightsPlainBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
+                InsightsPlainBlock_iOS(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 11, weight: .medium, design: .default))
@@ -523,7 +501,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "pace", color: Color(hex: "A371F7"), info: .pace) {
+            InsightsPlainBlock_iOS(title: "pace", color: ColorPalette.Coaching.pace, info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -535,7 +513,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "longest monologue", color: Color(hex: "EC4899"), info: .longestMonologue) {
+            InsightsPlainBlock_iOS(title: "longest monologue", color: ColorPalette.Coaching.monologue, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -548,7 +526,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "questions asked", color: Color(hex: "3FB950"), info: .questionsAsked) {
+            InsightsPlainBlock_iOS(title: "questions asked", color: ColorPalette.Coaching.questions, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -559,7 +537,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                 }
             }
             
-            InsightsPlainBlock_iOS(title: "clarity", color: Color(hex: "D29922"), info: .clarity) {
+            InsightsPlainBlock_iOS(title: "clarity", color: ColorPalette.Coaching.clarity, info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         TrainingMetricRow_iOS(
@@ -1399,7 +1377,7 @@ private struct FillerWordsSection: View {
     var body: some View {
         TerminalSection(
             title: "fillers: \(speaker.speakerLabel.lowercased())",
-            color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+            color: speaker.isLocalMic ? ColorPalette.Coaching.fillers : ColorPalette.Text.meta,
             headerStyle: .plain,
             info: .fillers
         ) {
@@ -1419,7 +1397,7 @@ private struct FillerWordsSection: View {
                                 
                                 Text("\(entry.count)")
                                     .font(.system(size: interfaceScale.insightBodySize, weight: .semibold, design: .default))
-                                    .foregroundStyle(Color(hex: "F59E0B"))
+                                    .foregroundStyle(ColorPalette.Coaching.fillers)
                             }
                         }
                     }
@@ -1433,7 +1411,7 @@ private struct TalkRatioSection: View {
     let metrics: TrainingMetrics
     
     var body: some View {
-        TerminalSection(title: "talk ratio", color: Color(hex: "58A6FF"), headerStyle: .plain, info: .talkRatio) {
+        TerminalSection(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, headerStyle: .plain, info: .talkRatio) {
             VStack(alignment: .leading, spacing: 8) {
                 // Bar
                 GeometryReader { geo in
@@ -1474,7 +1452,7 @@ private struct PaceSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "pace", color: Color(hex: "A371F7"), headerStyle: .plain, info: .pace) {
+        TerminalSection(title: "pace", color: ColorPalette.Coaching.pace, headerStyle: .plain, info: .pace) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
                     TerminalTrainingMetricRow(
@@ -1492,7 +1470,7 @@ private struct MonologueSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "longest monologue", color: Color(hex: "EC4899"), headerStyle: .plain, info: .longestMonologue) {
+        TerminalSection(title: "longest monologue", color: ColorPalette.Coaching.monologue, headerStyle: .plain, info: .longestMonologue) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
                     if speaker.longestMonologueWords > 0 {
@@ -1511,7 +1489,7 @@ private struct QuestionsSection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "questions asked", color: Color(hex: "3FB950"), headerStyle: .plain, info: .questionsAsked) {
+        TerminalSection(title: "questions asked", color: ColorPalette.Coaching.questions, headerStyle: .plain, info: .questionsAsked) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
                     TerminalTrainingMetricRow(
@@ -1528,7 +1506,7 @@ private struct ClaritySection: View {
     let speakers: [TrainingMetrics.SpeakerStats]
     
     var body: some View {
-        TerminalSection(title: "clarity", color: Color(hex: "D29922"), headerStyle: .plain, info: .clarity) {
+        TerminalSection(title: "clarity", color: ColorPalette.Coaching.clarity, headerStyle: .plain, info: .clarity) {
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(speakers) { speaker in
                     TerminalTrainingMetricRow(
@@ -1922,7 +1900,7 @@ extension TerminalSectionInfo {
     
     static let pace = TerminalSectionInfo(
         title: "Pace",
-        summary: "Words per minute (WPM). Faster is not always better; clarity usually drops when pace gets too high.",
+        summary: "Words spoken per minute. Faster is not always better; clarity usually drops when pace gets too high.",
         guidance: [
             "Common clear speaking range: ~120-170 wpm.",
             "Energetic but still understandable often lands around 150-190 wpm.",
@@ -1967,6 +1945,23 @@ extension TerminalSectionInfo {
 
 // MARK: - Training Main View (Sidebar)
 
+enum CoachingOverviewTab: String, CaseIterable {
+    case focus
+    case stats
+    case history
+
+    var accessibilityHint: String {
+        switch self {
+        case .focus:
+            return "Shows your next-meeting focus, strengths, trends, and examples"
+        case .stats:
+            return "Shows overall, recent, and latest coaching metrics"
+        case .history:
+            return "Shows coaching metrics for each meeting"
+        }
+    }
+}
+
 struct TrainingMainView: View {
     let meetings: [Meeting]
     var onSelectMeeting: ((UUID) -> Void)? = nil
@@ -1975,43 +1970,36 @@ struct TrainingMainView: View {
     @State private var cachedRows: [TrainingRow] = []
     @State private var isComputing = false
     @State private var lastComputedHash = ""
+    @State private var selectedTab: CoachingOverviewTab = .focus
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("coaching")
-                        .font(.system(size: 20, weight: .bold, design: .default))
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(20), weight: .bold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
-                    Text("speech analytics from your recent meetings")
-                        .font(.system(size: 12, weight: .medium, design: .default))
+                    Text("personal coaching across your recent meetings")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                 }
 
-                if !cachedRows.isEmpty {
-                    TrainingStatsOverview(rows: cachedRows)
-                }
+                coachingTabs
 
                 if isComputing && cachedRows.isEmpty {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
                         Text("computing metrics...")
-                            .font(.system(size: 11, weight: .medium, design: .default))
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.dim)
                     }
                     .padding(.vertical, 20)
-                } else if !displayedRows.isEmpty {
-                    VStack(alignment: .leading, spacing: 2) {
-                        trainingTableHeader
-
-                        ForEach(displayedRows) { row in
-                            trainingTableRow(row)
-                        }
-                    }
+                } else if !cachedRows.isEmpty {
+                    selectedTabContent
                 } else if !isComputing {
                     Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see coaching stats.")
-                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
                         .padding(.vertical, 20)
                 }
@@ -2032,6 +2020,50 @@ struct TrainingMainView: View {
         .onAppear {
             if cachedRows.isEmpty {
                 Task { await computeRows() }
+            }
+        }
+    }
+
+    private var coachingTabs: some View {
+        MinitiTabStripSurface {
+            HStack(spacing: 0) {
+                ForEach(CoachingOverviewTab.allCases, id: \.self) { tab in
+                    let isSelected = selectedTab == tab
+                    Button {
+                        selectedTab = tab
+                    } label: {
+                        MinitiTabLabel(
+                            title: tab.rawValue,
+                            isSelected: isSelected,
+                            fillsAvailableWidth: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .accessibilityHint(tab.accessibilityHint)
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: MinitiDesignSystem.CoachingLayout.compactColumnMaxWidth)
+    }
+
+    @ViewBuilder
+    private var selectedTabContent: some View {
+        switch selectedTab {
+        case .focus:
+            CoachingGuidanceView(rows: cachedRows, onSelectMeeting: onSelectMeeting)
+        case .stats:
+            TrainingStatsOverview(rows: cachedRows)
+        case .history:
+            VStack(alignment: .leading, spacing: 2) {
+                trainingTableHeader
+
+                ForEach(displayedRows) { row in
+                    trainingTableRow(row)
+                }
             }
         }
     }
@@ -2067,6 +2099,17 @@ struct TrainingMainView: View {
                 let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language, names: names, selfIDs: selfIDs)
                 guard let speaker = metrics.speakers.first(where: { $0.isLocalMic })
                         ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount }) else { return nil }
+                let topFiller = speaker.fillers.first?.word
+                let examples = CoachingExampleExtractor.examples(
+                    meetingID: id,
+                    meetingTitle: title,
+                    meetingDate: startTime,
+                    segments: segments,
+                    selfIDs: selfIDs,
+                    detectedFillers: speaker.fillers.map(\.word),
+                    topFiller: topFiller,
+                    talkRatio: metrics.speakers.contains(where: { !$0.isLocalMic }) ? metrics.talkRatioYou : nil
+                )
                 return TrainingRow(
                     id: id,
                     date: startTime,
@@ -2075,7 +2118,12 @@ struct TrainingMainView: View {
                     fillers: speaker.fillersPerMinute,
                     pace: speaker.wordsPerMinute,
                     clarity: speaker.avgWordsPerTurn,
-                    questions: speaker.questionsAsked
+                    questions: speaker.questionsAsked,
+                    durationMinutes: metrics.durationMinutes,
+                    talkRatio: metrics.speakers.contains(where: { !$0.isLocalMic }) ? metrics.talkRatioYou : nil,
+                    longestMonologue: speaker.longestMonologueWords,
+                    topFiller: topFiller,
+                    examples: examples
                 )
             }
         }.value
@@ -2116,10 +2164,10 @@ struct TrainingMainView: View {
             sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
                 .padding(.leading, 2)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            compactStatHeader("f", fullLabel: "fillers", column: .fillers, color: Color(hex: "F59E0B"), info: .fillers)
-            compactStatHeader("p", fullLabel: "pace", column: .pace, color: Color(hex: "58A6FF"), info: .pace)
-            compactStatHeader("c", fullLabel: "clarity", column: .clarity, color: Color(hex: "A371F7"), info: .clarity)
-            compactStatHeader("q", fullLabel: "questions", column: .questions, color: Color(hex: "3FB950"), info: .questionsAsked)
+            compactStatHeader("f", fullLabel: "fillers", column: .fillers, color: ColorPalette.Coaching.fillers, info: .fillers)
+            compactStatHeader("p", fullLabel: "pace", column: .pace, color: ColorPalette.Coaching.pace, info: .pace)
+            compactStatHeader("c", fullLabel: "clarity", column: .clarity, color: ColorPalette.Coaching.clarity, info: .clarity)
+            compactStatHeader("q", fullLabel: "questions", column: .questions, color: ColorPalette.Coaching.questions, info: .questionsAsked)
             #else
             sortableHeader("date", unit: nil, column: .date, width: Self.dateColumnWidth, alignment: .leading)
             sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
@@ -2209,9 +2257,9 @@ struct TrainingMainView: View {
         let chevronSize: CGFloat = 8
         let unitSize: CGFloat = 9
         #else
-        let labelSize: CGFloat = 9
-        let chevronSize: CGFloat = 7
-        let unitSize: CGFloat = 8
+        let labelSize = MinitiDesignSystem.CoachingTypography.size(9)
+        let chevronSize = MinitiDesignSystem.CoachingTypography.size(7)
+        let unitSize = MinitiDesignSystem.CoachingTypography.size(8)
         #endif
 
         return VStack(alignment: alignment, spacing: 1) {
@@ -2268,53 +2316,53 @@ struct TrainingMainView: View {
 
             Text(String(format: "%.1f", row.fillers))
                 .font(.system(size: 12, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "F59E0B"))
+                .foregroundStyle(ColorPalette.Coaching.fillers)
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(Int(row.pace))")
                 .font(.system(size: 12, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "58A6FF"))
+                .foregroundStyle(ColorPalette.Coaching.pace)
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(Int(row.clarity))")
                 .font(.system(size: 12, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "A371F7"))
+                .foregroundStyle(ColorPalette.Coaching.clarity)
                 .frame(width: Self.statColumnWidth, alignment: .center)
 
             Text("\(row.questions)")
                 .font(.system(size: 12, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "3FB950"))
+                .foregroundStyle(ColorPalette.Coaching.questions)
                 .frame(width: Self.statColumnWidth, alignment: .center)
             #else
             Text(row.dateString)
-                .font(.system(size: 10, weight: .medium, design: .default))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: Self.dateColumnWidth, alignment: .leading)
 
             Text(row.title)
-                .font(.system(size: 11, weight: .medium, design: .default))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Text(String(format: "%.1f", row.fillers))
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "F59E0B"))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Coaching.fillers)
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.pace))")
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "58A6FF"))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Coaching.pace)
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(Int(row.clarity))")
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "A371F7"))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Coaching.clarity)
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
 
             Text("\(row.questions)")
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(Color(hex: "3FB950"))
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Coaching.questions)
                 .frame(width: Self.statColumnWidth, alignment: .trailing)
             #endif
         }
@@ -2400,11 +2448,329 @@ struct TrainingRow: Identifiable {
     let pace: Double
     let clarity: Double
     let questions: Int
+    let durationMinutes: Double
+    let talkRatio: Double?
+    let longestMonologue: Int
+    let topFiller: String?
+    let examples: [CoachingMetric: CoachingExample]
+
+    var coachingSnapshot: CoachingSnapshot {
+        CoachingSnapshot(
+            date: date,
+            fillersPerMinute: fillers,
+            wordsPerMinute: pace,
+            avgWordsPerTurn: clarity,
+            // Avoid turning one question in a very short test recording into an
+            // extreme rate while retaining duration comparability for real calls.
+            questionsPer30Minutes: Double(questions) / max(durationMinutes, 5) * 30,
+            talkRatio: talkRatio,
+            longestMonologueWords: Double(longestMonologue),
+            topFiller: topFiller,
+            examples: examples
+        )
+    }
 
     static func formatDate(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateFormat = "yy-MM-dd"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Personalized Coaching Guidance
+
+private struct CoachingGuidanceView: View {
+    let rows: [TrainingRow]
+    let onSelectMeeting: ((UUID) -> Void)?
+
+    private var report: CoachingReport? {
+        CoachingAdvisor.analyze(rows.map(\.coachingSnapshot))
+    }
+
+    var body: some View {
+        if let report {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+                coachingFocus(report)
+
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("your trends")
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(13), weight: .bold, design: .default))
+                            .foregroundStyle(ColorPalette.Text.primary)
+                        Spacer()
+                        Text(baselineLabel(report.meetingCount))
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.meta)
+                    }
+
+                    LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                        ForEach(report.summaries) { summary in
+                            CoachingTrendCard(
+                                summary: summary,
+                                onSelectMeeting: onSelectMeeting
+                            )
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
+        }
+    }
+
+    private func coachingFocus(_ report: CoachingReport) -> some View {
+        let focus = report.focus
+        let accent = focus.metric.accent
+        return MinitiCardSurface(
+            style: .accented(accent),
+            contentPadding: MinitiDesignSystem.Spacing.section
+        ) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                    Image(systemName: focus.status == .strong ? "sparkles" : "scope")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .semibold))
+                    Text(focus.status == .strong ? "keep building" : "next meeting focus")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .bold, design: .default))
+                }
+                .foregroundStyle(accent)
+
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+                    Text(focus.headline)
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(17), weight: .bold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text(focus.observation)
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .regular, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.standard) {
+                    Image(systemName: "lightbulb.fill")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .semibold))
+                        .foregroundStyle(accent)
+                        .padding(.top, 2)
+                    Text(focus.tip)
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(MinitiDesignSystem.Spacing.comfortable)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                        .fill(accent.opacity(0.08))
+                )
+
+                if !report.strengths.isEmpty {
+                    HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.small) {
+                        Text("working well")
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .bold, design: .default))
+                            .foregroundStyle(ColorPalette.Status.success)
+                        Text(report.strengths.map(\.headline).joined(separator: " • "))
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.meta)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func baselineLabel(_ count: Int) -> String {
+        if count < 4 { return "building a baseline • \(count) meeting\(count == 1 ? "" : "s")" }
+        return "recent vs previous • \(count) meetings"
+    }
+}
+
+private struct CoachingTrendCard: View {
+    let summary: CoachingMetricSummary
+    let onSelectMeeting: ((UUID) -> Void)?
+
+    private var accent: Color { summary.metric.accent }
+
+    private var content: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+            HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                Image(systemName: summary.metric.systemImage)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .semibold))
+                Text(summary.metric.displayName)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .bold, design: .default))
+                Spacer(minLength: MinitiDesignSystem.Spacing.small)
+                trendLabel
+            }
+            .foregroundStyle(accent)
+
+            HStack(alignment: .firstTextBaseline, spacing: MinitiDesignSystem.Spacing.small) {
+                Text(summary.recentValue)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(14), weight: .semibold, design: .default))
+                    .monospacedDigit()
+                    .foregroundStyle(ColorPalette.Text.primary)
+                if let previous = summary.previousValue {
+                    Text("from \(previous)")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                        .monospacedDigit()
+                        .foregroundStyle(ColorPalette.Text.meta)
+                }
+            }
+
+            Text(summary.observation)
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .regular, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+
+            if let example = summary.example {
+                CoachingExampleView(
+                    example: example,
+                    accent: accent,
+                    onSelectMeeting: onSelectMeeting
+                )
+            }
+
+            HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.small) {
+                Text("try")
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .bold, design: .default))
+                    .foregroundStyle(accent)
+                Text(summary.tip)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(11), weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.meta)
+            }
+        }
+    }
+
+    var body: some View {
+        MinitiCardSurface {
+            content
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var trendLabel: some View {
+        HStack(spacing: MinitiDesignSystem.Spacing.compact) {
+            Image(systemName: summary.trend.systemImage)
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold))
+            Text(summary.trend.label)
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold, design: .default))
+        }
+        .foregroundStyle(summary.trend.color)
+    }
+}
+
+private struct CoachingExampleView: View {
+    let example: CoachingExample
+    let accent: Color
+    let onSelectMeeting: ((UUID) -> Void)?
+
+    var body: some View {
+        if let onSelectMeeting {
+            Button {
+                onSelectMeeting(example.meetingID)
+            } label: {
+                exampleContent(showsDisclosure: true)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(
+                "Example from \(example.meetingTitle), \(example.meetingDate.formatted(date: .abbreviated, time: .omitted)): \(example.excerpt)"
+            )
+            .accessibilityHint("Opens the source meeting")
+        } else {
+            exampleContent(showsDisclosure: false)
+                .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func exampleContent(showsDisclosure: Bool) -> some View {
+        MinitiCardSurface(
+            style: .inset,
+            contentPadding: MinitiDesignSystem.Spacing.standard
+        ) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+                HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                    Image(systemName: "quote.opening")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold))
+                    Text(example.label)
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold, design: .default))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .layoutPriority(1)
+                    Spacer(minLength: MinitiDesignSystem.Spacing.small)
+                    if showsDisclosure {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(8), weight: .bold))
+                            .foregroundStyle(ColorPalette.Text.disabled)
+                    }
+                }
+                .foregroundStyle(accent)
+
+                HStack(spacing: MinitiDesignSystem.Spacing.compact) {
+                    Text(example.meetingTitle)
+                        .lineLimit(1)
+                    Text("·")
+                    Text(example.meetingDate, format: .dateTime.day().month(.abbreviated).year())
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .medium, design: .default))
+                .foregroundStyle(ColorPalette.Text.meta)
+
+                Text("“\(example.excerpt)”")
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.muted)
+            }
+        }
+    }
+}
+
+private extension CoachingMetric {
+    var displayName: String {
+        switch self {
+        case .fillers: return "fillers"
+        case .pace: return "pace"
+        case .clarity: return "clarity"
+        case .questions: return "questions"
+        case .talkRatio: return "talk ratio"
+        case .monologue: return "longest monologue"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .fillers: return "pause.fill"
+        case .pace: return "speedometer"
+        case .clarity: return "text.alignleft"
+        case .questions: return "questionmark.bubble.fill"
+        case .talkRatio: return "person.2.fill"
+        case .monologue: return "quote.bubble.fill"
+        }
+    }
+
+    var accent: Color {
+        MinitiDesignSystem.ContentAccent.coachingMetric(self)
+    }
+}
+
+private extension CoachingTrend {
+    var label: String {
+        switch self {
+        case .improving: return "improving"
+        case .steady: return "steady"
+        case .needsAttention: return "watch"
+        case .buildingBaseline: return "baseline"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .improving: return "arrow.down.right"
+        case .steady: return "arrow.right"
+        case .needsAttention: return "arrow.up.right"
+        case .buildingBaseline: return "ellipsis"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .improving: return ColorPalette.Accent.green
+        case .steady, .buildingBaseline: return ColorPalette.Text.meta
+        case .needsAttention: return ColorPalette.Status.warning
+        }
     }
 }
 
@@ -2421,25 +2787,37 @@ struct TrainingStatsOverview: View {
             let avgPace = recent.map(\.pace).reduce(0, +) / Double(recent.count)
             let avgFillers = recent.map(\.fillers).reduce(0, +) / Double(recent.count)
             let avgClarity = recent.map(\.clarity).reduce(0, +) / Double(recent.count)
-            let avgQuestions = Double(recent.map(\.questions).reduce(0, +)) / Double(recent.count)
+            let avgQuestions = recent.map(\.coachingSnapshot.questionsPer30Minutes).reduce(0, +) / Double(recent.count)
+            let avgTalkRatio = average(recent.compactMap(\.talkRatio))
+            let avgLongestMonologue = Double(recent.map(\.longestMonologue).reduce(0, +)) / Double(recent.count)
 
             let allPace = sorted.isEmpty ? 0 : sorted.map(\.pace).reduce(0, +) / Double(sorted.count)
             let allFillers = sorted.isEmpty ? 0 : sorted.map(\.fillers).reduce(0, +) / Double(sorted.count)
             let allClarity = sorted.isEmpty ? 0 : sorted.map(\.clarity).reduce(0, +) / Double(sorted.count)
-            let allQuestions = sorted.isEmpty ? 0 : Double(sorted.map(\.questions).reduce(0, +)) / Double(sorted.count)
+            let allQuestions = sorted.isEmpty ? 0 : sorted.map(\.coachingSnapshot.questionsPer30Minutes).reduce(0, +) / Double(sorted.count)
+            let allTalkRatio = average(sorted.compactMap(\.talkRatio))
+            let allLongestMonologue = sorted.isEmpty ? 0 : Double(sorted.map(\.longestMonologue).reduce(0, +)) / Double(sorted.count)
+            let fillersChart = Self.chartPoints(from: sorted) { $0.fillers }
+            let paceChart = Self.chartPoints(from: sorted) { $0.pace }
+            let clarityChart = Self.chartPoints(from: sorted) { $0.clarity }
+            let questionsChart = Self.chartPoints(from: sorted) { $0.coachingSnapshot.questionsPer30Minutes }
+            let talkRatioChart = Self.chartPoints(from: sorted) { $0.talkRatio }
+            let monologueChart = Self.chartPoints(from: sorted) { Double($0.longestMonologue) }
 
-            VStack(spacing: 2) {
-                TrainingStatHeader(meetingCount: recent.count, allCount: sorted.count)
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                VStack(spacing: 2) {
+                    TrainingStatHeader(meetingCount: recent.count, allCount: sorted.count)
 
-                VStack(spacing: 0) {
+                    VStack(spacing: 0) {
                     TrainingStatRow(
                         label: "fillers",
                         allValue: String(format: "%.1f", allFillers),
                         avgValue: String(format: "%.1f", avgFillers),
                         lastValue: String(format: "%.1f", last.fillers),
-                        unit: "f/min",
+                        unit: "/ min",
                         trend: trend(last: last.fillers, avg: avgFillers),
-                        color: Color(hex: "F59E0B"),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .fillers, latest: last.fillers, baseline: avgFillers),
+                        color: ColorPalette.Coaching.fillers,
                         info: .fillers
                     )
                     TrainingStatRow(
@@ -2447,9 +2825,10 @@ struct TrainingStatsOverview: View {
                         allValue: "\(Int(allPace))",
                         avgValue: "\(Int(avgPace))",
                         lastValue: "\(Int(last.pace))",
-                        unit: "w/min",
+                        unit: "words / min",
                         trend: trend(last: last.pace, avg: avgPace),
-                        color: Color(hex: "58A6FF"),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .pace, latest: last.pace, baseline: avgPace),
+                        color: ColorPalette.Coaching.pace,
                         info: .pace
                     )
                     TrainingStatRow(
@@ -2457,32 +2836,102 @@ struct TrainingStatsOverview: View {
                         allValue: "\(Int(allClarity))",
                         avgValue: "\(Int(avgClarity))",
                         lastValue: "\(Int(last.clarity))",
-                        unit: "w/turn",
+                        unit: "words / turn",
                         trend: trend(last: last.clarity, avg: avgClarity),
-                        color: Color(hex: "A371F7"),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .clarity, latest: last.clarity, baseline: avgClarity),
+                        color: ColorPalette.Coaching.clarity,
                         info: .clarity
                     )
                     TrainingStatRow(
                         label: "questions",
                         allValue: String(format: "%.0f", allQuestions),
                         avgValue: String(format: "%.0f", avgQuestions),
-                        lastValue: "\(last.questions)",
-                        unit: "qs",
-                        trend: trend(last: Double(last.questions), avg: avgQuestions),
-                        color: Color(hex: "3FB950"),
+                        lastValue: String(format: "%.0f", last.coachingSnapshot.questionsPer30Minutes),
+                        unit: "/ 30 min",
+                        trend: trend(last: last.coachingSnapshot.questionsPer30Minutes, avg: avgQuestions),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .questions, latest: last.coachingSnapshot.questionsPer30Minutes, baseline: avgQuestions),
+                        color: ColorPalette.Coaching.questions,
                         info: .questionsAsked
                     )
+                    TrainingStatRow(
+                        label: "talk ratio",
+                        allValue: formatPercentageNumber(allTalkRatio),
+                        avgValue: formatPercentageNumber(avgTalkRatio),
+                        lastValue: formatPercentageNumber(last.talkRatio),
+                        unit: "% you",
+                        trend: trend(last: last.talkRatio, avg: avgTalkRatio),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .talkRatio, latest: last.talkRatio, baseline: avgTalkRatio),
+                        color: ColorPalette.Coaching.talkRatio,
+                        info: .talkRatio
+                    )
+                    TrainingStatRow(
+                        label: "longest monologue",
+                        allValue: "\(Int(allLongestMonologue.rounded()))",
+                        avgValue: "\(Int(avgLongestMonologue.rounded()))",
+                        lastValue: "\(last.longestMonologue)",
+                        unit: "words",
+                        trend: trend(last: Double(last.longestMonologue), avg: avgLongestMonologue),
+                        comparisonTone: CoachingAdvisor.comparisonTone(for: .monologue, latest: Double(last.longestMonologue), baseline: avgLongestMonologue),
+                        color: ColorPalette.Coaching.monologue,
+                        info: .longestMonologue
+                    )
+                    }
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(hex: "0F0F11"))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
+                            )
+                    )
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(hex: "0F0F11"))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
-                        )
-                )
+
+                VStack(spacing: MinitiDesignSystem.Spacing.comfortable) {
+                    CoachingMetricChartCard(
+                        label: "fillers",
+                        unit: "/ min",
+                        color: ColorPalette.Coaching.fillers,
+                        points: fillersChart,
+                        meetingCount: sorted.count
+                    )
+                    CoachingMetricChartCard(
+                        label: "pace",
+                        unit: "words / min",
+                        color: ColorPalette.Coaching.pace,
+                        points: paceChart,
+                        meetingCount: sorted.count
+                    )
+                    CoachingMetricChartCard(
+                        label: "clarity",
+                        unit: "words / turn",
+                        color: ColorPalette.Coaching.clarity,
+                        points: clarityChart,
+                        meetingCount: sorted.count
+                    )
+                    CoachingMetricChartCard(
+                        label: "questions",
+                        unit: "/ 30 min",
+                        color: ColorPalette.Coaching.questions,
+                        points: questionsChart,
+                        meetingCount: sorted.count
+                    )
+                    CoachingMetricChartCard(
+                        label: "talk ratio",
+                        unit: "% you",
+                        color: ColorPalette.Coaching.talkRatio,
+                        points: talkRatioChart,
+                        meetingCount: sorted.count
+                    )
+                    CoachingMetricChartCard(
+                        label: "longest monologue",
+                        unit: "words",
+                        color: ColorPalette.Coaching.monologue,
+                        points: monologueChart,
+                        meetingCount: sorted.count
+                    )
+                }
             }
-            .frame(maxWidth: 480)
+            .frame(maxWidth: MinitiDesignSystem.CoachingLayout.statsColumnMaxWidth)
         }
     }
 
@@ -2490,13 +2939,45 @@ struct TrainingStatsOverview: View {
         case up, down, same
     }
 
-    fileprivate func trend(last: Double, avg: Double) -> Trend {
-        guard avg > 0 else { return .same }
+    private func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    static func chartPoints(
+        from rows: [TrainingRow],
+        value: (TrainingRow) -> Double?
+    ) -> [CoachingChartPoint] {
+        Array(rows.reversed()).enumerated().compactMap { index, row in
+            guard let metricValue = value(row), metricValue.isFinite else { return nil }
+            return CoachingChartPoint(
+                id: row.id,
+                meetingIndex: Double(index + 1),
+                date: row.date,
+                value: metricValue
+            )
+        }
+    }
+
+    private func formatPercentageNumber(_ value: Double?) -> String {
+        guard let value else { return "—" }
+        return "\(Int((value * 100).rounded()))"
+    }
+
+    fileprivate func trend(last: Double?, avg: Double?) -> Trend {
+        guard let last, let avg, avg > 0 else { return .same }
         let ratio = last / avg
         if ratio > 1.10 { return .up }
         if ratio < 0.90 { return .down }
         return .same
     }
+}
+
+struct CoachingChartPoint: Identifiable {
+    let id: UUID
+    let meetingIndex: Double
+    let date: Date
+    let value: Double
 }
 
 private struct TrainingStatHeader: View {
@@ -2543,6 +3024,7 @@ private struct TrainingStatRow: View {
     let lastValue: String
     let unit: String
     let trend: TrainingStatsOverview.Trend
+    let comparisonTone: CoachingComparisonTone
     let color: Color
     let info: TerminalSectionInfo
 
@@ -2554,69 +3036,244 @@ private struct TrainingStatRow: View {
         }
     }
 
+    private var trendColor: Color {
+        switch comparisonTone {
+        case .positive: return ColorPalette.Status.success
+        case .negative: return ColorPalette.Status.error
+        case .neutral: return ColorPalette.Text.meta
+        }
+    }
+
     #if os(iOS)
-    fileprivate static let labelWidth: CGFloat = 120
-    fileprivate static let colWidth: CGFloat = 48
+    fileprivate static let labelWidth: CGFloat = 150
+    fileprivate static let colWidth: CGFloat = 36
     fileprivate static let fontSize: CGFloat = 12
     fileprivate static let headerFontSize: CGFloat = 10
     #else
-    fileprivate static let labelWidth: CGFloat = 100
-    fileprivate static let colWidth: CGFloat = 82
-    fileprivate static let fontSize: CGFloat = 10
-    fileprivate static let headerFontSize: CGFloat = 9
+    fileprivate static let labelWidth: CGFloat = 220
+    fileprivate static let colWidth: CGFloat = 96
+    fileprivate static let fontSize = MinitiDesignSystem.CoachingTypography.size(10)
+    fileprivate static let headerFontSize = MinitiDesignSystem.CoachingTypography.size(9)
     #endif
 
     var body: some View {
-        HStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(color)
-                    .frame(width: 3, height: 12)
-                    .cornerRadius(1)
-                Text(label)
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+            HStack(spacing: 0) {
+                (
+                    Text(label)
+                        .font(.system(size: Self.fontSize, weight: .semibold, design: .default))
+                        .foregroundColor(color)
+                    + Text(" \(unit)")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                        .foregroundColor(ColorPalette.Text.meta)
+                )
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+                .padding(.leading, MinitiDesignSystem.Spacing.control)
+                .frame(width: Self.labelWidth, alignment: .leading)
+
+                Spacer(minLength: 4)
+
+                Text(allValue)
+                    .font(.system(size: Self.fontSize, weight: .medium, design: .default))
+                    .foregroundStyle(Color(hex: "71717A"))
+                    .frame(width: Self.colWidth, alignment: .center)
+
+                Spacer(minLength: 8)
+
+                Text(avgValue)
+                    .font(.system(size: Self.fontSize, weight: .medium, design: .default))
+                    .foregroundStyle(Color(hex: "A1A1AA"))
+                    .frame(width: Self.colWidth, alignment: .center)
+
+                Spacer(minLength: 8)
+
+                Text(lastValue)
                     .font(.system(size: Self.fontSize, weight: .semibold, design: .default))
-                    .foregroundStyle(color)
-                    .lineLimit(1)
-                    .fixedSize()
-                TerminalSectionInfoButton(info: info, accent: color)
-                #if os(iOS)
-                Text(unit)
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "3F3F46"))
-                    .lineLimit(1)
-                    .fixedSize()
-                #endif
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .frame(width: Self.colWidth, alignment: .center)
+
+                Image(systemName: trendIcon)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .bold))
+                    .foregroundStyle(trendColor)
+                    .frame(width: 28)
             }
-            .frame(minWidth: Self.labelWidth, alignment: .leading)
 
-            Spacer(minLength: 4)
+            Text(info.summary)
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, MinitiDesignSystem.Spacing.control)
 
-            Text(allValue)
-                .font(.system(size: Self.fontSize, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "71717A"))
-                .frame(width: Self.colWidth, alignment: .center)
-
-            Spacer(minLength: 8)
-
-            Text(avgValue)
-                .font(.system(size: Self.fontSize, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "A1A1AA"))
-                .frame(width: Self.colWidth, alignment: .center)
-
-            Spacer(minLength: 8)
-
-            Text(lastValue)
-                .font(.system(size: Self.fontSize, weight: .semibold, design: .default))
-                .foregroundStyle(ColorPalette.Text.primary)
-                .frame(width: Self.colWidth, alignment: .center)
-
-            Image(systemName: trendIcon)
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(Color(hex: "71717A"))
-                .frame(width: 28)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .padding(.vertical, MinitiDesignSystem.Spacing.control)
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 3)
+                .padding(.vertical, MinitiDesignSystem.Spacing.control)
+                .padding(.leading, 12)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(ColorPalette.Border.primary.opacity(0.7))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
+        }
+    }
+}
+
+private struct CoachingMetricChartCard: View {
+    let label: String
+    let unit: String
+    let color: Color
+    let points: [CoachingChartPoint]
+    let meetingCount: Int
+
+    var body: some View {
+        MinitiCardSurface(
+            style: .standard,
+            contentPadding: MinitiDesignSystem.Spacing.control
+        ) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                (
+                    Text(label)
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .semibold, design: .default))
+                        .foregroundColor(color)
+                    + Text(" \(unit)")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                        .foregroundColor(ColorPalette.Text.meta)
+                )
+                .lineLimit(1)
+                .minimumScaleFactor(0.82)
+
+                CoachingMetricLineChart(
+                    points: points,
+                    meetingCount: meetingCount,
+                    color: color,
+                    metricLabel: label,
+                    unit: unit
+                )
+            }
+        }
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1)
+                .fill(color)
+                .frame(width: 3)
+                .padding(.vertical, MinitiDesignSystem.Spacing.control)
+        }
+    }
+}
+
+private struct CoachingMetricLineChart: View {
+    let points: [CoachingChartPoint]
+    let meetingCount: Int
+    let color: Color
+    let metricLabel: String
+    let unit: String
+
+    private var valueDomain: ClosedRange<Double> {
+        guard let minimum = points.map(\.value).min(),
+              let maximum = points.map(\.value).max() else { return 0...1 }
+        let spread = maximum - minimum
+        let scale = max(abs(maximum), 1)
+        let padding = max(spread * 0.16, scale * 0.08)
+        return max(0, minimum - padding)...(maximum + padding)
+    }
+
+    private var latestPoint: CoachingChartPoint? {
+        points.last
+    }
+
+    private var meetingDomain: ClosedRange<Double> {
+        0.5...(Double(max(meetingCount, 1)) + 0.5)
+    }
+
+    var body: some View {
+        Group {
+            if points.isEmpty {
+                RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                    .fill(ColorPalette.Background.primary.opacity(0.35))
+                    .overlay {
+                        Text("not enough meeting history yet")
+                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.meta)
+                    }
+            } else {
+                Chart {
+                    ForEach(points) { point in
+                        AreaMark(
+                            x: .value("Meeting", point.meetingIndex),
+                            yStart: .value("Chart baseline", valueDomain.lowerBound),
+                            yEnd: .value(metricLabel, point.value)
+                        )
+                        .interpolationMethod(.monotone)
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [color.opacity(0.20), color.opacity(0.01)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+
+                        LineMark(
+                            x: .value("Meeting", point.meetingIndex),
+                            y: .value(metricLabel, point.value)
+                        )
+                        .interpolationMethod(.monotone)
+                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                        .foregroundStyle(color)
+                    }
+
+                    if let latestPoint {
+                        PointMark(
+                            x: .value("Latest meeting", latestPoint.meetingIndex),
+                            y: .value(metricLabel, latestPoint.value)
+                        )
+                        .symbolSize(46)
+                        .foregroundStyle(ColorPalette.Background.panel)
+
+                        PointMark(
+                            x: .value("Latest meeting", latestPoint.meetingIndex),
+                            y: .value(metricLabel, latestPoint.value)
+                        )
+                        .symbolSize(20)
+                        .foregroundStyle(color)
+                    }
+                }
+                .chartXScale(domain: meetingDomain)
+                .chartYScale(domain: valueDomain)
+                .chartXAxis(.hidden)
+                .chartYAxis {
+                    AxisMarks(values: .automatic(desiredCount: 3)) {
+                        AxisGridLine(stroke: StrokeStyle(lineWidth: 1, dash: [2, 4]))
+                            .foregroundStyle(ColorPalette.Border.primary.opacity(0.75))
+                    }
+                }
+                .chartPlotStyle { plotArea in
+                    plotArea
+                        .background(ColorPalette.Background.primary.opacity(0.35))
+                        .clipShape(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                                .stroke(ColorPalette.Border.primary.opacity(0.7), lineWidth: 1)
+                        }
+                }
+            }
+        }
+        .frame(height: MinitiDesignSystem.CoachingLayout.statsChartHeight)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(metricLabel) history")
+        .accessibilityValue(accessibilityValue)
+    }
+
+    private var accessibilityValue: String {
+        guard let latestPoint else { return "Not enough meeting history yet" }
+        let date = latestPoint.date.formatted(date: .abbreviated, time: .omitted)
+        return "Latest value \(latestPoint.value.formatted()) \(unit) on \(date), across \(points.count) meetings"
     }
 }
 

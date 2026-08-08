@@ -168,7 +168,7 @@ private struct PostMeetingReviewBar: View {
                         appState.saveAndOpenCurrentMeeting()
                     }
                 } label: {
-                    MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
+                    MinitiControlLabel(role: .primary, isEmphasized: true) {
                         HStack(spacing: 6) {
                             Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "rectangle.stack" : "clock.arrow.circlepath")
                                 .font(.system(size: 10, weight: .semibold))
@@ -208,12 +208,11 @@ struct HomeActionButton: View {
     let icon: String
     let label: String
     let shortcut: String
-    let accentColor: Color
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            MinitiVibeyLabel(accent: accentColor) {
+            MinitiControlLabel(role: .secondary) {
                 HStack(spacing: 7) {
                     Image(systemName: icon)
                         .font(.system(size: 11, weight: .semibold))
@@ -224,7 +223,7 @@ struct HomeActionButton: View {
 
                     Text(shortcut)
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(accentColor.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
+                        .foregroundStyle(ColorPalette.Text.meta)
                         .lineLimit(1)
                 }
             }
@@ -379,12 +378,6 @@ struct ReadyStateView: View {
                 .disabled(!appState.canStartRecording || appState.isStartingMeeting)
 
                 MeetingLanguagePicker(language: $appState.meetingLanguage)
-
-                Text(captureSummary)
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(ColorPalette.Text.dim)
-                    .accessibilityLabel("Recording setup: \(captureSummary)")
-
             }
 
             // Upcoming calendar events
@@ -409,7 +402,6 @@ struct ReadyStateView: View {
                                 icon: "keyboard",
                                 label: "shortcuts",
                                 shortcut: "⌘/",
-                                accentColor: ColorPalette.Accent.amber,
                                 action: { keyboardService.showingHelp.toggle() }
                             )
 
@@ -417,7 +409,6 @@ struct ReadyStateView: View {
                                 icon: "gearshape",
                                 label: "settings",
                                 shortcut: "⌘,",
-                                accentColor: ColorPalette.Accent.blueGitHub,
                                 action: { openSettings() }
                             )
                         }
@@ -449,17 +440,6 @@ struct ReadyStateView: View {
         
     }
 
-    private var captureSummary: String {
-        let sources: String
-        switch (appState.captureMicrophone, appState.captureSystemAudio) {
-        case (true, true): sources = "Microphone + system audio"
-        case (true, false): sources = "Microphone only"
-        case (false, true): sources = "System audio only"
-        case (false, false): sources = "No audio source selected"
-        }
-        let language = TranscriptionLanguage(rawValue: appState.meetingLanguage)?.displayName ?? "English"
-        return "\(sources) • \(language)"
-    }
 }
 
 private struct AutoStartBanner: View {
@@ -1785,7 +1765,7 @@ struct LiveTrainingInsightsContent: View {
             LiveTrainingFillersSection(presentations: speakerPresentations)
             
             if metrics.speakers.count > 1 {
-                LiveInsightSection(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
+                LiveInsightSection(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, info: .talkRatio) {
                     VStack(alignment: .leading, spacing: 8) {
                         GeometryReader { geo in
                             HStack(spacing: 0) {
@@ -1813,7 +1793,7 @@ struct LiveTrainingInsightsContent: View {
                 }
             }
             
-            LiveInsightSection(title: "pace", color: Color(hex: "A371F7"), info: .pace) {
+            LiveInsightSection(title: "pace", color: ColorPalette.Coaching.pace, info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         LiveTrainingMetricRow(
@@ -1825,7 +1805,7 @@ struct LiveTrainingInsightsContent: View {
                 }
             }
             
-            LiveInsightSection(title: "longest monologue", color: Color(hex: "EC4899"), info: .longestMonologue) {
+            LiveInsightSection(title: "longest monologue", color: ColorPalette.Coaching.monologue, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -1838,7 +1818,7 @@ struct LiveTrainingInsightsContent: View {
                 }
             }
             
-            LiveInsightSection(title: "questions asked", color: Color(hex: "3FB950"), info: .questionsAsked) {
+            LiveInsightSection(title: "questions asked", color: ColorPalette.Coaching.questions, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         LiveTrainingMetricRow(
@@ -1849,7 +1829,7 @@ struct LiveTrainingInsightsContent: View {
                 }
             }
             
-            LiveInsightSection(title: "clarity", color: Color(hex: "D29922"), info: .clarity) {
+            LiveInsightSection(title: "clarity", color: ColorPalette.Coaching.clarity, info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         LiveTrainingMetricRow(
@@ -1878,7 +1858,7 @@ private struct LiveTrainingFillersSection: View {
             if speaker.totalFillers > 0 || speaker.isLocalMic {
                 LiveInsightSection(
                     title: "fillers: \(speaker.speakerLabel.lowercased())",
-                    color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+                    color: speaker.isLocalMic ? ColorPalette.Coaching.fillers : ColorPalette.Text.meta,
                     info: .fillers
                 ) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1949,7 +1929,7 @@ private struct LiveTrainingFillersSection: View {
                         .fixedSize()
                     Text("\(entry.count)")
                         .font(.system(size: 10, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Accent.amber)
+                        .foregroundStyle(ColorPalette.Coaching.fillers)
                 }
             }
         }
@@ -2100,13 +2080,13 @@ struct TerminalHeader: View {
                         }
                     }
                 } label: {
-                    let accent = appState.isRecording ? MinitiDesignSystem.Accent.recording : MinitiDesignSystem.Accent.resume
-                    MinitiVibeyLabel(accent: accent, isEmphasized: appState.isRecording) {
+                    let role: MinitiControlRole = appState.isRecording ? .recording : .positive
+                    MinitiControlLabel(role: role, isEmphasized: appState.isRecording) {
                         HStack(spacing: 6) {
                             if isResumePending {
                                 ProgressView()
                                     .controlSize(.small)
-                                    .tint(accent)
+                                    .tint(role.accent)
                                     .frame(width: 11)
                             } else {
                                 Image(systemName: appState.isRecording ? "stop.fill" : "record.circle")
@@ -2118,7 +2098,7 @@ struct TerminalHeader: View {
                                 .lineLimit(1)
                             Text("⌘⇧R")
                                 .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(accent.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
+                                .foregroundStyle(role.accent.opacity(MinitiDesignSystem.ControlOpacity.supportingContent))
                                 .lineLimit(1)
                         }
                     }
@@ -2155,7 +2135,7 @@ struct TerminalHeader: View {
                         Button {
                             appState.goHome()
                         } label: {
-                            MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
+                            MinitiControlLabel(role: .primary, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "rectangle.stack")
                                         .font(.system(size: 10, weight: .semibold))
@@ -2173,7 +2153,7 @@ struct TerminalHeader: View {
                                 appState.saveAndOpenCurrentMeeting()
                             }
                         } label: {
-                            MinitiVibeyLabel(accent: MinitiDesignSystem.Accent.navigation, isEmphasized: true) {
+                            MinitiControlLabel(role: .primary, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
@@ -2182,7 +2162,7 @@ struct TerminalHeader: View {
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                     Text("⌘S")
                                         .font(.system(size: 10, weight: .medium, design: .default))
-                                        .foregroundStyle(MinitiDesignSystem.Accent.navigation.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
+                                        .foregroundStyle(MinitiControlRole.primary.accent.opacity(MinitiDesignSystem.ControlOpacity.supportingContent))
                                         .lineLimit(1)
                                 }
                             }
@@ -2851,7 +2831,6 @@ struct CalendarNudgeCard: View {
 
 struct ZonedOutButton: View {
     @EnvironmentObject var appState: AppState
-    private let accent = MinitiDesignSystem.Accent.zonedOut
 
     var body: some View {
         Button {
@@ -2861,7 +2840,7 @@ struct ZonedOutButton: View {
                 appState.triggerZonedOutCatchUp()
             }
         } label: {
-            MinitiVibeyLabel(accent: accent) {
+            MinitiControlLabel(role: .secondary) {
                 HStack(spacing: 6) {
                     Text("😶")
                         .font(.system(size: 12))
@@ -2870,7 +2849,7 @@ struct ZonedOutButton: View {
                         .font(.system(size: 11, weight: .medium, design: .default))
                     Text("⌘⇧Z")
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(accent.opacity(MinitiDesignSystem.VibeyOpacity.supportingContent))
+                        .foregroundStyle(ColorPalette.Text.meta)
                         .lineLimit(1)
                 }
             }
@@ -2902,7 +2881,7 @@ struct ZonedOutButton: View {
 
 private struct ZonedOutPopoverContent: View {
     @EnvironmentObject var appState: AppState
-    private let accent = Color(hex: "D2A8FF")
+    private let accent = MinitiDesignSystem.ContentAccent.zonedOut
 
     private var generatedLabel: String? {
         guard let date = appState.zonedOutCatchUpGeneratedAt else { return nil }

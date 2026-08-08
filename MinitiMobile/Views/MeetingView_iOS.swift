@@ -196,22 +196,10 @@ struct MeetingView_iOS: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    if appState.isRecording {
-                        Button {
-                            appState.triggerZonedOutCatchUp()
-                        } label: {
-                            Text("😶")
-                                .font(.system(size: 18))
-                                .accessibilityLabel("catch me up")
-                        }
-                        .disabled(!appState.canRequestZonedOutCatchUp && appState.zonedOutCatchUp == nil && !appState.isGeneratingCatchUp)
-                    }
-                    ShareLink(item: shareContent) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                    }
+                ShareLink(item: shareContent) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.muted)
                 }
             }
         }
@@ -285,7 +273,7 @@ struct MeetingView_iOS: View {
             if isStopped {
                 // Stopped: discard | resume | done — equal width, no overlap
                 HStack(spacing: 8) {
-                    flexButton(icon: "trash", label: "discard", color: Color(hex: "F85149"), bgColor: Color(hex: "F85149").opacity(0.12), borderColor: Color(hex: "F85149").opacity(0.3)) {
+                    flexButton(icon: "trash", label: "discard", role: .destructive) {
                         showDiscardConfirmation = true
                     }
 
@@ -294,18 +282,20 @@ struct MeetingView_iOS: View {
                     if appState.isFinalizingMeeting {
                         flexFinalizingStatus
                     } else if appState.isCurrentMeetingGeneratingFinalInsights {
-                        flexButton(icon: "rectangle.stack", label: "meetings", color: ColorPalette.Accent.blueGitHub, bgColor: ColorPalette.Accent.blueGitHub.opacity(0.12), borderColor: ColorPalette.Accent.blueGitHub.opacity(0.3)) {
+                        flexButton(icon: "rectangle.stack", label: "meetings", role: .primary) {
                             appState.goHome()
                         }
                     } else {
-                        flexButton(icon: "checkmark", label: "done", color: ColorPalette.Accent.blueGitHub, bgColor: ColorPalette.Accent.blueGitHub.opacity(0.12), borderColor: ColorPalette.Accent.blueGitHub.opacity(0.3)) {
+                        flexButton(icon: "checkmark", label: "done", role: .primary) {
                             appState.saveAndOpenCurrentMeeting()
                         }
                     }
                 }
             } else {
-                // Recording: centered stop button
-                stopButton
+                HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                    zonedOutButton
+                    stopButton
+                }
             }
         }
         .padding(.horizontal, 16)
@@ -316,32 +306,54 @@ struct MeetingView_iOS: View {
     }
     
     private var stopButton: some View {
-        Button {
+        let role = MinitiControlRole.recording
+        return Button {
             appState.stopRecording()
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                Text("stop")
-                    .font(.system(size: 12, weight: .semibold, design: .default))
+            MinitiControlLabel(
+                role: role,
+                isEmphasized: true,
+                height: 44,
+                horizontalPadding: 0
+            ) {
+                HStack(spacing: 6) {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("stop")
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                }
+                .frame(width: 128)
             }
-            .foregroundStyle(Color(hex: "F85149"))
-            .padding(.horizontal, 14)
-            .frame(minHeight: 44)
-            .frame(width: 128)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: "F85149").opacity(0.15))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color(hex: "F85149").opacity(0.3), lineWidth: 1)
-            )
         }
+        .buttonStyle(.plain)
+    }
+
+    private var zonedOutButton: some View {
+        Button {
+            appState.triggerZonedOutCatchUp()
+        } label: {
+            MinitiControlLabel(
+                role: .secondary,
+                height: 44,
+                horizontalPadding: 0
+            ) {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("catch me up")
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                }
+                .frame(width: 128)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!appState.canRequestZonedOutCatchUp && appState.zonedOutCatchUp == nil && !appState.isGeneratingCatchUp)
+        .accessibilityHint("Summarizes the last few minutes of this meeting")
     }
     
     private var flexResumeButton: some View {
-        Button {
+        let role = MinitiControlRole.positive
+        return Button {
             guard !isResumePending else { return }
             isResumingRecording = true
             appState.managedSessionError = nil
@@ -351,7 +363,7 @@ struct MeetingView_iOS: View {
                 if isResumePending {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(Color(hex: "3FB950"))
+                        .tint(role.accent)
                 } else {
                     Image(systemName: "record.circle")
                         .font(.system(size: 11, weight: .semibold))
@@ -360,22 +372,27 @@ struct MeetingView_iOS: View {
                     .font(.system(size: 12, weight: .semibold, design: .default))
                     .lineLimit(1)
             }
-            .foregroundStyle(Color(hex: "3FB950"))
+            .foregroundStyle(role.accent)
             .frame(minHeight: 44)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(Color(hex: "3FB950").opacity(0.15))
+                    .fill(role.accent.opacity(MinitiDesignSystem.ControlOpacity.emphasizedFill))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color(hex: "3FB950").opacity(0.3), lineWidth: 1)
+                    .stroke(role.accent.opacity(MinitiDesignSystem.ControlOpacity.emphasizedBorder), lineWidth: 1)
             )
         }
         .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights)
     }
 
-    private func flexButton(icon: String, label: String, color: Color, bgColor: Color, borderColor: Color, action: @escaping () -> Void) -> some View {
+    private func flexButton(
+        icon: String,
+        label: String,
+        role: MinitiControlRole,
+        action: @escaping () -> Void
+    ) -> some View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: icon)
@@ -383,16 +400,16 @@ struct MeetingView_iOS: View {
                 Text(label)
                     .font(.system(size: 12, weight: .semibold, design: .default))
             }
-            .foregroundStyle(color)
+            .foregroundStyle(role.accent)
             .frame(minHeight: 44)
             .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 4)
-                    .fill(bgColor)
+                    .fill(role.accent.opacity(MinitiDesignSystem.ControlOpacity.restingFill))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 4)
-                    .stroke(borderColor, lineWidth: 1)
+                    .stroke(role.accent.opacity(MinitiDesignSystem.ControlOpacity.restingBorder), lineWidth: 1)
             )
         }
     }
@@ -422,33 +439,27 @@ struct MeetingView_iOS: View {
     // MARK: - Section Picker
     
     private var sectionPicker: some View {
-        HStack(spacing: 0) {
-            ForEach(MeetingSection.allCases, id: \.self) { section in
-                Button {
-                    activeSection = section
-                } label: {
-                    Text(section.rawValue)
-                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .default))
-                        .foregroundStyle(activeSection == section ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
-                        .frame(maxWidth: .infinity)
-                        .frame(minHeight: 44)
-                        .background(
-                            activeSection == section
-                                ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
-                                : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
+        MinitiTabStripSurface {
+            HStack(spacing: 0) {
+                ForEach(MeetingSection.allCases, id: \.self) { section in
+                    let isSelected = activeSection == section
+                    Button {
+                        activeSection = section
+                    } label: {
+                        MinitiTabLabel(
+                            title: section.rawValue,
+                            isSelected: isSelected,
+                            height: 44,
+                            fillsAvailableWidth: true
                         )
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
                 }
             }
         }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "09090B"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                )
-        )
         .frame(maxWidth: 500)
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -459,7 +470,7 @@ struct MeetingView_iOS: View {
     private var liveInsightsContent: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
-                InsightsModeMenu_iOS(
+                InsightsModeTabs_iOS(
                     selection: appState.insightsMode,
                     updatedAt: appState.lastInsightsUpdatedAt[appState.insightsMode],
                     onSelect: appState.switchInsightsMode
@@ -638,7 +649,7 @@ struct ReadyStateView_iOS: View {
                             .foregroundStyle(.white)
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(Capsule().fill(ColorPalette.Accent.purple))
+                            .background(Capsule().fill(MinitiControlRole.primary.accent))
                         }
                         .disabled(isPurchasingPro)
 
@@ -708,11 +719,6 @@ struct ReadyStateView_iOS: View {
 
                     MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
 
-                    Text(captureSummary)
-                        .font(.caption)
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .accessibilityLabel("Recording setup: \(captureSummary)")
-
                 }
 
                 // Upcoming calendar events
@@ -780,31 +786,60 @@ struct ReadyStateView_iOS: View {
         }
     }
 
-    private var captureSummary: String {
-        let language = TranscriptionLanguage(rawValue: appState.meetingLanguage)?.displayName ?? "English"
-        return "Microphone • \(language)"
-    }
 }
 
-struct InsightsModeMenu_iOS: View {
+struct InsightsModeTabs_iOS: View {
     @EnvironmentObject private var appState: AppState
     let selection: InsightsMode
     let updatedAt: Date?
     let onSelect: (InsightsMode) -> Void
 
     var body: some View {
-        Menu {
-            Section("Core views") {
-                ForEach(InsightsMode.coreModes, id: \.self) { mode in
-                    modeButton(mode)
+        VStack(alignment: .trailing, spacing: MinitiDesignSystem.Spacing.small) {
+            MinitiTabStripSurface {
+                HStack(spacing: 0) {
+                    ForEach(InsightsMode.coreModes, id: \.self) { mode in
+                        coreModeButton(mode)
+                    }
+
+                    specialistMenu
                 }
             }
 
+            if let updatedAt {
+                Text(updatedText(updatedAt))
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.meta)
+            }
+        }
+    }
+
+    private func coreModeButton(_ mode: InsightsMode) -> some View {
+        let isSelected = mode == selection
+        return Button {
+            onSelect(mode)
+        } label: {
+            MinitiTabLabel(
+                title: mode.displayName,
+                isSelected: isSelected,
+                height: 44,
+                fillsAvailableWidth: true
+            )
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityHint(mode.description)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+
+    private var specialistMenu: some View {
+        Menu {
             Section("Specialist views") {
-                modeButton(.meddpicc)
+                specialistButton(.meddpicc)
 
                 if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
-                    modeButton(.docs)
+                    specialistButton(.docs)
                 } else {
                     Button {
                         appState.showSettings = true
@@ -834,47 +869,20 @@ struct InsightsModeMenu_iOS: View {
                 }
             }
         } label: {
-            HStack(spacing: 10) {
-                Image(systemName: selection.systemImage)
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(selection.displayName)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(ColorPalette.Text.primary)
-                    Text(freshnessText)
-                        .font(.caption)
-                        .foregroundStyle(ColorPalette.Text.muted)
-                }
-                Spacer()
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(ColorPalette.Text.muted)
-                    .accessibilityHidden(true)
-            }
-            .padding(.horizontal, 12)
-            .frame(minHeight: 50)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(ColorPalette.Background.secondary)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+            MinitiTabLabel(
+                title: selection.isSpecialist ? selection.displayName : "More",
+                isSelected: selection.isSpecialist,
+                height: 44,
+                fillsAvailableWidth: true
             )
         }
-        .accessibilityLabel("Insight mode: \(selection.displayName)")
-        .accessibilityHint("Choose another insight view")
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityLabel(selection.isSpecialist ? "Specialist view: \(selection.displayName), selected" : "More insight views")
+        .accessibilityHint("Choose Sales or Playbook")
     }
 
-    private var freshnessText: String {
-        guard let updatedAt else { return selection.description }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return "Updated \(formatter.localizedString(for: updatedAt, relativeTo: Date()))"
-    }
-
-    private func modeButton(_ mode: InsightsMode) -> some View {
+    private func specialistButton(_ mode: InsightsMode) -> some View {
         Button {
             onSelect(mode)
         } label: {
@@ -884,6 +892,12 @@ struct InsightsModeMenu_iOS: View {
                 Image(systemName: mode == selection ? "checkmark.circle.fill" : mode.systemImage)
             }
         }
+    }
+
+    private func updatedText(_ updatedAt: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Updated \(formatter.localizedString(for: updatedAt, relativeTo: Date()))"
     }
 }
 
@@ -1628,8 +1642,9 @@ struct ZonedOutSheet_iOS: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {
                         HStack(spacing: 10) {
-                            Text("😶")
-                                .font(.system(size: 22))
+                            Image(systemName: "arrow.clockwise")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(accent)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("catch me up")
                                     .font(.system(size: 14, weight: .semibold, design: .default))

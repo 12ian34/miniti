@@ -557,7 +557,7 @@ struct MeetingDetail_iOS: View {
     private var insightsContent: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
-                InsightsModeMenu_iOS(
+                InsightsModeTabs_iOS(
                     selection: appState.insightsMode,
                     updatedAt: meeting.insightsUpdatedAt,
                     onSelect: appState.switchInsightsMode
@@ -884,7 +884,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 if speaker.totalFillers > 0 || speaker.isLocalMic {
                     HistoricalDetailBlock_iOS(
                         title: "fillers: \(speaker.speakerLabel.lowercased())",
-                        color: speaker.isLocalMic ? Color(hex: "F59E0B") : Color(hex: "8B949E"),
+                        color: speaker.isLocalMic ? ColorPalette.Coaching.fillers : ColorPalette.Text.meta,
                         info: .fillers
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
@@ -927,7 +927,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
             }
             
             if metrics.speakers.count > 1 {
-                HistoricalDetailBlock_iOS(title: "talk ratio", color: Color(hex: "58A6FF"), info: .talkRatio) {
+                HistoricalDetailBlock_iOS(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, info: .talkRatio) {
                     HStack(spacing: 8) {
                         Text("you \(Int(metrics.talkRatioYou * 100))%")
                             .font(.system(size: 11, weight: .medium, design: .default))
@@ -941,7 +941,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "pace", color: Color(hex: "A371F7"), info: .pace) {
+            HistoricalDetailBlock_iOS(title: "pace", color: ColorPalette.Coaching.pace, info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -953,7 +953,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "longest monologue", color: Color(hex: "EC4899"), info: .longestMonologue) {
+            HistoricalDetailBlock_iOS(title: "longest monologue", color: ColorPalette.Coaching.monologue, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         if speaker.longestMonologueWords > 0 {
@@ -966,7 +966,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "questions asked", color: Color(hex: "3FB950"), info: .questionsAsked) {
+            HistoricalDetailBlock_iOS(title: "questions asked", color: ColorPalette.Coaching.questions, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -977,7 +977,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                 }
             }
             
-            HistoricalDetailBlock_iOS(title: "clarity", color: Color(hex: "D29922"), info: .clarity) {
+            HistoricalDetailBlock_iOS(title: "clarity", color: ColorPalette.Coaching.clarity, info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
                         HistoricalTrainingMetricRow_iOS(
@@ -1027,7 +1027,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
                         .frame(width: 70, alignment: .trailing)
                     Text("\(entry.count)")
                         .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Accent.amber)
+                        .foregroundStyle(ColorPalette.Coaching.fillers)
                 }
             }
         }

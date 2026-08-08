@@ -508,6 +508,566 @@ struct TrainingMetrics: Sendable {
     }
 }
 
+// MARK: - Coaching Guidance (locally computed, no LLM)
+
+/// A comparable, meeting-level view of the user's coaching metrics. Questions are
+/// normalized to a 30-minute meeting so a long call does not automatically look
+/// more inquisitive than a short one.
+struct CoachingSnapshot: Sendable {
+    let date: Date
+    let fillersPerMinute: Double
+    let wordsPerMinute: Double
+    let avgWordsPerTurn: Double
+    let questionsPer30Minutes: Double
+    let talkRatio: Double?
+    let longestMonologueWords: Double
+    let topFiller: String?
+    let examples: [CoachingMetric: CoachingExample]
+}
+
+enum CoachingMetric: String, CaseIterable, Hashable, Sendable {
+    case fillers
+    case pace
+    case clarity
+    case questions
+    case talkRatio
+    case monologue
+}
+
+struct CoachingExample: Sendable, Equatable {
+    let meetingID: UUID
+    let meetingTitle: String
+    let meetingDate: Date
+    let label: String
+    let excerpt: String
+}
+
+enum CoachingTrend: Sendable, Equatable {
+    case improving
+    case steady
+    case needsAttention
+    case buildingBaseline
+}
+
+enum CoachingMetricStatus: Sendable, Equatable {
+    case strong
+    case balanced
+    case focus
+}
+
+enum CoachingComparisonTone: Sendable, Equatable {
+    case positive
+    case negative
+    case neutral
+}
+
+struct CoachingMetricSummary: Sendable, Equatable, Identifiable {
+    var id: CoachingMetric { metric }
+
+    let metric: CoachingMetric
+    let status: CoachingMetricStatus
+    let trend: CoachingTrend
+    let recentValue: String
+    let previousValue: String?
+    let headline: String
+    let observation: String
+    let tip: String
+    let example: CoachingExample?
+    fileprivate let priority: Double
+}
+
+struct CoachingReport: Sendable, Equatable {
+    let meetingCount: Int
+    let focus: CoachingMetricSummary
+    let strengths: [CoachingMetricSummary]
+    let summaries: [CoachingMetricSummary]
+}
+
+enum CoachingAdvisor {
+    /// Classifies a latest-vs-baseline movement for compact stats UI. Metrics
+    /// with a healthy range use distance from that range; directional metrics
+    /// use their established Coaching interpretation.
+    static func comparisonTone(
+        for metric: CoachingMetric,
+        latest: Double?,
+        baseline: Double?
+    ) -> CoachingComparisonTone {
+        guard let latest, let baseline, baseline > 0 else { return .neutral }
+        let relativeChange = abs(latest - baseline) / baseline
+        guard relativeChange > 0.10 else { return .neutral }
+
+        switch metric {
+        case .fillers, .monologue:
+            return latest < baseline ? .positive : .negative
+        case .questions:
+            return latest > baseline ? .positive : .negative
+        case .pace, .clarity, .talkRatio:
+            let latestSeverity = severity(for: metric, value: latest)
+            let baselineSeverity = severity(for: metric, value: baseline)
+            if latestSeverity < baselineSeverity - 0.01 { return .positive }
+            if latestSeverity > baselineSeverity + 0.01 { return .negative }
+            return .neutral
+        }
+    }
+
+    static func analyze(_ snapshots: [CoachingSnapshot]) -> CoachingReport? {
+        let sorted = snapshots.sorted { $0.date > $1.date }
+        guard !sorted.isEmpty else { return nil }
+
+        let recentTalkRatio = average(Array(sorted.prefix(3)).compactMap(\.talkRatio))
+        let summaries = CoachingMetric.allCases.compactMap { metric -> CoachingMetricSummary? in
+            let values = sorted.compactMap { value(for: metric, snapshot: $0) }
+            guard !values.isEmpty else { return nil }
+
+            let comparisonWindowSize = values.count >= 4 ? min(3, values.count / 2) : nil
+            let recentWindowSize = comparisonWindowSize ?? min(3, values.count)
+            let recent = average(Array(values.prefix(recentWindowSize))) ?? 0
+            let previous: Double? = {
+                guard let windowSize = comparisonWindowSize else { return nil }
+                return average(Array(values.dropFirst(windowSize).prefix(windowSize)))
+            }()
+            let severity = severity(for: metric, value: recent)
+            let trend = trend(for: metric, recent: recent, previous: previous)
+            var priority = severity
+            if trend == .needsAttention { priority += 0.3 }
+            if trend == .improving { priority -= 0.1 }
+            if metric == .questions, (recentTalkRatio ?? 0) < 0.65 {
+                // Raw question count is highly meeting-type dependent. It becomes a
+                // stronger coaching signal when paired with a high talk ratio.
+                priority = min(priority, 0.65)
+            }
+
+            let copy = copy(
+                for: metric,
+                value: recent
+            )
+            return CoachingMetricSummary(
+                metric: metric,
+                status: status(for: severity),
+                trend: previous == nil ? .buildingBaseline : trend,
+                recentValue: formattedValue(recent, for: metric),
+                previousValue: previous.map { formattedValue($0, for: metric) },
+                headline: copy.headline,
+                observation: copy.observation,
+                tip: copy.tip,
+                example: representativeExample(
+                    for: metric,
+                    snapshots: Array(sorted.prefix(recentWindowSize))
+                ),
+                priority: priority
+            )
+        }
+
+        guard let focus = summaries.max(by: { $0.priority < $1.priority }) else { return nil }
+        let strengths = summaries
+            .filter { $0.metric != focus.metric && ($0.status == .strong || $0.trend == .improving) }
+            .sorted { lhs, rhs in
+                if lhs.status != rhs.status { return lhs.status == .strong }
+                return lhs.priority < rhs.priority
+            }
+            .prefix(2)
+
+        return CoachingReport(
+            meetingCount: sorted.count,
+            focus: focus,
+            strengths: Array(strengths),
+            summaries: summaries
+        )
+    }
+
+    private static func representativeExample(
+        for metric: CoachingMetric,
+        snapshots: [CoachingSnapshot]
+    ) -> CoachingExample? {
+        let candidates = snapshots.compactMap { snapshot -> (Double, CoachingExample)? in
+            guard let example = snapshot.examples[metric],
+                  let value = value(for: metric, snapshot: snapshot) else { return nil }
+            return (severity(for: metric, value: value), example)
+        }
+        return candidates.max(by: { $0.0 < $1.0 })?.1
+    }
+
+    private static func value(for metric: CoachingMetric, snapshot: CoachingSnapshot) -> Double? {
+        switch metric {
+        case .fillers: return snapshot.fillersPerMinute
+        case .pace: return snapshot.wordsPerMinute
+        case .clarity: return snapshot.avgWordsPerTurn
+        case .questions: return snapshot.questionsPer30Minutes
+        case .talkRatio: return snapshot.talkRatio
+        case .monologue: return snapshot.longestMonologueWords
+        }
+    }
+
+    private static func average(_ values: [Double]) -> Double? {
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    private static func trend(for metric: CoachingMetric, recent: Double, previous: Double?) -> CoachingTrend {
+        guard let previous else { return .buildingBaseline }
+        let recentSeverity = severity(for: metric, value: recent)
+        let previousSeverity = severity(for: metric, value: previous)
+        if recentSeverity < previousSeverity - 0.12 { return .improving }
+        if recentSeverity > previousSeverity + 0.12 { return .needsAttention }
+        return .steady
+    }
+
+    /// Converts each metric into distance from a broad conversational coaching
+    /// range. These are prompts for reflection, not quality scores: presentations,
+    /// interviews, and workshops naturally have different healthy shapes.
+    private static func severity(for metric: CoachingMetric, value: Double) -> Double {
+        switch metric {
+        case .fillers:
+            return max(0, (value - 3) / 4)
+        case .pace:
+            if value < 110 { return (110 - value) / 55 }
+            if value > 180 { return (value - 180) / 55 }
+            return 0
+        case .clarity:
+            if value < 5 { return (5 - value) / 5 }
+            if value > 20 { return (value - 20) / 15 }
+            return 0
+        case .questions:
+            return max(0, (3 - value) / 3)
+        case .talkRatio:
+            if value < 0.35 { return (0.35 - value) / 0.25 }
+            if value > 0.65 { return (value - 0.65) / 0.25 }
+            return 0
+        case .monologue:
+            return max(0, (value - 150) / 180)
+        }
+    }
+
+    private static func status(for severity: Double) -> CoachingMetricStatus {
+        if severity <= 0.1 { return .strong }
+        if severity < 0.75 { return .balanced }
+        return .focus
+    }
+
+    private static func formattedValue(_ value: Double, for metric: CoachingMetric) -> String {
+        switch metric {
+        case .fillers: return String(format: "%.1f / min", value)
+        case .pace: return "\(Int(value.rounded())) wpm"
+        case .clarity: return String(format: "%.1f words / turn", value)
+        case .questions: return String(format: "%.1f / 30 min", value)
+        case .talkRatio: return "\(Int((value * 100).rounded()))% you"
+        case .monologue: return "\(Int(value.rounded())) words"
+        }
+    }
+
+    private static func copy(
+        for metric: CoachingMetric,
+        value: Double
+    ) -> (headline: String, observation: String, tip: String) {
+        switch metric {
+        case .fillers:
+            if value <= 3 {
+                return (
+                    "Your pauses are working",
+                    "Filler use is low enough that your ideas can carry the emphasis.",
+                    "Keep using a quiet beat before an important answer instead of rushing to fill it."
+                )
+            }
+            return (
+                "Make pauses do the work",
+                "Fillers are softening otherwise clear delivery.",
+                "Choose one filler to notice next meeting. When it arrives, replace only that word with one silent breath."
+            )
+        case .pace:
+            if value > 180 {
+                return (
+                    "Give ideas room to land",
+                    "Your recent pace is energetic, but listeners may have less time to absorb each point.",
+                    "After each key sentence, pause for one full beat. Aim to slow the important 20%, not the whole meeting."
+                )
+            }
+            if value < 110 {
+                return (
+                    "Lead with the point",
+                    "Your recent pace is deliberate and may occasionally lose momentum.",
+                    "Start answers with the conclusion in one sentence, then add the context that earns it."
+                )
+            }
+            return (
+                "Your pace is easy to follow",
+                "You are sitting in a broadly conversational range.",
+                "Keep varying pace on purpose: slower for decisions, slightly quicker for familiar context."
+            )
+        case .clarity:
+            if value > 20 {
+                return (
+                    "Shorten the next answer",
+                    "Your turns are becoming dense, which can hide the main point.",
+                    "Use a one-point-per-turn rule: make the point, give one example, then hand the conversation back."
+                )
+            }
+            if value < 5 {
+                return (
+                    "Connect the short answers",
+                    "Your turns are very brief and may sometimes sound fragmented.",
+                    "Add one sentence of reasoning after a short answer so the listener gets both the decision and why."
+                )
+            }
+            return (
+                "Your turns are concise",
+                "Your average answer length is in a clear conversational range.",
+                "Protect that clarity by stating the point before the supporting detail."
+            )
+        case .questions:
+            if value < 3 {
+                return (
+                    "Invite one level deeper",
+                    "You are asking relatively few questions; that can be fine for presentations but limits discovery in conversations.",
+                    "Prepare one follow-up prompt: “What makes that important now?” Use it once when the other person raises a priority."
+                )
+            }
+            return (
+                "You are creating curiosity",
+                "Your recent meetings include a healthy cadence of questions.",
+                "Keep improving question quality: follow one factual answer with a why, impact, or trade-off question."
+            )
+        case .talkRatio:
+            if value > 0.65 {
+                return (
+                    "Create more room",
+                    "You have been carrying most of the conversation. That may fit a demo, but it can limit discovery.",
+                    "After your next explanation, ask “What stands out to you?” and wait through the first quiet beat."
+                )
+            }
+            if value < 0.35 {
+                return (
+                    "Claim a little more space",
+                    "You are listening generously, though your own point of view may be getting less airtime.",
+                    "Before the meeting, write down the one perspective only you can add and make sure you state it clearly."
+                )
+            }
+            return (
+                "The conversation has room to breathe",
+                "Your recent talk ratio is broadly balanced for a two-way discussion.",
+                "Keep checking the format: discovery should leave more room; a demo can reasonably ask more of your voice."
+            )
+        case .monologue:
+            if value > 150 {
+                return (
+                    "Turn explanations into dialogue",
+                    "Your longest stretches are doing a lot of work before anyone else enters.",
+                    "Break long explanations into two-minute chapters and add a quick check-in between them."
+                )
+            }
+            return (
+                "You are handing the conversation back",
+                "Your longest speaking stretches stay compact enough for regular participation.",
+                "Keep ending explanations with a real hand-off, not a rhetorical “does that make sense?”"
+            )
+        }
+    }
+}
+
+enum CoachingExampleExtractor {
+    static func examples(
+        meetingID: UUID,
+        meetingTitle: String,
+        meetingDate: Date,
+        segments: [TrainingMetrics.Segment],
+        selfIDs: Set<Int>,
+        detectedFillers: [String],
+        topFiller: String?,
+        talkRatio: Double?
+    ) -> [CoachingMetric: CoachingExample] {
+        let finals = segments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        guard !finals.isEmpty else { return [:] }
+
+        let effectiveSelfIDs = resolvedSelfIDs(in: finals, configured: selfIDs)
+        let local = finals.filter { effectiveSelfIDs.contains($0.speaker) }
+        let remote = finals.filter { !effectiveSelfIDs.contains($0.speaker) }
+        guard !local.isEmpty else { return [:] }
+
+        let longestTurn = local.max { wordCount($0.text) < wordCount($1.text) }
+        let longestRun = longestSelfRun(in: finals, selfIDs: effectiveSelfIDs)
+        let recentQuestion = local.reversed().first { $0.text.contains("?") }
+        let recentRemote = remote.reversed().first
+        var result: [CoachingMetric: CoachingExample] = [:]
+
+        if let fillerTurn = fillerExample(
+            in: local,
+            topFiller: topFiller,
+            detectedFillers: detectedFillers
+        ) {
+            result[.fillers] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: topFiller == nil ? "A clean recent turn" : "A filler in context",
+                text: fillerTurn.text
+            )
+        }
+
+        if let longestTurn {
+            result[.pace] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: "A recent passage behind this pattern",
+                text: longestTurn.text
+            )
+            result[.clarity] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: "Your longest recent turn",
+                text: longestTurn.text
+            )
+        }
+
+        if let recentQuestion {
+            result[.questions] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: "A question you asked",
+                text: recentQuestion.text
+            )
+        } else if let recentRemote {
+            result[.questions] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: "A moment you could explore further",
+                text: recentRemote.text
+            )
+        }
+
+        if let longestRun {
+            let talkRatioLabel: String
+            if let talkRatio, talkRatio > 0.65 {
+                talkRatioLabel = "Part of your longest speaking stretch"
+            } else if let talkRatio, talkRatio < 0.35 {
+                talkRatioLabel = "A moment where you added your view"
+            } else {
+                talkRatioLabel = "A recent contribution"
+            }
+            if talkRatio != nil {
+                result[.talkRatio] = example(
+                    meetingID: meetingID,
+                    meetingTitle: meetingTitle,
+                    meetingDate: meetingDate,
+                    label: talkRatioLabel,
+                    text: longestRun
+                )
+            }
+            result[.monologue] = example(
+                meetingID: meetingID,
+                meetingTitle: meetingTitle,
+                meetingDate: meetingDate,
+                label: "Part of your longest uninterrupted stretch",
+                text: longestRun
+            )
+        }
+
+        return result
+    }
+
+    private static func resolvedSelfIDs(
+        in segments: [TrainingMetrics.Segment],
+        configured: Set<Int>
+    ) -> Set<Int> {
+        let preferred = configured.isEmpty ? [DeepgramService.micSpeakerID] : configured
+        if segments.contains(where: { preferred.contains($0.speaker) }) {
+            return preferred
+        }
+
+        // Imported transcripts may not carry a self-speaker mapping. Match the
+        // existing Coaching fallback by treating the most talkative speaker as You.
+        let wordCounts = Dictionary(grouping: segments, by: \.speaker)
+            .mapValues { $0.reduce(0) { $0 + wordCount($1.text) } }
+        guard let fallback = wordCounts.max(by: { $0.value < $1.value })?.key else { return preferred }
+        return [fallback]
+    }
+
+    private static func fillerExample(
+        in segments: [TrainingMetrics.Segment],
+        topFiller: String?,
+        detectedFillers: [String]
+    ) -> TrainingMetrics.Segment? {
+        if let topFiller {
+            let phrase = TrainingMetrics.tokenize(topFiller)
+            if let match = segments.reversed().first(where: {
+                TrainingMetrics.countPhraseOccurrences(of: phrase, in: TrainingMetrics.tokenize($0.text)) > 0
+            }) {
+                return match
+            }
+        }
+
+        let fillerTokens = detectedFillers.map(TrainingMetrics.tokenize)
+        return segments.reversed().first { segment in
+            let tokens = TrainingMetrics.tokenize(segment.text)
+            return !fillerTokens.contains { phrase in
+                TrainingMetrics.countPhraseOccurrences(of: phrase, in: tokens) > 0
+            }
+        }
+    }
+
+    private static func longestSelfRun(
+        in segments: [TrainingMetrics.Segment],
+        selfIDs: Set<Int>
+    ) -> String? {
+        var current: [String] = []
+        var longest: [String] = []
+        var currentCount = 0
+        var longestCount = 0
+
+        for segment in segments {
+            if selfIDs.contains(segment.speaker) {
+                current.append(segment.text)
+                currentCount += wordCount(segment.text)
+            } else {
+                if currentCount > longestCount {
+                    longest = current
+                    longestCount = currentCount
+                }
+                current = []
+                currentCount = 0
+            }
+        }
+        if currentCount > longestCount { longest = current }
+        let text = longest.joined(separator: " ").trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? nil : text
+    }
+
+    private static func example(
+        meetingID: UUID,
+        meetingTitle: String,
+        meetingDate: Date,
+        label: String,
+        text: String
+    ) -> CoachingExample {
+        CoachingExample(
+            meetingID: meetingID,
+            meetingTitle: meetingTitle,
+            meetingDate: meetingDate,
+            label: label,
+            excerpt: clipped(text)
+        )
+    }
+
+    private static func wordCount(_ text: String) -> Int {
+        TrainingMetrics.tokenize(text).count
+    }
+
+    static func clipped(_ text: String, limit: Int = 160) -> String {
+        let compact = text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        guard compact.count > limit else { return compact }
+
+        let prefix = String(compact.prefix(limit))
+        let boundary = prefix.lastIndex(where: { $0.isWhitespace }) ?? prefix.endIndex
+        return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines) + "…"
+    }
+}
+
 enum TrainingFillerPreferences {
     private static let legacyStorageKey = "trainingCustomFillers.v1"
     static let defaultFillers: [String] = TranscriptionLanguage.english.defaultFillers
