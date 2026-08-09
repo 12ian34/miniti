@@ -457,6 +457,141 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(adjusted, NSRange(location: 80, length: 0))
     }
 
+    func testLocalizedLiveTranscriptMutationReconstructsMiddleInsertion() throws {
+        let previous = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "First speaker."),
+                Turn(speaker: 2, timestamp: 10, text: "Third speaker."),
+            ],
+            speakerNames: nil
+        ).attributed
+        let next = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "First speaker."),
+                Turn(speaker: 3, timestamp: 5, text: "Second speaker."),
+                Turn(speaker: 2, timestamp: 10, text: "Third speaker."),
+            ],
+            speakerNames: nil
+        ).attributed
+
+        let mutation = try XCTUnwrap(
+            LiveTranscriptDocumentMutation.localizedReplacement(
+                previous: previous,
+                next: next,
+                revision: 2
+            )
+        )
+        let reconstructed = NSMutableAttributedString(attributedString: previous)
+        reconstructed.replaceCharacters(in: mutation.range, with: mutation.replacement)
+
+        XCTAssertTrue(reconstructed.isEqual(to: next))
+        XCTAssertLessThan(mutation.range.length, previous.length)
+        XCTAssertLessThan(mutation.replacement.length, next.length)
+    }
+
+    func testLocalizedLiveTranscriptMutationHandlesChangedSpeakerGrouping() throws {
+        let previous = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "Opening sentence."),
+                Turn(speaker: 2, timestamp: 10, text: "Closing sentence."),
+            ],
+            speakerNames: nil
+        ).attributed
+        let next = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "Opening sentence."),
+                Turn(speaker: 2, timestamp: 7, text: "Earlier part"),
+                Turn(speaker: 2, timestamp: 10, text: "Closing sentence."),
+            ],
+            speakerNames: nil
+        ).attributed
+
+        let mutation = try XCTUnwrap(
+            LiveTranscriptDocumentMutation.localizedReplacement(
+                previous: previous,
+                next: next,
+                revision: 3
+            )
+        )
+        let reconstructed = NSMutableAttributedString(attributedString: previous)
+        reconstructed.replaceCharacters(in: mutation.range, with: mutation.replacement)
+
+        XCTAssertTrue(reconstructed.isEqual(to: next))
+    }
+
+    func testLocalizedMiddleInsertionPreservesSelectionBeforeChange() throws {
+        let previous = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "Stable selected sentence."),
+                Turn(speaker: 2, timestamp: 10, text: "Later sentence."),
+            ],
+            speakerNames: nil
+        ).attributed
+        let next = SelectableAttributed.transcriptDocument(
+            turns: [
+                Turn(speaker: 1, timestamp: 0, text: "Stable selected sentence."),
+                Turn(speaker: 3, timestamp: 5, text: "Inserted sentence."),
+                Turn(speaker: 2, timestamp: 10, text: "Later sentence."),
+            ],
+            speakerNames: nil
+        ).attributed
+        let mutation = try XCTUnwrap(
+            LiveTranscriptDocumentMutation.localizedReplacement(
+                previous: previous,
+                next: next,
+                revision: 4
+            )
+        )
+        let stableText = previous.string as NSString
+        let stableSelection = stableText.range(of: "Stable selected")
+
+        let adjusted = LiveTranscriptSelectionPolicy.adjustedRange(
+            stableSelection,
+            replacing: mutation.range,
+            replacementLength: mutation.replacement.length,
+            resultingLength: next.length
+        )
+
+        XCTAssertEqual(adjusted, stableSelection)
+    }
+
+    func testLocalizedMutationStaysBoundedInLongTranscript() throws {
+        let previousTurns = (0..<500).map { index in
+            Turn(
+                speaker: index % 3,
+                timestamp: TimeInterval(index * 2),
+                text: "Finalized sentence \(index)."
+            )
+        }
+        var nextTurns = previousTurns
+        nextTurns.insert(
+            Turn(speaker: 8, timestamp: 499, text: "Chronologically delayed sentence."),
+            at: 250
+        )
+        let previous = SelectableAttributed.transcriptDocument(
+            turns: previousTurns,
+            speakerNames: nil
+        ).attributed
+        let next = SelectableAttributed.transcriptDocument(
+            turns: nextTurns,
+            speakerNames: nil
+        ).attributed
+
+        let mutation = try XCTUnwrap(
+            LiveTranscriptDocumentMutation.localizedReplacement(
+                previous: previous,
+                next: next,
+                revision: 5
+            )
+        )
+        let reconstructed = NSMutableAttributedString(attributedString: previous)
+        reconstructed.replaceCharacters(in: mutation.range, with: mutation.replacement)
+
+        XCTAssertTrue(reconstructed.isEqual(to: next))
+        XCTAssertLessThan(mutation.range.length, previous.length / 10)
+        XCTAssertLessThan(mutation.replacement.length, next.length / 10)
+    }
+
     @MainActor
     func testMacLiveTranscriptUsesOneTextKit2DocumentAndPreservesStableSelection() throws {
         let initialString = "stable selected text\nvolatile tail"

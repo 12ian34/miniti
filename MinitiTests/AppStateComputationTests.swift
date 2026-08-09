@@ -1121,6 +1121,127 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(segments.count, 1)
     }
 
+    func testTranscriptTimelineTimestampAddsReconnectEpoch() {
+        XCTAssertEqual(
+            AppState.transcriptTimelineTimestamp(streamStart: 2.75, timelineOffset: 120),
+            122.75
+        )
+    }
+
+    func testCollisionFreeTranscriptTimestampSeparatesEqualChannelFinals() {
+        var segments = [
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "system channel",
+                speaker: 1,
+                timestamp: 10,
+                isFinal: true
+            )
+        ]
+
+        let micTimestamp = AppState.collisionFreeTranscriptTimestamp(proposed: 10, in: segments)
+        XCTAssertEqual(micTimestamp, 10.000_001, accuracy: 0.000_000_1)
+        segments.append(
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "mic channel",
+                speaker: DeepgramService.micSpeakerID,
+                timestamp: micTimestamp,
+                isFinal: true
+            )
+        )
+
+        let nextTimestamp = AppState.collisionFreeTranscriptTimestamp(proposed: 10, in: segments)
+        XCTAssertEqual(nextTimestamp, 10.000_002, accuracy: 0.000_000_1)
+    }
+
+    func testMergeFinalSegmentInsertsDelayedMicSpeechChronologically() {
+        var segments = [
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "before",
+                speaker: 1,
+                timestamp: 10,
+                isFinal: true
+            ),
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "after",
+                speaker: 1,
+                timestamp: 14,
+                isFinal: true
+            ),
+        ]
+        let delayedMic = AppState.LiveSegment(
+            id: UUID(),
+            text: "local reply",
+            speaker: DeepgramService.micSpeakerID,
+            timestamp: 12,
+            isFinal: true
+        )
+
+        let result = AppState.mergeFinalSegment(delayedMic, into: &segments)
+
+        XCTAssertEqual(result, .appended)
+        XCTAssertEqual(segments.map(\.text), ["before", "local reply", "after"])
+        XCTAssertEqual(segments.map(\.timestamp), [10, 12, 14])
+    }
+
+    func testDelayedCumulativeFinalFindsMatchBeyondRecentSuffix() {
+        let originalID = UUID()
+        var segments = [
+            AppState.LiveSegment(
+                id: originalID,
+                text: "the local speaker starts",
+                speaker: DeepgramService.micSpeakerID,
+                timestamp: 10,
+                isFinal: true
+            ),
+        ]
+        for index in 0..<5 {
+            segments.append(
+                AppState.LiveSegment(
+                    id: UUID(),
+                    text: "later system segment \(index)",
+                    speaker: 1,
+                    timestamp: 11 + TimeInterval(index),
+                    isFinal: true
+                )
+            )
+        }
+        let cumulative = AppState.LiveSegment(
+            id: UUID(),
+            text: "the local speaker starts and finishes the thought",
+            speaker: DeepgramService.micSpeakerID,
+            timestamp: 10.2,
+            isFinal: true
+        )
+
+        let result = AppState.mergeFinalSegment(cumulative, into: &segments)
+
+        XCTAssertEqual(result, .replacedSuperset)
+        XCTAssertEqual(segments.count, 6)
+        XCTAssertEqual(segments[0].id, originalID)
+        XCTAssertEqual(segments[0].text, cumulative.text)
+    }
+
+    func testChronologicalInsertionIndexHandlesLongTranscriptMiddle() {
+        let segments = (0..<4_000).map { index in
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "segment \(index)",
+                speaker: index % 2,
+                timestamp: TimeInterval(index * 2),
+                isFinal: true
+            )
+        }
+
+        XCTAssertEqual(
+            AppState.chronologicalInsertionIndex(for: 3_999, in: segments),
+            2_000
+        )
+    }
+
     func testStoppedInterimTranscriptIsPromotedWhenNoFinalExists() {
         var segments: [AppState.LiveSegment] = []
 
@@ -1660,6 +1781,17 @@ final class AppStateComputationTests: XCTestCase {
     func testParseAttioOAuthCallbackRejectsUnexpectedHost() {
         let url = URL(string: "miniti-attio://wrong-host?status=success")!
         XCTAssertNil(AttioSendSheet.parseOAuthCallback(url))
+    }
+
+    func testParseTwentyOAuthCallbackAcceptsExpectedSchemeAndHost() {
+        let url = URL(string: "miniti-twenty://oauth-callback?status=success&message=ok")!
+        let payload = TwentySendSheet.parseOAuthCallback(url)
+        XCTAssertEqual(payload, .init(status: "success", message: "ok"))
+    }
+
+    func testParseTwentyOAuthCallbackRejectsAttioScheme() {
+        let url = URL(string: "miniti-attio://oauth-callback?status=success")!
+        XCTAssertNil(TwentySendSheet.parseOAuthCallback(url))
     }
     #endif
 

@@ -1603,7 +1603,9 @@ struct MeetingDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.interfaceScale) private var interfaceScale
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
+    @AppStorage("twentyExportEnabled") private var twentyExportEnabled: Bool = false
     @State private var showingAttioSheet = false
+    @State private var showingTwentySheet = false
     @State private var showExportedConfirmation = false
     @State private var renamingSpeaker: Int? = nil
     
@@ -1724,6 +1726,9 @@ struct MeetingDetailView: View {
         }
         .sheet(isPresented: $showingAttioSheet) {
             AttioSendSheet(meeting: meeting)
+        }
+        .sheet(isPresented: $showingTwentySheet) {
+            TwentySendSheet(meeting: meeting)
         }
         .sheet(item: Binding(
             get: { renamingSpeaker.map { SpeakerRenameTarget(id: $0) } },
@@ -1893,6 +1898,34 @@ struct MeetingDetailView: View {
                 .focusable(false)
                 .help("Send meeting to Attio")
                 .accessibilityLabel("Send meeting to Attio")
+            }
+
+            if twentyExportEnabled {
+                Button {
+                    showingTwentySheet = true
+                } label: {
+                    HStack(spacing: 8) {
+                        TwentyLogoMark()
+                            .frame(width: 14, height: 14)
+                        if !compact {
+                            Text("send to twenty")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                    }
+                    .foregroundStyle(ColorPalette.Integrations.twenty)
+                    .frame(minWidth: compact ? 30 : nil, minHeight: 28)
+                    .padding(.horizontal, compact ? 0 : 12)
+                    .background(ColorPalette.Integrations.twenty.opacity(0.08))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(ColorPalette.Integrations.twenty.opacity(0.22), lineWidth: 1)
+                    )
+                    .cornerRadius(6)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("Send meeting to Twenty")
+                .accessibilityLabel("Send meeting to Twenty")
             }
         }
         .fixedSize(horizontal: true, vertical: false)
@@ -2766,26 +2799,137 @@ struct KeyboardShortcutsOverlay: View {
     }
 }
 
-// MARK: - Attio Send (macOS history detail only)
+// MARK: - CRM Send (macOS history detail only)
 
-struct AttioLogoMark: View {
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 3)
-                .fill(ColorPalette.Integrations.attioLight.opacity(0.18))
-            Circle()
-                .fill(ColorPalette.Integrations.attio)
-                .frame(width: 6, height: 6)
-                .offset(x: -2.5, y: -1.5)
-            Circle()
-                .fill(ColorPalette.Integrations.attioPale)
-                .frame(width: 4, height: 4)
-                .offset(x: 3, y: 2)
+enum CRMProvider: String, Sendable {
+    case attio
+    case twenty
+
+    var displayName: String {
+        switch self {
+        case .attio: return "Attio"
+        case .twenty: return "Twenty"
+        }
+    }
+
+    var callbackScheme: String { "miniti-\(rawValue)" }
+    var notificationName: Notification.Name {
+        switch self {
+        case .attio: return .minitiAttioOAuthCallback
+        case .twenty: return .minitiTwentyOAuthCallback
+        }
+    }
+    var accentColor: Color {
+        switch self {
+        case .attio: return ColorPalette.Integrations.attio
+        case .twenty: return ColorPalette.Integrations.twenty
+        }
+    }
+    var searchScopes: [CRMSearchScope] {
+        switch self {
+        case .attio: return [.people, .companies, .both]
+        case .twenty: return [.people, .companies, .opportunities, .all]
+        }
+    }
+    var defaultSearchScope: CRMSearchScope { self == .attio ? .both : .all }
+
+    func connectStart(using api: MinitiAPIService, deviceId: String) async throws -> MinitiAPIService.AttioConnectStartResponse {
+        switch self {
+        case .attio: return try await api.attioConnectStart(deviceId: deviceId)
+        case .twenty: return try await api.twentyConnectStart(deviceId: deviceId)
+        }
+    }
+
+    func status(using api: MinitiAPIService, deviceId: String) async throws -> MinitiAPIService.AttioStatusResponse {
+        switch self {
+        case .attio: return try await api.attioStatus(deviceId: deviceId)
+        case .twenty: return try await api.twentyStatus(deviceId: deviceId)
+        }
+    }
+
+    func search(
+        using api: MinitiAPIService,
+        deviceId: String,
+        query: String,
+        objects: [String]
+    ) async throws -> [MinitiAPIService.AttioSearchRecord] {
+        switch self {
+        case .attio: return try await api.attioSearch(deviceId: deviceId, query: query, objects: objects)
+        case .twenty: return try await api.twentySearch(deviceId: deviceId, query: query, objects: objects)
+        }
+    }
+
+    func send(
+        using api: MinitiAPIService,
+        deviceId: String,
+        meetingPayload: AttioMeetingPayload,
+        targetObject: String,
+        targetRecordID: String,
+        createTasks: Bool
+    ) async throws -> MinitiAPIService.AttioSendResponse {
+        switch self {
+        case .attio:
+            return try await api.attioSendMeeting(
+                deviceId: deviceId,
+                meetingPayload: meetingPayload,
+                targetObject: targetObject,
+                targetRecordID: targetRecordID,
+                createTasksFromActionItems: createTasks
+            )
+        case .twenty:
+            return try await api.twentySendMeeting(
+                deviceId: deviceId,
+                meetingPayload: meetingPayload,
+                targetObject: targetObject,
+                targetRecordID: targetRecordID,
+                createTasksFromActionItems: createTasks
+            )
         }
     }
 }
 
+struct AttioLogoMark: View {
+    var body: some View {
+        Image("AttioLogo")
+            .resizable()
+            .renderingMode(.template)
+            .scaledToFit()
+            .foregroundStyle(ColorPalette.Integrations.attio)
+            .accessibilityHidden(true)
+    }
+}
+
+struct TwentyLogoMark: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 4)
+            .fill(ColorPalette.Integrations.twenty.opacity(0.14))
+            .overlay {
+                Text("20")
+                    .font(.system(size: 8, weight: .black, design: .rounded))
+                    .foregroundStyle(ColorPalette.Integrations.twenty)
+            }
+    }
+}
+
 struct AttioSendSheet: View {
+    let meeting: Meeting
+    var body: some View { CRMSendSheet(meeting: meeting, provider: .attio) }
+
+    nonisolated static func parseOAuthCallback(_ url: URL) -> CRMSendSheet.OAuthCallbackPayload? {
+        CRMSendSheet.parseOAuthCallback(url, provider: .attio)
+    }
+}
+
+struct TwentySendSheet: View {
+    let meeting: Meeting
+    var body: some View { CRMSendSheet(meeting: meeting, provider: .twenty) }
+
+    nonisolated static func parseOAuthCallback(_ url: URL) -> CRMSendSheet.OAuthCallbackPayload? {
+        CRMSendSheet.parseOAuthCallback(url, provider: .twenty)
+    }
+}
+
+struct CRMSendSheet: View {
     struct OAuthCallbackPayload: Equatable {
         let status: String?
         let message: String?
@@ -2793,7 +2937,9 @@ struct AttioSendSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
-    @AppStorage("attioCreateTasksFromActionItems") private var createTasksFromActionItems: Bool = true
+    let provider: CRMProvider
+    @AppStorage("attioCreateTasksFromActionItems") private var attioCreateTasks: Bool = true
+    @AppStorage("twentyCreateTasksFromActionItems") private var twentyCreateTasks: Bool = true
 
     @State private var api = MinitiAPIService()
     @State private var status: MinitiAPIService.AttioStatusResponse?
@@ -2802,7 +2948,7 @@ struct AttioSendSheet: View {
     @State private var connectionError: String?
 
     @State private var query = ""
-    @State private var selectedScope: AttioSearchScope = .both
+    @State private var selectedScope: CRMSearchScope
     @State private var results: [MinitiAPIService.AttioSearchRecord] = []
     @State private var selectedRecordID: String?
     @State private var selectedRecordObject: String?
@@ -2818,6 +2964,12 @@ struct AttioSendSheet: View {
     @State private var sendError: String?
     @State private var localEscapeMonitor: Any?
     @State private var deviceId: String?
+
+    init(meeting: Meeting, provider: CRMProvider) {
+        self.meeting = meeting
+        self.provider = provider
+        _selectedScope = State(initialValue: provider.defaultSearchScope)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2856,10 +3008,10 @@ struct AttioSendSheet: View {
         .onDisappear {
             removeLocalEscapeMonitor()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .minitiAttioOAuthCallback)) { notification in
+        .onReceive(NotificationCenter.default.publisher(for: provider.notificationName)) { notification in
             guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
-            guard let payload = Self.parseOAuthCallback(callbackURL) else { return }
-            DebugLogger.shared.log(.app, "[attio] oauth callback received status=\(payload.status ?? "nil")")
+            guard let payload = Self.parseOAuthCallback(callbackURL, provider: provider) else { return }
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth callback received status=\(payload.status ?? "nil")")
             Task { @MainActor in
                 await handleOAuthCallback(payload)
             }
@@ -2873,9 +3025,9 @@ struct AttioSendSheet: View {
 
     private var header: some View {
         HStack(spacing: 10) {
-            AttioLogoMark()
+            providerLogo
                 .frame(width: 18, height: 18)
-            Text("send to attio")
+            Text("send to \(provider.displayName.lowercased())")
                 .font(.system(size: 13, weight: .bold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer()
@@ -2895,7 +3047,7 @@ struct AttioSendSheet: View {
 
     private var connectionSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("attio account")
+            sectionTitle("\(provider.displayName.lowercased()) account")
 
             HStack(spacing: 10) {
                 Circle()
@@ -2935,12 +3087,12 @@ struct AttioSendSheet: View {
 
     private var searchSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            sectionTitle("find attio record")
+            sectionTitle("find \(provider.displayName.lowercased()) record")
 
             HStack(spacing: 8) {
                 MinitiTabStripSurface {
                     HStack(spacing: 0) {
-                        ForEach(AttioSearchScope.allCases, id: \.self) { scope in
+                        ForEach(provider.searchScopes, id: \.self) { scope in
                             Button {
                                 selectedScope = scope
                             } label: {
@@ -2986,7 +3138,7 @@ struct AttioSendSheet: View {
                         }
                         .buttonStyle(.plain)
                         .focusable(false)
-                        .accessibilityLabel("Clear Attio search")
+                        .accessibilityLabel("Clear \(provider.displayName) search")
                     }
                 }
                 .padding(.horizontal, 10)
@@ -3010,7 +3162,7 @@ struct AttioSendSheet: View {
                                 Image(systemName: "magnifyingglass")
                                     .font(.system(size: 10, weight: .bold))
                             }
-                            Text(isSearching ? "searching..." : "search attio")
+                            Text(isSearching ? "searching..." : "search \(provider.displayName.lowercased())")
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                     }
@@ -3170,9 +3322,9 @@ struct AttioSendSheet: View {
     private var sendSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 16) {
-                Toggle(isOn: $createTasksFromActionItems) {
+                Toggle(isOn: createTasksBinding) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("create attio tasks")
+                        Text("create \(provider.displayName.lowercased()) tasks")
                             .font(.system(size: 11, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.secondary)
                         Text(actionItemToggleDetail)
@@ -3187,7 +3339,7 @@ struct AttioSendSheet: View {
                 Spacer(minLength: 12)
 
                 Button {
-                    Task { await sendToAttio() }
+                    Task { await sendToCRM() }
                 } label: {
                     MinitiControlLabel(role: .primary, isEmphasized: true, height: 34, horizontalPadding: 14) {
                         HStack(spacing: 8) {
@@ -3198,7 +3350,7 @@ struct AttioSendSheet: View {
                                 Image(systemName: "paperplane.fill")
                                     .font(.system(size: 11, weight: .bold))
                             }
-                            Text(isSending ? "sending..." : "send meeting to attio")
+                            Text(isSending ? "sending..." : "send meeting to \(provider.displayName.lowercased())")
                                 .font(.system(size: 12, weight: .bold, design: .default))
                         }
                     }
@@ -3207,7 +3359,7 @@ struct AttioSendSheet: View {
                 .focusable(false)
                 .disabled(!sendIsEnabled)
                 .opacity(sendIsEnabled ? 1 : 0.42)
-                .accessibilityHint(sendDisabledReason ?? "Adds this meeting to the selected Attio record")
+                .accessibilityHint(sendDisabledReason ?? "Adds this meeting to the selected \(provider.displayName) record")
             }
 
             if let sendMessage {
@@ -3228,6 +3380,28 @@ struct AttioSendSheet: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
         .background(ColorPalette.Background.panel)
+    }
+
+    @ViewBuilder
+    private var providerLogo: some View {
+        switch provider {
+        case .attio: AttioLogoMark()
+        case .twenty: TwentyLogoMark()
+        }
+    }
+
+    private var createTasksBinding: Binding<Bool> {
+        switch provider {
+        case .attio: return $attioCreateTasks
+        case .twenty: return $twentyCreateTasks
+        }
+    }
+
+    private var createTasksFromActionItems: Bool {
+        switch provider {
+        case .attio: return attioCreateTasks
+        case .twenty: return twentyCreateTasks
+        }
     }
 
     private var connectionStatusText: String {
@@ -3275,6 +3449,7 @@ struct AttioSendSheet: View {
         switch objectSlug.lowercased() {
         case "people": return Color(hex: "58A6FF")
         case "companies": return Color(hex: "A371F7")
+        case "opportunities": return ColorPalette.Integrations.twenty
         default: return Color(hex: "8B949E")
         }
     }
@@ -3285,8 +3460,12 @@ struct AttioSendSheet: View {
             return "search people..."
         case .companies:
             return "search companies..."
+        case .opportunities:
+            return "search opportunities..."
         case .both:
             return "search people or companies..."
+        case .all:
+            return "search people, companies, or opportunities..."
         }
     }
 
@@ -3319,11 +3498,13 @@ struct AttioSendSheet: View {
 
     private var sendDisabledReason: String? {
         if deviceId == nil || isLoadingStatus || status == nil {
-            return "Checking your Attio connection..."
+            return "Checking your \(provider.displayName) connection..."
         }
-        if status?.connected != true { return "Connect Attio above before sending." }
+        if status?.connected != true { return "Connect \(provider.displayName) above before sending." }
         if selectedRecordID == nil || selectedRecordObject == nil {
-            return "Select a person or company above to enable sending."
+            return provider == .twenty
+                ? "Select a person, company, or opportunity above to enable sending."
+                : "Select a person or company above to enable sending."
         }
         return nil
     }
@@ -3341,55 +3522,55 @@ struct AttioSendSheet: View {
         guard let deviceId else { return }
         isLoadingStatus = true
         defer { isLoadingStatus = false }
-        DebugLogger.shared.log(.app, "[attio] status refresh start")
+        DebugLogger.shared.log(.app, "[\(provider.rawValue)] status refresh start")
         do {
-            status = try await api.attioStatus(deviceId: deviceId)
+            status = try await provider.status(using: api, deviceId: deviceId)
             connectionError = nil
             DebugLogger.shared.log(
                 .app,
-                "[attio] status refresh success connected=\(status?.connected == true) account=\(status?.accountLabel ?? "-")"
+                "[\(provider.rawValue)] status refresh success connected=\(status?.connected == true) account=\(status?.accountLabel ?? "-")"
             )
         } catch {
             status = .init(connected: false, accountLabel: nil)
-            if isMissingAttioBackend(error) {
-                connectionError = "Attio backend endpoints are not deployed yet"
+            if isMissingCRMBackend(error) {
+                connectionError = "\(provider.displayName) backend endpoints are not deployed yet"
             }
-            DebugLogger.shared.log(.app, "[attio] status refresh failed \(error.localizedDescription)")
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] status refresh failed \(error.localizedDescription)")
         }
     }
 
     private func startOAuth() async {
         connectionError = nil
         guard let deviceId else {
-            connectionError = "Attio connection is still loading"
+            connectionError = "\(provider.displayName) connection is still loading"
             return
         }
         isConnecting = true
         defer { isConnecting = false }
-        DebugLogger.shared.log(.app, "[attio] oauth start requested")
+        DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth start requested")
 
         do {
-            let start = try await api.attioConnectStart(deviceId: deviceId)
-            DebugLogger.shared.log(.app, "[attio] oauth start response callbackScheme=\(start.callbackScheme)")
+            let start = try await provider.connectStart(using: api, deviceId: deviceId)
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth start response callbackScheme=\(start.callbackScheme)")
             guard let authURL = URL(string: start.authURL) else {
-                DebugLogger.shared.log(.app, "[attio] oauth start invalid auth URL")
-                connectionError = "Invalid Attio auth URL from server"
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth start invalid auth URL")
+                connectionError = "Invalid \(provider.displayName) auth URL from server"
                 return
             }
-            guard start.callbackScheme.lowercased() == "miniti-attio" else {
-                DebugLogger.shared.log(.app, "[attio] oauth start unexpected callback scheme=\(start.callbackScheme)")
+            guard start.callbackScheme.lowercased() == provider.callbackScheme else {
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth start unexpected callback scheme=\(start.callbackScheme)")
                 connectionError = "Unexpected callback scheme from server"
                 return
             }
             guard NSWorkspace.shared.open(authURL) else {
-                DebugLogger.shared.log(.app, "[attio] oauth browser open failed")
-                connectionError = "Could not open browser for Attio login"
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth browser open failed")
+                connectionError = "Could not open browser for \(provider.displayName) login"
                 return
             }
-            DebugLogger.shared.log(.app, "[attio] oauth browser opened host=\(authURL.host ?? "-")")
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth browser opened host=\(authURL.host ?? "-")")
         } catch {
-            DebugLogger.shared.log(.app, "[attio] oauth start failed \(error.localizedDescription)")
-            connectionError = userFacingAttioError(error)
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth start failed \(error.localizedDescription)")
+            connectionError = userFacingCRMError(error)
         }
     }
 
@@ -3397,17 +3578,17 @@ struct AttioSendSheet: View {
     private func handleOAuthCallback(_ payload: OAuthCallbackPayload) async {
         DebugLogger.shared.log(
             .app,
-            "[attio] oauth callback parsed status=\(payload.status ?? "nil") message=\((payload.message ?? "").prefix(120))"
+            "[\(provider.rawValue)] oauth callback parsed status=\(payload.status ?? "nil") message=\((payload.message ?? "").prefix(120))"
         )
 
         if payload.status != "success" {
-            connectionError = payload.message ?? "Attio connection failed"
-            DebugLogger.shared.log(.app, "[attio] oauth callback failed")
+            connectionError = payload.message ?? "\(provider.displayName) connection failed"
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth callback failed")
             return
         }
 
         connectionError = nil
-        DebugLogger.shared.log(.app, "[attio] oauth callback success, refreshing status")
+        DebugLogger.shared.log(.app, "[\(provider.rawValue)] oauth callback success, refreshing status")
         await refreshStatus()
     }
 
@@ -3415,18 +3596,18 @@ struct AttioSendSheet: View {
         searchError = nil
         sendMessage = nil
         guard let deviceId else {
-            searchError = "Attio connection is still loading"
+            searchError = "\(provider.displayName) connection is still loading"
             return
         }
         guard status?.connected == true else {
-            searchError = "Connect Attio first"
-            DebugLogger.shared.log(.app, "[attio] search blocked not connected")
+            searchError = "Connect \(provider.displayName) first"
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] search blocked not connected")
             return
         }
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= 2 else {
-            DebugLogger.shared.log(.app, "[attio] search skipped query too short")
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] search skipped query too short")
             return
         }
 
@@ -3435,15 +3616,16 @@ struct AttioSendSheet: View {
         defer { isSearching = false }
         DebugLogger.shared.log(
             .app,
-            "[attio] search start scope=\(selectedScope.label.lowercased()) query='\(trimmed.prefix(80))'"
+            "[\(provider.rawValue)] search start scope=\(selectedScope.label.lowercased()) query='\(trimmed.prefix(80))'"
         )
         do {
-            results = try await api.attioSearch(
+            results = try await provider.search(
+                using: api,
                 deviceId: deviceId,
                 query: trimmed,
                 objects: selectedScope.objectSlugs
             )
-            DebugLogger.shared.log(.app, "[attio] search success results=\(results.count)")
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] search success results=\(results.count)")
             if let selectedRecordID,
                let selectedRecordObject,
                !results.contains(where: { $0.idPayload.recordID == selectedRecordID && $0.objectSlug == selectedRecordObject }) {
@@ -3451,21 +3633,21 @@ struct AttioSendSheet: View {
                 // (Selection remains sendable; this only affects visual matching in results list.)
             }
         } catch {
-            searchError = userFacingAttioError(error)
+            searchError = userFacingCRMError(error)
             results = []
-            DebugLogger.shared.log(.app, "[attio] search failed \(error.localizedDescription)")
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] search failed \(error.localizedDescription)")
         }
     }
 
-    private func sendToAttio() async {
+    private func sendToCRM() async {
         sendError = nil
         sendMessage = nil
         guard let deviceId else {
-            sendError = "Attio connection is still loading"
+            sendError = "\(provider.displayName) connection is still loading"
             return
         }
         guard let selectedRecordID, let selectedRecordObject else {
-            sendError = "Select an Attio record first"
+            sendError = "Select a \(provider.displayName) record first"
             return
         }
         isSending = true
@@ -3475,19 +3657,20 @@ struct AttioSendSheet: View {
             let shouldCreateTasks = createTasksFromActionItems && !meetingPayload.actionItems.isEmpty
             DebugLogger.shared.log(
                 .app,
-                "[attio] send start object=\(selectedRecordObject) record=\(selectedRecordID) " +
+                "[\(provider.rawValue)] send start object=\(selectedRecordObject) record=\(selectedRecordID) " +
                 "notesPayload actionItems=\(meetingPayload.actionItems.count) createTasks=\(shouldCreateTasks)"
             )
             if shouldCreateTasks {
                 let previewItems = meetingPayload.actionItems.prefix(5).joined(separator: " | ")
-                DebugLogger.shared.log(.app, "[attio] normalized action items: \(previewItems)")
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] normalized action items: \(previewItems)")
             }
-            let response = try await api.attioSendMeeting(
+            let response = try await provider.send(
+                using: api,
                 deviceId: deviceId,
                 meetingPayload: meetingPayload,
                 targetObject: selectedRecordObject,
                 targetRecordID: selectedRecordID,
-                createTasksFromActionItems: shouldCreateTasks
+                createTasks: shouldCreateTasks
             )
             if response.success {
                 let notePart = "\(response.noteIDs.count) note\(response.noteIDs.count == 1 ? "" : "s")"
@@ -3499,34 +3682,34 @@ struct AttioSendSheet: View {
                 if let taskError = response.taskError {
                     DebugLogger.shared.log(
                         .app,
-                        "[attio] task creation skipped error='\(taskError)' createdTasks=\(createdTaskCount) noteIDs=\(response.noteIDs.count)"
+                        "[\(provider.rawValue)] task creation skipped error='\(taskError)' createdTasks=\(createdTaskCount) noteIDs=\(response.noteIDs.count)"
                     )
                     warningPart = " · task creation skipped: \(taskError)"
                 } else if shouldCreateTasks && !meetingPayload.actionItems.isEmpty && createdTaskCount == 0 {
                     DebugLogger.shared.log(
                         .app,
-                        "[attio] task creation returned zero tasks without explicit error; actionItems=\(meetingPayload.actionItems.count)"
+                        "[\(provider.rawValue)] task creation returned zero tasks without explicit error; actionItems=\(meetingPayload.actionItems.count)"
                     )
-                    warningPart = " · sent action items but Attio returned 0 tasks"
+                    warningPart = " · sent action items but \(provider.displayName) returned 0 tasks"
                 } else {
                     warningPart = ""
                 }
                 DebugLogger.shared.log(
                     .app,
-                    "[attio] send success notes=\(response.noteIDs.count) tasks=\(createdTaskCount)"
+                    "[\(provider.rawValue)] send success notes=\(response.noteIDs.count) tasks=\(createdTaskCount)"
                 )
                 sendMessage = "sent (\(notePart)\(taskPart))\(warningPart)"
             } else {
-                DebugLogger.shared.log(.app, "[attio] send response success=false")
-                sendError = "Attio send failed"
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] send response success=false")
+                sendError = "\(provider.displayName) send failed"
             }
         } catch {
-            DebugLogger.shared.log(.app, "[attio] send failed \(error.localizedDescription)")
-            sendError = userFacingAttioError(error)
+            DebugLogger.shared.log(.app, "[\(provider.rawValue)] send failed \(error.localizedDescription)")
+            sendError = userFacingCRMError(error)
         }
     }
 
-    private func isMissingAttioBackend(_ error: Error) -> Bool {
+    private func isMissingCRMBackend(_ error: Error) -> Bool {
         guard case let MinitiAPIService.ServiceError.serverError(message) = error else { return false }
         return message.contains("HTTP 404")
     }
@@ -3535,19 +3718,20 @@ struct AttioSendSheet: View {
         switch (selectedRecordObject ?? "").lowercased() {
         case "people": return "person"
         case "companies": return "company"
+        case "opportunities": return "opportunity"
         default: return selectedRecordObject ?? ""
         }
     }
 
-    private func userFacingAttioError(_ error: Error) -> String {
-        if isMissingAttioBackend(error) {
-            return "Attio backend endpoints are not deployed yet"
+    private func userFacingCRMError(_ error: Error) -> String {
+        if isMissingCRMBackend(error) {
+            return "\(provider.displayName) backend endpoints are not deployed yet"
         }
         return error.localizedDescription
     }
 
-    nonisolated static func parseOAuthCallback(_ url: URL) -> OAuthCallbackPayload? {
-        guard url.scheme?.lowercased() == "miniti-attio" else { return nil }
+    nonisolated static func parseOAuthCallback(_ url: URL, provider: CRMProvider) -> OAuthCallbackPayload? {
+        guard url.scheme?.lowercased() == provider.callbackScheme else { return nil }
         guard url.host?.lowercased() == "oauth-callback" else { return nil }
         let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         let status = components?.queryItems?.first(where: { $0.name == "status" })?.value
@@ -3559,12 +3743,12 @@ struct AttioSendSheet: View {
         selectedRecordID = record.idPayload.recordID
         selectedRecordObject = record.objectSlug
         selectedRecordText = record.recordText
-        selectedRecordDetail = record.secondaryIdentifier
+        selectedRecordDetail = record.recordDetail ?? record.secondaryIdentifier
         showSearchResults = false
         results = []
         DebugLogger.shared.log(
             .app,
-            "[attio] selected record object=\(record.objectSlug) id=\(record.idPayload.recordID) text='\(record.recordText.prefix(80))'"
+            "[\(provider.rawValue)] selected record object=\(record.objectSlug) id=\(record.idPayload.recordID) text='\(record.recordText.prefix(80))'"
         )
         persistSelection()
     }
@@ -3586,7 +3770,7 @@ struct AttioSendSheet: View {
     }
 
     private func persistedSelectionKey(_ suffix: String) -> String {
-        "crm.attio.lastSelection.\(meeting.id.uuidString).\(suffix)"
+        "crm.\(provider.rawValue).lastSelection.\(meeting.id.uuidString).\(suffix)"
     }
 
     private func installLocalEscapeMonitor() {
@@ -3607,16 +3791,20 @@ struct AttioSendSheet: View {
     }
 }
 
-private enum AttioSearchScope: CaseIterable {
+enum CRMSearchScope: CaseIterable {
     case people
     case companies
+    case opportunities
     case both
+    case all
 
     var label: String {
         switch self {
         case .people: return "people"
         case .companies: return "companies"
+        case .opportunities: return "opportunities"
         case .both: return "both"
+        case .all: return "all"
         }
     }
 
@@ -3624,7 +3812,9 @@ private enum AttioSearchScope: CaseIterable {
         switch self {
         case .people: return ["people"]
         case .companies: return ["companies"]
+        case .opportunities: return ["opportunities"]
         case .both: return ["people", "companies"]
+        case .all: return ["people", "companies", "opportunities"]
         }
     }
 }

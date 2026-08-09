@@ -4,6 +4,7 @@ import AppKit
 
 extension Notification.Name {
     static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
+    static let minitiTwentyOAuthCallback = Notification.Name("minitiTwentyOAuthCallback")
     static let minitiGoogleOAuthCallback = Notification.Name("minitiGoogleOAuthCallback")
     /// Posted after meetings are inserted outside the main window's own flows
     /// (e.g. Granola CSV import in Settings) so the history sidebar refreshes.
@@ -19,10 +20,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             let scheme = url.scheme?.lowercased() ?? ""
-            guard scheme == "miniti-google" || scheme == "miniti-attio" else { continue }
-            let notificationName: Notification.Name = scheme == "miniti-google"
-                ? .minitiGoogleOAuthCallback
-                : .minitiAttioOAuthCallback
+            guard ["miniti-google", "miniti-attio", "miniti-twenty"].contains(scheme) else { continue }
+            let notificationName: Notification.Name
+            switch scheme {
+            case "miniti-google": notificationName = .minitiGoogleOAuthCallback
+            case "miniti-twenty": notificationName = .minitiTwentyOAuthCallback
+            default: notificationName = .minitiAttioOAuthCallback
+            }
             NotificationCenter.default.post(
                 name: notificationName,
                 object: nil,

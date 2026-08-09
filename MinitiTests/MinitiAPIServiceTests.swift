@@ -330,6 +330,24 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertEqual(record.secondaryIdentifier, "acme.com")
     }
 
+    func testTwentyOpportunitySearchRecordDetail() throws {
+        let json = """
+        {
+            "id": {"workspace_id": "twenty-cloud", "object_id": "opportunities", "record_id": "o1"},
+            "record_text": "Enterprise renewal",
+            "record_image": null,
+            "object_slug": "opportunities",
+            "record_email": null,
+            "record_domain": null,
+            "record_detail": "Acme · MEETING"
+        }
+        """.data(using: .utf8)!
+
+        let record = try decoder.decode(MinitiAPIService.AttioSearchRecord.self, from: json)
+        XCTAssertEqual(record.objectLabel, "opportunity")
+        XCTAssertEqual(record.detailLabel, "opportunity · Acme · MEETING")
+    }
+
     // MARK: - ManagedInsightsResponse
 
     func testManagedInsightsResponseFullDecode() throws {

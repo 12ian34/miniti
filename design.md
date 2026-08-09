@@ -731,7 +731,7 @@ Component tokens map directly to the SwiftUI views in `Miniti/Views/`:
 - **navigation-swipe-cue** — neutral edge dial driven directly by a macOS two-finger back/forward gesture. Its progress ring reaches full exactly at the commit threshold and only appears when history exists in that direction.
 
 - **terminal-header** — the red-dot + timer strip at the top of the recording view.
-- **input-field** — note textarea, search, webhook URL, Attio search. Always system 13px. Attio modal actions use the same semantic compact controls as the rest of the app; Attio orange identifies the integration, not its buttons.
+- **input-field** — note textarea, search, webhook URL, CRM search. Always system 13px. CRM modal actions use the same semantic compact controls as the rest of the app; Attio orange and Twenty's neutral mark identify integration content, not buttons.
 - **pill-tag** — topic tags, language badge, usage pill.
 - **pill-status-recording** / **pill-status-pro** — live indicators; color is the only variance.
 - **update-banner** / **limit-banner** — home-screen banners; blue for update available, amber for usage warning.

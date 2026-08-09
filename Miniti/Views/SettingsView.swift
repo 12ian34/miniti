@@ -926,6 +926,7 @@ struct IntegrationsSettingsView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
+    @AppStorage("twentyExportEnabled") private var twentyExportEnabled: Bool = false
     @AppStorage("autoExportMarkdown") private var autoExportMarkdown: Bool = false
     @AppStorage("markdownExportFolderPath") private var markdownExportFolderPath: String = ""
     @AppStorage("generateAgentsMd") private var generateAgentsMd: Bool = false
@@ -1089,6 +1090,13 @@ struct IntegrationsSettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+
+                    if appState.isGoogleCalendarConnected && twentyExportEnabled {
+                        Toggle("Auto-sync meetings to Twenty", isOn: $appState.autoTwentySync)
+                        Text("Automatically match attendee domains to Twenty companies and send meeting data after saving.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
@@ -1097,6 +1105,15 @@ struct IntegrationsSettingsView: View {
                 Text(attioExportEnabled
                      ? "\"Send to Attio\" is available in saved meeting history."
                      : "\"Send to Attio\" is hidden until you enable it here.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Twenty CRM") {
+                Toggle("Enable \"Send to Twenty\"", isOn: $twentyExportEnabled)
+                Text(twentyExportEnabled
+                     ? "\"Send to Twenty\" is available in saved meeting history."
+                     : "\"Send to Twenty\" is hidden until you enable it here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

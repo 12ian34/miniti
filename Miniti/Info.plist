@@ -16,6 +16,14 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
+			<string>com.miniti.app.twenty</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>miniti-twenty</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>com.miniti.app.attio</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
