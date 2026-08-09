@@ -11,6 +11,24 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-09 - v2.2.0 (macOS only; iOS unchanged)
+
+This release is for macOS. The currently pending iOS release and its App Store submission are unchanged.
+
+#### New
+
+- new: (macOS) Send saved meetings to Twenty CRM people, companies, or opportunities, with optional tasks created from action items
+- new: (macOS) Automatically sync calendar-linked meetings to a matching Twenty company using attendee domains
+
+#### Experience improvements
+
+- improvement: (macOS) Attio and Twenty share one clear CRM send workflow, and Send to Attio now uses the official Attio logo
+
+#### Fixes
+
+- fix: (macOS) Transcript turns stay in chronological order when microphone and system-audio results finalize out of order or after a reconnect
+- fix: (macOS) Selecting live transcript text remains stable when an earlier transcript result arrives and is inserted above it
+
 ### 2026-08-09 - v2.1.1 (macOS only; iOS unchanged)
 
 This hotfix is available for macOS. The currently pending iOS release and its App Store submission are unchanged.
