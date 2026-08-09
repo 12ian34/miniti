@@ -7,6 +7,75 @@ private let transcriptViewPerformanceLog = OSLog(
     category: .pointsOfInterest
 )
 
+#if os(macOS)
+enum LiveTranscriptDocumentMutation {
+    static func localizedReplacement(
+        previous: NSAttributedString,
+        next: NSAttributedString,
+        revision: UInt64
+    ) -> SelectableTextMutation? {
+        let old = previous.string as NSString
+        let new = next.string as NSString
+        guard old != new, old.length > 0, new.length > 0 else { return nil }
+
+        let sharedLimit = min(old.length, new.length)
+        var prefix = 0
+        while prefix < sharedLimit, old.character(at: prefix) == new.character(at: prefix) {
+            prefix += 1
+        }
+
+        var suffix = 0
+        while suffix < old.length - prefix,
+              suffix < new.length - prefix,
+              old.character(at: old.length - suffix - 1)
+                == new.character(at: new.length - suffix - 1) {
+            suffix += 1
+        }
+
+        let replacementStart = paragraphStart(in: old, before: prefix)
+        let oldChangedEnd = old.length - suffix
+        let newChangedEnd = new.length - suffix
+        let oldReplacementEnd = paragraphEnd(in: old, after: oldChangedEnd)
+        let newReplacementEnd = paragraphEnd(in: new, after: newChangedEnd)
+        guard replacementStart <= oldReplacementEnd,
+              replacementStart <= newReplacementEnd else { return nil }
+
+        let oldRange = NSRange(
+            location: replacementStart,
+            length: oldReplacementEnd - replacementStart
+        )
+        let newRange = NSRange(
+            location: replacementStart,
+            length: newReplacementEnd - replacementStart
+        )
+        return SelectableTextMutation(
+            revision: revision,
+            range: oldRange,
+            replacement: next.attributedSubstring(from: newRange)
+        )
+    }
+
+    private static func paragraphStart(in string: NSString, before index: Int) -> Int {
+        guard index > 0 else { return 0 }
+        let newline = string.range(
+            of: "\n",
+            options: .backwards,
+            range: NSRange(location: 0, length: min(index, string.length))
+        )
+        return newline.location == NSNotFound ? 0 : NSMaxRange(newline)
+    }
+
+    private static func paragraphEnd(in string: NSString, after index: Int) -> Int {
+        guard index < string.length else { return string.length }
+        let newline = string.range(
+            of: "\n",
+            range: NSRange(location: max(0, index), length: string.length - max(0, index))
+        )
+        return newline.location == NSNotFound ? string.length : NSMaxRange(newline)
+    }
+}
+#endif
+
 struct TranscriptView: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.interfaceScale) private var interfaceScale
@@ -175,7 +244,12 @@ struct TranscriptView: View {
                 cachedVisibleSegmentCount += appended.count
                 for segment in appended { cachedVisibleSpeakers.insert(segment.speaker) }
             } else if !appended.isEmpty {
-                rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
+                rebuildAllSegments(
+                    liveSegments,
+                    names: names,
+                    selfIDs: selfIDs,
+                    allowsLocalizedMutation: !forceFullRebuild
+                )
             }
             #else
             if !appended.isEmpty, !cachedDisplayTurns.isEmpty {
@@ -205,7 +279,12 @@ struct TranscriptView: View {
             }
             #endif
         } else {
-            rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
+            rebuildAllSegments(
+                liveSegments,
+                names: names,
+                selfIDs: selfIDs,
+                allowsLocalizedMutation: !forceFullRebuild
+            )
         }
 
         cachedSourceSegments = liveSegments
@@ -216,7 +295,8 @@ struct TranscriptView: View {
     private func rebuildAllSegments(
         _ liveSegments: [AppState.LiveSegment],
         names: [String: String],
-        selfIDs: Set<Int>
+        selfIDs: Set<Int>,
+        allowsLocalizedMutation: Bool = false
     ) {
         let visible = liveSegments.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -235,11 +315,17 @@ struct TranscriptView: View {
             headerFontSize: interfaceScale.transcriptHeaderSize,
             lineSpacing: interfaceScale.transcriptLineSpacing
         )
+        cachedTranscriptRevision &+= 1
+        cachedTranscriptMutation = allowsLocalizedMutation
+            ? LiveTranscriptDocumentMutation.localizedReplacement(
+                previous: cachedTranscript,
+                next: document.attributed,
+                revision: cachedTranscriptRevision
+            )
+            : nil
         cachedDisplayTurns = document.turns
         cachedTurnStartOffsets = document.turnStartOffsets
         cachedTranscript = NSMutableAttributedString(attributedString: document.attributed)
-        cachedTranscriptRevision &+= 1
-        cachedTranscriptMutation = nil
         #else
         cachedDisplayTurns = SelectableAttributed.mergeTurns(
             visibleTurns,

@@ -665,6 +665,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let objectSlug: String
         let recordEmail: String?
         let recordDomain: String?
+        let recordDetail: String?
 
         enum CodingKeys: String, CodingKey {
             case idPayload = "id"
@@ -673,6 +674,7 @@ final class MinitiAPIService: @unchecked Sendable {
             case objectSlug = "object_slug"
             case recordEmail = "record_email"
             case recordDomain = "record_domain"
+            case recordDetail = "record_detail"
         }
 
         var id: String { "\(objectSlug):\(idPayload.recordID)" }
@@ -692,12 +694,16 @@ final class MinitiAPIService: @unchecked Sendable {
             switch objectSlug.lowercased() {
             case "people": return "person"
             case "companies": return "company"
+            case "opportunities": return "opportunity"
             default: return objectSlug
             }
         }
 
         var detailLabel: String {
             let slug = objectSlug.lowercased()
+            if let recordDetail = recordDetail?.trimmingCharacters(in: .whitespaces), !recordDetail.isEmpty {
+                return "\(objectLabel) · \(recordDetail)"
+            }
             let value = secondaryIdentifier?.trimmingCharacters(in: .whitespaces)
             if let value, !value.isEmpty {
                 return "\(objectLabel) · \(value)"
@@ -705,6 +711,7 @@ final class MinitiAPIService: @unchecked Sendable {
             switch slug {
             case "people": return "person · no email"
             case "companies": return "company · no domain"
+            case "opportunities": return "opportunity"
             default: return objectLabel
             }
         }
@@ -1409,6 +1416,65 @@ final class MinitiAPIService: @unchecked Sendable {
         let (data, response) = try await URLSession.shared.data(for: request)
         try validateResponse(response, data: data)
         return try decode(AttioSendResponse.self, from: data, endpoint: "/attio/send")
+    }
+
+    // Twenty deliberately mirrors the Attio response contract so the macOS CRM
+    // send surface can share connection, record-selection, and result handling.
+    func twentyConnectStart(deviceId: String, callbackScheme: String = "miniti-twenty") async throws -> AttioConnectStartResponse {
+        let request = makeRequest(
+            path: "/twenty/connect/start",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["callback_scheme": callbackScheme],
+            timeoutInterval: 15
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(AttioConnectStartResponse.self, from: data, endpoint: "/twenty/connect/start")
+    }
+
+    func twentyStatus(deviceId: String) async throws -> AttioStatusResponse {
+        let request = makeRequest(path: "/twenty/status", deviceId: deviceId, timeoutInterval: 10)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(AttioStatusResponse.self, from: data, endpoint: "/twenty/status")
+    }
+
+    func twentySearch(deviceId: String, query: String, objects: [String]) async throws -> [AttioSearchRecord] {
+        let request = makeRequest(
+            path: "/twenty/search",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["query": query, "objects": objects],
+            timeoutInterval: 15
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(AttioSearchResponse.self, from: data, endpoint: "/twenty/search").data
+    }
+
+    func twentySendMeeting(
+        deviceId: String,
+        meetingPayload: AttioMeetingPayload,
+        targetObject: String,
+        targetRecordID: String,
+        createTasksFromActionItems: Bool
+    ) async throws -> AttioSendResponse {
+        let request = makeRequest(
+            path: "/twenty/send",
+            method: "POST",
+            deviceId: deviceId,
+            body: [
+                "target_object": targetObject,
+                "target_record_id": targetRecordID,
+                "meeting": meetingPayload.dictionary,
+                "create_tasks_from_action_items": createTasksFromActionItems
+            ],
+            timeoutInterval: 30
+        )
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        return try decode(AttioSendResponse.self, from: data, endpoint: "/twenty/send")
     }
     
     // MARK: - Response Validation

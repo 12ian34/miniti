@@ -249,6 +249,13 @@ final class AppState: ObservableObject {
         let receivedAt: Date
     }
 
+    private struct PendingOrderedFinalSegment {
+        let segment: DeepgramService.SpeakerSegment
+        let timelineOffset: TimeInterval
+        let arrivalSequence: UInt64
+        let deadline: Date
+    }
+
     private struct MeetingSavePayload {
         let meeting: Meeting
         let meetingID: UUID
@@ -783,6 +790,7 @@ final class AppState: ObservableObject {
     @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
     @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
+    @AppStorage("autoTwentySync") var autoTwentySync: Bool = false
     @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false
     @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false
     @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
@@ -869,8 +877,15 @@ final class AppState: ObservableObject {
     private var pendingMicSegments: [PendingMicSegment] = []
     private var recentSystemSegments: [BufferedSystemSegment] = []
     private var pendingMicFlushTask: Task<Void, Never>?
+    private var pendingOrderedFinalSegments: [PendingOrderedFinalSegment] = []
+    private var pendingOrderedFinalFlushTask: Task<Void, Never>?
+    private var nextOrderedFinalArrivalSequence: UInt64 = 0
+    /// Deepgram word times restart at zero for every WebSocket. Add this offset to place the
+    /// current socket's precise word clock on the meeting's accumulated recording timeline.
+    private var deepgramTimelineOffset: TimeInterval = 0
     private let micEchoReconciliationDelay: TimeInterval = 4
     private let echoSystemHistoryWindow: TimeInterval = 8
+    private let dualChannelOrderingDelay: TimeInterval = 0.35
     private var pendingAudioRecoveryTransitionTask: Task<Void, Never>?
     private var desiredAudioRecoveryState: AudioRecoveryState = .healthy
     private var systemAudioInactiveSince: CFAbsoluteTime = 0
@@ -882,6 +897,12 @@ final class AppState: ObservableObject {
     private let diagnosticsSessionId = UUID().uuidString
     private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
+    /// The published duration advances on a UI timer. Ordering reconnect epochs from the wall
+    /// clock avoids up to one second of overlap between the old and new Deepgram timelines.
+    private var preciseCurrentRecordingDuration: TimeInterval {
+        guard let recordingStartDate else { return recordingDuration }
+        return max(recordingDuration, Date().timeIntervalSince(recordingStartDate))
+    }
     private var accumulatedRecordedDuration: TimeInterval = 0
     private var activeMeetingSaveTask: Task<Void, Never>?
     private var pendingMeetingSaves: [UUID: PendingMeetingSave] = [:]
@@ -934,11 +955,23 @@ final class AppState: ObservableObject {
         into segments: inout [LiveSegment],
         duplicateSearchSuffix: Int = 3
     ) -> FinalSegmentMergeResult {
-        let searchStart = max(0, segments.count - duplicateSearchSuffix)
+        let suffixStart = max(0, segments.count - duplicateSearchSuffix)
+        // A mic segment can be held briefly for echo reconciliation. Include the nearby timeline
+        // window as well as the legacy suffix so a late chronological insertion still merges a
+        // cumulative Deepgram final instead of duplicating it.
+        let delayedFinalSearchWindow: TimeInterval = 8
+        let timelineStart = chronologicalInsertionIndex(
+            for: newSegment.timestamp - delayedFinalSearchWindow,
+            in: segments
+        )
+        let searchStart = min(suffixStart, timelineStart)
         var containedMatchIndex: Int?
 
         for index in searchStart..<segments.count {
             let existing = segments[index]
+            let isInSuffix = index >= suffixStart
+            if !isInSuffix,
+               existing.timestamp > newSegment.timestamp + delayedFinalSearchWindow { continue }
             guard existing.isFinal, existing.speaker == newSegment.speaker else { continue }
             if existing.text == newSegment.text {
                 return .skippedExactDuplicate
@@ -963,8 +996,54 @@ final class AppState: ObservableObject {
             return .replacedSuperset
         }
 
-        segments.append(newSegment)
+        let insertionIndex = chronologicalInsertionIndex(for: newSegment.timestamp, in: segments)
+        segments.insert(newSegment, at: insertionIndex)
         return .appended
+    }
+
+    nonisolated static func transcriptTimelineTimestamp(
+        streamStart: TimeInterval,
+        timelineOffset: TimeInterval
+    ) -> TimeInterval {
+        max(0, timelineOffset + streamStart)
+    }
+
+    /// Persist a total ordering without adding a SwiftData migration. Deepgram can emit two
+    /// channel segments with the same sample timestamp; a microsecond tie-break remains invisible
+    /// to users while surviving save/reload where relationship iteration order is unspecified.
+    nonisolated static func collisionFreeTranscriptTimestamp(
+        proposed: TimeInterval,
+        in segments: [LiveSegment]
+    ) -> TimeInterval {
+        let step: TimeInterval = 0.000_001
+        var candidate = max(0, proposed)
+        while true {
+            let index = chronologicalInsertionIndex(for: candidate, in: segments)
+            let collidesWithPrevious = index > 0
+                && abs(segments[index - 1].timestamp - candidate) < step / 2
+            let collidesWithNext = index < segments.count
+                && abs(segments[index].timestamp - candidate) < step / 2
+            guard collidesWithPrevious || collidesWithNext else { return candidate }
+            candidate += step
+        }
+    }
+
+    nonisolated static func chronologicalInsertionIndex(
+        for timestamp: TimeInterval,
+        in segments: [LiveSegment]
+    ) -> Int {
+        guard let last = segments.last, last.timestamp > timestamp else { return segments.count }
+        var lower = 0
+        var upper = segments.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if segments[middle].timestamp <= timestamp {
+                lower = middle + 1
+            } else {
+                upper = middle
+            }
+        }
+        return lower
     }
 
     /// Preserve transcript text that was visible as an interim when a recording stopped but the
@@ -1387,6 +1466,9 @@ final class AppState: ObservableObject {
                     DebugLogger.shared.log(.app, "Deepgram reconnect skipped attempt \(idx + 1): credential unavailable")
                     continue
                 }
+                // A new Deepgram socket resets word timestamps to zero. Anchor that new clock at
+                // the active meeting duration so post-reconnect segments remain chronological.
+                self.deepgramTimelineOffset = self.preciseCurrentRecordingDuration
                 deepgramService.connect(
                     language: self.meetingLanguage,
                     personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
@@ -1786,7 +1868,7 @@ final class AppState: ObservableObject {
             pruneSystemEchoHistory(now: now)
             suppressPendingMicEchoes()
             releasePendingMicSegmentsCoveredBySystem()
-            commitFinalSpeakerSegments(systemSegments)
+            enqueueOrderedFinalSegments(systemSegments)
         }
 
         var immediateMic: [DeepgramService.SpeakerSegment] = []
@@ -1814,12 +1896,12 @@ final class AppState: ObservableObject {
         }
 
         if !immediateMic.isEmpty {
-            commitFinalSpeakerSegments(immediateMic)
+            enqueueOrderedFinalSegments(immediateMic)
         }
         if !unclassified.isEmpty {
             // Defensive fallback for malformed multichannel results. Never drop
             // transcript content merely because Deepgram omitted channel_index.
-            commitFinalSpeakerSegments(unclassified)
+            enqueueOrderedFinalSegments(unclassified)
         }
         schedulePendingMicFlush()
     }
@@ -1886,7 +1968,89 @@ final class AppState: ObservableObject {
 
         let coveredIDs = Set(covered.map(\.segment.id))
         pendingMicSegments.removeAll { coveredIDs.contains($0.segment.id) }
-        commitFinalSpeakerSegments(covered.map(\.segment))
+        enqueueOrderedFinalSegments(covered.map(\.segment))
+    }
+
+    /// Keep the common dual-channel case append-only by allowing nearby mic/system final callbacks
+    /// to rendezvous briefly on Deepgram's precise stream clock. Interim text remains immediate.
+    private func enqueueOrderedFinalSegments(
+        _ segments: [DeepgramService.SpeakerSegment],
+        now: Date = Date()
+    ) {
+        guard !segments.isEmpty else { return }
+        for segment in segments {
+            nextOrderedFinalArrivalSequence &+= 1
+            pendingOrderedFinalSegments.append(
+                PendingOrderedFinalSegment(
+                    segment: segment,
+                    timelineOffset: deepgramTimelineOffset,
+                    arrivalSequence: nextOrderedFinalArrivalSequence,
+                    deadline: now.addingTimeInterval(dualChannelOrderingDelay)
+                )
+            )
+        }
+        scheduleOrderedFinalFlush()
+    }
+
+    private func scheduleOrderedFinalFlush() {
+        pendingOrderedFinalFlushTask?.cancel()
+        pendingOrderedFinalFlushTask = nil
+        guard let deadline = pendingOrderedFinalSegments.map(\.deadline).min() else { return }
+
+        let delay = max(0, deadline.timeIntervalSinceNow)
+        pendingOrderedFinalFlushTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.flushDueOrderedFinalSegments()
+        }
+    }
+
+    private func flushDueOrderedFinalSegments(now: Date = Date()) {
+        let due = pendingOrderedFinalSegments.filter { $0.deadline <= now }
+        pendingOrderedFinalSegments.removeAll { $0.deadline <= now }
+        commitOrderedFinalSegments(due)
+        scheduleOrderedFinalFlush()
+    }
+
+    private func flushAllPendingOrderedFinalSegments() {
+        pendingOrderedFinalFlushTask?.cancel()
+        pendingOrderedFinalFlushTask = nil
+        let remaining = pendingOrderedFinalSegments
+        pendingOrderedFinalSegments.removeAll()
+        commitOrderedFinalSegments(remaining)
+    }
+
+    private func commitOrderedFinalSegments(_ pending: [PendingOrderedFinalSegment]) {
+        guard !pending.isEmpty else { return }
+        let ordered = pending.sorted { lhs, rhs in
+            let lhsTime = Self.transcriptTimelineTimestamp(
+                streamStart: lhs.segment.startTime,
+                timelineOffset: lhs.timelineOffset
+            )
+            let rhsTime = Self.transcriptTimelineTimestamp(
+                streamStart: rhs.segment.startTime,
+                timelineOffset: rhs.timelineOffset
+            )
+            if lhsTime != rhsTime { return lhsTime < rhsTime }
+            return lhs.arrivalSequence < rhs.arrivalSequence
+        }
+
+        // A reconnect flushes the old socket before installing the new offset, so all entries in
+        // a normal batch share one timeline offset. Keep a defensive grouping path to avoid ever
+        // applying a new socket's offset to an older segment.
+        var batch: [DeepgramService.SpeakerSegment] = []
+        var batchOffset: TimeInterval?
+        for item in ordered {
+            if let batchOffset, batchOffset != item.timelineOffset {
+                commitFinalSpeakerSegments(batch, timelineOffset: batchOffset)
+                batch.removeAll(keepingCapacity: true)
+            }
+            batchOffset = item.timelineOffset
+            batch.append(item.segment)
+        }
+        if let batchOffset, !batch.isEmpty {
+            commitFinalSpeakerSegments(batch, timelineOffset: batchOffset)
+        }
     }
 
     private func schedulePendingMicFlush() {
@@ -1908,7 +2072,7 @@ final class AppState: ObservableObject {
         let due = pendingMicSegments.filter { $0.deadline <= now }.map(\.segment)
         pendingMicSegments.removeAll { $0.deadline <= now }
         if !due.isEmpty {
-            commitFinalSpeakerSegments(due)
+            enqueueOrderedFinalSegments(due, now: now)
         }
         pruneSystemEchoHistory(now: now)
         schedulePendingMicFlush()
@@ -1921,23 +2085,32 @@ final class AppState: ObservableObject {
         let remaining = pendingMicSegments.map(\.segment)
         pendingMicSegments.removeAll()
         if !remaining.isEmpty {
-            commitFinalSpeakerSegments(remaining)
+            enqueueOrderedFinalSegments(remaining)
         }
     }
 
     private func resetEchoReconciliation(flushPending: Bool = false) {
         if flushPending {
             flushAllPendingMicSegments()
+            flushAllPendingOrderedFinalSegments()
         } else {
             pendingMicFlushTask?.cancel()
             pendingMicFlushTask = nil
             pendingMicSegments.removeAll()
+            pendingOrderedFinalFlushTask?.cancel()
+            pendingOrderedFinalFlushTask = nil
+            pendingOrderedFinalSegments.removeAll()
+            nextOrderedFinalArrivalSequence = 0
+            deepgramTimelineOffset = 0
         }
         recentSystemSegments.removeAll()
     }
     #endif
 
-    private func commitFinalSpeakerSegments(_ finalSegments: [DeepgramService.SpeakerSegment]) {
+    private func commitFinalSpeakerSegments(
+        _ finalSegments: [DeepgramService.SpeakerSegment],
+        timelineOffset: TimeInterval? = nil
+    ) {
         guard !finalSegments.isEmpty else { return }
         
         // Build new array state atomically to avoid multiple @Published mutations.
@@ -1959,11 +2132,21 @@ final class AppState: ObservableObject {
             detectedSpeakers.insert(segment.speaker)
             
             // Create live segment
+            let proposedTimestamp = timelineOffset.map {
+                Self.transcriptTimelineTimestamp(
+                    streamStart: segment.startTime,
+                    timelineOffset: $0
+                )
+            } ?? recordingDuration
+            let timestamp = Self.collisionFreeTranscriptTimestamp(
+                proposed: proposedTimestamp,
+                in: updated
+            )
             let liveSegment = LiveSegment(
                 id: segment.id,
                 text: text,
                 speaker: segment.speaker,
-                timestamp: recordingDuration,
+                timestamp: timestamp,
                 isFinal: true
             )
             
@@ -3946,9 +4129,10 @@ final class AppState: ObservableObject {
             WebhookService.send(payload: payload, to: webhookURL)
         }
 
-        // Auto-sync to Attio if configured
+        // Auto-sync to configured CRMs using calendar attendee domains.
         if let meeting = currentMeeting, !meeting.attendees.isEmpty {
             autoSyncToAttio(meeting: meeting)
+            autoSyncToTwenty(meeting: meeting)
         }
 
         // Clear session and return to home
@@ -5058,7 +5242,10 @@ final class AppState: ObservableObject {
         let useMultichannel = false
         deepgramService.sourceLookup = nil
         #endif
-        
+
+        // Initial and resumed sockets use the duration already accumulated before this active
+        // recording interval. Deepgram's word clock begins at zero for the new connection.
+        deepgramTimelineOffset = accumulatedRecordedDuration
         deepgramService.connect(
             language: meetingLanguage,
             personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
@@ -5316,7 +5503,9 @@ final class AppState: ObservableObject {
             var hasContent = !liveSegments.isEmpty ||
                 !stoppedInterimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             #if os(macOS)
-            hasContent = hasContent || !pendingMicSegments.isEmpty
+            hasContent = hasContent ||
+                !pendingMicSegments.isEmpty ||
+                !pendingOrderedFinalSegments.isEmpty
             #endif
 
             if hasContent {
@@ -5347,6 +5536,7 @@ final class AppState: ObservableObject {
                     )
                     #if os(macOS)
                     flushAllPendingMicSegments()
+                    flushAllPendingOrderedFinalSegments()
                     #endif
                     // Make the transcript durable before slower, failure-prone AI requests.
                     _ = await saveCurrentMeetingAndWait()
@@ -6602,6 +6792,50 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Auto Attio sync: sent to \(match.objectSlug) \(match.recordText)")
             } catch {
                 DebugLogger.shared.log(.app, "Auto Attio sync failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func autoSyncToTwenty(meeting: Meeting) {
+        guard autoTwentySync, googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        let externalDomains = Set(meeting.attendees.filter { !$0.isSelf }.map(\.domain).filter { !$0.isEmpty })
+        guard !externalDomains.isEmpty, let service = minitiAPIService else { return }
+
+        let payload = AttioMeetingPayload.from(meeting: meeting)
+        let domainsCopy = externalDomains
+        Task.detached {
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            do {
+                var allMatches: [MinitiAPIService.AttioSearchRecord] = []
+                for domain in domainsCopy {
+                    let results = try await service.twentySearch(
+                        deviceId: deviceId,
+                        query: domain,
+                        objects: ["companies"]
+                    )
+                    allMatches.append(contentsOf: results)
+                }
+                let uniqueMatches = Dictionary(
+                    grouping: allMatches,
+                    by: { "\($0.objectSlug):\($0.idPayload.recordID)" }
+                ).compactMap(\.value.first)
+                guard uniqueMatches.count == 1, let match = uniqueMatches.first else {
+                    DebugLogger.shared.log(
+                        .app,
+                        "Auto Twenty sync: \(uniqueMatches.count) matches for domains \(domainsCopy) — skipping (need exactly 1)"
+                    )
+                    return
+                }
+                _ = try await service.twentySendMeeting(
+                    deviceId: deviceId,
+                    meetingPayload: payload,
+                    targetObject: match.objectSlug,
+                    targetRecordID: match.idPayload.recordID,
+                    createTasksFromActionItems: false
+                )
+                DebugLogger.shared.log(.app, "Auto Twenty sync: sent to \(match.objectSlug) \(match.recordText)")
+            } catch {
+                DebugLogger.shared.log(.app, "Auto Twenty sync failed: \(error.localizedDescription)")
             }
         }
     }

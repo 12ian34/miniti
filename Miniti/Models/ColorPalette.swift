@@ -283,6 +283,7 @@ struct ColorPalette {
         static let attio = Color(hex: "F97316")
         static let attioLight = Color(hex: "FB923C")
         static let attioPale = Color(hex: "FDBA74")
+        static let twenty = Color(hex: "E6EDF3")
     }
     
     // MARK: - Status Colors
