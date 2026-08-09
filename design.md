@@ -689,6 +689,7 @@ Containers follow the same small-step rhythm:
 
 - The meeting view splits horizontally into a transcript + notes column and an insights rail. Both use `surface-panel` for the background and `border` for the 1px divider.
 - On macOS, the sidebar collapses to a compact icon rail via `⌘[`; the insights pane collapses via `⌘]`. Collapsed states share the `sidebar` component tokens.
+- macOS history rows keep their locale-formatted start time and duration on one metadata line. Titles use the full row width at rest; hover actions temporarily overlay the trailing title edge without changing layout. Background AI work uses a separate `finishing insights…` status line, so neither state compresses or reflows the metadata.
 - On iOS, the recording view keeps share in the native trailing toolbar slot and places the labelled neutral `catch me up` action immediately left of the red Stop action in the bottom control bar. The catch-up action uses an SF Symbol rather than an emoji. There is no tab bar during recording.
 
 ## Elevation & Depth

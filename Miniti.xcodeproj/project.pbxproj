@@ -47,6 +47,7 @@
 		AE0000010000000000000003 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AF0000010000000000000001 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
 		AF0000010000000000000002 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
+		B70000010000000000000002 /* LiveTranscriptTextPaneMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */; };
 		C10000010000000000000001 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		C10000010000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		C10000010000000000000003 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
@@ -164,6 +165,7 @@
 		B90000010000000000000001 /* MinitiDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiDesignSystem.swift; sourceTree = "<group>"; };
 		AE0000010000000000000001 /* ForceUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceUpdateView.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
+		B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTextPaneMac.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000002 /* AudioCaptureService_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService_iOS.swift; sourceTree = "<group>"; };
 		C20000010000000000000003 /* MainTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
@@ -278,6 +280,7 @@
 				A20000010000000000000002 /* MainWindow.swift */,
 				A20000010000000000000003 /* MeetingView.swift */,
 				A20000010000000000000004 /* TranscriptView.swift */,
+				B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */,
 				AF0000010000000000000003 /* SelectableTextView.swift */,
 				A20000010000000000000005 /* InsightsView.swift */,
 				B90000010000000000000001 /* MinitiDesignSystem.swift */,
@@ -578,6 +581,7 @@
 				A10000010000000000000002 /* MainWindow.swift in Sources */,
 				A10000010000000000000003 /* MeetingView.swift in Sources */,
 				A10000010000000000000004 /* TranscriptView.swift in Sources */,
+				B70000010000000000000002 /* LiveTranscriptTextPaneMac.swift in Sources */,
 				AF0000010000000000000001 /* SelectableTextView.swift in Sources */,
 				A10000010000000000000005 /* InsightsView.swift in Sources */,
 				A10000010000000000000007 /* SettingsView.swift in Sources */,
@@ -838,7 +842,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 108;
+				CURRENT_PROJECT_VERSION = 109;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -856,7 +860,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -874,7 +878,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 108;
+				CURRENT_PROJECT_VERSION = 109;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -892,7 +896,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.1.0;
+				MARKETING_VERSION = 2.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;

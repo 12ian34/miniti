@@ -412,5 +412,143 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(container.reliableMeasurementWidth(for: 1), 420)
         XCTAssertEqual(container.reliableMeasurementWidth(for: nil), 420)
     }
+
+    func testLiveTranscriptSelectionBeforeTailMutationIsPreserved() {
+        let adjusted = LiveTranscriptSelectionPolicy.adjustedRange(
+            NSRange(location: 12, length: 18),
+            replacing: NSRange(location: 80, length: 20),
+            replacementLength: 35,
+            resultingLength: 115
+        )
+
+        XCTAssertEqual(adjusted, NSRange(location: 12, length: 18))
+    }
+
+    func testLiveTranscriptSelectionAfterTailMutationTracksCharacterDelta() {
+        let adjusted = LiveTranscriptSelectionPolicy.adjustedRange(
+            NSRange(location: 120, length: 10),
+            replacing: NSRange(location: 80, length: 20),
+            replacementLength: 35,
+            resultingLength: 145
+        )
+
+        XCTAssertEqual(adjusted, NSRange(location: 135, length: 10))
+    }
+
+    func testLiveTranscriptSelectionIntersectingVolatileTailCollapsesSafely() {
+        let adjusted = LiveTranscriptSelectionPolicy.adjustedRange(
+            NSRange(location: 75, length: 20),
+            replacing: NSRange(location: 80, length: 20),
+            replacementLength: 35,
+            resultingLength: 115
+        )
+
+        XCTAssertEqual(adjusted, NSRange(location: 75, length: 0))
+    }
+
+    func testLiveTranscriptCaretAtInterimInsertionPointDoesNotMove() {
+        let adjusted = LiveTranscriptSelectionPolicy.adjustedRange(
+            NSRange(location: 80, length: 0),
+            replacing: NSRange(location: 80, length: 0),
+            replacementLength: 12,
+            resultingLength: 92
+        )
+
+        XCTAssertEqual(adjusted, NSRange(location: 80, length: 0))
+    }
+
+    @MainActor
+    func testMacLiveTranscriptUsesOneTextKit2DocumentAndPreservesStableSelection() throws {
+        let initialString = "stable selected text\nvolatile tail"
+        let initialAttributed = NSAttributedString(
+            string: initialString,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 17),
+                .foregroundColor: NSColor.systemGreen,
+            ]
+        )
+        let initialPane = LiveTranscriptTextPaneMac(
+            finalizedAttributed: initialAttributed,
+            finalizedMutation: nil,
+            finalizedRevision: 1,
+            interim: nil,
+            isAutoScrollEnabled: false,
+            reduceMotion: true,
+            onScrolledAwayFromBottom: {}
+        )
+        let scrollView = NSTextView.scrollableDocumentContentTextView()
+        let textView = try XCTUnwrap(scrollView.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scrollView, textView: textView)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: initialPane)
+        coordinator.attach(scrollView: scrollView, textView: textView)
+        coordinator.apply(parent: initialPane)
+        defer { coordinator.detach() }
+
+        XCTAssertNotNil(textView.textLayoutManager)
+        XCTAssertTrue(textView.isSelectable)
+        XCTAssertFalse(textView.isEditable)
+        XCTAssertFalse(textView.isRichText)
+        XCTAssertFalse(textView.usesInspectorBar)
+        XCTAssertFalse(textView.usesFontPanel)
+        XCTAssertFalse(textView.usesRuler)
+        XCTAssertFalse(textView.usesRolloverButtonForSelection)
+        XCTAssertFalse(textView.allowsImageEditing)
+        XCTAssertFalse(textView.isContinuousSpellCheckingEnabled)
+        XCTAssertFalse(textView.isGrammarCheckingEnabled)
+        XCTAssertFalse(textView.smartInsertDeleteEnabled)
+        XCTAssertFalse(textView.isAutomaticQuoteSubstitutionEnabled)
+        XCTAssertFalse(textView.isAutomaticLinkDetectionEnabled)
+        XCTAssertFalse(textView.isAutomaticDataDetectionEnabled)
+        XCTAssertFalse(textView.isAutomaticDashSubstitutionEnabled)
+        XCTAssertFalse(textView.isAutomaticTextReplacementEnabled)
+        XCTAssertFalse(textView.isAutomaticSpellingCorrectionEnabled)
+        XCTAssertEqual(textView.enabledTextCheckingTypes, 0)
+        XCTAssertFalse(textView.isAutomaticTextCompletionEnabled)
+        XCTAssertFalse(textView.allowsCharacterPickerTouchBarItem)
+        XCTAssertEqual(textView.inlinePredictionType, .no)
+        XCTAssertFalse(textView.usesFindPanel)
+        XCTAssertFalse(textView.usesFindBar)
+        XCTAssertFalse(textView.isIncrementalSearchingEnabled)
+        if #available(macOS 15.0, *) {
+            XCTAssertEqual(textView.mathExpressionCompletionType, .no)
+            XCTAssertEqual(textView.writingToolsBehavior, .none)
+        }
+        XCTAssertEqual(
+            textView.selectedTextAttributes[.backgroundColor] as? NSColor,
+            NSColor(ColorPalette.Accent.green)
+        )
+        XCTAssertEqual(
+            textView.selectedTextAttributes[.foregroundColor] as? NSColor,
+            NSColor(ColorPalette.Background.primary)
+        )
+        XCTAssertEqual(
+            (textView.textStorage?.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize,
+            17
+        )
+        let stableSelection = NSRange(location: 7, length: initialAttributed.length - 7)
+        textView.setSelectedRange(stableSelection)
+
+        let insertionRange = NSRange(location: initialAttributed.length, length: 0)
+        let replacement = NSAttributedString(string: " plus appended final text")
+        let updated = NSMutableAttributedString(attributedString: initialAttributed)
+        updated.replaceCharacters(in: insertionRange, with: replacement)
+        let updatedPane = LiveTranscriptTextPaneMac(
+            finalizedAttributed: updated,
+            finalizedMutation: SelectableTextMutation(
+                revision: 2,
+                range: insertionRange,
+                replacement: replacement
+            ),
+            finalizedRevision: 2,
+            interim: nil,
+            isAutoScrollEnabled: false,
+            reduceMotion: true,
+            onScrolledAwayFromBottom: {}
+        )
+        coordinator.apply(parent: updatedPane)
+
+        XCTAssertEqual(textView.string, updated.string)
+        XCTAssertEqual(textView.selectedRange(), stableSelection)
+    }
     #endif
 }
