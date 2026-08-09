@@ -105,6 +105,7 @@ private extension MainNavigationDestination {
 
 struct MainWindow: View {
     private static let historySearchDebounceNanoseconds: UInt64 = 200_000_000
+    private static let expandedSidebarMinimumWindowWidth: CGFloat = 940
 
     @EnvironmentObject var appState: AppState
     @EnvironmentObject var keyboardService: KeyboardShortcutsService
@@ -125,6 +126,8 @@ struct MainWindow: View {
     @State private var navigationHistory = MainNavigationHistory(current: .home)
     @State private var isApplyingNavigationHistory = false
     @State private var navigationSwipeProgress: CGFloat = 0
+    @State private var isCompactSidebarMode = false
+    @State private var isCompactSidebarPresented = false
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
@@ -180,77 +183,119 @@ struct MainWindow: View {
     }
     
     var body: some View {
-        ZStack {
-            HStack(spacing: 0) {
-                // Sidebar
-                TerminalSidebar(
-                    meetings: meetings,
-                    displayedMeetings: displayedMeetings,
-                    selectedMeetingID: $selectedMeetingID,
-                    isCollapsed: $sidebarCollapsed,
-                    isSearchActive: $isSearchActive,
-                    searchText: $searchText,
-                    showTraining: $showTraining,
-                    historyCollapsed: $historyCollapsed,
-                    searchFocusRequest: searchFocusRequest,
-                    searchSnippets: searchSnippets,
-                    searchMatchCounts: searchMatchCounts,
-                    onDeleteMeeting: { meeting in
-                        deleteMeeting(meeting)
-                    },
-                    onTogglePin: { meeting in
-                        meeting.isPinned.toggle()
-                        try? modelContext.save()
-                        refreshMeetings()
-                    }
-                )
-                .frame(width: sidebarCollapsed ? 52 : 220)
-                .animation(.easeInOut(duration: 0.2), value: sidebarCollapsed)
-                
-                // Subtle gradient divider
-                ZStack {
-                    Rectangle()
-                        .fill(Theme.border)
-                        .frame(width: 1)
-                    
-                    Rectangle()
-                        .fill(
-                            LinearGradient(
-                                colors: [Theme.border.opacity(0), Theme.borderLight.opacity(0.5), Theme.border.opacity(0)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 1)
-                }
-                
-                // Main content
-                if let meeting = selectedMeeting {
-                    MeetingDetailView(
-                        meeting: meeting,
-                        showsBackToCoaching: coachingOriginMeetingID == meeting.id,
-                        onBackToCoaching: backToCoaching
-                    )
-                        .id(meeting.id)
-                } else if showTraining {
-                    TrainingMainView(meetings: meetings) { meetingID in
-                        coachingOriginMeetingID = meetingID
-                        selectedMeetingID = meetingID
-                    }
-                } else {
-                    MeetingView(meetings: meetings)
-                }
-            }
-            
-            // Keyboard shortcuts help overlay
-            if keyboardService.showingHelp {
-                KeyboardShortcutsOverlay()
-            }
+        GeometryReader { geometry in
+            let usesCompactSidebar = geometry.size.width < Self.expandedSidebarMinimumWindowWidth
+            let sidebarIsEffectivelyCollapsed = usesCompactSidebar || sidebarCollapsed
 
-            if abs(navigationSwipeProgress) > 0.01 {
-                MainWindowNavigationSwipeCue(signedProgress: navigationSwipeProgress)
-                    .allowsHitTesting(false)
-                    .zIndex(10)
+            ZStack {
+                HStack(spacing: 0) {
+                    // Sidebar
+                    terminalSidebar(
+                        isCollapsed: Binding(
+                            get: { sidebarIsEffectivelyCollapsed },
+                            set: { newValue in
+                                if usesCompactSidebar {
+                                    if !newValue { isCompactSidebarPresented = true }
+                                } else {
+                                    sidebarCollapsed = newValue
+                                }
+                            }
+                        ),
+                        closesAfterNavigation: false
+                    )
+                    .frame(width: sidebarIsEffectivelyCollapsed ? 52 : 220)
+                    .animation(.easeInOut(duration: 0.2), value: sidebarIsEffectivelyCollapsed)
+
+                    // Subtle gradient divider
+                    ZStack {
+                        Rectangle()
+                            .fill(Theme.border)
+                            .frame(width: 1)
+
+                        Rectangle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Theme.border.opacity(0), Theme.borderLight.opacity(0.5), Theme.border.opacity(0)],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            )
+                            .frame(width: 1)
+                    }
+
+                    // Main content
+                    if let meeting = selectedMeeting {
+                        MeetingDetailView(
+                            meeting: meeting,
+                            showsBackToCoaching: coachingOriginMeetingID == meeting.id,
+                            onBackToCoaching: backToCoaching
+                        )
+                        .id(meeting.id)
+                    } else if showTraining {
+                        TrainingMainView(meetings: meetings) { meetingID in
+                            coachingOriginMeetingID = meetingID
+                            selectedMeetingID = meetingID
+                        }
+                    } else {
+                        MeetingView(meetings: meetings)
+                    }
+                }
+
+                // Keyboard shortcuts help overlay
+                if keyboardService.showingHelp {
+                    KeyboardShortcutsOverlay()
+                }
+
+                if abs(navigationSwipeProgress) > 0.01 {
+                    MainWindowNavigationSwipeCue(signedProgress: navigationSwipeProgress)
+                        .allowsHitTesting(false)
+                        .zIndex(10)
+                }
+
+                if usesCompactSidebar && isCompactSidebarPresented {
+                    Button {
+                        isCompactSidebarPresented = false
+                    } label: {
+                        Color.black.opacity(0.32)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("close navigation sidebar")
+                    .zIndex(20)
+
+                    HStack(spacing: 0) {
+                        terminalSidebar(
+                            isCollapsed: Binding(
+                                get: { false },
+                                set: { newValue in
+                                    if newValue { isCompactSidebarPresented = false }
+                                }
+                            ),
+                            closesAfterNavigation: true
+                        )
+                        .frame(width: 220)
+                        .shadow(color: .black.opacity(0.45), radius: 18, x: 8)
+
+                        Spacer(minLength: 0)
+                    }
+                    .transition(
+                        reduceMotion
+                            ? .identity
+                            : .move(edge: .leading).combined(with: .opacity)
+                    )
+                    .zIndex(21)
+                }
+            }
+            .animation(
+                reduceMotion ? nil : .easeInOut(duration: 0.18),
+                value: isCompactSidebarPresented
+            )
+            .onAppear {
+                isCompactSidebarMode = usesCompactSidebar
+            }
+            .onChange(of: usesCompactSidebar) { _, isCompact in
+                isCompactSidebarMode = isCompact
+                if !isCompact { isCompactSidebarPresented = false }
             }
         }
         .frame(minWidth: 760, minHeight: 520)
@@ -278,6 +323,7 @@ struct MainWindow: View {
                 // Leaving a session (save, discard, or Home) restores full navigation.
                 sidebarCollapsed = false
             }
+            isCompactSidebarPresented = false
             refreshMeetings()
         }
         .onChange(of: appState.isRecording) { _, isRecording in
@@ -285,6 +331,7 @@ struct MainWindow: View {
             // until recording is resumed or a new recording starts.
             if isRecording {
                 sidebarCollapsed = true
+                isCompactSidebarPresented = false
             }
         }
         .onChange(of: appState.pendingOpenSavedMeetingID) { _, _ in
@@ -295,12 +342,14 @@ struct MainWindow: View {
             selectPendingSavedMeetingIfNeeded()
         }
         .onChange(of: selectedMeetingID) { _, newValue in
+            isCompactSidebarPresented = false
             if newValue != coachingOriginMeetingID {
                 coachingOriginMeetingID = nil
             }
             recordNavigationDestinationChange()
         }
         .onChange(of: showTraining) { _, _ in
+            isCompactSidebarPresented = false
             recordNavigationDestinationChange()
         }
         .onChange(of: searchText) { _, newValue in
@@ -336,6 +385,45 @@ struct MainWindow: View {
         }
     }
 
+    private func terminalSidebar(
+        isCollapsed: Binding<Bool>,
+        closesAfterNavigation: Bool
+    ) -> some View {
+        TerminalSidebar(
+            meetings: meetings,
+            displayedMeetings: displayedMeetings,
+            selectedMeetingID: Binding(
+                get: { selectedMeetingID },
+                set: { newValue in
+                    selectedMeetingID = newValue
+                    if closesAfterNavigation { isCompactSidebarPresented = false }
+                }
+            ),
+            isCollapsed: isCollapsed,
+            isSearchActive: $isSearchActive,
+            searchText: $searchText,
+            showTraining: Binding(
+                get: { showTraining },
+                set: { newValue in
+                    showTraining = newValue
+                    if closesAfterNavigation { isCompactSidebarPresented = false }
+                }
+            ),
+            historyCollapsed: $historyCollapsed,
+            searchFocusRequest: searchFocusRequest,
+            searchSnippets: searchSnippets,
+            searchMatchCounts: searchMatchCounts,
+            onDeleteMeeting: { meeting in
+                deleteMeeting(meeting)
+            },
+            onTogglePin: { meeting in
+                meeting.isPinned.toggle()
+                try? modelContext.save()
+                refreshMeetings()
+            }
+        )
+    }
+
     private func initializeIfNeeded() {
         guard !didInitialize else { return }
         didInitialize = true
@@ -361,11 +449,19 @@ struct MainWindow: View {
         }
 
         keyboardService.onToggleSidebarCollapse = { [self] in
-            sidebarCollapsed.toggle()
+            if isCompactSidebarMode {
+                isCompactSidebarPresented.toggle()
+            } else {
+                sidebarCollapsed.toggle()
+            }
         }
 
         keyboardService.onFocusSearch = { [self] in
-            sidebarCollapsed = false
+            if isCompactSidebarMode {
+                isCompactSidebarPresented = true
+            } else {
+                sidebarCollapsed = false
+            }
             historyCollapsed = false
             isSearchActive = true
             searchFocusRequest += 1
@@ -1229,7 +1325,7 @@ struct SidebarHistoryItem: View {
     private var highlightColor: Color { ColorPalette.Accent.amber }
 
     var body: some View {
-        HStack(spacing: 0) {
+        ZStack(alignment: .topTrailing) {
             Button(action: action) {
                 VStack(alignment: .leading, spacing: 3) {
                     if meeting.isPinned {
@@ -1269,11 +1365,13 @@ struct SidebarHistoryItem: View {
                         Text(formatDate(meeting.startTime))
                             .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
+                            .layoutPriority(1)
                         Text("•")
                             .foregroundStyle(Theme.textDim.opacity(0.6))
                         Text(meeting.formattedDuration)
                             .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(Theme.textDim)
+                            .fixedSize(horizontal: true, vertical: false)
 
                         if let lang = TranscriptionLanguage(rawValue: meeting.language), lang != .english {
                             Text("•")
@@ -1291,16 +1389,6 @@ struct SidebarHistoryItem: View {
                                 .foregroundStyle(Theme.textDim)
                         }
 
-                        if appState.finalizingInsightMeetingIDs.contains(meeting.id) {
-                            Text("•")
-                                .foregroundStyle(Theme.textDim.opacity(0.6))
-                            ProgressView()
-                                .controlSize(.mini)
-                            Text("insights")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(ColorPalette.Accent.blue)
-                        }
-
                         if let count = matchCount, count > 0 {
                             Text("•")
                                 .foregroundStyle(Theme.textDim.opacity(0.6))
@@ -1309,15 +1397,32 @@ struct SidebarHistoryItem: View {
                                 .foregroundStyle(highlightColor)
                         }
                     }
+                    .lineLimit(1)
+
+                    if appState.finalizingInsightMeetingIDs.contains(meeting.id) {
+                        HStack(spacing: 5) {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(ColorPalette.Accent.blue)
+                            Text("finishing insights…")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Accent.blue)
+                                .lineLimit(1)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel("Finishing insights")
+                        .help("Final insights are being generated in the background")
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .focusable(false)
-            
-            // Delete button (show on hover)
-            if isHovering {
+
+            // Overlay hover actions on the title instead of reserving permanent
+            // trailing space or compressing the metadata row.
+            HStack(spacing: 0) {
                 Button(action: onTogglePin) {
                     Image(systemName: meeting.isPinned ? "pin.slash" : "pin")
                         .font(.system(size: 9, weight: .medium))
@@ -1338,8 +1443,12 @@ struct SidebarHistoryItem: View {
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .transition(.opacity.combined(with: .scale(scale: 0.8)))
             }
+            .background(isSelected ? Theme.bgTertiary : Theme.bgSecondary)
+            .padding(.top, meeting.isPinned ? 14 : 0)
+            .opacity(isHovering ? 1 : 0)
+            .allowsHitTesting(isHovering)
+            .accessibilityHidden(!isHovering)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -1368,9 +1477,24 @@ struct SidebarHistoryItem: View {
     }
     
     private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter.string(from: date)
+        if Calendar.current.component(.year, from: date) == Calendar.current.component(.year, from: Date()) {
+            return date.formatted(
+                .dateTime
+                    .day()
+                    .month(.abbreviated)
+                    .hour()
+                    .minute()
+            )
+        }
+
+        return date.formatted(
+            .dateTime
+                .day()
+                .month(.abbreviated)
+                .year()
+                .hour()
+                .minute()
+        )
     }
 }
 

@@ -17,6 +17,12 @@ struct TranscriptView: View {
     @State private var cachedVisibleSegmentCount = 0
     @State private var cachedVisibleSpeakers: Set<Int> = []
     @State private var cachedDisplayTurns: [SelectableAttributed.TranscriptTurn] = []
+    #if os(macOS)
+    @State private var cachedTurnStartOffsets: [Int] = []
+    @State private var cachedTranscript = NSMutableAttributedString()
+    @State private var cachedTranscriptMutation: SelectableTextMutation?
+    @State private var cachedTranscriptRevision: UInt64 = 0
+    #endif
     @State private var cachedLastDisplaySpeaker: Int?
     @State private var cachedUniqueSpeakers: [Int] = []
     @State private var runtimeSnapshot = TranscriptRuntimeState.Snapshot.zero
@@ -30,6 +36,36 @@ struct TranscriptView: View {
     private var hasInterimText: Bool {
         !interimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    #if os(macOS)
+    private var macInterimSnapshot: LiveTranscriptInterimSnapshot? {
+        guard hasInterimText else { return nil }
+        let speaker = interimSpeaker ?? currentSpeaker
+        let startsNewTurn = cachedLastDisplaySpeaker.map {
+            SelectableAttributed.displayGroupKey(
+                speaker: $0,
+                names: appState.liveSpeakerNames,
+                selfIDs: appState.liveSelfSpeakerIDs
+            ) != SelectableAttributed.displayGroupKey(
+                speaker: speaker,
+                names: appState.liveSpeakerNames,
+                selfIDs: appState.liveSelfSpeakerIDs
+            )
+        } ?? true
+        return LiveTranscriptInterimSnapshot(
+            revision: runtimeSnapshot.revision,
+            text: interimText,
+            speaker: speaker,
+            startsNewTurn: startsNewTurn,
+            hasFinalizedContent: cachedTranscript.length > 0,
+            speakerNames: appState.liveSpeakerNames,
+            selfIDs: appState.liveSelfSpeakerIDs,
+            bodyFontSize: interfaceScale.transcriptBodySize,
+            headerFontSize: interfaceScale.transcriptHeaderSize,
+            lineSpacing: interfaceScale.transcriptLineSpacing
+        )
+    }
+    #endif
 
     private func rebuildSegmentCaches(
         liveSegments: [AppState.LiveSegment],
@@ -70,6 +106,78 @@ struct TranscriptView: View {
             let appended = liveSegments.dropFirst(cachedSourceSegments.count).filter {
                 !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             }
+            #if os(macOS)
+            if !appended.isEmpty, !cachedDisplayTurns.isEmpty,
+               let replacementStart = cachedTurnStartOffsets.last {
+                let oldTurnCount = cachedDisplayTurns.count
+                var updatedTurns = cachedDisplayTurns
+                for segment in appended {
+                    let next = SelectableAttributed.TranscriptTurn(
+                        speaker: segment.speaker,
+                        timestamp: segment.timestamp,
+                        text: segment.text
+                    )
+                    let mergedTail = SelectableAttributed.mergeTurns(
+                        [updatedTurns[updatedTurns.count - 1], next],
+                        speakerNames: names,
+                        selfIDs: selfIDs
+                    )
+                    if mergedTail.count == 1 {
+                        updatedTurns[updatedTurns.count - 1] = mergedTail[0]
+                    } else {
+                        updatedTurns.append(next)
+                    }
+                }
+                let tailStartIndex = oldTurnCount - 1
+                let tailDocument = SelectableAttributed.transcriptDocument(
+                    turns: Array(updatedTurns[tailStartIndex...]),
+                    speakerNames: names,
+                    selfIDs: selfIDs,
+                    bodyFontSize: interfaceScale.transcriptBodySize,
+                    headerFontSize: interfaceScale.transcriptHeaderSize,
+                    lineSpacing: interfaceScale.transcriptLineSpacing,
+                    startsAtDocumentBeginning: tailStartIndex == 0
+                )
+                let oldTailRange = NSRange(
+                    location: replacementStart,
+                    length: cachedTranscript.length - replacementStart
+                )
+                let oldTail = cachedTranscript.attributedSubstring(from: oldTailRange)
+                cachedTranscript.replaceCharacters(in: oldTailRange, with: tailDocument.attributed)
+
+                // A normal final either extends the current speaker turn or appends
+                // a new one, so the previously rendered tail remains an exact prefix.
+                // Mutate only the new suffix: this minimizes TextKit layout work and
+                // keeps selections that reach into the prior final turn intact.
+                let stablePrefixLength = tailDocument.attributed.string.hasPrefix(oldTail.string)
+                    ? oldTail.length
+                    : 0
+                let mutationRange = NSRange(
+                    location: replacementStart + stablePrefixLength,
+                    length: oldTail.length - stablePrefixLength
+                )
+                let mutationReplacement = tailDocument.attributed.attributedSubstring(
+                    from: NSRange(
+                        location: stablePrefixLength,
+                        length: tailDocument.attributed.length - stablePrefixLength
+                    )
+                )
+
+                cachedTranscriptRevision &+= 1
+                cachedTranscriptMutation = SelectableTextMutation(
+                    revision: cachedTranscriptRevision,
+                    range: mutationRange,
+                    replacement: mutationReplacement
+                )
+                cachedDisplayTurns = Array(updatedTurns[..<tailStartIndex]) + tailDocument.turns
+                cachedTurnStartOffsets = Array(cachedTurnStartOffsets[..<tailStartIndex])
+                    + tailDocument.turnStartOffsets.map { replacementStart + $0 }
+                cachedVisibleSegmentCount += appended.count
+                for segment in appended { cachedVisibleSpeakers.insert(segment.speaker) }
+            } else if !appended.isEmpty {
+                rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
+            }
+            #else
             if !appended.isEmpty, !cachedDisplayTurns.isEmpty {
                 var updatedTurns = cachedDisplayTurns
                 for segment in appended {
@@ -95,6 +203,7 @@ struct TranscriptView: View {
             } else if !appended.isEmpty {
                 rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
             }
+            #endif
         } else {
             rebuildAllSegments(liveSegments, names: names, selfIDs: selfIDs)
         }
@@ -112,15 +221,32 @@ struct TranscriptView: View {
         let visible = liveSegments.filter {
             !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
+        let visibleTurns: [SelectableAttributed.TranscriptTurn] = visible.map {
+            .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
+        }
+        cachedVisibleSegmentCount = visible.count
+        cachedVisibleSpeakers = Set(visible.map(\.speaker))
+        #if os(macOS)
+        let document = SelectableAttributed.transcriptDocument(
+            turns: visibleTurns,
+            speakerNames: names,
+            selfIDs: selfIDs,
+            bodyFontSize: interfaceScale.transcriptBodySize,
+            headerFontSize: interfaceScale.transcriptHeaderSize,
+            lineSpacing: interfaceScale.transcriptLineSpacing
+        )
+        cachedDisplayTurns = document.turns
+        cachedTurnStartOffsets = document.turnStartOffsets
+        cachedTranscript = NSMutableAttributedString(attributedString: document.attributed)
+        cachedTranscriptRevision &+= 1
+        cachedTranscriptMutation = nil
+        #else
         cachedDisplayTurns = SelectableAttributed.mergeTurns(
-            visible.map {
-                .init(speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
-            },
+            visibleTurns,
             speakerNames: names,
             selfIDs: selfIDs
         )
-        cachedVisibleSegmentCount = visible.count
-        cachedVisibleSpeakers = Set(visible.map(\.speaker))
+        #endif
     }
 
     private func updateUniqueSpeakers(_ detectedSpeakers: Set<Int>) {
@@ -237,6 +363,45 @@ struct TranscriptView: View {
                         #endif
                     }
                     
+                    #if os(macOS)
+                    ZStack(alignment: .bottomTrailing) {
+                        LiveTranscriptTextPaneMac(
+                            finalizedAttributed: cachedTranscript,
+                            finalizedMutation: cachedTranscriptMutation,
+                            finalizedRevision: cachedTranscriptRevision,
+                            interim: macInterimSnapshot,
+                            isAutoScrollEnabled: isAutoScrollEnabled,
+                            reduceMotion: accessibilityReduceMotion,
+                            onScrolledAwayFromBottom: {
+                                isAutoScrollEnabled = false
+                            }
+                        )
+
+                        if !isAutoScrollEnabled {
+                            Button {
+                                isAutoScrollEnabled = true
+                            } label: {
+                                Text("resume auto-scroll")
+                                    .font(.system(size: 10, weight: .semibold, design: .default))
+                                    .foregroundStyle(ColorPalette.Text.primary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(ColorPalette.Accent.blue.opacity(0.95))
+                                    .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help("resume following the live transcript")
+                            .padding(.trailing, 32)
+                            .padding(.bottom, 16)
+                            .zIndex(1)
+                        }
+                    }
+                    .onChange(of: appState.isRecording) { _, isRecording in
+                        if isRecording {
+                            isAutoScrollEnabled = true
+                        }
+                    }
+                    #else
                     ScrollViewReader { proxy in
                         GeometryReader { scrollGeometry in
                             ZStack(alignment: .bottomTrailing) {
@@ -275,19 +440,6 @@ struct TranscriptView: View {
                                     }
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
-                                    #if os(macOS)
-                                    .background(
-                                        TranscriptScrollWheelObserver(
-                                            onScrolledAwayFromBottom: {
-                                                if isAutoScrollEnabled,
-                                                   Date() >= suppressAutoScrollLockUntil {
-                                                    isAutoScrollEnabled = false
-                                                    cancelPendingAutoScroll()
-                                                }
-                                            }
-                                        )
-                                    )
-                                    #endif
                                 }
                                 .scrollIndicators(.hidden)
                                 .simultaneousGesture(
@@ -342,6 +494,7 @@ struct TranscriptView: View {
                             }
                         }
                     }
+                    #endif
                 }
             }
         }
@@ -406,103 +559,6 @@ struct TranscriptView: View {
         .background(Color(hex: "09090B")) // GitHub dark background
     }
 }
-
-// MARK: - macOS Scroll Wheel Observer
-
-#if os(macOS)
-private struct TranscriptScrollWheelObserver: NSViewRepresentable {
-    var onScrolledAwayFromBottom: () -> Void
-
-    func makeNSView(context: Context) -> NSView {
-        let view = ScrollWheelPassthroughView()
-        view.onScrolledAwayFromBottom = onScrolledAwayFromBottom
-        return view
-    }
-
-    func updateNSView(_ nsView: NSView, context: Context) {
-        (nsView as? ScrollWheelPassthroughView)?.onScrolledAwayFromBottom = onScrolledAwayFromBottom
-    }
-
-    private class ScrollWheelPassthroughView: NSView {
-        var onScrolledAwayFromBottom: (() -> Void)?
-        private var scrollEventMonitor: Any?
-        private var didSetupObserver = false
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard !didSetupObserver, window != nil else { return }
-            DispatchQueue.main.async { [weak self] in
-                self?.setupScrollEventMonitor()
-            }
-        }
-
-        private func setupScrollEventMonitor() {
-            guard let scrollView = enclosingScrollView else { return }
-            didSetupObserver = true
-            // Observe actual wheel input instead of every clip-view bounds
-            // change. Layout, pane resizing, and programmatic scroll-to-bottom
-            // all move the clip view and must not disable auto-scroll.
-            scrollEventMonitor = NSEvent.addLocalMonitorForEvents(
-                matching: [.scrollWheel, .leftMouseDragged]
-            ) {
-                [weak self, weak scrollView] event in
-                guard let self,
-                      let scrollView,
-                      event.window === self.window else { return event }
-                let location = scrollView.convert(event.locationInWindow, from: nil)
-                guard scrollView.bounds.contains(location) else { return event }
-
-                if event.type == .leftMouseDragged {
-                    var hitView = scrollView.hitTest(location)
-                    var isDraggingScroller = false
-                    while let candidate = hitView {
-                        if candidate is NSScroller {
-                            isDraggingScroller = true
-                            break
-                        }
-                        hitView = candidate.superview
-                    }
-                    guard isDraggingScroller else { return event }
-                }
-
-                DispatchQueue.main.async { [weak self, weak scrollView] in
-                    guard let self, let scrollView else { return }
-                    let contentHeight = scrollView.documentView?.frame.height ?? 0
-                    let viewportHeight = scrollView.contentView.bounds.height
-                    let scrollY = scrollView.contentView.bounds.origin.y
-                    let distanceFromBottom = contentHeight - viewportHeight - scrollY
-                    if distanceFromBottom > 30 {
-                        self.onScrolledAwayFromBottom?()
-                    }
-                }
-                return event
-            }
-        }
-
-        override func removeFromSuperview() {
-            removeScrollEventMonitor()
-            super.removeFromSuperview()
-        }
-
-        override func viewWillMove(toWindow newWindow: NSWindow?) {
-            if newWindow == nil {
-                removeScrollEventMonitor()
-            }
-            super.viewWillMove(toWindow: newWindow)
-        }
-
-        private func removeScrollEventMonitor() {
-            if let scrollEventMonitor {
-                NSEvent.removeMonitor(scrollEventMonitor)
-                self.scrollEventMonitor = nil
-            }
-            didSetupObserver = false
-        }
-
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    }
-}
-#endif
 
 // MARK: - Speaker Legend
 

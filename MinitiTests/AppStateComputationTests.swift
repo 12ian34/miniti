@@ -139,14 +139,28 @@ final class AppStateComputationTests: XCTestCase {
     func testSpecialistInsightModeRequiresOptInAndFallsBackWhenDisabled() {
         let defaults = UserDefaults.standard
         let previousSalesValue = defaults.object(forKey: "salesInsightsEnabled")
+        let previousDocsURL = defaults.object(forKey: "docsMCPURL")
+        let previousPlaybookValue = defaults.object(forKey: "playbookInsightsEnabled")
         defer {
             if let previousSalesValue {
                 defaults.set(previousSalesValue, forKey: "salesInsightsEnabled")
             } else {
                 defaults.removeObject(forKey: "salesInsightsEnabled")
             }
+            if let previousDocsURL {
+                defaults.set(previousDocsURL, forKey: "docsMCPURL")
+            } else {
+                defaults.removeObject(forKey: "docsMCPURL")
+            }
+            if let previousPlaybookValue {
+                defaults.set(previousPlaybookValue, forKey: "playbookInsightsEnabled")
+            } else {
+                defaults.removeObject(forKey: "playbookInsightsEnabled")
+            }
         }
 
+        defaults.removeObject(forKey: "docsMCPURL")
+        defaults.removeObject(forKey: "playbookInsightsEnabled")
         let state = AppState()
         state.setInsightModeEnabled(.meddpicc, enabled: false)
 

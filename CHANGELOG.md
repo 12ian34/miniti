@@ -11,6 +11,22 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-09 - v2.1.1 (macOS only; iOS unchanged)
+
+This hotfix is available for macOS. The currently pending iOS release and its App Store submission are unchanged.
+
+#### Experience improvements
+
+- improvement: (macOS) Live transcript text remains selectable across speaker turns without turning the transcript into an editable document
+- improvement: (macOS) Narrow windows now use a compact navigation rail with an accessible overlay sidebar instead of clipping the full sidebar
+- improvement: (macOS) Meeting history gives titles more room, keeps date and duration together, and shows background insight work on a separate status line
+
+#### Fixes
+
+- fix: (macOS) Resizing the window during long live meetings no longer destabilizes transcript layout or trigger the associated crash
+- fix: (macOS) Resume auto-scroll now follows new transcript text without the scrollbar bouncing between positions
+- fix: (macOS) Zoned Out requests no longer compete with automatic insight updates for the same request allowance
+
 ### 2026-08-08 - v2.1.0 (macOS; iOS coming later)
 
 This release is available on macOS now. The currently pending iOS release is unchanged; these iPhone and iPad updates will follow in a later App Store release.
