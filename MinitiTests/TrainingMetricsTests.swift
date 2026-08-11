@@ -360,6 +360,113 @@ final class TrainingMetricsTests: XCTestCase {
 
     // MARK: - Personalized coaching guidance
 
+    @MainActor
+    func testCoachingOverviewSignatureIgnoresMeetingUntilItCompletes() {
+        let meeting = Meeting(
+            title: "Live meeting",
+            startTime: Date(timeIntervalSince1970: 100),
+            segments: [
+                TranscriptSegment(
+                    text: "This meeting is still live.",
+                    speaker: DeepgramService.micSpeakerID,
+                    timestamp: 1,
+                    isFinal: true
+                )
+            ]
+        )
+        XCTAssertNil(CoachingOverviewStore.signature(for: meeting))
+
+        meeting.title = "Renamed while live"
+        XCTAssertNil(CoachingOverviewStore.signature(for: meeting))
+
+        meeting.endTime = Date(timeIntervalSince1970: 200)
+        XCTAssertNotNil(CoachingOverviewStore.signature(for: meeting))
+    }
+
+    @MainActor
+    func testCoachingOverviewSignatureTracksDerivedMetricInputs() {
+        let meeting = Meeting(
+            title: "Completed meeting",
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: Date(timeIntervalSince1970: 200),
+            segments: [
+                TranscriptSegment(
+                    text: "A completed coaching sample.",
+                    speaker: DeepgramService.micSpeakerID,
+                    timestamp: 1,
+                    isFinal: true
+                )
+            ]
+        )
+        let original = CoachingOverviewStore.signature(for: meeting)
+
+        meeting.transcriptRevision += 1
+        let revised = CoachingOverviewStore.signature(for: meeting)
+        XCTAssertNotEqual(revised, original)
+
+        meeting.setSpeakerName(id: "0", name: "Alex")
+        XCTAssertNotEqual(CoachingOverviewStore.signature(for: meeting), revised)
+    }
+
+    @MainActor
+    func testCoachingOverviewCachesCompletedRowsAndPrunesDeletedMeetingsImmediately() async throws {
+        let meeting = Meeting(
+            title: "Cached meeting",
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: Date(timeIntervalSince1970: 200),
+            segments: [
+                TranscriptSegment(
+                    text: "I have a useful coaching example for this meeting.",
+                    speaker: DeepgramService.micSpeakerID,
+                    timestamp: 1,
+                    isFinal: true
+                )
+            ]
+        )
+        let store = CoachingOverviewStore()
+
+        store.refreshIfNeeded(meetings: [meeting])
+        try await waitForCoachingStore(store) {
+            store.rows.map(\.id) == [meeting.id]
+        }
+        XCTAssertEqual(store.rows.map(\.id), [meeting.id])
+
+        store.refreshIfNeeded(meetings: [])
+        XCTAssertTrue(store.rows.isEmpty)
+        XCTAssertFalse(store.isComputing)
+    }
+
+    @MainActor
+    func testCoachingOverviewKeepsCachedRowVisibleWhileChangedMeetingRefreshes() async throws {
+        let meeting = Meeting(
+            title: "Original title",
+            startTime: Date(timeIntervalSince1970: 100),
+            endTime: Date(timeIntervalSince1970: 200),
+            segments: [
+                TranscriptSegment(
+                    text: "I have a useful coaching example for this meeting.",
+                    speaker: DeepgramService.micSpeakerID,
+                    timestamp: 1,
+                    isFinal: true
+                )
+            ]
+        )
+        let store = CoachingOverviewStore()
+        store.refreshIfNeeded(meetings: [meeting])
+        try await waitForCoachingStore(store) {
+            store.rows.first?.title == "Original title"
+        }
+
+        meeting.title = "Updated title"
+        store.refreshIfNeeded(meetings: [meeting])
+        XCTAssertEqual(store.rows.first?.title, "Original title")
+
+        try await waitForCoachingStore(store) {
+            store.rows.first?.title == "Updated title"
+        }
+        XCTAssertEqual(store.rows.first?.title, "Updated title")
+    }
+
     func testCoachingAdvisorNeedsAtLeastOneSnapshot() {
         XCTAssertNil(CoachingAdvisor.analyze([]))
     }
@@ -558,6 +665,18 @@ final class TrainingMetricsTests: XCTestCase {
             topFiller: nil,
             examples: [:]
         )
+    }
+
+    @MainActor
+    private func waitForCoachingStore(
+        _ store: CoachingOverviewStore,
+        until condition: () -> Bool
+    ) async throws {
+        for _ in 0..<400 {
+            if condition(), !store.isComputing { return }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTFail("Timed out waiting for Coaching overview refresh")
     }
 
     private func coachingSnapshot(

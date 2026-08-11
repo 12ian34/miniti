@@ -1,6 +1,8 @@
 import SwiftUI
 import SwiftData
 import AppKit
+import UserNotifications
+import os
 
 extension Notification.Name {
     static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
@@ -12,10 +14,19 @@ extension Notification.Name {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("miniti.main-window")
+    private static let lifecycleLogger = Logger(subsystem: "com.miniti.app", category: "window-lifecycle")
     weak var appState: AppState?
+    var openMainWindow: (() -> Void)?
     private var isTerminationReplyPending = false
     private var terminationTimeoutTask: Task<Void, Never>?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        AppState.registerSmartMeetingNotificationCategory()
+    }
 
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
@@ -40,9 +51,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard let mainWindow = sender.windows.first(where: Self.isMainAppWindow) else {
-            return true
+            Self.lifecycleLogger.info("Dock reopen requested main scene recreation")
+            openMainWindow?()
+            return openMainWindow == nil
         }
 
+        Self.lifecycleLogger.info("Dock reopen restoring identified main window")
         sender.activate(ignoringOtherApps: true)
         if mainWindow.isMiniaturized {
             mainWindow.deminiaturize(nil)
@@ -88,15 +102,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor private func closeDuplicateWindows() {
         let mainWindows = NSApp.windows.filter { $0.isVisible && Self.isMainAppWindow($0) }
         guard mainWindows.count > 1 else { return }
+        Self.lifecycleLogger.info("Closing \(mainWindows.count - 1, privacy: .public) duplicate main window(s)")
         for window in mainWindows.dropFirst() {
             window.close()
         }
     }
 
+    static func restoreMainWindowIfPresent() -> Bool {
+        guard let window = NSApp.windows.first(where: isMainAppWindow) else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        lifecycleLogger.info("Restored identified main window")
+        return true
+    }
+
     private static func isMainAppWindow(_ window: NSWindow) -> Bool {
-        window.level == .normal &&
-        !(window is NSPanel) &&
-        window.styleMask.contains(.fullSizeContentView)
+        window.identifier == mainWindowIdentifier
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let actionIdentifier = response.actionIdentifier
+        let eventID = response.notification.request.content.userInfo["eventID"] as? String
+        Task { @MainActor [weak self] in
+            if actionIdentifier != UNNotificationDefaultActionIdentifier {
+                self?.appState?.handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
+            }
+            if !Self.restoreMainWindowIfPresent() {
+                Self.lifecycleLogger.info("Notification requested main scene recreation")
+                self?.openMainWindow?()
+            }
+        }
+        completionHandler()
+    }
+}
+
+private struct MainWindowIdentifierInstaller: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            nsView.window?.identifier = AppDelegate.mainWindowIdentifier
+        }
+    }
+}
+
+private struct MainWindowSceneBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    let appDelegate: AppDelegate
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                appDelegate.openMainWindow = {
+                    openWindow(id: "main")
+                }
+            }
     }
 }
 
@@ -129,7 +199,7 @@ struct MinitiApp: App {
     }()
     
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("Miniti", id: "main") {
             Group {
                 if appState.requiresForceUpdate {
                     ForceUpdateView()
@@ -152,6 +222,10 @@ struct MinitiApp: App {
             .onAppear {
                 appDelegate.appState = appState
             }
+            .background {
+                MainWindowIdentifierInstaller()
+                MainWindowSceneBridge(appDelegate: appDelegate)
+            }
         }
         .handlesExternalEvents(matching: ["*"])
         .modelContainer(sharedModelContainer)
@@ -172,7 +246,7 @@ struct MinitiApp: App {
         .defaultSize(width: 1000, height: 650)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button("New Session") {
+                Button(appState.currentMeeting == nil ? "New Meeting" : "End & Start New Meeting") {
                     if let onNewSession = keyboardService.onNewSession {
                         onNewSession()
                     } else {
@@ -397,6 +471,37 @@ struct MenuBarView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let prompt = appState.smartMeetingPrompt {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(prompt.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Text(prompt.countdown.map { "Starting next in \($0)s" } ?? prompt.message)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                    HStack {
+                        if prompt.kind == .calendar, let eventID = prompt.eventID {
+                            Button("End & start") {
+                                appState.endAndStartCalendarMeeting(eventID: eventID)
+                            }
+                        } else {
+                            Button("End") {
+                                appState.endMeetingFromSmartPrompt()
+                            }
+                        }
+                        Button("Keep") {
+                            appState.keepRecordingFromSmartMeetingPrompt()
+                        }
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                Divider()
+            }
+
             // Status section
             if appState.isRecording {
                 HStack(spacing: 8) {
@@ -454,12 +559,20 @@ struct MenuBarView: View {
                 }
             } label: {
                 Label(
-                    appState.isRecording ? "Stop Recording" : "Start Recording",
+                    appState.isRecording ? "Stop Recording" : (appState.currentMeeting == nil ? "Start Recording" : "Resume Meeting"),
                     systemImage: appState.isRecording ? "stop.fill" : "record.circle"
                 )
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
             .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
+
+            if appState.currentMeeting != nil {
+                Button {
+                    appState.endAndStartNewMeeting()
+                } label: {
+                    Label("End & Start New Meeting", systemImage: "plus.square.on.square")
+                }
+            }
             
             if appState.currentMeeting != nil && !appState.liveSegments.isEmpty {
                 Button {
@@ -475,9 +588,8 @@ struct MenuBarView: View {
             Divider()
             
             Button {
-                NSApp.activate(ignoringOtherApps: true)
-                if let window = NSApp.windows.first(where: { $0.title.isEmpty || $0.title == "miniti" }) {
-                    window.makeKeyAndOrderFront(nil)
+                if !AppDelegate.restoreMainWindowIfPresent() {
+                    openWindow(id: "main")
                 }
             } label: {
                 Label("Open Miniti", systemImage: "macwindow")
@@ -506,23 +618,37 @@ struct MenuBarView: View {
 struct SettingsCommands: Commands {
     @ObservedObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    @FocusedValue(\.settingsSearchFocusAction) private var focusSettingsSearch
 
     var body: some Commands {
         CommandMenu("Settings") {
-            Button("General") { open("general") }
-            Button("Language") { open("language") }
-            Button("Account") { open("account") }
-            if appState.appMode == .byok {
-                Button("API Keys") { open("apikeys") }
+            Button("Search Settings") {
+                focusSettingsSearch?()
             }
-            Button("Audio") { open("audio") }
-            Button("Integrations") { open("integrations") }
-            Button("About") { open("about") }
+            .keyboardShortcut("f", modifiers: .command)
+            .disabled(focusSettingsSearch == nil)
+
+            Divider()
+
+            Button("General") { open("general") }
+            Button("Account & Plan") { open("account") }
+            Button("Recording & Audio") { open("recording") }
+            Button("Language") { open("language") }
+            Button("AI & Models") { open("ai") }
+            Button("Notifications") { open("notifications") }
+            Divider()
+            Button("Calendar & Meetings") { open("calendar") }
+            Button("CRM") { open("crm") }
+            Button("Webhooks") { open("webhooks") }
+            Button("Docs MCP") { open("docsMCP") }
+            Button("Data & Export") { open("dataExport") }
+            Button("Privacy & Support") { open("privacySupport") }
         }
     }
 
     private func open(_ tab: String) {
-        appState.selectedSettingsTab = tab
+        appState.selectedSettingsTab = SettingsDestination.fromLegacyID(tab).rawValue
+        appState.pendingSettingsSearchTarget = nil
         openSettings()
     }
 }

@@ -106,6 +106,10 @@ struct MeetingView_iOS: View {
                 RecordingIssueBanner_iOS(message: error)
             }
 
+            if let prompt = appState.smartMeetingPrompt {
+                SmartMeetingBanner_iOS(prompt: prompt)
+            }
+
             if appState.audioRecoveryState != .healthy {
                 HStack(spacing: 8) {
                     Circle()
@@ -542,6 +546,74 @@ struct MeetingView_iOS: View {
     
     // MARK: - Actions
     
+}
+
+private struct SmartMeetingBanner_iOS: View {
+    @EnvironmentObject private var appState: AppState
+    let prompt: AppState.SmartMeetingPrompt
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: prompt.kind == .calendar ? "calendar.badge.clock" : "moon.zzz.fill")
+                    .foregroundStyle(ColorPalette.Accent.amber)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(prompt.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text(countdownMessage)
+                        .font(.caption2)
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            }
+
+            if prompt.kind == .calendar, let eventID = prompt.eventID {
+                Button("End & start next") {
+                    appState.endAndStartCalendarMeeting(eventID: eventID)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.green)
+                .frame(maxWidth: .infinity)
+
+                HStack(spacing: 8) {
+                    Button("Remind in 2 min") {
+                        appState.remindSmartMeetingPromptInTwoMinutes()
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button("Keep recording") {
+                        appState.keepRecordingFromSmartMeetingPrompt()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button("End meeting") {
+                        appState.endMeetingFromSmartPrompt()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ColorPalette.Accent.amber)
+
+                    Button("Keep recording") {
+                        appState.keepRecordingFromSmartMeetingPrompt()
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(ColorPalette.Accent.amber.opacity(0.1))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var countdownMessage: String {
+        if let countdown = prompt.countdown {
+            return "\(prompt.message) Starting the next recording in \(countdown)s."
+        }
+        return prompt.message
+    }
 }
 
 // MARK: - Ready State (Home Screen)

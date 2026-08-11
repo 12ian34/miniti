@@ -1,6 +1,37 @@
 import SwiftUI
 import SwiftData
 import UIKit
+import UserNotifications
+
+@MainActor
+private final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak var appState: AppState?
+
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+        AppState.registerSmartMeetingNotificationCategory()
+        return true
+    }
+
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping @Sendable () -> Void
+    ) {
+        let actionIdentifier = response.actionIdentifier
+        let eventID = response.notification.request.content.userInfo["eventID"] as? String
+        Task { @MainActor [weak self] in
+            if actionIdentifier != UNNotificationDefaultActionIdentifier {
+                self?.appState?.handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
+            }
+        }
+        completionHandler()
+    }
+}
 
 @MainActor
 private final class MeetingBackgroundSaveLease {
@@ -32,6 +63,7 @@ private final class MeetingBackgroundSaveLease {
 
 @main
 struct MinitiMobileApp: App {
+    @UIApplicationDelegateAdaptor(MobileAppDelegate.self) private var appDelegate
     @StateObject private var appState = AppState()
     @AppStorage(InterfaceScale.storageKey) private var interfaceScaleRaw = InterfaceScale.standard.rawValue
     @Environment(\.scenePhase) private var scenePhase
@@ -73,6 +105,9 @@ struct MinitiMobileApp: App {
             .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
             .minitiReduceMotionAware()
             .preferredColorScheme(.dark)
+            .onAppear {
+                appDelegate.appState = appState
+            }
             .onOpenURL { url in
                 switch url.scheme?.lowercased() {
                 case "miniti-google":

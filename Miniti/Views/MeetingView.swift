@@ -17,6 +17,10 @@ struct MeetingView: View {
                         RecordingIssueBanner(message: error)
                     }
 
+                    if let prompt = appState.smartMeetingPrompt {
+                        SmartMeetingBanner(prompt: prompt)
+                    }
+
                     // Only claim the meeting was saved when finalization is running or there is
                     // transcript content to save — a failed start has neither and should show
                     // just the error banner.
@@ -91,6 +95,65 @@ struct MeetingView: View {
                 meetingTitle = newTitle
             }
         }
+    }
+}
+
+private struct SmartMeetingBanner: View {
+    @EnvironmentObject private var appState: AppState
+    let prompt: AppState.SmartMeetingPrompt
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: prompt.kind == .calendar ? "calendar.badge.clock" : "moon.zzz.fill")
+                .foregroundStyle(ColorPalette.Accent.amber)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prompt.title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text(countdownMessage)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ColorPalette.Text.muted)
+            }
+
+            Spacer(minLength: 8)
+
+            if prompt.kind == .calendar, let eventID = prompt.eventID {
+                Button("End & start next") {
+                    appState.endAndStartCalendarMeeting(eventID: eventID)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.green)
+
+                Button("Remind in 2 min") {
+                    appState.remindSmartMeetingPromptInTwoMinutes()
+                }
+                .buttonStyle(.bordered)
+            } else {
+                Button("End meeting") {
+                    appState.endMeetingFromSmartPrompt()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(ColorPalette.Accent.amber)
+            }
+
+            Button("Keep recording") {
+                appState.keepRecordingFromSmartMeetingPrompt()
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Accent.amber.opacity(0.1))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var countdownMessage: String {
+        if let countdown = prompt.countdown {
+            return "\(prompt.message) Starting the next recording in \(countdown)s."
+        }
+        return prompt.message
     }
 }
 

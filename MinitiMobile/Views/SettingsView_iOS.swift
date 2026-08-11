@@ -3,85 +3,179 @@ import AVFoundation
 import SwiftData
 import UniformTypeIdentifiers
 
-private enum SettingsCategory_iOS: String, CaseIterable, Identifiable {
-    case account
-    case recording
-    case appearanceLanguage
-    case integrations
-    case privacySupport
+struct SettingsView_iOS: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var searchText = ""
+    @State private var selectedDestination: SettingsDestination? = .general
 
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .account: return "Account & plan"
-        case .recording: return "Recording"
-        case .appearanceLanguage: return "Appearance & language"
-        case .integrations: return "Integrations & import"
-        case .privacySupport: return "Privacy & support"
+    private var searchResults: [SettingsSearchItem] {
+        SettingsSearchCatalog.availableItems(on: .iOS, appMode: appState.appMode)
+            .filter { $0.matches(searchText) }
+    }
+
+    var body: some View {
+        Group {
+            if horizontalSizeClass == .regular {
+                regularWidthSettings
+            } else {
+                compactSettings
+            }
+        }
+        .preferredColorScheme(.dark)
+        .onAppear {
+            let restored = SettingsDestination.fromLegacyID(appState.selectedSettingsTab)
+            selectedDestination = SettingsDestination.available(on: .iOS).contains(restored) ? restored : .general
         }
     }
-    var subtitle: String {
-        switch self {
-        case .account: return "Subscription, usage, API mode, and device"
-        case .recording: return "Permissions, auto-stop, Live Activity, and nudges"
-        case .appearanceLanguage: return "Interface scale, languages, fillers, and vocabulary"
-        case .integrations: return "Calendar, docs, webhooks, and Granola"
-        case .privacySupport: return "Diagnostics, model information, and help"
+
+    private var compactSettings: some View {
+        NavigationStack {
+            List {
+                if searchText.isEmpty {
+                    ForEach(SettingsDestination.available(on: .iOS)) { destination in
+                        NavigationLink {
+                            SettingsDetailView_iOS(category: destination)
+                        } label: {
+                            destinationLabel(destination)
+                        }
+                    }
+                } else if searchResults.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    ForEach(searchResults) { item in
+                        NavigationLink {
+                            SettingsDetailView_iOS(category: item.destination, initialSearchTarget: item.id)
+                        } label: {
+                            searchResultLabel(item)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, prompt: "Search settings")
+            .scrollContentBackground(.hidden)
+            .background(ColorPalette.Background.primary)
         }
     }
-    var icon: String {
-        switch self {
-        case .account: return "person.crop.circle"
-        case .recording: return "waveform"
-        case .appearanceLanguage: return "textformat"
-        case .integrations: return "puzzlepiece.extension"
-        case .privacySupport: return "hand.raised"
+
+    private var regularWidthSettings: some View {
+        NavigationSplitView {
+            List(selection: $selectedDestination) {
+                if searchText.isEmpty {
+                    ForEach(SettingsDestination.available(on: .iOS)) { destination in
+                        Label(destination.title, systemImage: destination.systemImage)
+                            .tag(destination)
+                    }
+                } else if searchResults.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    ForEach(searchResults) { item in
+                        Button {
+                            openSearchResult(item)
+                        } label: {
+                            searchResultLabel(item)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .navigationTitle("Settings")
+            .searchable(text: $searchText, placement: .sidebar, prompt: "Search settings")
+            .onChange(of: selectedDestination) { _, destination in
+                guard let destination else { return }
+                appState.selectedSettingsTab = destination.rawValue
+                appState.pendingSettingsSearchTarget = nil
+            }
+        } detail: {
+            NavigationStack {
+                SettingsDetailView_iOS(category: selectedDestination ?? .general)
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
+    }
+
+    private func destinationLabel(_ destination: SettingsDestination) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: destination.systemImage)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 30)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(destination.title).font(.headline)
+                Text(destination.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func searchResultLabel(_ item: SettingsSearchItem) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(item.title)
+                .foregroundStyle(.primary)
+            Text(item.breadcrumb)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 3)
+    }
+
+    private func openSearchResult(_ item: SettingsSearchItem) {
+        selectedDestination = item.destination
+        appState.selectedSettingsTab = item.destination.rawValue
+        appState.pendingSettingsSearchTarget = nil
+        DispatchQueue.main.async {
+            appState.pendingSettingsSearchTarget = item.id
         }
     }
 }
 
-struct SettingsView_iOS: View {
-    @State private var searchText = ""
+private struct SettingsScrollTargetModifier_iOS: ViewModifier {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let destination: SettingsDestination
 
-    private var categories: [SettingsCategory_iOS] {
-        guard !searchText.isEmpty else { return SettingsCategory_iOS.allCases }
-        return SettingsCategory_iOS.allCases.filter {
-            $0.title.localizedCaseInsensitiveContains(searchText) ||
-            $0.subtitle.localizedCaseInsensitiveContains(searchText)
+    func body(content: Content) -> some View {
+        ScrollViewReader { proxy in
+            content
+                .onAppear {
+                    scrollIfNeeded(with: proxy, target: appState.pendingSettingsSearchTarget)
+                }
+                .onChange(of: appState.pendingSettingsSearchTarget) { _, target in
+                    scrollIfNeeded(with: proxy, target: target)
+                }
         }
     }
 
-    var body: some View {
-        List(categories) { category in
-            NavigationLink {
-                SettingsDetailView_iOS(category: category)
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: category.icon)
-                        .font(.title3)
-                        .foregroundStyle(ColorPalette.Accent.green)
-                        .frame(width: 30)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(category.title).font(.headline)
-                        Text(category.subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.vertical, 4)
+    private func scrollIfNeeded(with proxy: ScrollViewProxy, target: String?) {
+        guard let target,
+              SettingsSearchCatalog.items.first(where: { $0.id == target })?.destination == destination else { return }
+        DispatchQueue.main.async {
+            if reduceMotion {
+                proxy.scrollTo(target, anchor: .center)
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
             }
         }
-        .navigationTitle("Settings")
-        .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "Search settings")
-        .scrollContentBackground(.hidden)
-        .background(ColorPalette.Background.primary)
-        .preferredColorScheme(.dark)
+    }
+}
+
+private extension View {
+    func settingsSearchScrolling_iOS(for destination: SettingsDestination) -> some View {
+        modifier(SettingsScrollTargetModifier_iOS(destination: destination))
     }
 }
 
 private struct SettingsDetailView_iOS: View {
-    let category: SettingsCategory_iOS
+    let category: SettingsDestination
+    var initialSearchTarget: String? = nil
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
@@ -100,17 +194,21 @@ private struct SettingsDetailView_iOS: View {
     
     var body: some View {
             Form {
-                if category == .appearanceLanguage {
+                if category == .general {
                 Section("Appearance") {
                     InterfaceScaleSlider()
+                        .id("general.interfaceScale")
+                }
                 }
 
+                if category == .language {
                 Section("Language") {
                     Picker("Default Language", selection: $appState.defaultLanguage) {
                         ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
                             Text(lang.displayName).tag(lang.rawValue)
                         }
                     }
+                    .id("language.default")
                     
                     Text("Transcription, insights, and coaching filler detection all adapt to this language. Can be overridden per meeting.")
                         .font(.caption)
@@ -125,6 +223,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id("language.fillers")
 
                     NavigationLink(destination: PersonalDictionaryDetail_iOS()) {
                         HStack {
@@ -135,6 +234,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id("language.dictionary")
                 }
                 }
                 
@@ -145,7 +245,7 @@ private struct SettingsDetailView_iOS: View {
                             Text("Plan")
                             Spacer()
                             if appState.shouldShowManagedSubscriptionPlaceholder {
-                                Text("Checking...")
+                                Text("Checking…")
                                     .foregroundStyle(.secondary)
                             } else if appState.isPro {
                                 Text("Pro — \(Int(appState.displayMinutesLimit)) min/month")
@@ -160,7 +260,7 @@ private struct SettingsDetailView_iOS: View {
                         if appState.shouldShowManagedSubscriptionPlaceholder {
                             HStack(spacing: 8) {
                                 ProgressView()
-                                Text("Checking subscription status...")
+                                Text("Checking subscription status…")
                                     .foregroundStyle(.secondary)
                             }
                         } else if appState.isPro {
@@ -185,7 +285,7 @@ private struct SettingsDetailView_iOS: View {
                                 if isPurchasing {
                                     HStack {
                                         ProgressView()
-                                        Text("Purchasing...")
+                                        Text("Purchasing…")
                                     }
                                 } else {
                                     Text("Upgrade to Pro — $4.99/month")
@@ -228,7 +328,7 @@ private struct SettingsDetailView_iOS: View {
                             if isRestoringPurchases {
                                 HStack {
                                     ProgressView()
-                                    Text("Restoring...")
+                                        Text("Restoring…")
                                 }
                             } else {
                                 Text("Restore Purchases")
@@ -242,6 +342,7 @@ private struct SettingsDetailView_iOS: View {
                         }
                         
                     }
+                    .id("account.subscription")
                     
                     Section("Usage") {
                         if let usage = appState.usageInfo {
@@ -271,7 +372,7 @@ private struct SettingsDetailView_iOS: View {
                             }
                         } else if appState.isLoadingUsage {
                             HStack {
-                                Text("Loading usage...")
+                                Text("Loading usage…")
                                 Spacer()
                                 ProgressView()
                             }
@@ -286,6 +387,7 @@ private struct SettingsDetailView_iOS: View {
                             }
                         }
                     }
+                    .id("account.usage")
 
                 }
 
@@ -293,12 +395,13 @@ private struct SettingsDetailView_iOS: View {
                     Picker("API Mode", selection: $appState.appModeRaw) {
                         Text(
                             appState.shouldShowManagedSubscriptionPlaceholder
-                                ? "Miniti (checking plan...)"
+                                ? "Miniti (checking plan…)"
                                 : (appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)")
                         )
                         .tag(AppMode.managed.rawValue)
                         Text("Bring Your Own Keys").tag(AppMode.byok.rawValue)
                     }
+                    .id("account.apiMode")
                     .onChange(of: appState.appModeRaw) { _, newValue in
                         if newValue == AppMode.managed.rawValue {
                             Task { await appState.refreshUsage() }
@@ -307,7 +410,7 @@ private struct SettingsDetailView_iOS: View {
                     
                     Text(appState.appMode == .managed
                          ? (appState.shouldShowManagedSubscriptionPlaceholder
-                            ? "Checking subscription status..."
+                            ? "Checking subscription status…"
                             : (appState.isPro
                                ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
                                : "500 free minutes per month via Miniti's backend."))
@@ -324,12 +427,14 @@ private struct SettingsDetailView_iOS: View {
                             key: $appState.deepgramApiKey,
                             placeholder: "Enter Deepgram API key"
                         )
+                        .id("account.deepgramKey")
                         
                         APIKeyRow(
                             label: "OpenAI",
                             key: $appState.openaiApiKey,
                             placeholder: "Enter OpenAI API key"
                         )
+                        .id("account.openAIKey")
                     }
                 }
                 }
@@ -349,10 +454,11 @@ private struct SettingsDetailView_iOS: View {
                         }
                     }
                 }
+                .id("recording.permissions")
                 }
                 
                 // Models (read-only)
-                if category == .privacySupport {
+                if category == .ai {
                 Section("Models") {
                     HStack {
                         Text("Transcription")
@@ -375,6 +481,16 @@ private struct SettingsDetailView_iOS: View {
                         .multilineTextAlignment(.trailing)
                     }
                 }
+                .id("ai.models")
+
+                Section("Provider Mode") {
+                    LabeledContent("Current mode", value: appState.appMode == .byok ? "Bring Your Own Keys" : "Managed by Miniti")
+                    Text(appState.appMode == .byok
+                         ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
+                         : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 }
                 
                 // Device
@@ -390,6 +506,7 @@ private struct SettingsDetailView_iOS: View {
                             .textSelection(.enabled)
                     }
                 }
+                .id("account.deviceID")
                 }
 
                 if category == .recording {
@@ -401,11 +518,13 @@ private struct SettingsDetailView_iOS: View {
                         Text("10 minutes").tag(10)
                         Text("15 minutes").tag(15)
                     }
+                    .id("recording.autoStop")
                     Text("Automatically stop recording when no speech is detected for the selected duration.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
                     Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
+                        .id("recording.autoNameSpeakers")
                     Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -413,6 +532,7 @@ private struct SettingsDetailView_iOS: View {
 
                 Section("Live Activity") {
                     Toggle("Show transcript on Lock Screen", isOn: $showTranscriptInLiveActivity)
+                        .id("recording.liveActivityTranscript")
                         .onChange(of: showTranscriptInLiveActivity) { _, _ in
                             appState.refreshLiveActivityPrivacySetting()
                         }
@@ -420,9 +540,12 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                }
 
-                Section("Nudges") {
+                if category == .notifications {
+                Section("Meeting Nudges") {
                     Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
+                        .id("notifications.questions")
                         .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
                             if newValue {
                                 appState.requestQuestionNotificationPermission()
@@ -433,6 +556,7 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(.secondary)
 
                     Toggle("Nudge me when I'm monologuing", isOn: $appState.notifyOnMonologue)
+                        .id("notifications.monologue")
                         .onChange(of: appState.notifyOnMonologue) { _, newValue in
                             if newValue {
                                 appState.requestNudgeNotificationPermission()
@@ -443,6 +567,7 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(.secondary)
 
                     Toggle("Nudge me when I'm using too many fillers", isOn: $appState.notifyOnHighFillerRate)
+                        .id("notifications.fillers")
                         .onChange(of: appState.notifyOnHighFillerRate) { _, newValue in
                             if newValue {
                                 appState.requestNudgeNotificationPermission()
@@ -453,6 +578,7 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(.secondary)
 
                     Toggle("Remind me 1 minute before upcoming meetings", isOn: $appState.notifyOnUpcomingMeeting)
+                        .id("notifications.upcomingMeeting")
                         .onChange(of: appState.notifyOnUpcomingMeeting) { _, newValue in
                             if newValue {
                                 appState.requestNudgeNotificationPermission { _ in
@@ -468,7 +594,7 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
-                if category == .integrations {
+                if category == .dataExport {
                 Section("Import from Granola") {
                     Link(destination: GranolaCSVImporter.exportURL) {
                         HStack {
@@ -507,9 +633,21 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                .id("data.granola")
+                }
 
-                Section("Google Calendar") {
+                if category == .calendar {
+                Section("Calendar & Meeting Automation") {
+                    Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                        .id("integrations.smartMeetings")
+                    Text("Notices when a meeting may have ended or another meeting is approaching, then helps you finish, save, and start the right recording. Works with or without Google Calendar.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
+                        .font(.caption)
+
                     Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                        .id("integrations.googleCalendar")
                     Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -556,11 +694,13 @@ private struct SettingsDetailView_iOS: View {
 
                         if appState.isGoogleCalendarConnected {
                             Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
+                                .id("integrations.autoStart")
                             Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip. Only fires while Miniti is open in the foreground.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
                             Toggle("Auto-stop after meeting ends", isOn: $appState.autoStopFromCalendar)
+                                .id("integrations.calendarAutoStop")
                             Text("Automatically stop recording when the calendar event ends and no one is speaking.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -568,11 +708,15 @@ private struct SettingsDetailView_iOS: View {
                     }
                 }
 
+                }
+
+                if category == .webhooks {
                 Section("Webhooks") {
                     TextField("Webhook URL", text: $appState.webhookURL)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .id("integrations.webhook")
                     if !appState.webhookURL.isEmpty {
                         if let url = URL(string: appState.webhookURL),
                            let scheme = url.scheme?.lowercased(),
@@ -591,13 +735,17 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                }
 
+                if category == .docsMCP {
                 DocsMCPSettingsSection_iOS()
+                    .id("integrations.docsMCP")
                 }
 
                 if category == .privacySupport {
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
+                        .id("privacy.diagnostics")
                     Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -614,6 +762,7 @@ private struct SettingsDetailView_iOS: View {
                                 handleVersionTap()
                             }
                     }
+                    .id("privacy.version")
                     Text("Pro is an auto-renewable subscription. Cancel anytime in Apple ID subscriptions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -635,6 +784,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id("privacy.docs")
                     Link(destination: URL(string: "https://miniti.app/roadmap")!) {
                         HStack {
                             Text("Roadmap")
@@ -650,9 +800,19 @@ private struct SettingsDetailView_iOS: View {
                             Spacer()
                             Image(systemName: "arrow.up.right")
                                 .font(.caption)
+                            .foregroundStyle(.secondary)
+                        }
+                    }
+                    Link(destination: URL(string: "https://miniti.app/support")!) {
+                        HStack {
+                            Text("Support")
+                            Spacer()
+                            Image(systemName: "arrow.up.right")
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id("privacy.support")
                     Link(destination: URL(string: "https://miniti.app/privacy")!) {
                         HStack {
                             Text("Privacy")
@@ -662,6 +822,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    .id("privacy.legal")
                     Link(destination: URL(string: "https://miniti.app/terms")!) {
                         HStack {
                             Text("Terms")
@@ -683,6 +844,7 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
             }
+            .settingsSearchScrolling_iOS(for: category)
             .navigationTitle(category.title)
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
@@ -699,6 +861,14 @@ private struct SettingsDetailView_iOS: View {
                 } else if case .failure(let error) = result {
                     granolaImportFailed = true
                     granolaImportMessage = error.localizedDescription
+                }
+            }
+            .onAppear {
+                appState.selectedSettingsTab = category.rawValue
+                guard let initialSearchTarget else { return }
+                appState.pendingSettingsSearchTarget = nil
+                DispatchQueue.main.async {
+                    appState.pendingSettingsSearchTarget = initialSearchTarget
                 }
             }
         .preferredColorScheme(.dark)
@@ -784,6 +954,7 @@ struct FillerSettingsDetail_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Edit \(filler)")
                         
                         Button(role: .destructive) {
                             removeFiller(at: index)
@@ -791,6 +962,7 @@ struct FillerSettingsDetail_iOS: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Delete \(filler)")
                     }
                 }
                 
@@ -921,6 +1093,7 @@ struct PersonalDictionaryDetail_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Edit \(term)")
 
                         Button(role: .destructive) {
                             removeDictionaryTerm(at: index)
@@ -928,6 +1101,7 @@ struct PersonalDictionaryDetail_iOS: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.plain)
+                        .accessibilityLabel("Delete \(term)")
                     }
                 }
 
@@ -1054,6 +1228,7 @@ struct APIKeyRow: View {
                         .font(.system(size: 14))
                 }
                 .buttonStyle(.borderless)
+                .accessibilityLabel(showKey ? "Hide \(label) API key" : "Show \(label) API key")
             }
             
             HStack(spacing: 4) {

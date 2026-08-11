@@ -11,6 +11,26 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-11 - v2.2.1 (macOS and iOS)
+
+This release brings Smart meetings and the redesigned Settings experience to Mac, iPhone, and iPad. It also brings the latest Coaching improvements to iOS.
+
+#### New
+
+- new: (macOS and iOS) Smart meetings notices when a recording may have ended or another calendar meeting is approaching, then helps you save and start the right meeting; it is on by default and independent of existing auto-start and auto-stop settings
+- new: (iOS) The Coaching overview highlights strengths, tracks trends across recent meetings, and suggests one practical focus for the next meeting with examples from your transcripts
+
+#### Experience improvements
+
+- improvement: (macOS and iOS) Settings is reorganized into clear, searchable sections for recording, language, AI, calendar, integrations, data, and support; individual results open the exact control
+- improvement: (macOS) Settings uses a stable, non-collapsible sidebar without the unnecessary collapse control
+- improvement: (macOS) The navigation sidebar no longer repeats your plan and remaining minutes, which remain available on Home
+- improvement: (macOS and iOS) Coaching opens immediately with its previous results and refreshes only changed meetings in the background
+
+#### Fixes
+
+- fix: (macOS) Closing or minimizing the main window no longer leaves Miniti running without a reliable way to reopen it from the Dock or menu bar
+
 ### 2026-08-09 - v2.2.0 (macOS only; iOS unchanged)
 
 This release is for macOS. The currently pending iOS release and its App Store submission are unchanged.
