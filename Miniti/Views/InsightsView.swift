@@ -92,7 +92,7 @@ struct InsightsModeTabs: View {
                     specialistButton(.docs)
                 } else {
                     Button {
-                        appState.selectedSettingsTab = "integrations"
+                        appState.selectedSettingsTab = "docsMCP"
                         openSettings()
                     } label: {
                         Label("Set Up Playbook…", systemImage: "gearshape")
@@ -800,7 +800,7 @@ struct DocsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 #if os(macOS)
                 Button {
-                    appState.selectedSettingsTab = "integrations"
+                    appState.selectedSettingsTab = "docsMCP"
                     openSettings()
                 } label: {
                     HStack(spacing: 5) {
@@ -818,7 +818,7 @@ struct DocsEmptyState: View {
                 .buttonStyle(.plain)
                 .padding(.top, 2)
                 #else
-                Text("Settings → Integrations → Docs MCP")
+                Text("Settings → Docs MCP")
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                     .multilineTextAlignment(.center)
@@ -1962,14 +1962,214 @@ enum CoachingOverviewTab: String, CaseIterable {
     }
 }
 
+private struct CoachingMeetingInput: Sendable {
+    let id: UUID
+    let startTime: Date
+    let title: String
+    let segments: [TrainingMetrics.Segment]
+    let duration: TimeInterval
+    let language: String
+    let speakerNames: [String: String]
+    let selfSpeakerIDs: Set<Int>
+}
+
+/// Keeps locally derived Coaching rows alive while users move between destinations.
+/// The parent navigation view prewarms this store, and only meetings whose inputs
+/// changed are recomputed. Existing rows stay visible while replacements are built.
+@MainActor
+final class CoachingOverviewStore: ObservableObject {
+    @Published private(set) var rows: [TrainingRow] = []
+    @Published private(set) var isComputing = false
+
+    private var rowsByMeetingID: [UUID: TrainingRow] = [:]
+    private var completedSignatures: [UUID: String] = [:]
+    private var metricsTask: Task<TrainingRow?, Never>?
+    private var refreshTask: Task<Void, Never>?
+    private var refreshGeneration = 0
+
+    static func signature(for meeting: Meeting) -> String? {
+        guard let endTime = meeting.endTime,
+              let duration = meeting.duration,
+              duration > 5 else { return nil }
+
+        let fillers = TrainingFillerPreferences.currentFillers(for: meeting.language)
+            .joined(separator: "\u{1F}")
+        return [
+            "coaching-v3",
+            meeting.id.uuidString,
+            String(meeting.startTime.timeIntervalSinceReferenceDate),
+            String(endTime.timeIntervalSinceReferenceDate),
+            String(meeting.segments.count),
+            String(meeting.transcriptRevision),
+            meeting.displayTitle,
+            meeting.language,
+            meeting.speakerNamesJSON ?? "",
+            meeting.selfSpeakerIDsJSON ?? "",
+            fillers
+        ].joined(separator: "\u{1E}")
+    }
+
+    func refreshIfNeeded(meetings: [Meeting]) {
+        let eligibleIDs = Set(meetings.compactMap { meeting -> UUID? in
+            guard meeting.endTime != nil,
+                  let duration = meeting.duration,
+                  duration > 5 else { return nil }
+            return meeting.id
+        })
+
+        for id in Set(rowsByMeetingID.keys).subtracting(eligibleIDs) {
+            rowsByMeetingID.removeValue(forKey: id)
+        }
+        for id in Set(completedSignatures.keys).subtracting(eligibleIDs) {
+            completedSignatures.removeValue(forKey: id)
+        }
+        publishRows(in: meetings)
+
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        refreshTask?.cancel()
+        metricsTask?.cancel()
+
+        guard !eligibleIDs.isEmpty else {
+            isComputing = false
+            refreshTask = nil
+            metricsTask = nil
+            return
+        }
+
+        if rows.isEmpty && eligibleIDs.contains(where: { completedSignatures[$0] == nil }) {
+            isComputing = true
+        }
+
+        refreshTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard !Task.isCancelled, let self else { return }
+            await self.performRefresh(meetings: meetings, generation: generation)
+        }
+    }
+
+    private func performRefresh(meetings: [Meeting], generation: Int) async {
+        for meeting in meetings {
+            guard generation == refreshGeneration, !Task.isCancelled else { return }
+            await Task.yield()
+            guard generation == refreshGeneration, !Task.isCancelled else { return }
+            guard let signature = Self.signature(for: meeting),
+                  completedSignatures[meeting.id] != signature else { continue }
+
+            isComputing = true
+
+            guard let input = Self.input(from: meeting) else {
+                rowsByMeetingID.removeValue(forKey: meeting.id)
+                completedSignatures[meeting.id] = signature
+                publishRows(in: meetings)
+                continue
+            }
+
+            let metricsTask = Task.detached(priority: .userInitiated) {
+                Self.computeRow(from: input)
+            }
+            self.metricsTask = metricsTask
+            let row = await metricsTask.value
+
+            guard generation == refreshGeneration, !Task.isCancelled else { return }
+            if let row {
+                rowsByMeetingID[meeting.id] = row
+            } else {
+                rowsByMeetingID.removeValue(forKey: meeting.id)
+            }
+            completedSignatures[meeting.id] = signature
+            publishRows(in: meetings)
+        }
+
+        finishRefresh(generation: generation)
+    }
+
+    private func finishRefresh(generation: Int) {
+        guard generation == refreshGeneration else { return }
+        metricsTask = nil
+        refreshTask = nil
+        isComputing = false
+    }
+
+    private func publishRows(in meetings: [Meeting]) {
+        rows = meetings.compactMap { rowsByMeetingID[$0.id] }
+    }
+
+    private static func input(from meeting: Meeting) -> CoachingMeetingInput? {
+        guard let duration = meeting.duration,
+              meeting.endTime != nil,
+              duration > 5 else { return nil }
+
+        let segments = meeting.segments.map {
+            TrainingMetrics.Segment(
+                text: $0.text,
+                speaker: $0.speaker,
+                isFinal: $0.isFinal,
+                timestamp: $0.timestamp
+            )
+        }
+        guard !segments.isEmpty else { return nil }
+
+        return CoachingMeetingInput(
+            id: meeting.id,
+            startTime: meeting.startTime,
+            title: meeting.displayTitle,
+            segments: segments,
+            duration: duration,
+            language: meeting.language,
+            speakerNames: meeting.speakerNames,
+            selfSpeakerIDs: meeting.selfSpeakerIDs
+        )
+    }
+
+    private nonisolated static func computeRow(from input: CoachingMeetingInput) -> TrainingRow? {
+        guard !Task.isCancelled else { return nil }
+        let metrics = TrainingMetrics.compute(
+            from: input.segments,
+            duration: input.duration,
+            language: input.language,
+            names: input.speakerNames,
+            selfIDs: input.selfSpeakerIDs
+        )
+        guard !Task.isCancelled,
+              let speaker = metrics.speakers.first(where: { $0.isLocalMic })
+                ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount }) else { return nil }
+        let topFiller = speaker.fillers.first?.word
+        let hasOtherSpeaker = metrics.speakers.contains(where: { !$0.isLocalMic })
+        let examples = CoachingExampleExtractor.examples(
+            meetingID: input.id,
+            meetingTitle: input.title,
+            meetingDate: input.startTime,
+            segments: input.segments,
+            selfIDs: input.selfSpeakerIDs,
+            detectedFillers: speaker.fillers.map(\.word),
+            topFiller: topFiller,
+            talkRatio: hasOtherSpeaker ? metrics.talkRatioYou : nil
+        )
+        return TrainingRow(
+            id: input.id,
+            date: input.startTime,
+            dateString: TrainingRow.formatDate(input.startTime),
+            title: input.title,
+            fillers: speaker.fillersPerMinute,
+            pace: speaker.wordsPerMinute,
+            clarity: speaker.avgWordsPerTurn,
+            questions: speaker.questionsAsked,
+            durationMinutes: metrics.durationMinutes,
+            talkRatio: hasOtherSpeaker ? metrics.talkRatioYou : nil,
+            longestMonologue: speaker.longestMonologueWords,
+            topFiller: topFiller,
+            examples: examples
+        )
+    }
+}
+
 struct TrainingMainView: View {
     let meetings: [Meeting]
+    @ObservedObject var store: CoachingOverviewStore
     var onSelectMeeting: ((UUID) -> Void)? = nil
     @State private var sortColumn: TrainingSortColumn = .date
     @State private var sortAscending = false
-    @State private var cachedRows: [TrainingRow] = []
-    @State private var isComputing = false
-    @State private var lastComputedHash = ""
     @State private var selectedTab: CoachingOverviewTab = .focus
 
     var body: some View {
@@ -1986,7 +2186,7 @@ struct TrainingMainView: View {
 
                 coachingTabs
 
-                if isComputing && cachedRows.isEmpty {
+                if store.isComputing && store.rows.isEmpty {
                     HStack(spacing: 8) {
                         ProgressView()
                             .controlSize(.small)
@@ -1995,9 +2195,9 @@ struct TrainingMainView: View {
                             .foregroundStyle(ColorPalette.Text.dim)
                     }
                     .padding(.vertical, 20)
-                } else if !cachedRows.isEmpty {
+                } else if !store.rows.isEmpty {
                     selectedTabContent
-                } else if !isComputing {
+                } else if !store.isComputing {
                     Text("no meetings with enough data yet. record a meeting longer than 5 seconds to see coaching stats.")
                         .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .medium, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
@@ -2014,13 +2214,13 @@ struct TrainingMainView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ColorPalette.Background.primary)
-        .task(id: meetingsHash) {
-            await computeRows()
+        .task {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            store.refreshIfNeeded(meetings: meetings)
         }
-        .onAppear {
-            if cachedRows.isEmpty {
-                Task { await computeRows() }
-            }
+        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
+            store.refreshIfNeeded(meetings: meetings)
         }
     }
 
@@ -2054,9 +2254,9 @@ struct TrainingMainView: View {
     private var selectedTabContent: some View {
         switch selectedTab {
         case .focus:
-            CoachingGuidanceView(rows: cachedRows, onSelectMeeting: onSelectMeeting)
+            CoachingGuidanceView(rows: store.rows, onSelectMeeting: onSelectMeeting)
         case .stats:
-            TrainingStatsOverview(rows: cachedRows)
+            TrainingStatsOverview(rows: store.rows)
         case .history:
             VStack(alignment: .leading, spacing: 2) {
                 trainingTableHeader
@@ -2068,73 +2268,8 @@ struct TrainingMainView: View {
         }
     }
 
-    private var meetingsHash: String {
-        let parts = meetings.compactMap { m -> String? in
-            guard m.endTime != nil else { return nil }
-            return "\(m.id):\(m.segments.count)"
-        }
-        return parts.joined(separator: ",")
-    }
-
-    private func computeRows() async {
-        let currentHash = meetingsHash
-        guard currentHash != lastComputedHash else { return }
-        isComputing = true
-
-        let validMeetings = meetings.filter { $0.endTime != nil && !$0.segments.isEmpty }
-
-        let snapshots: [(UUID, Date, String, [TrainingMetrics.Segment], Double, String, [String: String], Set<Int>)] = validMeetings.compactMap { meeting in
-            guard let duration = meeting.duration, duration > 5 else { return nil }
-            let segs = meeting.segments
-                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .sorted { $0.timestamp < $1.timestamp }
-                .map { TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: true, timestamp: $0.timestamp) }
-            guard !segs.isEmpty else { return nil }
-            let titleForRow = meeting.displayTitle
-            return (meeting.id, meeting.startTime, titleForRow, segs, duration, meeting.language, meeting.speakerNames, meeting.selfSpeakerIDs)
-        }
-
-        let rows: [TrainingRow] = await Task.detached(priority: .userInitiated) {
-            snapshots.compactMap { (id, startTime, title, segments, duration, language, names, selfIDs) in
-                let metrics = TrainingMetrics.compute(from: segments, duration: duration, language: language, names: names, selfIDs: selfIDs)
-                guard let speaker = metrics.speakers.first(where: { $0.isLocalMic })
-                        ?? metrics.speakers.max(by: { $0.wordCount < $1.wordCount }) else { return nil }
-                let topFiller = speaker.fillers.first?.word
-                let examples = CoachingExampleExtractor.examples(
-                    meetingID: id,
-                    meetingTitle: title,
-                    meetingDate: startTime,
-                    segments: segments,
-                    selfIDs: selfIDs,
-                    detectedFillers: speaker.fillers.map(\.word),
-                    topFiller: topFiller,
-                    talkRatio: metrics.speakers.contains(where: { !$0.isLocalMic }) ? metrics.talkRatioYou : nil
-                )
-                return TrainingRow(
-                    id: id,
-                    date: startTime,
-                    dateString: TrainingRow.formatDate(startTime),
-                    title: title,
-                    fillers: speaker.fillersPerMinute,
-                    pace: speaker.wordsPerMinute,
-                    clarity: speaker.avgWordsPerTurn,
-                    questions: speaker.questionsAsked,
-                    durationMinutes: metrics.durationMinutes,
-                    talkRatio: metrics.speakers.contains(where: { !$0.isLocalMic }) ? metrics.talkRatioYou : nil,
-                    longestMonologue: speaker.longestMonologueWords,
-                    topFiller: topFiller,
-                    examples: examples
-                )
-            }
-        }.value
-
-        cachedRows = rows
-        lastComputedHash = currentHash
-        isComputing = false
-    }
-
     private var displayedRows: [TrainingRow] {
-        cachedRows.sorted { a, b in
+        store.rows.sorted { a, b in
             let result: Bool
             switch sortColumn {
             case .date: result = a.date < b.date
@@ -2439,7 +2574,7 @@ private struct TrainingColumnInfoCard: View {
 }
 #endif
 
-struct TrainingRow: Identifiable {
+struct TrainingRow: Identifiable, Sendable {
     let id: UUID
     let date: Date
     let dateString: String

@@ -126,8 +126,218 @@ enum AppMode: String {
     case managed   // Miniti's backend — 500 min/month free
 }
 
+enum SettingsDestination: String, CaseIterable, Identifiable {
+    case general
+    case account
+    case recording
+    case language
+    case ai
+    case notifications
+    case calendar
+    case crm
+    case webhooks
+    case docsMCP
+    case dataExport
+    case privacySupport
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .general: return "General"
+        case .account: return "Account & Plan"
+        case .recording: return "Recording & Audio"
+        case .language: return "Language"
+        case .ai: return "AI & Models"
+        case .notifications: return "Notifications"
+        case .calendar: return "Calendar & Meetings"
+        case .crm: return "CRM"
+        case .webhooks: return "Webhooks"
+        case .docsMCP: return "Docs MCP"
+        case .dataExport: return "Data & Export"
+        case .privacySupport: return "Privacy & Support"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .general: return "Startup and appearance"
+        case .account: return "Subscription, usage, API mode, and keys"
+        case .recording: return "Audio sources, permissions, and recording behavior"
+        case .language: return "Transcription language and vocabulary"
+        case .ai: return "Transcription and insight models"
+        case .notifications: return "Meeting reminders and coaching nudges"
+        case .calendar: return "Google Calendar and meeting automation"
+        case .crm: return "Attio and Twenty connections"
+        case .webhooks: return "Send meeting data to other tools"
+        case .docsMCP: return "Ground Playbook answers in your documentation"
+        case .dataExport: return "Import meetings and export your data"
+        case .privacySupport: return "Diagnostics, app information, and help"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: return "gearshape"
+        case .account: return "person.crop.circle"
+        case .recording: return "waveform"
+        case .language: return "character.book.closed"
+        case .ai: return "sparkles"
+        case .notifications: return "bell"
+        case .calendar: return "calendar"
+        case .crm: return "person.2"
+        case .webhooks: return "arrow.triangle.branch"
+        case .docsMCP: return "books.vertical"
+        case .dataExport: return "tray.and.arrow.down"
+        case .privacySupport: return "hand.raised"
+        }
+    }
+
+    static func fromLegacyID(_ id: String) -> SettingsDestination {
+        switch id {
+        case "account", "apikeys": return .account
+        case "audio", "recording": return .recording
+        case "language": return .language
+        case "ai", "models": return .ai
+        case "notifications": return .notifications
+        case "integrations", "calendar": return .calendar
+        case "crm": return .crm
+        case "webhook", "webhooks": return .webhooks
+        case "mcp", "docsMCP": return .docsMCP
+        case "data", "dataExport": return .dataExport
+        case "about", "privacySupport": return .privacySupport
+        default: return .general
+        }
+    }
+}
+
+enum SettingsPlatform: Hashable {
+    case macOS
+    case iOS
+}
+
+extension SettingsDestination {
+    static func available(on platform: SettingsPlatform) -> [SettingsDestination] {
+        allCases.filter { destination in
+            destination != .crm || platform == .macOS
+        }
+    }
+}
+
+struct SettingsSearchItem: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let section: String
+    let destination: SettingsDestination
+    let keywords: [String]
+    let platforms: Set<SettingsPlatform>
+    let requiresBYOK: Bool
+
+    init(
+        _ id: String,
+        _ title: String,
+        section: String,
+        destination: SettingsDestination,
+        keywords: [String] = [],
+        platforms: Set<SettingsPlatform> = [.macOS, .iOS],
+        requiresBYOK: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.section = section
+        self.destination = destination
+        self.keywords = keywords
+        self.platforms = platforms
+        self.requiresBYOK = requiresBYOK
+    }
+
+    var breadcrumb: String { "\(destination.title) › \(section)" }
+
+    func isAvailable(on platform: SettingsPlatform, appMode: AppMode) -> Bool {
+        platforms.contains(platform) && (!requiresBYOK || appMode == .byok)
+    }
+
+    func matches(_ query: String) -> Bool {
+        let terms = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard !terms.isEmpty else { return true }
+        let haystack = ([title, section, destination.title, destination.subtitle] + keywords)
+            .joined(separator: " ")
+        return terms.allSatisfy { haystack.localizedCaseInsensitiveContains($0) }
+    }
+}
+
+enum SettingsSearchCatalog {
+    static let items: [SettingsSearchItem] = [
+        .init("general.launchAtLogin", "Launch at Login", section: "Startup", destination: .general, keywords: ["open automatically", "startup"], platforms: [.macOS]),
+        .init("general.showInMenuBar", "Show in Menu Bar", section: "Appearance", destination: .general, keywords: ["status item", "menu icon"], platforms: [.macOS]),
+        .init("general.interfaceScale", "Interface Scale", section: "Appearance", destination: .general, keywords: ["compact", "standard", "large", "text size"]),
+
+        .init("account.subscription", "Subscription", section: "Plan", destination: .account, keywords: ["free", "pro", "upgrade", "manage", "restore"]),
+        .init("account.usage", "Usage", section: "Plan", destination: .account, keywords: ["minutes", "limit", "remaining"]),
+        .init("account.apiMode", "API Mode", section: "Mode", destination: .account, keywords: ["managed", "BYOK", "bring your own keys"]),
+        .init("account.deepgramKey", "Deepgram API Key", section: "API Keys", destination: .account, keywords: ["transcription key"], requiresBYOK: true),
+        .init("account.openAIKey", "OpenAI API Key", section: "API Keys", destination: .account, keywords: ["insights key"], requiresBYOK: true),
+        .init("account.deviceID", "Device ID", section: "Device", destination: .account, keywords: ["identifier", "UUID"]),
+
+        .init("recording.microphone", "Capture Microphone", section: "Audio Sources", destination: .recording, keywords: ["mic", "audio input"], platforms: [.macOS]),
+        .init("recording.systemAudio", "Capture System Audio", section: "Audio Sources", destination: .recording, keywords: ["screen audio", "video calls"], platforms: [.macOS]),
+        .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
+        .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes"]),
+        .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
+        .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
+
+        .init("language.default", "Default Language", section: "Language", destination: .language, keywords: ["transcription language"]),
+        .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms"]),
+        .init("language.fillers", "Filler Detection", section: "Language", destination: .language, keywords: ["um", "uh", "coaching"]),
+        .init("ai.models", "AI Models", section: "Models", destination: .ai, keywords: ["Nova-3", "GPT", "Deepgram", "OpenAI", "BYOK", "managed"]),
+
+        .init("notifications.questions", "Incisive Question Notifications", section: "Meeting Nudges", destination: .notifications, keywords: ["questions", "alert"]),
+        .init("notifications.monologue", "Monologue Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["talking too long", "coaching"]),
+        .init("notifications.fillers", "Filler Word Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["um", "uh", "coaching"]),
+        .init("notifications.upcomingMeeting", "Upcoming Meeting Reminders", section: "Calendar Reminders", destination: .notifications, keywords: ["1 minute", "calendar", "alert"]),
+
+        .init("integrations.smartMeetings", "Smart Meetings", section: "Meeting Automation", destination: .calendar, keywords: ["meeting ended", "handoff", "transition"]),
+        .init("integrations.googleCalendar", "Google Calendar", section: "Google Calendar", destination: .calendar, keywords: ["connect", "disconnect", "events"]),
+        .init("integrations.autoStart", "Auto-start Recording", section: "Meeting Automation", destination: .calendar, keywords: ["countdown", "calendar"]),
+        .init("integrations.calendarAutoStop", "Auto-stop After Meeting Ends", section: "Meeting Automation", destination: .calendar, keywords: ["calendar", "quiet"]),
+        .init("integrations.attio", "Attio CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
+        .init("integrations.twenty", "Twenty CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
+        .init("integrations.webhook", "Webhook URL", section: "Webhooks", destination: .webhooks, keywords: ["Zapier", "Make", "n8n", "POST"]),
+        .init("integrations.docsMCP", "Docs MCP", section: "Connection", destination: .docsMCP, keywords: ["playbook", "documentation", "server"]),
+
+        .init("data.granola", "Import from Granola", section: "Import", destination: .dataExport, keywords: ["CSV", "meetings"]),
+        .init("data.markdownFolder", "Markdown Export Folder", section: "Markdown Export", destination: .dataExport, keywords: ["Obsidian", "files"], platforms: [.macOS]),
+        .init("data.autoExport", "Auto-export Meetings as Markdown", section: "Markdown Export", destination: .dataExport, keywords: ["Obsidian", "AGENTS.md"], platforms: [.macOS]),
+        .init("data.exportAll", "Export All Meetings", section: "Markdown Export", destination: .dataExport, keywords: ["backup", "markdown"], platforms: [.macOS]),
+
+        .init("privacy.diagnostics", "Share Diagnostics", section: "Privacy", destination: .privacySupport, keywords: ["reliability", "errors", "telemetry"]),
+        .init("privacy.version", "Version", section: "About", destination: .privacySupport, keywords: ["build", "update"]),
+        .init("privacy.docs", "Miniti Docs", section: "Help", destination: .privacySupport, keywords: ["documentation", "learn"]),
+        .init("privacy.support", "Support", section: "Help", destination: .privacySupport, keywords: ["help", "contact"]),
+        .init("privacy.legal", "Privacy & Terms", section: "About", destination: .privacySupport, keywords: ["policy", "legal"])
+    ]
+
+    static func availableItems(on platform: SettingsPlatform, appMode: AppMode) -> [SettingsSearchItem] {
+        items.filter { $0.isAvailable(on: platform, appMode: appMode) }
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
+    struct SmartMeetingPrompt: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case quiet
+            case calendar
+        }
+
+        let id: String
+        let kind: Kind
+        let title: String
+        let message: String
+        let eventID: String?
+        var countdown: Int?
+    }
+
     struct LiveInsightCadencePolicy: Equatable {
         let minimumInterval: TimeInterval
         let minimumSegmentDelta: Int
@@ -305,6 +515,15 @@ final class AppState: ObservableObject {
     @Published private(set) var finalizingInsightMeetingIDs: Set<UUID> = []
     @Published private(set) var lastInsightsUpdatedAt: [InsightsMode: Date] = [:]
     private var shouldOpenMeetingAfterFinalization = false
+
+    private enum PendingMeetingCompletion {
+        case none
+        case returnHome
+        case startUnscheduled
+        case startCalendar(MinitiAPIService.CalendarEvent)
+    }
+
+    private var pendingMeetingCompletion: PendingMeetingCompletion = .none
 
     var isCurrentMeetingGeneratingFinalInsights: Bool {
         guard let meetingID = currentMeeting?.id else { return false }
@@ -787,12 +1006,26 @@ final class AppState: ObservableObject {
             }
         }
     }
-    @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5
+    @AppStorage("autoStopMinutes") var autoStopMinutes: Int = 5 {
+        didSet { restartMeetingAutomationMonitoring() }
+    }
+    @AppStorage("smartMeetingsEnabled") var smartMeetingsEnabled: Bool = true {
+        didSet {
+            if !smartMeetingsEnabled {
+                clearSmartMeetingPrompt()
+            }
+            restartMeetingAutomationMonitoring()
+        }
+    }
     @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
     @AppStorage("autoTwentySync") var autoTwentySync: Bool = false
-    @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false
-    @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false
+    @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false {
+        didSet { restartMeetingAutomationMonitoring() }
+    }
+    @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false {
+        didSet { restartMeetingAutomationMonitoring() }
+    }
     @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
     @AppStorage("notifyOnMonologue") var notifyOnMonologue: Bool = false
     @AppStorage("notifyOnHighFillerRate") var notifyOnHighFillerRate: Bool = false
@@ -847,14 +1080,24 @@ final class AppState: ObservableObject {
     @Published var pendingAutoStartEvent: MinitiAPIService.CalendarEvent?
     @Published var autoStartCountdown: Int = 0
     @Published var calendarEventEndedWhileRecording: Bool = false
+    @Published private(set) var smartMeetingPrompt: SmartMeetingPrompt?
     private var calendarRefreshTimer: Timer?
     private var autoStartCheckTimer: Timer?
     private var autoStartCountdownTimer: Timer?
     private var dismissedAutoStartEventIDs: Set<String> = []
+    private var smartMeetingCountdownTimer: Timer?
+    private var smartMeetingSnoozedUntilByEventID: [String: Date] = [:]
+    private var smartMeetingSuppressedUntil: Date?
+    private var smartQuietEpisodePrompted = false
     
     @Published var wasAutoStopped = false
     @Published var autoStopReason: AutoStopReason?
-    @Published var selectedSettingsTab: String = "general"
+    @Published var selectedSettingsTab: String = UserDefaults.standard.string(forKey: "selectedSettingsDestination") ?? "general" {
+        didSet {
+            UserDefaults.standard.set(SettingsDestination.fromLegacyID(selectedSettingsTab).rawValue, forKey: "selectedSettingsDestination")
+        }
+    }
+    @Published var pendingSettingsSearchTarget: String?
     
     private var recordingTimer: Timer?
     private var periodicSaveTimer: Timer?
@@ -1292,6 +1535,7 @@ final class AppState: ObservableObject {
                     if micLevel > Self.speechMicLevelThreshold
                         || (self.captureSystemAudio && sysLevel > Self.speechSystemLevelThreshold) {
                         self.lastAudioActivityAt = CFAbsoluteTimeGetCurrent()
+                        self.noteSmartMeetingActivity()
                     }
                 }
                 .store(in: &cancellables)
@@ -1326,6 +1570,7 @@ final class AppState: ObservableObject {
         // Skip empty updates
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
+        noteSmartMeetingActivity()
         
         if update.isFinal {
             // Final result - will be handled by speaker segments for better accuracy
@@ -1516,10 +1761,10 @@ final class AppState: ObservableObject {
     private func startAutoStopMonitoring() {
         autoStopTimer?.invalidate()
         let hasCalendarAutoStop = autoStopFromCalendar && selectedCalendarEvent != nil
-        guard autoStopMinutes > 0 || hasCalendarAutoStop else { return }
+        guard autoStopMinutes > 0 || hasCalendarAutoStop || smartMeetingsEnabled else { return }
         autoStopTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.checkAutoStop()
+                self?.checkMeetingSilencePolicies()
             }
         }
     }
@@ -1527,6 +1772,114 @@ final class AppState: ObservableObject {
     private func stopAutoStopMonitoring() {
         autoStopTimer?.invalidate()
         autoStopTimer = nil
+    }
+
+    private func restartMeetingAutomationMonitoring() {
+        if isRecording {
+            startAutoStopMonitoring()
+        }
+        if googleCalendarEnabled, isGoogleCalendarConnected {
+            startAutoStartMonitoring()
+        }
+    }
+
+    private func checkMeetingSilencePolicies() {
+        checkSmartQuietMeetingPrompt()
+        checkAutoStop()
+    }
+
+    private func checkSmartQuietMeetingPrompt() {
+        guard smartMeetingsEnabled,
+              isRecording,
+              selectedCalendarEvent == nil,
+              lastTranscriptReceivedAt > 0 else { return }
+
+        let nowAbsolute = CFAbsoluteTimeGetCurrent()
+        let now = Date()
+        let transcriptGap = nowAbsolute - lastTranscriptReceivedAt
+        let audioGap = audioActivityGap(at: nowAbsolute)
+        let jointQuietGap = min(transcriptGap, audioGap)
+        let crossedBoundary = Self.quietPeriodCrossedCommonMeetingBoundary(
+            quietStartedAt: now.addingTimeInterval(-jointQuietGap),
+            now: now,
+            recordingDuration: recordingDuration
+        )
+        let isSuppressed = smartMeetingSuppressedUntil.map { $0 > now } ?? false
+        let hasMeaningfulTranscript = liveSegments.contains {
+            $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        guard Self.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: hasMeaningfulTranscript,
+            transcriptGap: transcriptGap,
+            audioGap: audioGap,
+            autoStopMinutes: autoStopMinutes,
+            crossedCommonBoundary: crossedBoundary,
+            alreadyPromptedThisQuietEpisode: smartQuietEpisodePrompted,
+            isSuppressed: isSuppressed
+        ) else { return }
+
+        smartQuietEpisodePrompted = true
+        let quietMinutes = max(1, Int(transcriptGap / 60))
+        presentSmartMeetingPrompt(
+            SmartMeetingPrompt(
+                id: "quiet-\(currentMeeting?.id.uuidString ?? UUID().uuidString)",
+                kind: .quiet,
+                title: "Has this meeting ended?",
+                message: "No speech for \(quietMinutes) minute\(quietMinutes == 1 ? "" : "s").",
+                eventID: nil,
+                countdown: nil
+            )
+        )
+    }
+
+    private func noteSmartMeetingActivity() {
+        smartMeetingSuppressedUntil = nil
+        smartQuietEpisodePrompted = false
+        guard let prompt = smartMeetingPrompt else { return }
+        switch prompt.kind {
+        case .quiet:
+            clearSmartMeetingPrompt()
+        case .calendar:
+            if prompt.countdown != nil {
+                cancelSmartMeetingCountdown(keepPrompt: true)
+            }
+        }
+    }
+
+    private func presentSmartMeetingPrompt(_ prompt: SmartMeetingPrompt) {
+        guard smartMeetingPrompt != prompt else { return }
+        clearSmartMeetingNotification()
+        smartMeetingPrompt = prompt
+        sendSmartMeetingNotificationIfNeeded(prompt)
+    }
+
+    func clearSmartMeetingPrompt() {
+        smartMeetingCountdownTimer?.invalidate()
+        smartMeetingCountdownTimer = nil
+        smartMeetingPrompt = nil
+        clearSmartMeetingNotification()
+    }
+
+    func keepRecordingFromSmartMeetingPrompt() {
+        guard let prompt = smartMeetingPrompt else { return }
+        if let eventID = prompt.eventID {
+            dismissedAutoStartEventIDs.insert(eventID)
+        } else {
+            smartMeetingSuppressedUntil = Date().addingTimeInterval(5 * 60)
+        }
+        clearSmartMeetingPrompt()
+    }
+
+    func remindSmartMeetingPromptInTwoMinutes() {
+        guard let eventID = smartMeetingPrompt?.eventID else { return }
+        smartMeetingSnoozedUntilByEventID[eventID] = Date().addingTimeInterval(2 * 60)
+        clearSmartMeetingPrompt()
+    }
+
+    func endMeetingFromSmartPrompt() {
+        clearSmartMeetingPrompt()
+        finishCurrentMeeting(then: .returnHome)
     }
     
     enum AutoStopDecision: Equatable {
@@ -1576,6 +1929,83 @@ final class AppState: ObservableObject {
 
         guard transcriptGap >= silenceWindow else { return .keepRecording }
         return calendarEventEnded ? .calendarSilence : .silence
+    }
+
+    /// Smart meetings prompts before the existing silence auto-stop point, while keeping enough
+    /// quiet time to avoid interrupting ordinary pauses in conversation.
+    nonisolated static func smartMeetingQuietThreshold(autoStopMinutes: Int) -> TimeInterval {
+        switch autoStopMinutes {
+        case 3: return 2 * 60
+        case 5: return 3 * 60
+        case 10, 15: return 5 * 60
+        default: return 5 * 60
+        }
+    }
+
+    /// A common half-hour boundary can bring the prompt forward, but only for an established
+    /// meeting and a quiet period that began before the boundary.
+    nonisolated static func quietPeriodCrossedCommonMeetingBoundary(
+        quietStartedAt: Date,
+        now: Date,
+        recordingDuration: TimeInterval,
+        calendar: Calendar = .current
+    ) -> Bool {
+        guard recordingDuration >= 15 * 60,
+              now.timeIntervalSince(quietStartedAt) >= 2 * 60 else { return false }
+
+        var boundary = calendar.dateInterval(of: .hour, for: quietStartedAt)?.start ?? quietStartedAt
+        if boundary <= quietStartedAt {
+            boundary = calendar.date(byAdding: .minute, value: 30, to: boundary) ?? boundary
+        }
+        while boundary <= now {
+            let minute = calendar.component(.minute, from: boundary)
+            if (minute == 0 || minute == 30), boundary > quietStartedAt {
+                return true
+            }
+            boundary = calendar.date(byAdding: .minute, value: 30, to: boundary) ?? now.addingTimeInterval(1)
+        }
+        return false
+    }
+
+    nonisolated static func shouldOfferSmartQuietPrompt(
+        hasMeaningfulTranscript: Bool,
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        autoStopMinutes: Int,
+        crossedCommonBoundary: Bool,
+        alreadyPromptedThisQuietEpisode: Bool,
+        isSuppressed: Bool
+    ) -> Bool {
+        guard hasMeaningfulTranscript,
+              !alreadyPromptedThisQuietEpisode,
+              !isSuppressed else { return false }
+        let threshold = crossedCommonBoundary
+            ? 2 * 60
+            : smartMeetingQuietThreshold(autoStopMinutes: autoStopMinutes)
+        return transcriptGap >= threshold && audioGap >= threshold
+    }
+
+    nonisolated static func canAutomaticallyHandoffCalendarMeeting(
+        currentEventEnd: Date?,
+        nextEventStart: Date?,
+        now: Date,
+        transcriptGap: TimeInterval,
+        audioGap: TimeInterval,
+        autoStartEnabled: Bool,
+        calendarAutoStopEnabled: Bool,
+        eventsOverlap: Bool
+    ) -> Bool {
+        guard autoStartEnabled,
+              calendarAutoStopEnabled,
+              !eventsOverlap,
+              let currentEventEnd,
+              let nextEventStart,
+              currentEventEnd <= now,
+              nextEventStart >= currentEventEnd,
+              nextEventStart.timeIntervalSince(currentEventEnd) <= 15 * 60,
+              transcriptGap >= 2 * 60,
+              audioGap >= 2 * 60 else { return false }
+        return true
     }
 
     enum TranscriptHealthAction: Equatable {
@@ -1650,6 +2080,9 @@ final class AppState: ObservableObject {
 
     private func checkAutoStop() {
         guard isRecording, lastTranscriptReceivedAt > 0 else { return }
+        if let smartMeetingSuppressedUntil, smartMeetingSuppressedUntil > Date() {
+            return
+        }
 
         let now = CFAbsoluteTimeGetCurrent()
         let transcriptGap = now - lastTranscriptReceivedAt
@@ -2171,6 +2604,7 @@ final class AppState: ObservableObject {
         // carried no text of its own and so never stamped the timestamp.
         if receivedTranscriptContent {
             lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
+            noteSmartMeetingActivity()
         }
         
         // Single atomic mutation — one @Published change instead of N
@@ -3930,29 +4364,35 @@ final class AppState: ObservableObject {
         target?.insightsUpdatedAt = now
     }
     
-    func startNewMeeting() {
+    @discardableResult
+    func startNewMeeting() -> Bool {
+        startNewMeeting(calendarEvent: nil)
+    }
+
+    @discardableResult
+    private func startNewMeeting(calendarEvent: MinitiAPIService.CalendarEvent?) -> Bool {
         DebugLogger.shared.log(.app, "startNewMeeting (mode=\(appMode.rawValue))")
         updateLogRedaction()
 
-        guard !isFinalizingMeeting else { return }
+        guard !isFinalizingMeeting else { return false }
         recordingErrorMessage = nil
         finalizationStatusText = ""
         shouldOpenMeetingAfterFinalization = false
 
         guard hasAcceptedTerms else {
             DebugLogger.shared.log(.app, "startNewMeeting blocked: terms not accepted")
-            return
+            return false
         }
         
         switch appMode {
         case .byok:
             guard !deepgramApiKey.isEmpty else {
                 showSettings = true
-                return
+                return false
             }
         case .managed:
             guard !isLimitReached else {
-                return
+                return false
             }
         }
         
@@ -3967,10 +4407,15 @@ final class AppState: ObservableObject {
         trainingMetricsTask?.cancel()
         trainingMetricsTask = nil
         
-        let meeting = Meeting(title: "untitled")
+        let meeting = Meeting(title: calendarEvent?.title ?? "untitled")
         meeting.language = meetingLanguage
+        if let calendarEvent {
+            meeting.calendarEventId = calendarEvent.id
+            meeting.attendees = calendarEvent.attendees.map { $0.toMeetingAttendee() }
+        }
         currentMeeting = meeting
-        currentTitleSuffix = ""
+        selectedCalendarEvent = calendarEvent
+        currentTitleSuffix = calendarEvent?.title ?? ""
         lastTitleUpdateCount = 0
         #if os(macOS)
         resetEchoReconciliation()
@@ -4027,19 +4472,56 @@ final class AppState: ObservableObject {
         } else {
             startRecording()
         }
+        return true
     }
     
     func createNewSession() {
-        // Stop recording if active (this saves and clears)
+        if currentMeeting == nil {
+            _ = startNewMeeting()
+        } else {
+            finishCurrentMeeting(then: .startUnscheduled)
+        }
+    }
+
+    func endAndStartNewMeeting() {
+        finishCurrentMeeting(then: .startUnscheduled)
+    }
+
+    func endAndStartCalendarMeeting(eventID: String) {
+        guard let event = upcomingEvents.first(where: { $0.id == eventID }) else {
+            recordingErrorMessage = "That calendar event is no longer available. Refresh your calendar and try again."
+            return
+        }
+        finishCurrentMeeting(then: .startCalendar(event))
+    }
+
+    private func finishCurrentMeeting(then completion: PendingMeetingCompletion) {
+        guard canBeginFreshMeeting(for: completion) else { return }
+        pendingMeetingCompletion = completion
+        clearSmartMeetingPrompt()
+
         if isRecording {
             stopRecording()
+        } else if isFinalizingMeeting {
+            finalizationStatusText = "Saving before the next meeting…"
         } else {
-            // Save and clear if not recording and a draft session exists
-            if currentMeeting != nil {
-                saveCurrentMeetingIfNeeded()
-            }
-            clearCurrentSession()
+            completeMeetingFinalization()
         }
+    }
+
+    private func canBeginFreshMeeting(for completion: PendingMeetingCompletion) -> Bool {
+        if case .returnHome = completion { return true }
+        guard hasAcceptedTerms else { return false }
+        switch appMode {
+        case .byok:
+            guard !deepgramApiKey.isEmpty else {
+                showSettings = true
+                return false
+            }
+        case .managed:
+            guard !isLimitReached, !isDeviceDisabled else { return false }
+        }
+        return true
     }
     
     /// Go back to home screen (clears current session after saving)
@@ -5570,9 +6052,11 @@ final class AppState: ObservableObject {
                 deepgramService?.disconnect()
                 saveCurrentMeetingIfNeeded()
                 finalizationStatusText = "Saved automatically"
+                completeMeetingFinalization()
             }
         } else {
             deepgramService?.disconnect()
+            completeMeetingFinalization()
         }
     }
 
@@ -5623,6 +6107,9 @@ final class AppState: ObservableObject {
         isFinalizingMeeting = false
         finalizationStatusText = ""
         shouldOpenMeetingAfterFinalization = false
+        clearSmartMeetingPrompt()
+        smartMeetingSuppressedUntil = nil
+        smartQuietEpisodePrompted = false
         recordingErrorMessage = nil
         currentMeeting = nil
         isStartingMeeting = false
@@ -5718,6 +6205,27 @@ final class AppState: ObservableObject {
             // let completion from an older stop clear a recording if another entry point regresses.
             shouldOpenMeetingAfterFinalization = false
             DebugLogger.shared.log(.app, "Finalization completed while recording; preserving active session")
+            return
+        }
+
+        let completion = pendingMeetingCompletion
+        pendingMeetingCompletion = .none
+        switch completion {
+        case .none:
+            break
+        case .returnHome:
+            shouldOpenMeetingAfterFinalization = false
+            goHome()
+            return
+        case .startUnscheduled:
+            shouldOpenMeetingAfterFinalization = false
+            goHome()
+            _ = startNewMeeting()
+            return
+        case .startCalendar(let event):
+            shouldOpenMeetingAfterFinalization = false
+            goHome()
+            _ = startNewMeeting(calendarEvent: event)
             return
         }
         guard shouldOpenMeetingAfterFinalization else { return }
@@ -6583,22 +7091,17 @@ final class AppState: ObservableObject {
     
     func startMeetingFromEvent(_ event: MinitiAPIService.CalendarEvent) {
         cancelAutoStartCountdown()
-        selectedCalendarEvent = event
-        
-        startNewMeeting()
-        
-        guard let meeting = currentMeeting else { return }
-        meeting.title = event.title
-        meeting.calendarEventId = event.id
-        meeting.attendees = event.attendees.map { $0.toMeetingAttendee() }
-        currentTitleSuffix = event.title
+        clearSmartMeetingPrompt()
+        _ = startNewMeeting(calendarEvent: event)
     }
     
     // MARK: - Auto-start from Calendar
     
     func startAutoStartMonitoring() {
         autoStartCheckTimer?.invalidate()
-        guard autoStartFromCalendar, googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        guard (autoStartFromCalendar || smartMeetingsEnabled),
+              googleCalendarEnabled,
+              isGoogleCalendarConnected else { return }
         autoStartCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.checkAutoStart()
@@ -6613,8 +7116,14 @@ final class AppState: ObservableObject {
     }
     
     private func checkAutoStart() {
-        guard autoStartFromCalendar, googleCalendarEnabled, isGoogleCalendarConnected else { return }
-        guard currentMeeting == nil, !isStartingMeeting else { return }
+        guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
+        if currentMeeting != nil {
+            if smartMeetingsEnabled {
+                checkSmartCalendarTransition()
+            }
+            return
+        }
+        guard autoStartFromCalendar, !isStartingMeeting else { return }
         guard pendingAutoStartEvent == nil else { return }
         
         let now = Date()
@@ -6677,6 +7186,102 @@ final class AppState: ObservableObject {
         autoStartCountdownTimer = nil
         pendingAutoStartEvent = nil
         autoStartCountdown = 0
+    }
+
+    private func checkSmartCalendarTransition() {
+        guard smartMeetingsEnabled,
+              isRecording || currentMeeting != nil,
+              let currentMeeting else { return }
+
+        let now = Date()
+        guard let event = upcomingEvents.first(where: { candidate in
+            guard candidate.id != currentMeeting.calendarEventId,
+                  !candidate.isAllDay,
+                  !dismissedAutoStartEventIDs.contains(candidate.id),
+                  let start = candidate.startDate else { return false }
+            let snoozedUntil = smartMeetingSnoozedUntilByEventID[candidate.id]
+            return (snoozedUntil == nil || snoozedUntil! <= now)
+                && start.timeIntervalSince(now) <= 60
+                && start.timeIntervalSince(now) >= -120
+        }) else { return }
+
+        let startsIn = max(0, Int(ceil(event.startDate?.timeIntervalSince(now) ?? 0)))
+        if smartMeetingPrompt?.eventID != event.id {
+            let time = event.startDate?.formatted(date: .omitted, time: .shortened) ?? "soon"
+            presentSmartMeetingPrompt(
+                SmartMeetingPrompt(
+                    id: "calendar-\(event.id)",
+                    kind: .calendar,
+                    title: "Next: \(event.title)",
+                    message: "Starts at \(time). Is the current meeting over?",
+                    eventID: event.id,
+                    countdown: nil
+                )
+            )
+        }
+
+        guard isRecording,
+              startsIn <= 15,
+              smartMeetingPrompt?.countdown == nil,
+              let currentEvent = selectedCalendarEvent,
+              currentEvent.id == currentMeeting.calendarEventId else { return }
+
+        let currentEnd = currentEvent.endDate
+        let nextStart = event.startDate
+        let eventsOverlap = {
+            guard let currentEnd, let nextStart else { return true }
+            return nextStart < currentEnd
+        }()
+        let nowAbsolute = CFAbsoluteTimeGetCurrent()
+        guard Self.canAutomaticallyHandoffCalendarMeeting(
+            currentEventEnd: currentEnd,
+            nextEventStart: nextStart,
+            now: now,
+            transcriptGap: nowAbsolute - lastTranscriptReceivedAt,
+            audioGap: audioActivityGap(at: nowAbsolute),
+            autoStartEnabled: autoStartFromCalendar,
+            calendarAutoStopEnabled: autoStopFromCalendar,
+            eventsOverlap: eventsOverlap
+        ) else { return }
+
+        beginSmartMeetingCountdown(for: event, seconds: max(1, startsIn))
+    }
+
+    private func beginSmartMeetingCountdown(
+        for event: MinitiAPIService.CalendarEvent,
+        seconds: Int
+    ) {
+        guard var prompt = smartMeetingPrompt, prompt.eventID == event.id else { return }
+        prompt.countdown = seconds
+        smartMeetingPrompt = prompt
+        smartMeetingCountdownTimer?.invalidate()
+        smartMeetingCountdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self,
+                      var prompt = self.smartMeetingPrompt,
+                      prompt.eventID == event.id,
+                      let countdown = prompt.countdown else { return }
+                if countdown <= 1 {
+                    self.smartMeetingCountdownTimer?.invalidate()
+                    self.smartMeetingCountdownTimer = nil
+                    self.endAndStartCalendarMeeting(eventID: event.id)
+                } else {
+                    prompt.countdown = countdown - 1
+                    self.smartMeetingPrompt = prompt
+                }
+            }
+        }
+    }
+
+    private func cancelSmartMeetingCountdown(keepPrompt: Bool) {
+        smartMeetingCountdownTimer?.invalidate()
+        smartMeetingCountdownTimer = nil
+        guard keepPrompt, var prompt = smartMeetingPrompt else {
+            smartMeetingPrompt = nil
+            return
+        }
+        prompt.countdown = nil
+        smartMeetingPrompt = prompt
     }
 
     /// True when the home-screen calendar nudge card should be visible.
@@ -7476,6 +8081,105 @@ final class AppState: ObservableObject {
     #endif
 
     // MARK: - Incisive Question Notifications
+
+    static let smartMeetingNotificationCategory = "miniti.smart-meeting"
+    static let smartMeetingEndAction = "miniti.smart.end"
+    static let smartMeetingEndAndStartAction = "miniti.smart.end-and-start"
+    static let smartMeetingKeepAction = "miniti.smart.keep"
+
+    static func registerSmartMeetingNotificationCategory() {
+        let endAndStart = UNNotificationAction(
+            identifier: smartMeetingEndAndStartAction,
+            title: "End & start next"
+        )
+        let end = UNNotificationAction(
+            identifier: smartMeetingEndAction,
+            title: "End meeting"
+        )
+        let keep = UNNotificationAction(
+            identifier: smartMeetingKeepAction,
+            title: "Keep recording"
+        )
+        let calendarCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".calendar",
+            actions: [endAndStart, keep],
+            intentIdentifiers: []
+        )
+        let quietCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".quiet",
+            actions: [end, keep],
+            intentIdentifiers: []
+        )
+        UNUserNotificationCenter.current().setNotificationCategories([calendarCategory, quietCategory])
+    }
+
+    private func sendSmartMeetingNotificationIfNeeded(_ prompt: SmartMeetingPrompt) {
+        guard smartMeetingsEnabled, !isAppInForeground() else { return }
+        let identifier = "miniti.smart-meeting.\(prompt.id)"
+        let title = prompt.title
+        let message = prompt.message
+        let eventID = prompt.eventID
+        let category = prompt.kind == .calendar
+            ? Self.smartMeetingNotificationCategory + ".calendar"
+            : Self.smartMeetingNotificationCategory + ".quiet"
+
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized
+                    || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = message
+            content.sound = .default
+            content.categoryIdentifier = category
+            if let eventID {
+                content.userInfo = ["eventID": eventID]
+            }
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            ) { error in
+                if let error {
+                    DebugLogger.shared.log(.app, "Smart meeting notification failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func clearSmartMeetingNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.getPendingNotificationRequests { requests in
+            let identifiers = requests.map(\.identifier).filter { $0.hasPrefix("miniti.smart-meeting.") }
+            center.removePendingNotificationRequests(withIdentifiers: identifiers)
+        }
+        center.getDeliveredNotifications { notifications in
+            let identifiers = notifications
+                .map(\.request.identifier)
+                .filter { $0.hasPrefix("miniti.smart-meeting.") }
+            center.removeDeliveredNotifications(withIdentifiers: identifiers)
+        }
+    }
+
+    func handleSmartMeetingNotificationAction(
+        _ actionIdentifier: String,
+        eventID: String?
+    ) {
+        switch actionIdentifier {
+        case Self.smartMeetingEndAndStartAction:
+            if let eventID {
+                endAndStartCalendarMeeting(eventID: eventID)
+            }
+        case Self.smartMeetingEndAction:
+            endMeetingFromSmartPrompt()
+        case Self.smartMeetingKeepAction:
+            if let eventID {
+                dismissedAutoStartEventIDs.insert(eventID)
+                clearSmartMeetingPrompt()
+            } else {
+                keepRecordingFromSmartMeetingPrompt()
+            }
+        default:
+            break
+        }
+    }
 
     func requestQuestionNotificationPermission(completion: (@Sendable (Bool) -> Void)? = nil) {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, _ in

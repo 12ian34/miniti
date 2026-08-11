@@ -128,6 +128,7 @@ struct MainWindow: View {
     @State private var navigationSwipeProgress: CGFloat = 0
     @State private var isCompactSidebarMode = false
     @State private var isCompactSidebarPresented = false
+    @StateObject private var coachingOverviewStore = CoachingOverviewStore()
 
     private var selectedMeeting: Meeting? {
         guard let selectedMeetingID else { return nil }
@@ -232,7 +233,7 @@ struct MainWindow: View {
                         )
                         .id(meeting.id)
                     } else if showTraining {
-                        TrainingMainView(meetings: meetings) { meetingID in
+                        TrainingMainView(meetings: meetings, store: coachingOverviewStore) { meetingID in
                             coachingOriginMeetingID = meetingID
                             selectedMeetingID = meetingID
                         }
@@ -337,6 +338,9 @@ struct MainWindow: View {
         .onChange(of: appState.pendingOpenSavedMeetingID) { _, _ in
             refreshMeetings()
             selectPendingSavedMeetingIfNeeded()
+        }
+        .onChange(of: appState.finalizingInsightMeetingIDs) { _, _ in
+            coachingOverviewStore.refreshIfNeeded(meetings: meetings)
         }
         .onChange(of: meetings.map(\.id)) { _, _ in
             selectPendingSavedMeetingIfNeeded()
@@ -587,6 +591,7 @@ struct MainWindow: View {
         let descriptor = FetchDescriptor<Meeting>()
         guard let fetched = try? modelContext.fetch(descriptor) else { return }
         meetings = fetched.sorted { $0.startTime > $1.startTime }
+        coachingOverviewStore.refreshIfNeeded(meetings: meetings)
         navigationHistory.retainMeetings(Set(fetched.map(\.id)))
 
         if let selectedMeetingID, !fetched.contains(where: { $0.id == selectedMeetingID }) {
@@ -1203,23 +1208,7 @@ struct TerminalSidebar: View {
                 GradientDivider()
                 
                 HStack(spacing: 8) {
-                    if appState.appMode == .managed {
-                        // Managed mode status
-                        Circle()
-                            .fill(appState.isLimitReached ? ColorPalette.Status.limitReached : Theme.accent)
-                            .frame(width: 6, height: 6)
-                            .shadow(color: (appState.isLimitReached ? ColorPalette.Status.limitReached : Theme.accent).opacity(0.5), radius: 4)
-                        
-                        if let usage = appState.usageInfo {
-                            Text("free • \(usage.formattedRemaining) left")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(Theme.textDim)
-                        } else {
-                            Text("free")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(Theme.textDim)
-                        }
-                    } else {
+                    if appState.appMode != .managed {
                         // BYOK mode status
                         Circle()
                             .fill(appState.deepgramApiKey.isEmpty ? ColorPalette.Status.noApiKey : Theme.accent)

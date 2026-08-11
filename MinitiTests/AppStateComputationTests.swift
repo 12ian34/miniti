@@ -9,6 +9,38 @@ import Combine
 
 final class AppStateComputationTests: XCTestCase {
 
+    func testSettingsLegacyDestinationsMapIntoStableSidebarDestinations() {
+        XCTAssertEqual(SettingsDestination.fromLegacyID("general"), .general)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("apikeys"), .account)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("audio"), .recording)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("integrations"), .calendar)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("mcp"), .docsMCP)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("about"), .privacySupport)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("unknown"), .general)
+    }
+
+    func testSettingsSearchCatalogFiltersByQueryPlatformAndMode() throws {
+        let macBYOK = SettingsSearchCatalog.availableItems(on: .macOS, appMode: .byok)
+        let macManaged = SettingsSearchCatalog.availableItems(on: .macOS, appMode: .managed)
+        let iOSBYOK = SettingsSearchCatalog.availableItems(on: .iOS, appMode: .byok)
+
+        XCTAssertTrue(macBYOK.contains(where: { $0.id == "account.deepgramKey" }))
+        XCTAssertFalse(macManaged.contains(where: { $0.id == "account.deepgramKey" }))
+        XCTAssertFalse(iOSBYOK.contains(where: { $0.id == "integrations.attio" }))
+        XCTAssertFalse(SettingsDestination.available(on: .iOS).contains(.crm))
+        XCTAssertTrue(SettingsDestination.available(on: .macOS).contains(.crm))
+
+        let byokOnlyIDs = Set(macBYOK.map(\.id)).subtracting(macManaged.map(\.id))
+        XCTAssertEqual(byokOnlyIDs, ["account.deepgramKey", "account.openAIKey"])
+        XCTAssertTrue(Set(macManaged.map(\.destination)).isSuperset(of: [.ai, .calendar, .crm, .webhooks, .docsMCP]))
+
+        let smartMeeting = try XCTUnwrap(macManaged.first(where: { $0.id == "integrations.smartMeetings" }))
+        XCTAssertTrue(smartMeeting.matches("meeting handoff"))
+        XCTAssertFalse(smartMeeting.matches("markdown folder"))
+
+        XCTAssertEqual(Set(SettingsSearchCatalog.items.map(\.id)).count, SettingsSearchCatalog.items.count)
+    }
+
     func testDebugLogRingPreservesNewestEntriesInOrder() {
         var ring = DebugLogger.EntryRing(capacity: 3)
         for index in 0..<5 {
@@ -1412,6 +1444,124 @@ final class AppStateComputationTests: XCTestCase {
             AppState.evaluateAutoStop(transcriptGap: 360, audioGap: 5, autoStopMinutes: 5, calendarEventEnded: true),
             .stalledPipeline
         )
+    }
+
+    // MARK: - Smart meetings
+
+    func testSmartMeetingQuietThresholdsStayAheadOfConfiguredAutoStop() {
+        XCTAssertEqual(AppState.smartMeetingQuietThreshold(autoStopMinutes: 0), 300)
+        XCTAssertEqual(AppState.smartMeetingQuietThreshold(autoStopMinutes: 3), 120)
+        XCTAssertEqual(AppState.smartMeetingQuietThreshold(autoStopMinutes: 5), 180)
+        XCTAssertEqual(AppState.smartMeetingQuietThreshold(autoStopMinutes: 10), 300)
+        XCTAssertEqual(AppState.smartMeetingQuietThreshold(autoStopMinutes: 15), 300)
+    }
+
+    func testSmartQuietPromptRequiresTranscriptAndBothQuietSignals() {
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: false,
+            transcriptGap: 600,
+            audioGap: 600,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 600,
+            audioGap: 30,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+        XCTAssertTrue(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 300,
+            audioGap: 300,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+    }
+
+    func testSmartQuietPromptIsOncePerEpisodeAndHonoursSuppression() {
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 600,
+            audioGap: 600,
+            autoStopMinutes: 5,
+            crossedCommonBoundary: false,
+            alreadyPromptedThisQuietEpisode: true,
+            isSuppressed: false
+        ))
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 600,
+            audioGap: 600,
+            autoStopMinutes: 5,
+            crossedCommonBoundary: false,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: true
+        ))
+    }
+
+    func testSmartBoundaryRequiresEstablishedMeetingAndTwoMinutesQuiet() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let quietStart = Date(timeIntervalSince1970: 10 * 3600 + 28 * 60)
+        let afterBoundary = Date(timeIntervalSince1970: 10 * 3600 + 31 * 60)
+
+        XCTAssertFalse(AppState.quietPeriodCrossedCommonMeetingBoundary(
+            quietStartedAt: quietStart,
+            now: afterBoundary,
+            recordingDuration: 14 * 60,
+            calendar: calendar
+        ))
+        XCTAssertTrue(AppState.quietPeriodCrossedCommonMeetingBoundary(
+            quietStartedAt: quietStart,
+            now: afterBoundary,
+            recordingDuration: 20 * 60,
+            calendar: calendar
+        ))
+    }
+
+    func testAutomaticCalendarHandoffRequiresBothExistingAutomationsAndQuiet() {
+        let now = Date(timeIntervalSince1970: 1_000)
+        let currentEnd = now.addingTimeInterval(-60)
+        let nextStart = now.addingTimeInterval(10)
+
+        XCTAssertTrue(AppState.canAutomaticallyHandoffCalendarMeeting(
+            currentEventEnd: currentEnd,
+            nextEventStart: nextStart,
+            now: now,
+            transcriptGap: 120,
+            audioGap: 120,
+            autoStartEnabled: true,
+            calendarAutoStopEnabled: true,
+            eventsOverlap: false
+        ))
+        XCTAssertFalse(AppState.canAutomaticallyHandoffCalendarMeeting(
+            currentEventEnd: currentEnd,
+            nextEventStart: nextStart,
+            now: now,
+            transcriptGap: 120,
+            audioGap: 120,
+            autoStartEnabled: false,
+            calendarAutoStopEnabled: true,
+            eventsOverlap: false
+        ))
+        XCTAssertFalse(AppState.canAutomaticallyHandoffCalendarMeeting(
+            currentEventEnd: currentEnd,
+            nextEventStart: nextStart,
+            now: now,
+            transcriptGap: 120,
+            audioGap: 30,
+            autoStartEnabled: true,
+            calendarAutoStopEnabled: true,
+            eventsOverlap: false
+        ))
     }
 
     // MARK: - evaluateTranscriptHealth

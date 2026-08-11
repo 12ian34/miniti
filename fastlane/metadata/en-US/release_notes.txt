@@ -1,7 +1,9 @@
 NEW
 
-- A new Coaching overview highlights your strengths, tracks trends across recent meetings, and suggests one practical focus for your next meeting, backed by examples from your transcripts.
+- Smart meetings notices when a recording may have ended or another calendar meeting is approaching, then helps you save and start the right meeting.
+- The Coaching overview highlights strengths, tracks trends across recent meetings, and suggests one practical focus for the next meeting with examples from your transcripts.
 
 IMPROVED
 
-- Refreshed styling makes Coaching, insights, actions, and recording controls clearer and more consistent across the app.
+- Settings is reorganized into clear, searchable sections. Search results open the exact control.
+- Coaching opens immediately with its previous results and refreshes changed meetings in the background.

@@ -5,58 +5,233 @@ import AppKit
 import AVFoundation
 import UniformTypeIdentifiers
 
+struct SettingsSearchFocusActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+extension FocusedValues {
+    var settingsSearchFocusAction: (() -> Void)? {
+        get { self[SettingsSearchFocusActionKey.self] }
+        set { self[SettingsSearchFocusActionKey.self] = newValue }
+    }
+}
+
 struct SettingsView: View {
     @EnvironmentObject var appState: AppState
-    var body: some View {
-        TabView(selection: $appState.selectedSettingsTab) {
-            GeneralSettingsView()
-                .tabItem {
-                    Label("General", systemImage: "gear")
-                }
-                .tag("general")
+    @State private var searchText = ""
+    @State private var selectedDestination: SettingsDestination = .general
+    @FocusState private var isSearchFocused: Bool
 
-            LanguageSettingsView()
-                .tabItem {
-                    Label("Language", systemImage: "globe")
-                }
-                .tag("language")
-
-            AccountSettingsView()
-                .tabItem {
-                    Label("Account", systemImage: "person.crop.circle")
-                }
-                .tag("account")
-
-            if appState.appMode == .byok {
-                APISettingsView()
-                    .tabItem {
-                        Label("API Keys", systemImage: "key")
-                    }
-                    .tag("apikeys")
-            }
-
-            AudioSettingsView()
-                .tabItem {
-                    Label("Audio", systemImage: "waveform")
-                }
-                .tag("audio")
-
-            IntegrationsSettingsView()
-                .tabItem {
-                    Label("Integrations", systemImage: "arrow.triangle.branch")
-                }
-                .tag("integrations")
-
-            AboutSettingsView()
-                .tabItem {
-                    Label("About", systemImage: "info.circle")
-                }
-                .tag("about")
-        }
-        .frame(width: 500, height: 400)
-        
+    private var searchResults: [SettingsSearchItem] {
+        SettingsSearchCatalog.availableItems(on: .macOS, appMode: appState.appMode)
+            .filter { $0.matches(searchText) }
     }
-    
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                HStack(spacing: 7) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search settings", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .focused($isSearchFocused)
+                    if !searchText.isEmpty {
+                        Button {
+                            searchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear settings search")
+                    }
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 7))
+                .padding(10)
+
+                Divider()
+
+            List(selection: $selectedDestination) {
+                if searchText.isEmpty {
+                    Section("Settings") {
+                        destinationRow(.general)
+                        destinationRow(.recording)
+                        destinationRow(.language)
+                        destinationRow(.ai)
+                        destinationRow(.notifications)
+                    }
+
+                    Section("Account") {
+                        destinationRow(.account)
+                    }
+
+                    Section("Connections") {
+                        destinationRow(.calendar)
+                        destinationRow(.crm)
+                        destinationRow(.webhooks)
+                        destinationRow(.docsMCP)
+                    }
+
+                    Section("Files") {
+                        destinationRow(.dataExport)
+                    }
+
+                    Section("Support") {
+                        destinationRow(.privacySupport)
+                    }
+                } else if searchResults.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    Section("Results") {
+                        ForEach(searchResults) { item in
+                            Button {
+                                openSearchResult(item)
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(item.title)
+                                        .foregroundStyle(.primary)
+                                    Text(item.breadcrumb)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            }
+            .frame(width: 230)
+
+            Divider()
+
+            VStack(spacing: 0) {
+                HStack {
+                    Text(selectedDestination.title)
+                        .font(.title2.weight(.semibold))
+                    Spacer()
+                }
+                .padding(.horizontal, 20)
+                .frame(height: 52)
+
+                Divider()
+
+                settingsDetail(for: selectedDestination)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(minWidth: 800, idealWidth: 880, minHeight: 520, idealHeight: 600)
+        .focusedSceneValue(\.settingsSearchFocusAction) {
+            isSearchFocused = true
+        }
+        .onAppear {
+            selectedDestination = SettingsDestination.fromLegacyID(appState.selectedSettingsTab)
+        }
+        .onChange(of: selectedDestination) { _, destination in
+            guard appState.selectedSettingsTab != destination.rawValue else { return }
+            appState.selectedSettingsTab = destination.rawValue
+            appState.pendingSettingsSearchTarget = nil
+        }
+        .onChange(of: appState.selectedSettingsTab) { _, destinationID in
+            let destination = SettingsDestination.fromLegacyID(destinationID)
+            guard selectedDestination != destination else { return }
+            selectedDestination = destination
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
+            guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
+            Task { @MainActor in
+                await appState.handleGoogleOAuthCallback(callbackURL)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func destinationRow(_ destination: SettingsDestination) -> some View {
+        Label(destination.title, systemImage: destination.systemImage)
+            .tag(destination)
+    }
+
+    @ViewBuilder
+    private func settingsDetail(for destination: SettingsDestination) -> some View {
+        switch destination {
+        case .general:
+            GeneralSettingsView()
+        case .account:
+            AccountSettingsView()
+        case .recording:
+            AudioSettingsView()
+        case .language:
+            LanguageSettingsView()
+        case .ai:
+            AISettingsView()
+        case .notifications:
+            NotificationsSettingsView()
+        case .calendar:
+            IntegrationsSettingsView(content: .calendar)
+        case .crm:
+            IntegrationsSettingsView(content: .crm)
+        case .webhooks:
+            IntegrationsSettingsView(content: .webhooks)
+        case .docsMCP:
+            IntegrationsSettingsView(content: .docsMCP)
+        case .dataExport:
+            IntegrationsSettingsView(content: .dataExport)
+        case .privacySupport:
+            AboutSettingsView()
+        }
+    }
+
+    private func openSearchResult(_ item: SettingsSearchItem) {
+        selectedDestination = item.destination
+        appState.pendingSettingsSearchTarget = nil
+        DispatchQueue.main.async {
+            appState.pendingSettingsSearchTarget = item.id
+        }
+    }
+}
+
+private struct SettingsScrollTargetModifier: ViewModifier {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let destination: SettingsDestination
+
+    func body(content: Content) -> some View {
+        ScrollViewReader { proxy in
+            content
+                .onAppear {
+                    scrollIfNeeded(with: proxy, target: appState.pendingSettingsSearchTarget)
+                }
+                .onChange(of: appState.pendingSettingsSearchTarget) { _, target in
+                    scrollIfNeeded(with: proxy, target: target)
+                }
+        }
+    }
+
+    private func scrollIfNeeded(with proxy: ScrollViewProxy, target: String?) {
+        guard let target,
+              SettingsSearchCatalog.items.first(where: { $0.id == target })?.destination == destination else { return }
+        DispatchQueue.main.async {
+            if reduceMotion {
+                proxy.scrollTo(target, anchor: .center)
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+            }
+        }
+    }
+}
+
+private extension View {
+    func settingsSearchScrolling(for destination: SettingsDestination) -> some View {
+        modifier(SettingsScrollTargetModifier(destination: destination))
+    }
 }
 
 // MARK: - Account Settings (Mode + Usage)
@@ -75,6 +250,7 @@ struct AccountSettingsView: View {
                     Text(appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
                     Text("Bring Your Own Keys (unlimited)").tag(AppMode.byok.rawValue)
                 }
+                .id("account.apiMode")
                 .pickerStyle(.radioGroup)
                 .onChange(of: appState.appModeRaw) { _, newValue in
                     if newValue == AppMode.managed.rawValue {
@@ -122,6 +298,7 @@ struct AccountSettingsView: View {
                         showRestoreSheet = true
                     }
                 }
+                .id("account.subscription")
                 
                 Section("Usage") {
                     if let usage = appState.usageInfo {
@@ -151,7 +328,7 @@ struct AccountSettingsView: View {
                         }
                     } else if appState.isLoadingUsage {
                         HStack {
-                            Text("Loading usage...")
+                            Text("Loading usage…")
                             Spacer()
                             ProgressView()
                                 .controlSize(.small)
@@ -167,6 +344,11 @@ struct AccountSettingsView: View {
                         }
                     }
                 }
+                .id("account.usage")
+            }
+
+            if appState.appMode == .byok {
+                APISettingsView()
             }
             
             Section("Device") {
@@ -178,10 +360,12 @@ struct AccountSettingsView: View {
                         .font(.system(.caption, design: .default))
                         .textSelection(.enabled)
                 }
+                .id("account.deviceID")
             }
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: .account)
         .sheet(isPresented: $showRestoreSheet) {
             RestoreLicenseKeySheet(
                 licenseKeyInput: $licenseKeyInput,
@@ -232,6 +416,7 @@ struct LanguageSettingsView: View {
                         Text(lang.displayName).tag(lang.rawValue)
                     }
                 }
+                .id("language.default")
                 .onChange(of: appState.defaultLanguage) { _, newLang in
                     fillers = TrainingFillerPreferences.currentFillers(for: newLang)
                     validationMessage = nil
@@ -261,6 +446,8 @@ struct LanguageSettingsView: View {
                             Image(systemName: "pencil")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Edit \(term)")
+                        .help("Edit \(term)")
 
                         Button(role: .destructive) {
                             removeDictionaryTerm(at: index)
@@ -268,6 +455,8 @@ struct LanguageSettingsView: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Delete \(term)")
+                        .help("Delete \(term)")
                     }
                 }
 
@@ -297,6 +486,7 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .id("language.dictionary")
             
             Section("Filler Detection") {
                 Text("These words and phrases are tracked in Coaching across live and saved meetings.")
@@ -317,6 +507,8 @@ struct LanguageSettingsView: View {
                             Image(systemName: "pencil")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Edit \(filler)")
+                        .help("Edit \(filler)")
                         
                         Button(role: .destructive) {
                             removeFiller(at: index)
@@ -324,6 +516,8 @@ struct LanguageSettingsView: View {
                             Image(systemName: "trash")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("Delete \(filler)")
+                        .help("Delete \(filler)")
                     }
                 }
                 
@@ -346,6 +540,7 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            .id("language.fillers")
             
             Section("Actions") {
                 Button("Reset to defaults") {
@@ -361,9 +556,11 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: .language)
         .onAppear {
             fillers = TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage)
             dictionaryTerms = PersonalDictionaryPreferences.currentTerms()
@@ -479,6 +676,50 @@ struct LanguageSettingsView: View {
     }
 }
 
+struct AISettingsView: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Form {
+            Section("Models") {
+                HStack {
+                    Text("Transcription")
+                    Spacer()
+                    Text("Deepgram Nova-3")
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(alignment: .top) {
+                    Text("Insights")
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("gpt-5-mini-2025-08-07")
+                        if appState.appMode == .managed {
+                            Text("gpt-5.4-mini-2026-03-17")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.trailing)
+                }
+            }
+            .id("ai.models")
+
+            Section("Provider Mode") {
+                LabeledContent("Current mode", value: appState.appMode == .byok ? "Bring Your Own Keys" : "Managed by Miniti")
+                Text(appState.appMode == .byok
+                     ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, CRM, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
+                     : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .settingsSearchScrolling(for: .ai)
+    }
+}
+
 struct APISettingsView: View {
     @AppStorage("deepgramApiKey") private var deepgramApiKey: String = ""
     @AppStorage("openaiApiKey") private var openaiApiKey: String = ""
@@ -497,8 +738,8 @@ struct APISettingsView: View {
     }
     
     var body: some View {
-        Form {
-            Section {
+        Group {
+            Section("API Keys") {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 6) {
                         Text("Deepgram API Key")
@@ -512,6 +753,8 @@ struct APISettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("About Deepgram API keys")
+                        .help("About Deepgram API keys")
                         .popover(isPresented: $showDeepgramInfo, arrowEdge: .trailing) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("Deepgram")
@@ -572,6 +815,8 @@ struct APISettingsView: View {
                             Image(systemName: showDeepgramKey ? "eye.slash" : "eye")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel(showDeepgramKey ? "Hide Deepgram API key" : "Show Deepgram API key")
+                        .help(showDeepgramKey ? "Hide API key" : "Show API key")
                         
                         Button {
                             testDeepgramKey()
@@ -591,12 +836,13 @@ struct APISettingsView: View {
                             .foregroundStyle(.green)
                             .font(.caption)
                     } else if deepgramStatus == .failure {
-                        Label("Invalid API key", systemImage: "xmark.circle.fill")
+                        Label("API key is invalid. Check the key and try again.", systemImage: "xmark.circle.fill")
                             .foregroundStyle(.red)
                             .font(.caption)
                     }
                 }
                 .padding(.bottom, 8)
+                .id("account.deepgramKey")
                 
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(alignment: .center, spacing: 6) {
@@ -611,6 +857,8 @@ struct APISettingsView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel("About OpenAI API keys")
+                        .help("About OpenAI API keys")
                         .popover(isPresented: $showOpenAIInfo, arrowEdge: .trailing) {
                             VStack(alignment: .leading, spacing: 10) {
                                 Text("OpenAI")
@@ -671,6 +919,8 @@ struct APISettingsView: View {
                             Image(systemName: showOpenAIKey ? "eye.slash" : "eye")
                         }
                         .buttonStyle(.borderless)
+                        .accessibilityLabel(showOpenAIKey ? "Hide OpenAI API key" : "Show OpenAI API key")
+                        .help(showOpenAIKey ? "Hide API key" : "Show API key")
                         
                         Button {
                             testOpenAIKey()
@@ -690,15 +940,14 @@ struct APISettingsView: View {
                             .foregroundStyle(.green)
                             .font(.caption)
                     } else if openaiStatus == .failure {
-                        Label("Invalid API key", systemImage: "xmark.circle.fill")
+                        Label("API key is invalid. Check the key and try again.", systemImage: "xmark.circle.fill")
                             .foregroundStyle(.red)
                             .font(.caption)
                     }
                 }
+                .id("account.openAIKey")
             }
         }
-        .formStyle(.grouped)
-        .padding()
     }
     
     private func testDeepgramKey() {
@@ -749,6 +998,7 @@ struct APISettingsView: View {
 }
 
 struct AudioSettingsView: View {
+    @EnvironmentObject private var appState: AppState
     @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") private var captureMicrophone: Bool = true
     
@@ -756,11 +1006,13 @@ struct AudioSettingsView: View {
         Form {
             Section("Audio Sources") {
                 Toggle("Capture Microphone", isOn: $captureMicrophone)
+                    .id("recording.microphone")
                 Text("Record audio from your microphone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 
                 Toggle("Capture System Audio", isOn: $captureSystemAudio)
+                    .id("recording.systemAudio")
                 Text("Record audio from other applications (e.g., video calls)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -785,9 +1037,31 @@ struct AudioSettingsView: View {
                     NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
                 }
             }
+            .id("recording.permissions")
+
+            Section("Recording") {
+                Picker("Auto-stop after silence", selection: $appState.autoStopMinutes) {
+                    Text("Off").tag(0)
+                    Text("3 minutes").tag(3)
+                    Text("5 minutes").tag(5)
+                    Text("10 minutes").tag(10)
+                    Text("15 minutes").tag(15)
+                }
+                .id("recording.autoStop")
+                Text("Automatically stop recording when no speech is detected for the selected duration.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
+                    .id("recording.autoNameSpeakers")
+                Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: .recording)
     }
     
     private func checkMicrophonePermission() -> Bool {
@@ -809,15 +1083,14 @@ struct PermissionStatusBadge: View {
 }
 
 struct GeneralSettingsView: View {
-    @EnvironmentObject var appState: AppState
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
-    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
 
     var body: some View {
         Form {
             Section("Startup") {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
+                    .id("general.launchAtLogin")
                     .onChange(of: launchAtLogin) { _, newValue in
                         setLaunchAtLogin(newValue)
                     }
@@ -825,6 +1098,7 @@ struct GeneralSettingsView: View {
 
             Section("Appearance") {
                 Toggle("Show in Menu Bar", isOn: $showInMenuBar)
+                    .id("general.showInMenuBar")
                 Text(showInMenuBar
                      ? "Miniti icon is shown in the menu bar."
                      : "Turn this back on to restore the Miniti menu bar icon.")
@@ -832,81 +1106,12 @@ struct GeneralSettingsView: View {
                     .foregroundStyle(.secondary)
 
                 InterfaceScaleSlider()
-            }
-
-            Section("Recording") {
-                Picker("Auto-stop after silence", selection: $appState.autoStopMinutes) {
-                    Text("Off").tag(0)
-                    Text("3 minutes").tag(3)
-                    Text("5 minutes").tag(5)
-                    Text("10 minutes").tag(10)
-                    Text("15 minutes").tag(15)
-                }
-                Text("Automatically stop recording when no speech is detected for the selected duration.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
-                Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Nudges") {
-                Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
-                    .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
-                        if newValue {
-                            appState.requestQuestionNotificationPermission()
-                        }
-                    }
-                Text("Sends a system notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Nudge me when I'm monologuing", isOn: $appState.notifyOnMonologue)
-                    .onChange(of: appState.notifyOnMonologue) { _, newValue in
-                        if newValue {
-                            appState.requestNudgeNotificationPermission()
-                        }
-                    }
-                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Only fires when the app is in the background, limited to one every 3 minutes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Nudge me when I'm using too many fillers", isOn: $appState.notifyOnHighFillerRate)
-                    .onChange(of: appState.notifyOnHighFillerRate) { _, newValue in
-                        if newValue {
-                            appState.requestNudgeNotificationPermission()
-                        }
-                    }
-                Text("Alerts you when filler words like \"um\" and \"uh\" spike in your last minute of speaking. Uses your configured filler list per language. Only fires when the app is in the background, limited to one every 3 minutes.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Remind me 1 minute before upcoming meetings", isOn: $appState.notifyOnUpcomingMeeting)
-                    .onChange(of: appState.notifyOnUpcomingMeeting) { _, newValue in
-                        if newValue {
-                            appState.requestNudgeNotificationPermission { _ in
-                                Task { @MainActor in appState.rescheduleMeetingReminders() }
-                            }
-                        } else {
-                            appState.rescheduleMeetingReminders()
-                        }
-                    }
-                Text("Fires a system notification about 60 seconds before each upcoming Google Calendar event starts. Requires Google Calendar to be connected. In addition to Calendar's own alerts.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section("Diagnostics") {
-                Toggle("Share Diagnostics", isOn: $shareDiagnostics)
-                Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .id("general.interfaceScale")
             }
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: .general)
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {
@@ -922,7 +1127,89 @@ struct GeneralSettingsView: View {
     }
 }
 
+struct NotificationsSettingsView: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Form {
+            Section("Meeting Nudges") {
+                Toggle("Notify me about incisive questions", isOn: $appState.notifyOnIncisiveQuestions)
+                    .id("notifications.questions")
+                    .onChange(of: appState.notifyOnIncisiveQuestions) { _, newValue in
+                        if newValue {
+                            appState.requestQuestionNotificationPermission()
+                        }
+                    }
+                Text("Sends a system notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Nudge me when I'm monologuing", isOn: $appState.notifyOnMonologue)
+                    .id("notifications.monologue")
+                    .onChange(of: appState.notifyOnMonologue) { _, newValue in
+                        if newValue {
+                            appState.requestNudgeNotificationPermission()
+                        }
+                    }
+                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Only fires when the app is in the background, limited to one every 3 minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Nudge me when I'm using too many fillers", isOn: $appState.notifyOnHighFillerRate)
+                    .id("notifications.fillers")
+                    .onChange(of: appState.notifyOnHighFillerRate) { _, newValue in
+                        if newValue {
+                            appState.requestNudgeNotificationPermission()
+                        }
+                    }
+                Text("Alerts you when filler words like \"um\" and \"uh\" spike in your last minute of speaking. Uses your configured filler list per language. Only fires when the app is in the background, limited to one every 3 minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Calendar Reminders") {
+                Toggle("Remind me 1 minute before upcoming meetings", isOn: $appState.notifyOnUpcomingMeeting)
+                    .id("notifications.upcomingMeeting")
+                    .onChange(of: appState.notifyOnUpcomingMeeting) { _, newValue in
+                        if newValue {
+                            appState.requestNudgeNotificationPermission { _ in
+                                Task { @MainActor in appState.rescheduleMeetingReminders() }
+                            }
+                        } else {
+                            appState.rescheduleMeetingReminders()
+                        }
+                    }
+                Text("Fires a system notification about 60 seconds before each upcoming Google Calendar event starts. Requires Google Calendar to be connected. In addition to Calendar's own alerts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .settingsSearchScrolling(for: .notifications)
+    }
+}
+
+enum IntegrationsSettingsContent: Equatable {
+    case calendar
+    case crm
+    case webhooks
+    case docsMCP
+    case dataExport
+
+    var destination: SettingsDestination {
+        switch self {
+        case .calendar: return .calendar
+        case .crm: return .crm
+        case .webhooks: return .webhooks
+        case .docsMCP: return .docsMCP
+        case .dataExport: return .dataExport
+        }
+    }
+}
+
 struct IntegrationsSettingsView: View {
+    let content: IntegrationsSettingsContent
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
@@ -939,6 +1226,7 @@ struct IntegrationsSettingsView: View {
 
     var body: some View {
         Form {
+            if content == .dataExport {
             Section("Import from Granola") {
                 Text("Generate a CSV from Granola, then import it into Miniti. Imported meetings keep their Granola provenance, and importing the same export again skips duplicates.")
                     .font(.caption)
@@ -980,6 +1268,7 @@ struct IntegrationsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .id("data.granola")
 
             Section("Markdown Export") {
                 HStack {
@@ -993,8 +1282,10 @@ struct IntegrationsSettingsView: View {
                         chooseExportFolder()
                     }
                 }
+                .id("data.markdownFolder")
 
                 Toggle("Auto-export meetings as markdown", isOn: $autoExportMarkdown)
+                    .id("data.autoExport")
                 Text("Automatically saves each meeting as a markdown file. Works with Obsidian, Cursor, and other tools.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1014,7 +1305,7 @@ struct IntegrationsSettingsView: View {
                             HStack(spacing: 6) {
                                 ProgressView()
                                     .controlSize(.small)
-                                Text("exporting...")
+                                Text("exporting…")
                             }
                         } else if let count = exportAllCount {
                             Text("exported \(count) meeting\(count == 1 ? "" : "s")")
@@ -1024,11 +1315,23 @@ struct IntegrationsSettingsView: View {
                         }
                     }
                     .disabled(isExportingAll)
+                    .id("data.exportAll")
                 }
             }
+            }
 
-            Section("Google Calendar") {
+            if content == .calendar {
+            Section("Calendar & Meeting Automation") {
+                Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                    .id("integrations.smartMeetings")
+                Text("Notices when a meeting may have ended or another meeting is approaching, then helps you finish, save, and start the right recording. Works with or without Google Calendar.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
+                    .font(.caption)
+
                 Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                    .id("integrations.googleCalendar")
                 Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1074,32 +1377,24 @@ struct IntegrationsSettingsView: View {
                     
                     if appState.isGoogleCalendarConnected {
                         Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
+                            .id("integrations.autoStart")
                         Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         
                         Toggle("Auto-stop after meeting ends", isOn: $appState.autoStopFromCalendar)
+                            .id("integrations.calendarAutoStop")
                         Text("Automatically stop recording when the calendar event ends and no one is speaking.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     
-                    if appState.isGoogleCalendarConnected && attioExportEnabled {
-                        Toggle("Auto-sync meetings to Attio", isOn: $appState.autoAttioSync)
-                        Text("Automatically match attendee domains to Attio records and send meeting data after saving.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    if appState.isGoogleCalendarConnected && twentyExportEnabled {
-                        Toggle("Auto-sync meetings to Twenty", isOn: $appState.autoTwentySync)
-                        Text("Automatically match attendee domains to Twenty companies and send meeting data after saving.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
 
+            }
+
+            if content == .crm {
             Section("Attio CRM") {
                 Toggle("Enable \"Send to Attio\"", isOn: $attioExportEnabled)
                 Text(attioExportEnabled
@@ -1107,7 +1402,17 @@ struct IntegrationsSettingsView: View {
                      : "\"Send to Attio\" is hidden until you enable it here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if attioExportEnabled {
+                    Toggle("Auto-sync calendar meetings to Attio", isOn: $appState.autoAttioSync)
+                        .disabled(!appState.isGoogleCalendarConnected)
+                    Text(appState.isGoogleCalendarConnected
+                         ? "Automatically match attendee domains to Attio records and send meeting data after saving."
+                         : "Connect Google Calendar under Calendar & Meetings to enable automatic Attio sync.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
+            .id("integrations.attio")
 
             Section("Twenty CRM") {
                 Toggle("Enable \"Send to Twenty\"", isOn: $twentyExportEnabled)
@@ -1116,11 +1421,24 @@ struct IntegrationsSettingsView: View {
                      : "\"Send to Twenty\" is hidden until you enable it here.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if twentyExportEnabled {
+                    Toggle("Auto-sync calendar meetings to Twenty", isOn: $appState.autoTwentySync)
+                        .disabled(!appState.isGoogleCalendarConnected)
+                    Text(appState.isGoogleCalendarConnected
+                         ? "Automatically match attendee domains to Twenty companies and send meeting data after saving."
+                         : "Connect Google Calendar under Calendar & Meetings to enable automatic Twenty sync.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .id("integrations.twenty")
             }
 
+            if content == .webhooks {
             Section("Webhooks") {
                 TextField("Webhook URL", text: $appState.webhookURL)
                     .textFieldStyle(.roundedBorder)
+                    .id("integrations.webhook")
                 if !appState.webhookURL.isEmpty {
                     if let url = URL(string: appState.webhookURL),
                        let scheme = url.scheme?.lowercased(),
@@ -1139,11 +1457,16 @@ struct IntegrationsSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            }
 
+            if content == .docsMCP {
             DocsMCPSettingsSection()
+                .id("integrations.docsMCP")
+            }
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: content.destination)
         .fileImporter(
             isPresented: $isGranolaImporterPresented,
             allowedContentTypes: [.commaSeparatedText, .plainText]
@@ -1153,12 +1476,6 @@ struct IntegrationsSettingsView: View {
             } else if case .failure(let error) = result {
                 granolaImportFailed = true
                 granolaImportMessage = error.localizedDescription
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .minitiGoogleOAuthCallback)) { notification in
-            guard let callbackURL = notification.userInfo?["url"] as? URL else { return }
-            Task { @MainActor in
-                await appState.handleGoogleOAuthCallback(callbackURL)
             }
         }
     }
@@ -1290,12 +1607,21 @@ private struct DocsMCPSettingsSection: View {
 }
 
 struct AboutSettingsView: View {
+    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
     @State private var versionTapCount = 0
     @State private var lastVersionTap: Date?
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
+            Section("Privacy") {
+                Toggle("Share Diagnostics", isOn: $shareDiagnostics)
+                    .id("privacy.diagnostics")
+                Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             Section("About") {
                 HStack {
                     Text("Version")
@@ -1306,6 +1632,7 @@ struct AboutSettingsView: View {
                             handleVersionTap()
                         }
                 }
+                .id("privacy.version")
                 Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
                         Text("Website")
@@ -1324,6 +1651,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .id("privacy.docs")
                 Link(destination: URL(string: "https://miniti.app/roadmap")!) {
                     HStack {
                         Text("Roadmap")
@@ -1351,6 +1679,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .id("privacy.support")
                 Link(destination: URL(string: "https://miniti.app/privacy")!) {
                     HStack {
                         Text("Privacy")
@@ -1360,6 +1689,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                .id("privacy.legal")
                 Link(destination: URL(string: "https://miniti.app/terms")!) {
                     HStack {
                         Text("Terms")
@@ -1373,6 +1703,7 @@ struct AboutSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
+        .settingsSearchScrolling(for: .privacySupport)
     }
 
     private func handleVersionTap() {

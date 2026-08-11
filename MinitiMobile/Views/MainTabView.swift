@@ -12,6 +12,7 @@ struct MainTabView: View {
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var selectedTab: MobileTab = .record
     @State private var coachingPath: [UUID] = []
+    @StateObject private var coachingOverviewStore = CoachingOverviewStore()
 
     enum MobileTab: String, CaseIterable, Identifiable {
         case record = "Record"
@@ -35,15 +36,23 @@ struct MainTabView: View {
             .onAppear {
                 appState.modelContext = modelContext
                 appState.resumeInterruptedMeeting()
+                coachingOverviewStore.refreshIfNeeded(meetings: meetings)
+            }
+            .onChange(of: meetings.count) { _, _ in
+                coachingOverviewStore.refreshIfNeeded(meetings: meetings)
+            }
+            .onChange(of: meetings.map(\.transcriptRevision)) { _, _ in
+                coachingOverviewStore.refreshIfNeeded(meetings: meetings)
+            }
+            .onChange(of: appState.finalizingInsightMeetingIDs) { _, _ in
+                coachingOverviewStore.refreshIfNeeded(meetings: meetings)
             }
             .onReceive(NotificationCenter.default.publisher(for: .minitiOpenActiveMeeting)) { _ in
                 selectedTab = .record
             }
             .sheet(isPresented: $appState.showSettings) {
-                NavigationStack {
-                    SettingsView_iOS()
-                }
-                .preferredColorScheme(.dark)
+                SettingsView_iOS()
+                    .preferredColorScheme(.dark)
             }
     }
 
@@ -128,7 +137,7 @@ struct MainTabView: View {
             MeetingView_iOS()
         case .training:
             NavigationStack(path: $coachingPath) {
-                TrainingMainView(meetings: meetings) { meetingID in
+                TrainingMainView(meetings: meetings, store: coachingOverviewStore) { meetingID in
                     coachingPath.append(meetingID)
                 }
                 .navigationDestination(for: UUID.self) { meetingID in
