@@ -142,9 +142,9 @@ final class ColorPaletteTests: XCTestCase {
         XCTAssertEqual(MinitiDesignSystem.CoachingLayout.compactColumnMaxWidth, 480)
         XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsColumnMaxWidth, 720)
         #if IOS_TEST_TARGET
-        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 64)
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 108)
         #else
-        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 76)
+        XCTAssertEqual(MinitiDesignSystem.CoachingLayout.statsChartHeight, 116)
         #endif
     }
 

@@ -94,6 +94,13 @@ struct MainWindowNavigationSwipePolicy {
         return horizontalTravel >= MinitiDesignSystem.NavigationGesture.commitDistance
             && horizontalTravel >= verticalTravel * MinitiDesignSystem.NavigationGesture.horizontalDominanceRatio
     }
+
+    static func allowsGestureWhileEditing(
+        isEditingText: Bool,
+        isMeetingSearchFocused: Bool
+    ) -> Bool {
+        !isEditingText || isMeetingSearchFocused
+    }
 }
 
 private extension MainNavigationDestination {
@@ -120,6 +127,8 @@ struct MainWindow: View {
     @State private var debouncedSearchText = ""
     @State private var isSearchActive = false
     @State private var searchFocusRequest = 0
+    @State private var searchBlurRequest = 0
+    @State private var isMeetingSearchFocused = false
     @State private var showTraining = false
     @State private var coachingOriginMeetingID: UUID?
     @State private var searchDebounceTask: Task<Void, Never>?
@@ -305,6 +314,7 @@ struct MainWindow: View {
             MainWindowNavigationSwipeObserver(
                 canGoBack: canNavigateBack,
                 canGoForward: canNavigateForward,
+                isMeetingSearchFocused: isMeetingSearchFocused,
                 onProgress: updateNavigationSwipeProgress,
                 onBack: navigateBack,
                 onForward: navigateForward
@@ -346,6 +356,7 @@ struct MainWindow: View {
             selectPendingSavedMeetingIfNeeded()
         }
         .onChange(of: selectedMeetingID) { _, newValue in
+            dismissMeetingSearchFocus()
             isCompactSidebarPresented = false
             if newValue != coachingOriginMeetingID {
                 coachingOriginMeetingID = nil
@@ -353,6 +364,7 @@ struct MainWindow: View {
             recordNavigationDestinationChange()
         }
         .onChange(of: showTraining) { _, _ in
+            dismissMeetingSearchFocus()
             isCompactSidebarPresented = false
             recordNavigationDestinationChange()
         }
@@ -415,8 +427,12 @@ struct MainWindow: View {
             ),
             historyCollapsed: $historyCollapsed,
             searchFocusRequest: searchFocusRequest,
+            searchBlurRequest: searchBlurRequest,
             searchSnippets: searchSnippets,
             searchMatchCounts: searchMatchCounts,
+            onSearchFocusChange: { focused in
+                isMeetingSearchFocused = focused
+            },
             onDeleteMeeting: { meeting in
                 deleteMeeting(meeting)
             },
@@ -512,12 +528,20 @@ struct MainWindow: View {
 
     private func navigateBack() {
         guard let destination = navigationHistory.goBack() else { return }
+        dismissMeetingSearchFocus()
         applyNavigationDestination(destination)
     }
 
     private func navigateForward() {
         guard let destination = navigationHistory.goForward() else { return }
+        dismissMeetingSearchFocus()
         applyNavigationDestination(destination)
+    }
+
+    private func dismissMeetingSearchFocus() {
+        guard isMeetingSearchFocused else { return }
+        isMeetingSearchFocused = false
+        searchBlurRequest += 1
     }
 
     private func updateNavigationSwipeProgress(_ progress: CGFloat) {
@@ -620,6 +644,7 @@ struct MainWindow: View {
 private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
     let canGoBack: Bool
     let canGoForward: Bool
+    let isMeetingSearchFocused: Bool
     let onProgress: (CGFloat) -> Void
     let onBack: () -> Void
     let onForward: () -> Void
@@ -628,6 +653,7 @@ private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
         let view = SwipePassthroughView()
         view.canGoBack = canGoBack
         view.canGoForward = canGoForward
+        view.isMeetingSearchFocused = isMeetingSearchFocused
         view.onProgress = onProgress
         view.onBack = onBack
         view.onForward = onForward
@@ -638,6 +664,7 @@ private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
         guard let view = nsView as? SwipePassthroughView else { return }
         view.canGoBack = canGoBack
         view.canGoForward = canGoForward
+        view.isMeetingSearchFocused = isMeetingSearchFocused
         view.onProgress = onProgress
         view.onBack = onBack
         view.onForward = onForward
@@ -646,6 +673,7 @@ private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
     private final class SwipePassthroughView: NSView {
         var canGoBack = false
         var canGoForward = false
+        var isMeetingSearchFocused = false
         var onProgress: ((CGFloat) -> Void)?
         var onBack: (() -> Void)?
         var onForward: (() -> Void)?
@@ -687,13 +715,17 @@ private struct MainWindowNavigationSwipeObserver: NSViewRepresentable {
         }
 
         private func handleScrollEvent(_ event: NSEvent) {
+            let isEditingText = isEditingText(in: event.window)
             guard event.window?.attachedSheet == nil,
                   event.window?.sheetParent == nil,
                   event.hasPreciseScrollingDeltas,
                   event.momentumPhase.isEmpty,
                   !event.phase.isEmpty,
                   event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
-                  !isEditingText(in: event.window) else {
+                  MainWindowNavigationSwipePolicy.allowsGestureWhileEditing(
+                      isEditingText: isEditingText,
+                      isMeetingSearchFocused: isMeetingSearchFocused
+                  ) else {
                 resetGesture()
                 return
             }
@@ -834,11 +866,14 @@ struct TerminalSidebar: View {
     @Binding var showTraining: Bool
     @Binding var historyCollapsed: Bool
     var searchFocusRequest: Int = 0
+    var searchBlurRequest: Int = 0
     let searchSnippets: [UUID: String]
     let searchMatchCounts: [UUID: Int]
+    let onSearchFocusChange: (Bool) -> Void
     let onDeleteMeeting: (Meeting) -> Void
     let onTogglePin: (Meeting) -> Void
     @State private var collapsedStatusPulse = false
+    @State private var searchFocusGeneration = 0
     @FocusState private var searchFieldFocused: Bool
 
     private var historicalMeetings: [Meeting] {
@@ -1139,20 +1174,26 @@ struct TerminalSidebar: View {
                     .padding(.horizontal, 10)
                     .onChange(of: isSearchActive) { _, active in
                         if active {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                                searchFieldFocused = true
-                            }
+                            scheduleSearchFocus()
                         } else {
-                            searchFieldFocused = false
+                            cancelPendingSearchFocus()
                         }
                     }
                     .onChange(of: searchFocusRequest) { _, _ in
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                            searchFieldFocused = true
-                        }
+                        scheduleSearchFocus()
+                    }
+                    .onChange(of: searchBlurRequest) { _, _ in
+                        cancelPendingSearchFocus()
                     }
                     .onChange(of: searchFieldFocused) { _, focused in
+                        onSearchFocusChange(focused)
                         if focused { isSearchActive = true }
+                    }
+                    .onDisappear {
+                        searchFocusGeneration += 1
+                        if searchFieldFocused {
+                            onSearchFocusChange(false)
+                        }
                     }
 
                     if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
@@ -1274,6 +1315,20 @@ struct TerminalSidebar: View {
         withAnimation(.easeInOut(duration: 0.65).repeatForever(autoreverses: true)) {
             collapsedStatusPulse = true
         }
+    }
+
+    private func scheduleSearchFocus() {
+        searchFocusGeneration += 1
+        let generation = searchFocusGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            guard searchFocusGeneration == generation else { return }
+            searchFieldFocused = true
+        }
+    }
+
+    private func cancelPendingSearchFocus() {
+        searchFocusGeneration += 1
+        searchFieldFocused = false
     }
 }
 
@@ -2854,7 +2909,7 @@ enum CRMProvider: String, Sendable {
         meetingPayload: AttioMeetingPayload,
         targetObject: String,
         targetRecordID: String,
-        createTasks: Bool
+        tasks: [CRMTaskPayload]
     ) async throws -> MinitiAPIService.AttioSendResponse {
         switch self {
         case .attio:
@@ -2863,7 +2918,8 @@ enum CRMProvider: String, Sendable {
                 meetingPayload: meetingPayload,
                 targetObject: targetObject,
                 targetRecordID: targetRecordID,
-                createTasksFromActionItems: createTasks
+                createTasksFromActionItems: false,
+                tasks: tasks
             )
         case .twenty:
             return try await api.twentySendMeeting(
@@ -2871,8 +2927,21 @@ enum CRMProvider: String, Sendable {
                 meetingPayload: meetingPayload,
                 targetObject: targetObject,
                 targetRecordID: targetRecordID,
-                createTasksFromActionItems: createTasks
+                createTasksFromActionItems: false,
+                tasks: tasks
             )
+        }
+    }
+
+    func taskPayloads(from actionItems: [String], now: Date = Date()) -> [CRMTaskPayload] {
+        let deadline = self == .attio ? CRMTaskPayload.localISODate(for: now) : nil
+        return CRMTaskPayload.fromActionItems(actionItems, deadlineAt: deadline)
+    }
+
+    var taskAssigneePreview: String {
+        switch self {
+        case .attio: return "connected user; unassigned if unavailable"
+        case .twenty: return "workspace default"
         }
     }
 }
@@ -2953,11 +3022,16 @@ struct CRMSendSheet: View {
     @State private var sendError: String?
     @State private var localEscapeMonitor: Any?
     @State private var deviceId: String?
+    @State private var taskPreviews: [CRMTaskPayload]
+    @State private var selectedTaskContents: Set<String>
 
     init(meeting: Meeting, provider: CRMProvider) {
         self.meeting = meeting
         self.provider = provider
+        let tasks = provider.taskPayloads(from: meeting.actionItems)
         _selectedScope = State(initialValue: provider.defaultSearchScope)
+        _taskPreviews = State(initialValue: tasks)
+        _selectedTaskContents = State(initialValue: Set(tasks.map(\.content)))
     }
 
     var body: some View {
@@ -2965,15 +3039,27 @@ struct CRMSendSheet: View {
             header
             Divider().overlay(Color(hex: "1C1C1F"))
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    connectionSection
-                    searchSection
-                    payloadPreviewSection
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        connectionSection
+                        searchSection
+                        payloadPreviewSection
+                        if createTasksFromActionItems, !taskPreviews.isEmpty {
+                            taskPreviewSection
+                                .id("crm-task-preview")
+                        }
+                    }
+                    .padding(16)
                 }
-                .padding(16)
+                .background(Color(hex: "09090B"))
+                .onChange(of: createTasksFromActionItems) { _, enabled in
+                    guard enabled, !taskPreviews.isEmpty else { return }
+                    DispatchQueue.main.async {
+                        proxy.scrollTo("crm-task-preview", anchor: .bottom)
+                    }
+                }
             }
-            .background(Color(hex: "09090B"))
 
             Divider().overlay(ColorPalette.Border.primary)
             sendSection
@@ -3308,6 +3394,86 @@ struct CRMSendSheet: View {
         )
     }
 
+    private var taskPreviewSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                sectionTitle("tasks to create")
+                Text("\(selectedTaskPayloads.count) of \(taskPreviews.count) selected")
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.meta)
+                Spacer()
+                Button {
+                    selectedTaskContents = Set(taskPreviews.map(\.content))
+                } label: {
+                    MinitiControlLabel(role: .secondary, height: 26, horizontalPadding: 8) {
+                        Text("select all")
+                            .font(.system(size: 10, weight: .semibold, design: .default))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedTaskPayloads.count == taskPreviews.count)
+
+                Button {
+                    selectedTaskContents.removeAll()
+                } label: {
+                    MinitiControlLabel(role: .secondary, height: 26, horizontalPadding: 8) {
+                        Text("clear")
+                            .font(.system(size: 10, weight: .semibold, design: .default))
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedTaskContents.isEmpty)
+            }
+
+            Text("Only checked tasks will be created. The meeting note still includes every action item.")
+                .font(.system(size: 10, weight: .regular, design: .default))
+                .foregroundStyle(ColorPalette.Text.meta)
+                .fixedSize(horizontal: false, vertical: true)
+
+            VStack(spacing: 8) {
+                ForEach(taskPreviews, id: \.content) { task in
+                    Toggle(isOn: taskSelectionBinding(for: task.content)) {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(task.content)
+                                .font(.system(size: 11, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Text.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 12) {
+                                    taskMetadataLabel(
+                                        icon: "calendar",
+                                        text: task.deadlineAt.map { "deadline \($0)" } ?? "no deadline"
+                                    )
+                                    taskMetadataLabel(icon: "circle", text: "status to do")
+                                }
+                                taskMetadataLabel(icon: "person", text: provider.taskAssigneePreview)
+                                taskMetadataLabel(icon: "link", text: linkedRecordPreview)
+                            }
+                        }
+                    }
+                    .toggleStyle(.checkbox)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(ColorPalette.Background.primary)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(ColorPalette.Border.primary, lineWidth: 1)
+                            )
+                    )
+                    .accessibilityHint("Uncheck to exclude this task from the CRM export")
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(ColorPalette.Background.panel)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(ColorPalette.Border.primary, lineWidth: 1))
+        )
+    }
+
     private var sendSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 16) {
@@ -3322,7 +3488,6 @@ struct CRMSendSheet: View {
                     }
                 }
                 .toggleStyle(.switch)
-                .focusable(false)
                 .disabled(normalizedActionItems.isEmpty)
 
                 Spacer(minLength: 12)
@@ -3434,6 +3599,26 @@ struct CRMSendSheet: View {
         }
     }
 
+    private func taskMetadataLabel(icon: String, text: String) -> some View {
+        Label(text, systemImage: icon)
+            .font(.system(size: 9, weight: .regular, design: .default))
+            .foregroundStyle(ColorPalette.Text.meta)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func taskSelectionBinding(for content: String) -> Binding<Bool> {
+        Binding(
+            get: { selectedTaskContents.contains(content) },
+            set: { isSelected in
+                if isSelected {
+                    selectedTaskContents.insert(content)
+                } else {
+                    selectedTaskContents.remove(content)
+                }
+            }
+        )
+    }
+
     private func color(for objectSlug: String) -> Color {
         switch objectSlug.lowercased() {
         case "people": return Color(hex: "58A6FF")
@@ -3478,7 +3663,10 @@ struct CRMSendSheet: View {
 
     private var actionItemToggleDetail: String {
         guard !normalizedActionItems.isEmpty else { return "no action items in this meeting" }
-        return "\(normalizedActionItems.count) action item\(normalizedActionItems.count == 1 ? "" : "s")"
+        guard createTasksFromActionItems else {
+            return "\(normalizedActionItems.count) available"
+        }
+        return "\(selectedTaskPayloads.count) of \(taskPreviews.count) selected"
     }
 
     private var sendIsEnabled: Bool {
@@ -3505,6 +3693,10 @@ struct CRMSendSheet: View {
 
     private var normalizedActionItems: [String] {
         AttioMeetingPayload.normalizedActionItems(from: meeting.actionItems)
+    }
+
+    private var selectedTaskPayloads: [CRMTaskPayload] {
+        taskPreviews.filter { selectedTaskContents.contains($0.content) }
     }
 
     private func refreshStatus() async {
@@ -3643,15 +3835,15 @@ struct CRMSendSheet: View {
         defer { isSending = false }
         do {
             let meetingPayload = AttioMeetingPayload.from(meeting: meeting)
-            let shouldCreateTasks = createTasksFromActionItems && !meetingPayload.actionItems.isEmpty
+            let tasksToCreate = createTasksFromActionItems ? selectedTaskPayloads : []
             DebugLogger.shared.log(
                 .app,
                 "[\(provider.rawValue)] send start object=\(selectedRecordObject) record=\(selectedRecordID) " +
-                "notesPayload actionItems=\(meetingPayload.actionItems.count) createTasks=\(shouldCreateTasks)"
+                "notesPayload actionItems=\(meetingPayload.actionItems.count) selectedTasks=\(tasksToCreate.count)"
             )
-            if shouldCreateTasks {
-                let previewItems = meetingPayload.actionItems.prefix(5).joined(separator: " | ")
-                DebugLogger.shared.log(.app, "[\(provider.rawValue)] normalized action items: \(previewItems)")
+            if !tasksToCreate.isEmpty {
+                let previewItems = tasksToCreate.prefix(5).map(\.content).joined(separator: " | ")
+                DebugLogger.shared.log(.app, "[\(provider.rawValue)] selected tasks: \(previewItems)")
             }
             let response = try await provider.send(
                 using: api,
@@ -3659,12 +3851,12 @@ struct CRMSendSheet: View {
                 meetingPayload: meetingPayload,
                 targetObject: selectedRecordObject,
                 targetRecordID: selectedRecordID,
-                createTasks: shouldCreateTasks
+                tasks: tasksToCreate
             )
             if response.success {
                 let notePart = "\(response.noteIDs.count) note\(response.noteIDs.count == 1 ? "" : "s")"
                 let createdTaskCount = response.taskCount ?? response.taskIDs.count
-                let taskPart = shouldCreateTasks
+                let taskPart = !tasksToCreate.isEmpty
                     ? ", \(createdTaskCount) task\(createdTaskCount == 1 ? "" : "s")"
                     : ""
                 let warningPart: String
@@ -3674,12 +3866,12 @@ struct CRMSendSheet: View {
                         "[\(provider.rawValue)] task creation skipped error='\(taskError)' createdTasks=\(createdTaskCount) noteIDs=\(response.noteIDs.count)"
                     )
                     warningPart = " · task creation skipped: \(taskError)"
-                } else if shouldCreateTasks && !meetingPayload.actionItems.isEmpty && createdTaskCount == 0 {
+                } else if !tasksToCreate.isEmpty && createdTaskCount == 0 {
                     DebugLogger.shared.log(
                         .app,
-                        "[\(provider.rawValue)] task creation returned zero tasks without explicit error; actionItems=\(meetingPayload.actionItems.count)"
+                        "[\(provider.rawValue)] task creation returned zero tasks without explicit error; selectedTasks=\(tasksToCreate.count)"
                     )
-                    warningPart = " · sent action items but \(provider.displayName) returned 0 tasks"
+                    warningPart = " · sent selected tasks but \(provider.displayName) returned 0 tasks"
                 } else {
                     warningPart = ""
                 }
@@ -3710,6 +3902,12 @@ struct CRMSendSheet: View {
         case "opportunities": return "opportunity"
         default: return selectedRecordObject ?? ""
         }
+    }
+
+    private var linkedRecordPreview: String {
+        let record = selectedRecordText ?? "selected record"
+        let object = selectedObjectLabel
+        return object.isEmpty ? record : "\(record) · \(object)"
     }
 
     private func userFacingCRMError(_ error: Error) -> String {

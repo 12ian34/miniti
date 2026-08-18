@@ -1,9 +1,4 @@
-NEW
-
-- Smart meetings notices when a recording may have ended or another calendar meeting is approaching, then helps you save and start the right meeting.
-- The Coaching overview highlights strengths, tracks trends across recent meetings, and suggests one practical focus for the next meeting with examples from your transcripts.
-
 IMPROVED
 
-- Settings is reorganized into clear, searchable sections. Search results open the exact control.
-- Coaching opens immediately with its previous results and refreshes changed meetings in the background.
+- Coaching focus sections now use clearer hierarchy, stronger next-step recommendations, and compact source examples.
+- Coaching history keeps every metric in its own chart with labelled value and meeting axes that stay readable as your history grows.

@@ -2075,6 +2075,27 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertFalse(MainWindowNavigationSwipePolicy.shouldCommit(horizontal: 100, vertical: 80))
     }
 
+    func testMainNavigationSwipeAllowsMeetingSearchButNotOtherTextEditors() {
+        XCTAssertTrue(
+            MainWindowNavigationSwipePolicy.allowsGestureWhileEditing(
+                isEditingText: false,
+                isMeetingSearchFocused: false
+            )
+        )
+        XCTAssertTrue(
+            MainWindowNavigationSwipePolicy.allowsGestureWhileEditing(
+                isEditingText: true,
+                isMeetingSearchFocused: true
+            )
+        )
+        XCTAssertFalse(
+            MainWindowNavigationSwipePolicy.allowsGestureWhileEditing(
+                isEditingText: true,
+                isMeetingSearchFocused: false
+            )
+        )
+    }
+
     func testMainNavigationSwipeProgressTracksDirectionAndThreshold() throws {
         let backProgress = try XCTUnwrap(
             MainWindowNavigationSwipePolicy.presentationProgress(horizontal: -42, vertical: 2)

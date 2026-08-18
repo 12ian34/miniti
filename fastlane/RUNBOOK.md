@@ -71,7 +71,7 @@ What it does:
 - screenshots are skipped (manage manually in App Store Connect)
 
 What it does not do:
-- no App Review submission (attach build and submit manually in App Store Connect)
+- no App Review submission; run `fastlane ios submit version:X.Y.Z build:N` after Apple finishes processing the upload
 
 Note: `automatic_release` is enabled — once Apple approves the build, it goes live immediately without manual release.
 
@@ -92,10 +92,13 @@ Release prep checklist for this lane:
 - verify listing metadata files are current (`name.txt`, `subtitle.txt`, `promotional_text.txt`, `description.txt`, `keywords.txt`, `privacy_url.txt`, `support_url.txt`, `marketing_url.txt`, and root `copyright.txt`)
 - ensure `fastlane/metadata/copyright.txt` includes the current year (ASC rejects missing/outdated year values)
 
-Afterward in App Store Connect:
-- attach the uploaded build
-- verify review info/screenshots
-- submit manually
+Afterward, verify the review info/screenshots and submit the processed build:
+
+```sh
+fastlane ios submit version:1.27.1 build:105
+```
+
+The submit lane selects the exact uploaded build, submits it for App Review, and preserves automatic release after approval. It does not upload a binary, metadata, or screenshots.
 
 ## macOS
 
@@ -249,6 +252,7 @@ fastlane ios beta version:1.27.1 changelog:"release notes here"
 ```sh
 fastlane ios build
 fastlane ios release version:1.27.1
+fastlane ios submit version:1.27.1 build:105
 ```
 
 ### macOS direct distribution

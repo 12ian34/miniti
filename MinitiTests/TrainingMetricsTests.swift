@@ -649,6 +649,27 @@ final class TrainingMetricsTests: XCTestCase {
         ])
     }
 
+    @MainActor
+    func testCoachingChartMeetingAxisAdaptsToHistorySize() {
+        XCTAssertEqual(
+            TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 4),
+            [1, 2, 3, 4]
+        )
+        XCTAssertEqual(
+            TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 23),
+            [1, 5, 10, 15, 20, 23]
+        )
+        XCTAssertEqual(
+            TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 100),
+            [1, 20, 40, 60, 80, 100]
+        )
+
+        let veryLargeHistory = TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 10_000)
+        XCTAssertLessThanOrEqual(veryLargeHistory.count, 7)
+        XCTAssertEqual(veryLargeHistory.first, 1)
+        XCTAssertEqual(veryLargeHistory.last, 10_000)
+    }
+
     private func trainingRow(day: TimeInterval, talkRatio: Double?) -> TrainingRow {
         TrainingRow(
             id: UUID(),

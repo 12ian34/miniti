@@ -134,14 +134,12 @@ If Sparkle downloads the update but fails when quitting/installing with `Failed 
 
 ```sh
 fastlane ios release version:X.Y.Z build:N
+fastlane ios submit version:X.Y.Z build:N
 ```
 
-Uploads to App Store Connect with metadata. Then manually in App Store Connect:
+The first command uploads the binary and metadata. Wait for Apple to process the build, then the second command attaches that exact build, submits it for review, and enables automatic release after approval.
 
-1. Create/select the X.Y.Z version.
-2. Attach the uploaded build.
-3. Complete review info + screenshots (screenshots are managed manually in ASC, not via Fastlane).
-4. Submit for review.
+Before submission, confirm the release already has current review info and screenshots in App Store Connect. Screenshots remain managed manually in ASC, not via Fastlane.
 
 ### 9. Publish customer-facing sources, commit + tag + push
 

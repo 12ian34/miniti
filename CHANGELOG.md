@@ -11,6 +11,20 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-19 - v2.2.2 (macOS current; iOS submitted)
+
+This release makes Coaching trends and CRM exports easier to review, and fixes navigation while searching meeting history.
+
+#### Experience improvements
+
+- improvement: (macOS and iOS) Coaching focus sections now use clearer hierarchy, stronger next-step recommendations, and compact source examples with meeting details kept out of the quote
+- improvement: (macOS and iOS) Coaching history keeps every metric in its own chart with labelled value and meeting axes that remain readable from a few meetings to hundreds
+- improvement: (macOS) CRM exports now preview every task with its deadline and assignment details, and let you exclude irrelevant tasks before sending
+
+#### Fixes
+
+- fix: (macOS) Back and forward trackpad gestures now work while meeting search is focused, then dismiss search focus automatically when navigation completes
+
 ### 2026-08-11 - v2.2.1 (macOS and iOS)
 
 This release brings Smart meetings and the redesigned Settings experience to Mac, iPhone, and iPad. It also brings the latest Coaching improvements to iOS.

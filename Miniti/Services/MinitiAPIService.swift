@@ -1399,18 +1399,26 @@ final class MinitiAPIService: @unchecked Sendable {
         meetingPayload: AttioMeetingPayload,
         targetObject: String,
         targetRecordID: String,
-        createTasksFromActionItems: Bool
+        createTasksFromActionItems: Bool,
+        tasks: [CRMTaskPayload]? = nil
     ) async throws -> AttioSendResponse {
+        var body: [String: Any] = [
+            "target_object": targetObject,
+            "target_record_id": targetRecordID,
+            "meeting": meetingPayload.dictionary,
+            "create_tasks_from_action_items": createTasksFromActionItems
+        ]
+        if let tasks {
+            // Explicit tasks are backward-safe: an older backend ignores `tasks`
+            // and sees the legacy switch disabled, so it cannot create deselected items.
+            body["create_tasks_from_action_items"] = false
+            body["tasks"] = tasks.map(\.dictionary)
+        }
         let request = makeRequest(
             path: "/attio/send",
             method: "POST",
             deviceId: deviceId,
-            body: [
-                "target_object": targetObject,
-                "target_record_id": targetRecordID,
-                "meeting": meetingPayload.dictionary,
-                "create_tasks_from_action_items": createTasksFromActionItems
-            ],
+            body: body,
             timeoutInterval: 30
         )
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -1458,18 +1466,24 @@ final class MinitiAPIService: @unchecked Sendable {
         meetingPayload: AttioMeetingPayload,
         targetObject: String,
         targetRecordID: String,
-        createTasksFromActionItems: Bool
+        createTasksFromActionItems: Bool,
+        tasks: [CRMTaskPayload]? = nil
     ) async throws -> AttioSendResponse {
+        var body: [String: Any] = [
+            "target_object": targetObject,
+            "target_record_id": targetRecordID,
+            "meeting": meetingPayload.dictionary,
+            "create_tasks_from_action_items": createTasksFromActionItems
+        ]
+        if let tasks {
+            body["create_tasks_from_action_items"] = false
+            body["tasks"] = tasks.map(\.dictionary)
+        }
         let request = makeRequest(
             path: "/twenty/send",
             method: "POST",
             deviceId: deviceId,
-            body: [
-                "target_object": targetObject,
-                "target_record_id": targetRecordID,
-                "meeting": meetingPayload.dictionary,
-                "create_tasks_from_action_items": createTasksFromActionItems
-            ],
+            body: body,
             timeoutInterval: 30
         )
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -1581,7 +1595,34 @@ final class MinitiAPIService: @unchecked Sendable {
     }
 }
 
-// MARK: - Attio Meeting Payload
+// MARK: - CRM Task + Meeting Payload
+
+struct CRMTaskPayload: Equatable, Sendable {
+    let content: String
+    let deadlineAt: String?
+
+    static func fromActionItems(_ items: [String], deadlineAt: String?) -> [CRMTaskPayload] {
+        AttioMeetingPayload.normalizedActionItems(from: items).map {
+            CRMTaskPayload(content: $0, deadlineAt: deadlineAt)
+        }
+    }
+
+    static func localISODate(for date: Date, calendar: Calendar = .current) -> String {
+        let components = calendar.dateComponents([.year, .month, .day], from: date)
+        return String(
+            format: "%04d-%02d-%02d",
+            components.year ?? 0,
+            components.month ?? 0,
+            components.day ?? 0
+        )
+    }
+
+    var dictionary: [String: Any] {
+        var result: [String: Any] = ["content": content]
+        if let deadlineAt { result["deadline_at"] = deadlineAt }
+        return result
+    }
+}
 
 struct AttioMeetingPayload: Sendable {
     let title: String

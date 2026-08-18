@@ -63,6 +63,14 @@ Upload screenshots only (no metadata, no binary). Reads from fastlane/screenshot
 
 Bump build/version if needed, build, and upload to App Store Connect with metadata/screenshots without auto-submitting
 
+### ios submit
+
+```sh
+[bundle exec] fastlane ios submit
+```
+
+Attach an uploaded build and submit it for App Review with automatic release
+
 ----
 
 
