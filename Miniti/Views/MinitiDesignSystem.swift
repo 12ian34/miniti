@@ -46,9 +46,9 @@ enum MinitiDesignSystem {
         static let compactColumnMaxWidth: CGFloat = 480
         static let statsColumnMaxWidth: CGFloat = 720
         #if os(macOS)
-        static let statsChartHeight: CGFloat = 76
+        static let statsChartHeight: CGFloat = 116
         #else
-        static let statsChartHeight: CGFloat = 64
+        static let statsChartHeight: CGFloat = 108
         #endif
     }
 
@@ -181,6 +181,30 @@ struct MinitiCardSurface<Content: View>: View {
                             .stroke(style.border, lineWidth: 1)
                     )
             )
+    }
+}
+
+/// A quiet content separator that carries a section accent into the interface
+/// without turning the surrounding content into another bordered surface.
+struct MinitiFadingDivider: View {
+    let accent: Color
+
+    var body: some View {
+        Rectangle()
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: accent.opacity(0.62), location: 0),
+                        .init(color: ColorPalette.Border.light.opacity(0.52), location: 0.42),
+                        .init(color: ColorPalette.Border.light.opacity(0.18), location: 0.72),
+                        .init(color: .clear, location: 1)
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            )
+            .frame(height: 1)
+            .accessibilityHidden(true)
     }
 }
 

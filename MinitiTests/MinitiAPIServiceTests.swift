@@ -534,6 +534,28 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertEqual(result.count, 3)
     }
 
+    func testCRMTaskPayloadsNormalizeItemsAndPreservePreviewedDeadline() {
+        let tasks = CRMTaskPayload.fromActionItems(
+            ["- [ ] Send revised proposal", "Send revised proposal", "Book implementation review"],
+            deadlineAt: "2026-08-21"
+        )
+
+        XCTAssertEqual(tasks, [
+            CRMTaskPayload(content: "Send revised proposal", deadlineAt: "2026-08-21"),
+            CRMTaskPayload(content: "Book implementation review", deadlineAt: "2026-08-21"),
+        ])
+        XCTAssertEqual(tasks[0].dictionary["content"] as? String, "Send revised proposal")
+        XCTAssertEqual(tasks[0].dictionary["deadline_at"] as? String, "2026-08-21")
+    }
+
+    func testCRMTaskPayloadLocalISODateUsesProvidedCalendar() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let date = Date(timeIntervalSince1970: 1_787_047_200) // 2026-08-18T10:00:00Z
+
+        XCTAssertEqual(CRMTaskPayload.localISODate(for: date, calendar: calendar), "2026-08-18")
+    }
+
     // MARK: - APIError decoding
 
     func testAPIErrorDecoding() throws {
