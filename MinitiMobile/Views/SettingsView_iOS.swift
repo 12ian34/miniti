@@ -471,9 +471,12 @@ private struct SettingsDetailView_iOS: View {
                         Text("Insights")
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
-                            Text("gpt-5-mini-2025-08-07")
                             if appState.appMode == .managed {
-                                Text("gpt-5.4-mini-2026-03-17")
+                                Text("gpt-5-mini-2025-08-07 · live updates")
+                                Text("gpt-5.4-mini-2026-03-17 · full insights + investigations")
+                            } else {
+                                Text("gpt-5-mini-2025-08-07 · insights")
+                                Text("gpt-5.4-mini-2026-03-17 · investigations")
                             }
                         }
                         .font(.caption)
@@ -491,6 +494,13 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                Section("Meeting Investigations") {
+                    Text("Web investigations run inside Miniti using OpenAI only when you tap Investigate. Results include clickable source citations; nothing runs automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .id("ai.investigations")
                 }
                 
                 // Device

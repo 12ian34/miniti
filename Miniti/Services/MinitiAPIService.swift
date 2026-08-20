@@ -1198,6 +1198,54 @@ final class MinitiAPIService: @unchecked Sendable {
         return decoded
     }
 
+    /// Managed-mode OpenAI investigation. Web scope enables server-side web
+    /// search; codebase scope sends only the bounded local excerpts selected by
+    /// the macOS client.
+    func generateInvestigation(
+        deviceId: String,
+        focus: String,
+        meetingContext: String,
+        scope: InvestigationScope,
+        codebaseContext: String?,
+        referencedFiles: [String],
+        model: String,
+        language: String = "en"
+    ) async throws -> InvestigationResult {
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        var body: [String: Any] = [
+            "transcript": meetingContext,
+            "mode": "investigation",
+            "investigation_scope": scope.rawValue,
+            "focus": focus,
+            "referenced_files": referencedFiles,
+            "model": model,
+            "language": language
+        ]
+        if let codebaseContext, !codebaseContext.isEmpty {
+            body["codebase_context"] = codebaseContext
+        }
+
+        let request = makeRequest(
+            path: "/insights",
+            method: "POST",
+            deviceId: deviceId,
+            body: body
+        )
+        DebugLogger.shared.log(
+            .app,
+            "API investigation request: scope=\(scope.rawValue), meetingChars=\(meetingContext.count), codeChars=\(codebaseContext?.count ?? 0), files=\(referencedFiles.count)"
+        )
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(InvestigationResult.self, from: data, endpoint: "/insights investigation")
+        DebugLogger.shared.log(
+            .app,
+            "API investigation response: duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt)), answerChars=\(decoded.answer.count), sources=\(decoded.sources.count)"
+        )
+        return decoded
+    }
+
     /// Managed-mode speaker name inference. Posts to /api/insights with mode="speaker_names".
     /// Transcript is expected to include `[SpeakerID:N] ...` tags so the backend prompt can
     /// map internal IDs to real names. `candidates` is a list of known attendee names used

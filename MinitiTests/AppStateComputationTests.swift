@@ -1345,6 +1345,166 @@ final class AppStateComputationTests: XCTestCase {
 
     // MARK: - Google Calendar disconnect cleanup
 
+    func testCalendarPrepNotesCodingRoundTrip() {
+        let now = Date(timeIntervalSince1970: 1_787_000_000)
+        let records = [
+            "evt-1": AppState.CalendarPrepNote(
+                eventID: "evt-1",
+                text: "Ask about the rollout plan",
+                eventStart: now.addingTimeInterval(3_600),
+                updatedAt: now
+            )
+        ]
+
+        let data = AppState.encodeCalendarPrepNotes(records)
+        XCTAssertNotNil(data)
+        XCTAssertEqual(AppState.decodeCalendarPrepNotes(data), records)
+        XCTAssertEqual(AppState.decodeCalendarPrepNotes(Data("invalid".utf8)), [:])
+    }
+
+    func testInvestigationFocusRecognizesResearchAndCapabilityQuestions() {
+        XCTAssertEqual(
+            AppState.investigationFocus(from: "Could we integrate this workflow with the codebase?"),
+            "Could we integrate this workflow with the codebase?"
+        )
+        XCTAssertEqual(
+            AppState.investigationFocus(from: "Please look into why the export is failing."),
+            "Please look into why the export is failing."
+        )
+        XCTAssertNil(AppState.investigationFocus(from: "How are you doing today?"))
+        XCTAssertNil(AppState.investigationFocus(from: "Let's meet again on Tuesday."))
+    }
+
+    func testInvestigationMeetingContextIncludesPrepAndRecentTranscriptWithinLimit() {
+        let segments = [
+            AppState.LiveSegment(
+                id: UUID(),
+                text: "Could we automate this approval flow?",
+                speaker: 1,
+                timestamp: 10,
+                isFinal: true
+            ),
+            AppState.LiveSegment(
+                id: UUID(),
+                text: String(repeating: "implementation context ", count: 500),
+                speaker: 2,
+                timestamp: 20,
+                isFinal: true
+            )
+        ]
+
+        let context = AppState.investigationMeetingContext(
+            meetingTitle: "Workflow review",
+            prepNotes: "Compare the current manual process.",
+            segments: segments,
+            maxCharacters: 5_000
+        )
+
+        XCTAssertLessThanOrEqual(context.count, 5_000)
+        XCTAssertTrue(context.contains("Workflow review"))
+        XCTAssertTrue(context.contains("Compare the current manual process."))
+        XCTAssertTrue(context.contains("Could we automate this approval flow?"))
+        XCTAssertTrue(context.contains("Recent conversation"))
+        XCTAssertTrue(context.contains("Speaker 2: Could we automate this approval flow?"))
+    }
+
+    #if os(macOS)
+    func testCodebaseSnapshotRanksRelevantSourceAndBoundsContext() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("miniti-investigation-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try Data("struct BillingCoordinator { func retryInvoicePayment() {} }".utf8)
+            .write(to: root.appendingPathComponent("BillingCoordinator.swift"))
+        try Data("struct UnrelatedWaveformRenderer {}".utf8)
+            .write(to: root.appendingPathComponent("Waveform.swift"))
+
+        let snapshot = try AppState.buildCodebaseSnapshot(
+            rootURL: root,
+            focus: "Could we retry a failed invoice payment?",
+            maxCharacters: 2_000,
+            maxFiles: 2
+        )
+
+        XCTAssertEqual(snapshot.files.first, "BillingCoordinator.swift")
+        XCTAssertTrue(snapshot.context.contains("retryInvoicePayment"))
+        XCTAssertLessThanOrEqual(snapshot.context.count, 2_000)
+    }
+
+    func testCodebaseSnapshotSkipsSymlinksAndRedactsLikelySecrets() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("miniti-investigation-security-\(UUID().uuidString)", isDirectory: true)
+        let outside = FileManager.default.temporaryDirectory
+            .appendingPathComponent("miniti-investigation-outside-\(UUID().uuidString).swift")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: outside)
+        }
+
+        try Data("let apiKey = super-secret-value\nfunc retryPayment() {}".utf8)
+            .write(to: root.appendingPathComponent("Billing.swift"))
+        try Data("func retryPaymentOutsideFolder() {}".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("Outside.swift"),
+            withDestinationURL: outside
+        )
+
+        let snapshot = try AppState.buildCodebaseSnapshot(
+            rootURL: root,
+            focus: "retry payment api key",
+            maxCharacters: 2_000,
+            maxFiles: 4
+        )
+
+        XCTAssertEqual(snapshot.files, ["Billing.swift"])
+        XCTAssertTrue(snapshot.context.contains("apiKey = [REDACTED]"))
+        XCTAssertFalse(snapshot.context.contains("super-secret-value"))
+        XCTAssertFalse(snapshot.context.contains("retryPaymentOutsideFolder"))
+    }
+
+    func testCodebaseSecretRedactionRemovesPrivateKeyBlocks() {
+        let content = """
+        token: abc123
+        -----BEGIN PRIVATE KEY-----
+        secret-material
+        -----END PRIVATE KEY-----
+        """
+        let redacted = AppState.redactLikelySecrets(content)
+        XCTAssertTrue(redacted.contains("token: [REDACTED]"))
+        XCTAssertTrue(redacted.contains("[REDACTED PRIVATE KEY]"))
+        XCTAssertFalse(redacted.contains("abc123"))
+        XCTAssertFalse(redacted.contains("secret-material"))
+    }
+    #endif
+
+    @MainActor
+    func testUpcomingMeetingEventsIncludesFutureDaysAndExcludesEndedEvents() {
+        let state = AppState()
+        let soon = Self.makeCalendarEvent(
+            id: "soon",
+            title: "Soon",
+            start: Date().addingTimeInterval(600),
+            end: Date().addingTimeInterval(1_200)
+        )
+        let tomorrow = Self.makeCalendarEvent(
+            id: "tomorrow",
+            title: "Tomorrow",
+            start: Date().addingTimeInterval(86_400),
+            end: Date().addingTimeInterval(90_000)
+        )
+        let ended = Self.makeCalendarEvent(
+            id: "ended",
+            title: "Ended",
+            start: Date().addingTimeInterval(-1_200),
+            end: Date().addingTimeInterval(-600)
+        )
+        state.upcomingEvents = [tomorrow, ended, soon]
+
+        XCTAssertEqual(state.upcomingMeetingEvents.map(\.id), ["soon", "tomorrow"])
+    }
+
     @MainActor
     func testApplyGoogleCalendarDisconnectedStateClearsStaleCalendarUI() {
         let state = AppState()
