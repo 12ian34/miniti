@@ -1699,7 +1699,7 @@ struct MeetingDetailView: View {
             // Side by side content
             HSplitView {
                 // Left side - transcript and notes
-                VSplitView {
+                ResizableNotesLayout {
                     // Transcript - takes most of the space
                     VStack(spacing: 0) {
                         DetailSectionHeader(title: "transcript", icon: "¶", onCopy: {
@@ -1708,8 +1708,7 @@ struct MeetingDetailView: View {
                         
                         transcriptContent
                     }
-                    .frame(minHeight: 400)
-                    
+                } notes: {
                     // Notes - compact, resizable
                     VStack(spacing: 0) {
                         DetailSectionHeader(title: "notes", icon: "✎", onCopy: {
@@ -1718,7 +1717,6 @@ struct MeetingDetailView: View {
                         
                         SavedNotesView(meeting: meeting)
                     }
-                    .frame(minHeight: 44, maxHeight: 200)
                 }
                 .frame(minWidth: 400)
                 

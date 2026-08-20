@@ -1,4 +1,8 @@
+NEW
+
+- Add locally stored prep notes to upcoming calendar meetings and carry them into live notes automatically.
+- Get timely investigation suggestions and run focused OpenAI web research inside Miniti with cited sources, only when you choose.
+
 IMPROVED
 
-- Coaching focus sections now use clearer hierarchy, stronger next-step recommendations, and compact source examples.
-- Coaching history keeps every metric in its own chart with labelled value and meeting axes that stay readable as your history grows.
+- Home shows your next five connected-calendar meetings across the coming days, with a preparation view before you start.

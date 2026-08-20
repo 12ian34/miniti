@@ -5,13 +5,30 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 ## Style
 
 - Write entries as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
-- Never modify older changelog entries after they are written. Add corrections, clarifications, or reversals only as a new entry at the top.
+- Never modify older changelog entries after they are written unless the user explicitly requests a historical correction. Add other corrections, clarifications, or reversals only as a new entry at the top.
 - The entry at the top of this file is the source of truth; `fastlane/metadata/en-US/release_notes.txt` and `en-GB/release_notes.txt` are mirrored from it at release time.
 - While a release is still being prepared, its top entry may use `### Unreleased - vX.Y.Z`. Replace `Unreleased` with the ship date only when the release is actually going out.
+- Release headers contain only the date and version. Put platform availability in the relevant bullets, never in a parenthetical status suffix.
 
 ## Releases
 
-### 2026-08-19 - v2.2.2 (macOS current; iOS submitted)
+### 2026-08-20 - v2.3.0
+
+This release helps you prepare for upcoming meetings and investigate important moments without interrupting the conversation.
+
+Available now on Mac. The iPhone and iPad update is with Apple for review and will release automatically after approval.
+
+#### New
+
+- new: (macOS and iOS) Add locally stored prep notes to upcoming calendar meetings, then carry them into the live meeting notes automatically when recording starts
+- new: (macOS and iOS) Miniti can spot conversation moments worth investigating and run focused OpenAI research inside the app only when you choose to act, with cited web sources and optional Mac codebase context
+
+#### Experience improvements
+
+- improvement: (macOS and iOS) Home now shows your next five connected-calendar meetings across the coming days, with a dedicated preparation view before you start
+- improvement: (macOS) Saved meeting notes now use the same draggable, space-aware panel as live notes
+
+### 2026-08-19 - v2.2.2
 
 This release makes Coaching trends and CRM exports easier to review, and fixes navigation while searching meeting history.
 
@@ -25,7 +42,7 @@ This release makes Coaching trends and CRM exports easier to review, and fixes n
 
 - fix: (macOS) Back and forward trackpad gestures now work while meeting search is focused, then dismiss search focus automatically when navigation completes
 
-### 2026-08-11 - v2.2.1 (macOS and iOS)
+### 2026-08-11 - v2.2.1
 
 This release brings Smart meetings and the redesigned Settings experience to Mac, iPhone, and iPad. It also brings the latest Coaching improvements to iOS.
 
@@ -45,7 +62,7 @@ This release brings Smart meetings and the redesigned Settings experience to Mac
 
 - fix: (macOS) Closing or minimizing the main window no longer leaves Miniti running without a reliable way to reopen it from the Dock or menu bar
 
-### 2026-08-09 - v2.2.0 (macOS only; iOS unchanged)
+### 2026-08-09 - v2.2.0
 
 This release is for macOS. The currently pending iOS release and its App Store submission are unchanged.
 
@@ -63,7 +80,7 @@ This release is for macOS. The currently pending iOS release and its App Store s
 - fix: (macOS) Transcript turns stay in chronological order when microphone and system-audio results finalize out of order or after a reconnect
 - fix: (macOS) Selecting live transcript text remains stable when an earlier transcript result arrives and is inserted above it
 
-### 2026-08-09 - v2.1.1 (macOS only; iOS unchanged)
+### 2026-08-09 - v2.1.1
 
 This hotfix is available for macOS. The currently pending iOS release and its App Store submission are unchanged.
 
@@ -79,7 +96,7 @@ This hotfix is available for macOS. The currently pending iOS release and its Ap
 - fix: (macOS) Resume auto-scroll now follows new transcript text without the scrollbar bouncing between positions
 - fix: (macOS) Zoned Out requests no longer compete with automatic insight updates for the same request allowance
 
-### 2026-08-08 - v2.1.0 (macOS; iOS coming later)
+### 2026-08-08 - v2.1.0
 
 This release is available on macOS now. The currently pending iOS release is unchanged; these iPhone and iPad updates will follow in a later App Store release.
 
@@ -92,7 +109,7 @@ This release is available on macOS now. The currently pending iOS release is unc
 
 - improvement: (macOS now; iOS later) Refreshed styling makes Coaching, insights, actions, and recording controls clearer and more consistent across the app
 
-### 2026-08-07 - v2.0.4 (macOS; iOS remains v2.0.3 pending App Store review)
+### 2026-08-07 - v2.0.4
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.3.
 
@@ -152,7 +169,7 @@ This release keeps the complete 2.0 update together, including everything from v
 - fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments
 - fix: (macOS and iOS) stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it
 
-### 2026-08-07 - v2.0.3 (macOS; iOS pending App Store release)
+### 2026-08-07 - v2.0.3
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.2.
 
@@ -207,7 +224,7 @@ This release keeps the complete 2.0 update together, including everything from v
 - fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments
 - fix: (macOS and iOS) stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it
 
-### 2026-08-07 - v2.0.2 (macOS; iOS pending App Store release)
+### 2026-08-07 - v2.0.2
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 and v2.0.1.
 
@@ -255,7 +272,7 @@ This release keeps the complete 2.0 update together, including everything from v
 - fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments
 - fix: (macOS and iOS) stopping or saving a short meeting no longer loses the last visible transcript when transcription disconnects before finalizing it
 
-### 2026-08-07 - v2.0.1 (macOS; iOS pending App Store release)
+### 2026-08-07 - v2.0.1
 
 #### Experience and workflow improvements
 
@@ -266,7 +283,7 @@ This release keeps the complete 2.0 update together, including everything from v
 - fix: (macOS) long live and saved transcripts no longer develop a large blank gap between the transcript and the latest line
 - fix: (macOS) future in-app updates no longer fail on the first attempt with a macOS security warning on affected Macs; installing v2.0.1 from an older version may still need one final retry because that update starts with the older updater
 
-### 2026-08-07 - v2.0.0 (macOS; iOS pending App Store release)
+### 2026-08-07 - v2.0.0
 
 #### New
 

@@ -693,9 +693,12 @@ struct AISettingsView: View {
                     Text("Insights")
                     Spacer()
                     VStack(alignment: .trailing, spacing: 2) {
-                        Text("gpt-5-mini-2025-08-07")
                         if appState.appMode == .managed {
-                            Text("gpt-5.4-mini-2026-03-17")
+                            Text("gpt-5-mini-2025-08-07 · live updates")
+                            Text("gpt-5.4-mini-2026-03-17 · full insights + investigations")
+                        } else {
+                            Text("gpt-5-mini-2025-08-07 · insights")
+                            Text("gpt-5.4-mini-2026-03-17 · investigations")
                         }
                     }
                     .font(.caption)
@@ -713,10 +716,58 @@ struct AISettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section("Meeting Investigations") {
+                LabeledContent("Codebase folder") {
+                    HStack(spacing: 8) {
+                        Text(appState.investigationCodebaseFolderName ?? "Not configured")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: 300, alignment: .trailing)
+
+                        Button("Choose…") {
+                            chooseInvestigationCodebaseFolder()
+                        }
+
+                        if appState.investigationCodebaseFolderName != nil {
+                            Button {
+                                appState.clearInvestigationCodebaseFolder()
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Clear investigation codebase folder")
+                        }
+                    }
+                }
+
+                Text("Investigations run inside Miniti with OpenAI only when you click. Web research includes clickable citations. Codebase investigation reads a bounded set of relevant excerpts from the folder you choose; OpenAI never receives unrestricted filesystem access.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .id("ai.investigations")
         }
         .formStyle(.grouped)
         .padding()
         .settingsSearchScrolling(for: .ai)
+    }
+
+    private func chooseInvestigationCodebaseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose"
+        panel.message = "Choose the codebase Miniti may search for explicitly requested OpenAI investigations."
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try appState.setInvestigationCodebaseFolder(url)
+            } catch {
+                DebugLogger.shared.log(.app, "Could not save investigation codebase permission: \(error.localizedDescription)")
+            }
+        }
     }
 }
 

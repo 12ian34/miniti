@@ -290,6 +290,7 @@ enum SettingsSearchCatalog {
         .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms"]),
         .init("language.fillers", "Filler Detection", section: "Language", destination: .language, keywords: ["um", "uh", "coaching"]),
         .init("ai.models", "AI Models", section: "Models", destination: .ai, keywords: ["Nova-3", "GPT", "Deepgram", "OpenAI", "BYOK", "managed"]),
+        .init("ai.investigations", "OpenAI Investigations", section: "Meeting Investigations", destination: .ai, keywords: ["research", "web", "codebase", "folder", "investigate"]),
 
         .init("notifications.questions", "Incisive Question Notifications", section: "Meeting Nudges", destination: .notifications, keywords: ["questions", "alert"]),
         .init("notifications.monologue", "Monologue Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["talking too long", "coaching"]),
@@ -324,6 +325,23 @@ enum SettingsSearchCatalog {
 
 @MainActor
 final class AppState: ObservableObject {
+    struct CalendarPrepNote: Codable, Equatable {
+        let eventID: String
+        var text: String
+        var eventStart: Date?
+        var updatedAt: Date
+    }
+
+    struct InvestigationSuggestion: Identifiable, Equatable {
+        let id: UUID
+        let focus: String
+    }
+
+    struct CodebaseSnapshot: Sendable, Equatable {
+        let context: String
+        let files: [String]
+    }
+
     struct SmartMeetingPrompt: Identifiable, Equatable {
         enum Kind: Equatable {
             case quiet
@@ -594,6 +612,24 @@ final class AppState: ObservableObject {
     
     // MARK: - Live Notes
     @Published var liveNotes: String = ""
+
+    // MARK: - Meeting Prep + Investigations
+    @Published private(set) var calendarPrepNotes: [String: CalendarPrepNote] = [:]
+    @Published private(set) var investigationSuggestion: InvestigationSuggestion?
+    @Published private(set) var investigationResult: InvestigationResult?
+    @Published private(set) var investigationError: String?
+    @Published private(set) var isGeneratingInvestigation = false
+    @Published var isInvestigationPresented = false
+    @Published private(set) var activeInvestigationScope: InvestigationScope = .web
+    @Published private(set) var activeInvestigationFocus = ""
+    #if os(macOS)
+    @AppStorage("investigationCodebaseBookmark") private var investigationCodebaseBookmark: Data = Data()
+    #endif
+    private static let calendarPrepNotesDefaultsKey = "calendarPrepNotes.v1"
+    private var lastInvestigationEvaluatedFinalSegmentID: UUID?
+    private var dismissedInvestigationSuggestionIDs: Set<UUID> = []
+    private var activeInvestigationTask: Task<Void, Never>?
+    private var investigationRequestID: UUID?
     
     // MARK: - Live Insights
     @Published var liveSummary: String = ""
@@ -1062,20 +1098,30 @@ final class AppState: ObservableObject {
     @Published var upcomingEvents: [MinitiAPIService.CalendarEvent] = []
     @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent?
 
+    var upcomingMeetingEvents: [MinitiAPIService.CalendarEvent] {
+        let now = Date()
+        return upcomingEvents
+            .filter { event in
+                guard !event.isAllDay,
+                      event.status.lowercased() != "cancelled",
+                      let end = event.endDate else { return false }
+                return end > now
+            }
+            .sorted {
+                ($0.startDate ?? .distantFuture) < ($1.startDate ?? .distantFuture)
+            }
+    }
+
     var todayEvents: [MinitiAPIService.CalendarEvent] {
         let calendar = Calendar.current
-        return upcomingEvents.filter { event in
+        return upcomingMeetingEvents.filter { event in
             guard let start = event.startDate else { return false }
             return calendar.isDateInToday(start)
         }
     }
 
     var nextEvent: MinitiAPIService.CalendarEvent? {
-        let now = Date()
-        return todayEvents.first { event in
-            guard let end = event.endDate else { return false }
-            return end > now
-        }
+        todayEvents.first
     }
     @Published var pendingAutoStartEvent: MinitiAPIService.CalendarEvent?
     @Published var autoStartCountdown: Int = 0
@@ -1410,6 +1456,11 @@ final class AppState: ObservableObject {
         if acceptedTermsVersion == 0, legacyHasAcceptedTerms {
             acceptedTermsVersion = 1
         }
+
+        calendarPrepNotes = Self.decodeCalendarPrepNotes(
+            UserDefaults.standard.data(forKey: Self.calendarPrepNotesDefaultsKey)
+        )
+        pruneExpiredCalendarPrepNotes()
 
         // Existing Docs users have already expressed intent by configuring an MCP URL. Preserve
         // that intent on the first launch with specialist-view preferences.
@@ -2645,6 +2696,7 @@ final class AppState: ObservableObject {
         }
 
         evaluateRealtimeNudges()
+        evaluateInvestigationSuggestion()
     }
 
     private var isGeneratingMeddpiccInsights = false
@@ -4407,7 +4459,11 @@ final class AppState: ObservableObject {
         trainingMetricsTask?.cancel()
         trainingMetricsTask = nil
         
-        let meeting = Meeting(title: calendarEvent?.title ?? "untitled")
+        let preparedNotes = calendarEvent.map { prepNotes(for: $0) } ?? ""
+        let meeting = Meeting(
+            title: calendarEvent?.title ?? "untitled",
+            notes: preparedNotes
+        )
         meeting.language = meetingLanguage
         if let calendarEvent {
             meeting.calendarEventId = calendarEvent.id
@@ -4432,7 +4488,7 @@ final class AppState: ObservableObject {
         managedSessionError = nil
         
         // Reset live notes and insights
-        liveNotes = ""
+        liveNotes = preparedNotes
         liveSummary = ""
         liveActionItems = []
         liveTopics = []
@@ -4457,6 +4513,7 @@ final class AppState: ObservableObject {
         lastQuestionNotificationAt = nil
         resetZonedOutState()
         resetNudgeState()
+        resetInvestigationState()
         lastInsightSegmentCount = 0
         lastMEDDPICCSegmentCount = 0
         lastMEDDPICCRequestAt = nil
@@ -6159,6 +6216,7 @@ final class AppState: ObservableObject {
         lastQuestionNotificationAt = nil
         resetZonedOutState()
         resetNudgeState()
+        resetInvestigationState()
         lastQuestionsSegmentCount = 0
         lastQuestionsRequestAt = nil
         questionsSuccessCount = 0
@@ -7033,6 +7091,50 @@ final class AppState: ObservableObject {
     }
     
     // MARK: - Google Calendar
+
+    func prepNotes(for event: MinitiAPIService.CalendarEvent) -> String {
+        calendarPrepNotes[event.id]?.text ?? ""
+    }
+
+    func updatePrepNotes(_ notes: String, for event: MinitiAPIService.CalendarEvent) {
+        if notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            calendarPrepNotes[event.id] = nil
+        } else {
+            calendarPrepNotes[event.id] = CalendarPrepNote(
+                eventID: event.id,
+                text: notes,
+                eventStart: event.startDate,
+                updatedAt: Date()
+            )
+        }
+        persistCalendarPrepNotes()
+    }
+
+    nonisolated static func decodeCalendarPrepNotes(_ data: Data?) -> [String: CalendarPrepNote] {
+        guard let data else { return [:] }
+        return (try? JSONDecoder().decode([String: CalendarPrepNote].self, from: data)) ?? [:]
+    }
+
+    nonisolated static func encodeCalendarPrepNotes(_ notes: [String: CalendarPrepNote]) -> Data? {
+        try? JSONEncoder().encode(notes)
+    }
+
+    private func persistCalendarPrepNotes() {
+        guard let data = Self.encodeCalendarPrepNotes(calendarPrepNotes) else { return }
+        UserDefaults.standard.set(data, forKey: Self.calendarPrepNotesDefaultsKey)
+    }
+
+    private func pruneExpiredCalendarPrepNotes(now: Date = Date()) {
+        let retained = calendarPrepNotes.filter { _, note in
+            if let eventStart = note.eventStart {
+                return eventStart.addingTimeInterval(30 * 24 * 60 * 60) > now
+            }
+            return note.updatedAt.addingTimeInterval(180 * 24 * 60 * 60) > now
+        }
+        guard retained.count != calendarPrepNotes.count else { return }
+        calendarPrepNotes = retained
+        persistCalendarPrepNotes()
+    }
     
     func refreshGoogleCalendarStatus() async {
         guard googleCalendarEnabled, let minitiAPIService else {
@@ -8283,6 +8385,449 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    // MARK: - User-triggered investigations
+
+    var canInvestigateCurrentConversation: Bool {
+        !liveSegments.isEmpty
+    }
+
+    #if os(macOS)
+    var investigationCodebaseFolderName: String? {
+        guard !investigationCodebaseBookmark.isEmpty,
+              let url = try? Self.resolveCodebaseBookmark(investigationCodebaseBookmark) else { return nil }
+        return url.lastPathComponent
+    }
+
+    func setInvestigationCodebaseFolder(_ url: URL) throws {
+        investigationCodebaseBookmark = try url.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    func clearInvestigationCodebaseFolder() {
+        investigationCodebaseBookmark = Data()
+    }
+    #endif
+
+    func dismissInvestigationSuggestion() {
+        guard let suggestion = investigationSuggestion else { return }
+        dismissedInvestigationSuggestionIDs.insert(suggestion.id)
+        investigationSuggestion = nil
+    }
+
+    func triggerInvestigation(
+        scope: InvestigationScope,
+        focus: String? = nil
+    ) {
+        guard canInvestigateCurrentConversation else { return }
+        activeInvestigationScope = scope
+        activeInvestigationFocus = focus
+            ?? investigationSuggestion?.focus
+            ?? liveSegments.last?.text
+            ?? "Investigate the main unresolved question in this conversation."
+        investigationResult = nil
+        investigationError = nil
+        isInvestigationPresented = true
+        dismissInvestigationSuggestion()
+        startInvestigationTask()
+    }
+
+    func refreshInvestigation() {
+        guard isInvestigationPresented, !activeInvestigationFocus.isEmpty else { return }
+        startInvestigationTask()
+    }
+
+    func dismissInvestigation() {
+        activeInvestigationTask?.cancel()
+        activeInvestigationTask = nil
+        investigationRequestID = nil
+        isGeneratingInvestigation = false
+        isInvestigationPresented = false
+    }
+
+    private func resetInvestigationState() {
+        activeInvestigationTask?.cancel()
+        activeInvestigationTask = nil
+        investigationRequestID = nil
+        investigationSuggestion = nil
+        investigationResult = nil
+        investigationError = nil
+        isGeneratingInvestigation = false
+        isInvestigationPresented = false
+        activeInvestigationScope = .web
+        activeInvestigationFocus = ""
+        lastInvestigationEvaluatedFinalSegmentID = nil
+        dismissedInvestigationSuggestionIDs = []
+    }
+
+    private func startInvestigationTask() {
+        activeInvestigationTask?.cancel()
+        let requestID = UUID()
+        investigationRequestID = requestID
+        isGeneratingInvestigation = false
+        activeInvestigationTask = Task { @MainActor [weak self] in
+            await self?.fetchInvestigation(requestID: requestID)
+        }
+    }
+
+    private func fetchInvestigation(requestID: UUID) async {
+        guard investigationRequestID == requestID else { return }
+        let meetingIDAtRequest = currentMeeting?.id
+        let scope = activeInvestigationScope
+        let focus = activeInvestigationFocus
+        let meetingContext = Self.investigationMeetingContext(
+            meetingTitle: currentMeeting?.displayTitle ?? "Meeting",
+            prepNotes: liveNotes,
+            segments: liveSegments
+        )
+        guard !meetingContext.isEmpty else {
+            investigationError = "not enough speech captured yet"
+            return
+        }
+
+        isGeneratingInvestigation = true
+        investigationError = nil
+
+        var codebaseContext: String?
+        var referencedFiles: [String] = []
+        #if os(macOS)
+        if scope == .codebase {
+            guard !investigationCodebaseBookmark.isEmpty else {
+                investigationError = "choose a codebase folder in Settings → AI & Models first"
+                isGeneratingInvestigation = false
+                return
+            }
+            let bookmark = investigationCodebaseBookmark
+            do {
+                let snapshot = try await Task.detached(priority: .userInitiated) {
+                    let rootURL = try Self.resolveCodebaseBookmark(bookmark)
+                    guard rootURL.startAccessingSecurityScopedResource() else {
+                        throw CocoaError(.fileReadNoPermission)
+                    }
+                    defer { rootURL.stopAccessingSecurityScopedResource() }
+                    return try Self.buildCodebaseSnapshot(rootURL: rootURL, focus: focus)
+                }.value
+                guard investigationRequestID == requestID, !Task.isCancelled else { return }
+                codebaseContext = snapshot.context
+                referencedFiles = snapshot.files
+                guard !snapshot.context.isEmpty else {
+                    investigationError = "no relevant readable source files were found in that folder"
+                    isGeneratingInvestigation = false
+                    return
+                }
+            } catch {
+                guard investigationRequestID == requestID, !Task.isCancelled else { return }
+                investigationError = "couldn't read the selected codebase — choose it again in Settings"
+                isGeneratingInvestigation = false
+                return
+            }
+        }
+        #elseif os(iOS)
+        if scope == .codebase {
+            investigationError = "codebase investigation is available on macOS"
+            isGeneratingInvestigation = false
+            return
+        }
+        #endif
+
+        do {
+            let result: InvestigationResult
+            if appMode == .managed {
+                guard let minitiAPIService else {
+                    investigationError = "Miniti's OpenAI service isn't available — try again"
+                    isGeneratingInvestigation = false
+                    return
+                }
+                result = try await minitiAPIService.generateInvestigation(
+                    deviceId: DeviceIdentifier.getOrCreateDeviceId(),
+                    focus: focus,
+                    meetingContext: meetingContext,
+                    scope: scope,
+                    codebaseContext: codebaseContext,
+                    referencedFiles: referencedFiles,
+                    model: OpenAIModel.gpt54Mini.rawValue,
+                    language: meetingLanguage
+                )
+            } else {
+                guard let insightsService, !openaiApiKey.isEmpty else {
+                    investigationError = "openai api key required in settings"
+                    isGeneratingInvestigation = false
+                    return
+                }
+                result = try await insightsService.generateInvestigation(
+                    focus: focus,
+                    meetingContext: meetingContext,
+                    scope: scope,
+                    codebaseContext: codebaseContext,
+                    referencedFiles: referencedFiles,
+                    model: .gpt54Mini,
+                    apiKey: openaiApiKey,
+                    language: meetingLanguage
+                )
+            }
+
+            guard investigationRequestID == requestID,
+                  !Task.isCancelled,
+                  currentMeeting?.id == meetingIDAtRequest else {
+                isGeneratingInvestigation = false
+                return
+            }
+            if result.isEmpty {
+                investigationError = "OpenAI returned no investigation result — try again"
+            } else {
+                investigationResult = result
+            }
+        } catch {
+            guard investigationRequestID == requestID,
+                  !Task.isCancelled,
+                  !(error is CancellationError) else {
+                isGeneratingInvestigation = false
+                return
+            }
+            investigationError = "couldn't investigate — \(error.localizedDescription.lowercased())"
+            enqueueDiagnosticEvent(
+                "insights_investigation_failed",
+                category: .insights,
+                level: .warning,
+                details: ["scope": scope.rawValue, "error": error.localizedDescription]
+            )
+        }
+        if investigationRequestID == requestID {
+            isGeneratingInvestigation = false
+        }
+    }
+
+    private func evaluateInvestigationSuggestion() {
+        guard isRecording,
+              let lastFinal = liveSegments.last,
+              lastFinal.id != lastInvestigationEvaluatedFinalSegmentID else { return }
+        lastInvestigationEvaluatedFinalSegmentID = lastFinal.id
+
+        var inspected = 0
+        for segment in liveSegments.reversed() {
+            guard segment.isFinal else { continue }
+            inspected += 1
+            if !dismissedInvestigationSuggestionIDs.contains(segment.id),
+               let focus = Self.investigationFocus(from: segment.text) {
+                investigationSuggestion = InvestigationSuggestion(id: segment.id, focus: focus)
+                return
+            }
+            if inspected >= 6 { break }
+        }
+    }
+
+    nonisolated static func investigationFocus(from text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 12 else { return nil }
+        let normalized = trimmed.lowercased()
+
+        let explicitPhrases = [
+            "investigate", "research", "look into", "find out", "check whether",
+            "figure out", "verify whether", "is it possible", "would it be possible",
+            "what would it take", "would be cool if"
+        ]
+        let capabilityPhrases = [
+            "can we build", "could we build", "can we implement", "could we implement",
+            "can we integrate", "could we integrate", "can we automate", "could we automate",
+            "can we support", "could we support", "can we fix", "could we fix",
+            "is there a way", "is there some way"
+        ]
+        let diagnosticTerms = [
+            "why does", "why is", "how could", "how can", "what causes",
+            "feasible", "feasibility", "possible", "tradeoff", "cost", "impact"
+        ]
+        let looksExplicit = explicitPhrases.contains { normalized.contains($0) }
+            || capabilityPhrases.contains { normalized.contains($0) }
+        let looksDiagnostic = (normalized.contains("?") || normalized.hasPrefix("why") || normalized.hasPrefix("how"))
+            && diagnosticTerms.contains { normalized.contains($0) }
+        guard looksExplicit || looksDiagnostic else { return nil }
+        return String(trimmed.prefix(280))
+    }
+
+    nonisolated static func investigationMeetingContext(
+        meetingTitle: String,
+        prepNotes: String,
+        segments: [LiveSegment],
+        maxCharacters: Int = 11_500
+    ) -> String {
+        let contextBudget = max(1_000, maxCharacters - 1_000)
+        let perTurnLimit = min(2_500, max(500, contextBudget / 2))
+        var recentLines: [String] = []
+        var recentCharacterCount = 0
+
+        for segment in segments.reversed() {
+            guard segment.isFinal else { continue }
+            let label = segment.speaker == DeepgramService.micSpeakerID
+                ? "You"
+                : "Speaker \(segment.speaker + 1)"
+            let line = String("\(label): \(segment.text)".prefix(perTurnLimit))
+            if !recentLines.isEmpty, recentCharacterCount + line.count > contextBudget { break }
+            recentLines.append(line)
+            recentCharacterCount += line.count + 1
+            if recentLines.count >= 14 { break }
+        }
+
+        let trimmedPrep = prepNotes.trimmingCharacters(in: .whitespacesAndNewlines)
+        var context = "Meeting title\n\(meetingTitle)"
+        if !trimmedPrep.isEmpty {
+            context += "\n\nMeeting prep notes\n\(String(trimmedPrep.prefix(2_000)))"
+        }
+        if !recentLines.isEmpty {
+            context += "\n\nRecent conversation\n\(recentLines.reversed().joined(separator: "\n"))"
+        }
+        return String(context.prefix(maxCharacters))
+    }
+
+    #if os(macOS)
+    nonisolated private static func resolveCodebaseBookmark(_ data: Data) throws -> URL {
+        var isStale = false
+        return try URL(
+            resolvingBookmarkData: data,
+            options: [.withSecurityScope],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+    }
+
+    nonisolated static func buildCodebaseSnapshot(
+        rootURL: URL,
+        focus: String,
+        maxCharacters: Int = 40_000,
+        maxFiles: Int = 8
+    ) throws -> CodebaseSnapshot {
+        let allowedExtensions = Set([
+            "swift", "m", "mm", "h", "c", "cc", "cpp", "hpp",
+            "ts", "tsx", "js", "jsx", "py", "go", "rs", "java", "kt", "kts",
+            "rb", "php", "cs", "sql", "graphql", "json", "yaml", "yml", "toml", "md"
+        ])
+        let excludedDirectories = Set([
+            ".git", ".build", ".swiftpm", "DerivedData", "node_modules", "Pods", "vendor", "dist", "build"
+        ])
+        let stopWords = Set([
+            "could", "would", "should", "there", "their", "about", "which", "this", "that",
+            "with", "from", "have", "what", "when", "where", "into", "some", "investigate"
+        ])
+        let tokens = Set(
+            focus.lowercased()
+                .split { !$0.isLetter && !$0.isNumber }
+                .map(String.init)
+                .filter { $0.count >= 3 && !stopWords.contains($0) }
+        )
+
+        struct Candidate {
+            let relativePath: String
+            let content: String
+            let score: Int
+        }
+
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: rootURL,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return CodebaseSnapshot(context: "", files: []) }
+
+        var candidates: [Candidate] = []
+        var inspectedFiles = 0
+        for case let fileURL as URL in enumerator {
+            let values = try? fileURL.resourceValues(forKeys: Set(keys))
+            if values?.isDirectory == true {
+                if excludedDirectories.contains(fileURL.lastPathComponent) {
+                    enumerator.skipDescendants()
+                }
+                continue
+            }
+            guard values?.isRegularFile == true,
+                  values?.isSymbolicLink != true,
+                  allowedExtensions.contains(fileURL.pathExtension.lowercased()),
+                  (values?.fileSize ?? 0) <= 300_000 else { continue }
+            inspectedFiles += 1
+            if inspectedFiles > 1_200 { break }
+
+            guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
+                  let content = String(data: data, encoding: .utf8) else { continue }
+            let relativePath = String(fileURL.path.dropFirst(rootURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let lowerPath = relativePath.lowercased()
+            let lowerContent = content.lowercased()
+            var score = 0
+            for token in tokens {
+                if lowerPath.contains(token) { score += 12 }
+                if lowerContent.contains(token) { score += 3 }
+            }
+            if ["readme.md", "agents.md", "package.json", "project.yml"].contains(lowerPath) {
+                score += 1
+            }
+            guard score > 0 else { continue }
+            candidates.append(Candidate(relativePath: relativePath, content: content, score: score))
+        }
+
+        candidates.sort {
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.relativePath < $1.relativePath
+        }
+
+        var blocks: [String] = []
+        var files: [String] = []
+        var usedCharacters = 0
+        for candidate in candidates.prefix(maxFiles) {
+            let excerpt = redactLikelySecrets(
+                relevantCodeExcerpt(candidate.content, tokens: tokens, maxCharacters: 5_000)
+            )
+            let block = "FILE: \(candidate.relativePath)\n\(excerpt)"
+            if !blocks.isEmpty, usedCharacters + block.count > maxCharacters { break }
+            blocks.append(block)
+            files.append(candidate.relativePath)
+            usedCharacters += block.count + 2
+        }
+        return CodebaseSnapshot(context: blocks.joined(separator: "\n\n"), files: files)
+    }
+
+    nonisolated private static func relevantCodeExcerpt(
+        _ content: String,
+        tokens: Set<String>,
+        maxCharacters: Int
+    ) -> String {
+        guard content.count > maxCharacters else { return content }
+        let lower = content.lowercased()
+        let positions = tokens.compactMap { lower.range(of: $0)?.lowerBound }
+        guard let first = positions.min() else { return String(content.prefix(maxCharacters)) }
+        let offset = lower.distance(from: lower.startIndex, to: first)
+        let startOffset = max(0, offset - maxCharacters / 3)
+        let start = content.index(content.startIndex, offsetBy: startOffset)
+        return String(content[start...].prefix(maxCharacters))
+    }
+
+    nonisolated static func redactLikelySecrets(_ content: String) -> String {
+        let sensitiveAssignment = try? NSRegularExpression(
+            pattern: #"(?im)^(\s*(?:(?:let|var|const|static\s+let|static\s+var)\s+)?[\"']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password|private[_-]?key|token|secret)[\"']?\s*[:=]\s*)[^\r\n,}]+"#
+        )
+        let privateKeyBlock = try? NSRegularExpression(
+            pattern: #"(?s)-----BEGIN [^-]*PRIVATE KEY-----.*?-----END [^-]*PRIVATE KEY-----"#
+        )
+
+        var redacted = content
+        if let sensitiveAssignment {
+            let range = NSRange(redacted.startIndex..., in: redacted)
+            redacted = sensitiveAssignment.stringByReplacingMatches(
+                in: redacted,
+                range: range,
+                withTemplate: "$1[REDACTED]"
+            )
+        }
+        if let privateKeyBlock {
+            let range = NSRange(redacted.startIndex..., in: redacted)
+            redacted = privateKeyBlock.stringByReplacingMatches(
+                in: redacted,
+                range: range,
+                withTemplate: "[REDACTED PRIVATE KEY]"
+            )
+        }
+        return redacted
+    }
+    #endif
 
     // MARK: - Real-time Nudges (monologue + filler rate)
 

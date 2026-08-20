@@ -394,6 +394,24 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(found?.queryArgument, "query")
     }
 
+    func testInvestigationResultDecodesSourcesAndReferencedFiles() throws {
+        let json = Data("""
+        {
+          "answer": "The API supports this approach.",
+          "sources": [
+            { "title": "OpenAI web search", "url": "https://developers.openai.com/api/docs/guides/tools-web-search" }
+          ],
+          "referenced_files": ["Sources/Billing.swift", "  "]
+        }
+        """.utf8)
+
+        let result = try JSONDecoder().decode(InvestigationResult.self, from: json)
+        XCTAssertEqual(result.answer, "The API supports this approach.")
+        XCTAssertEqual(result.sources.first?.title, "OpenAI web search")
+        XCTAssertEqual(result.referencedFiles, ["Sources/Billing.swift"])
+        XCTAssertFalse(result.isEmpty)
+    }
+
     // MARK: - InsightsError
 
     func testInsightsErrorDescriptions() {
@@ -431,6 +449,7 @@ final class InsightsParsingTests: XCTestCase {
 
     func testOpenAIModelRawValue() {
         XCTAssertEqual(OpenAIModel.gpt5Mini.rawValue, "gpt-5-mini-2025-08-07")
+        XCTAssertEqual(OpenAIModel.gpt54Mini.rawValue, "gpt-5.4-mini-2026-03-17")
     }
 
     func testOpenAIModelRoundtrip() throws {

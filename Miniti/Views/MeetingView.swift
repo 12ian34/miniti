@@ -21,6 +21,10 @@ struct MeetingView: View {
                         SmartMeetingBanner(prompt: prompt)
                     }
 
+                    if let suggestion = appState.investigationSuggestion {
+                        InvestigationSuggestionBanner(suggestion: suggestion)
+                    }
+
                     // Only claim the meeting was saved when finalization is running or there is
                     // transcript content to save — a failed start has neither and should show
                     // just the error banner.
@@ -95,6 +99,81 @@ struct MeetingView: View {
                 meetingTitle = newTitle
             }
         }
+        .sheet(
+            isPresented: Binding(
+                get: { appState.isInvestigationPresented },
+                set: { presented in
+                    if presented {
+                        appState.isInvestigationPresented = true
+                    } else {
+                        appState.dismissInvestigation()
+                    }
+                }
+            )
+        ) {
+            InvestigationViewMac()
+                .environmentObject(appState)
+                .frame(minWidth: 560, idealWidth: 680, minHeight: 520, idealHeight: 640)
+        }
+    }
+}
+
+private struct InvestigationSuggestionBanner: View {
+    @EnvironmentObject private var appState: AppState
+    let suggestion: AppState.InvestigationSuggestion
+
+    var body: some View {
+        HStack(spacing: MinitiDesignSystem.Spacing.comfortable) {
+            Image(systemName: "magnifyingglass.circle.fill")
+                .foregroundStyle(ColorPalette.Accent.blue)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.hairline) {
+                Text("worth investigating")
+                    .font(.system(size: 12, weight: .semibold, design: .default))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text(suggestion.focus)
+                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.muted)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+
+            Button {
+                appState.triggerInvestigation(scope: .web, focus: suggestion.focus)
+            } label: {
+                MinitiControlLabel(role: .primary, isEmphasized: true) {
+                    Label("research", systemImage: "globe")
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                }
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                appState.triggerInvestigation(scope: .codebase, focus: suggestion.focus)
+            } label: {
+                MinitiControlLabel(role: .secondary) {
+                    Label("codebase", systemImage: "chevron.left.forwardslash.chevron.right")
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                }
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                appState.dismissInvestigationSuggestion()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Text.dim)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss investigation suggestion")
+        }
+        .padding(.horizontal, MinitiDesignSystem.Spacing.section)
+        .padding(.vertical, MinitiDesignSystem.Spacing.control)
+        .background(ColorPalette.Accent.blue.opacity(0.08))
+        .accessibilityElement(children: .contain)
     }
 }
 
@@ -317,11 +396,11 @@ struct ReadyStateView: View {
                 Text("⬢")
                     .font(.system(size: 48, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "3FB950"))
-                
+
                 Text("miniti")
                     .font(.system(size: 28, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color(hex: "E6EDF3"))
-                
+
                 FlashingTagline(
                     text: "multi-dimensional meetings",
                     isIdle: !appState.isMonitoring
@@ -445,7 +524,7 @@ struct ReadyStateView: View {
 
             // Upcoming calendar events
             if appState.pendingAutoStartEvent == nil,
-               appState.googleCalendarEnabled && appState.isGoogleCalendarConnected && !appState.todayEvents.isEmpty {
+               appState.googleCalendarEnabled && appState.isGoogleCalendarConnected && !appState.upcomingMeetingEvents.isEmpty {
                 UpcomingEventsPanel(confirmEvent: $confirmEvent)
                     .frame(maxWidth: 380)
             }
@@ -581,7 +660,7 @@ private struct UpcomingEventsPanel: View {
     @Binding var confirmEvent: MinitiAPIService.CalendarEvent?
 
     private var displayEvents: [MinitiAPIService.CalendarEvent] {
-        Array(appState.todayEvents.prefix(5))
+        Array(appState.upcomingMeetingEvents.prefix(5))
     }
 
     var body: some View {
@@ -601,6 +680,7 @@ private struct UpcomingEventsPanel: View {
 }
 
 private struct EventConfirmSheet: View {
+    @EnvironmentObject private var appState: AppState
     let event: MinitiAPIService.CalendarEvent
     let onStart: () -> Void
     let onCancel: () -> Void
@@ -696,6 +776,34 @@ private struct EventConfirmSheet: View {
                     }
                 }
 
+                Divider()
+                    .background(ColorPalette.Border.primary)
+                    .padding(.vertical, 10)
+
+                Text("prep notes")
+                    .font(.system(size: 10, weight: .semibold, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                    .padding(.bottom, 6)
+
+                TextEditor(text: Binding(
+                    get: { appState.prepNotes(for: event) },
+                    set: { appState.updatePrepNotes($0, for: event) }
+                ))
+                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .scrollContentBackground(.hidden)
+                    .padding(8)
+                    .frame(height: 92)
+                    .background(
+                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                            .fill(ColorPalette.Background.primary)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                            .stroke(ColorPalette.Border.primary, lineWidth: 1)
+                    )
+                    .accessibilityLabel("Prep notes for \(event.title)")
+
                 HStack(spacing: 10) {
                     Button {
                         onCancel()
@@ -783,6 +891,7 @@ private struct EventConfirmSheet: View {
 }
 
 private struct CompactEventRow: View {
+    @EnvironmentObject private var appState: AppState
     let event: MinitiAPIService.CalendarEvent
     @State private var isHovered = false
 
@@ -791,7 +900,7 @@ private struct CompactEventRow: View {
             Text(formattedTime)
                 .font(.system(size: 10, weight: .semibold, design: .default))
                 .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
-                .frame(width: 40, alignment: .leading)
+                .frame(width: 66, alignment: .leading)
 
             Text(event.title)
                 .font(.system(size: 11, weight: .medium, design: .default))
@@ -826,6 +935,13 @@ private struct CompactEventRow: View {
                     }
                     .foregroundStyle(ColorPalette.Text.dim)
                 }
+            }
+
+            if !appState.prepNotes(for: event).isEmpty {
+                Image(systemName: "note.text")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .accessibilityLabel("Has prep notes")
             }
 
             Image(systemName: "record.circle")
@@ -863,7 +979,13 @@ private struct CompactEventRow: View {
     private var formattedTime: String {
         guard let date = event.startDate else { return "" }
         let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
+        if Calendar.current.isDateInToday(date) {
+            formatter.dateFormat = "HH:mm"
+        } else if Calendar.current.isDateInTomorrow(date) {
+            formatter.dateFormat = "'tom' HH:mm"
+        } else {
+            formatter.dateFormat = "EEE HH:mm"
+        }
         return formatter.string(from: date).lowercased()
     }
 
@@ -1271,7 +1393,7 @@ struct SectionHeader: View {
 // MARK: - Resizable Notes Layout
 
 /// Custom vertical split: transcript fills available space, notes starts compact
-/// with a drag handle to resize. Replaces VSplitView which can't control initial size.
+/// with a drag handle to resize, and the transcript keeps a usable minimum height.
 struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
     let transcript: Transcript
     let notes: Notes
@@ -1280,52 +1402,68 @@ struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
     @GestureState private var dragOffset: CGFloat = 0
     private let minNotesHeight: CGFloat = 50
     private let maxNotesHeight: CGFloat = 500
+    private let minTranscriptHeight: CGFloat = 200
+    private let dividerHeight: CGFloat = 8
     
     init(@ViewBuilder transcript: () -> Transcript, @ViewBuilder notes: () -> Notes) {
         self.transcript = transcript()
         self.notes = notes()
     }
     
-    private var effectiveHeight: CGFloat {
-        min(max(notesHeight - dragOffset, minNotesHeight), maxNotesHeight)
+    private func maximumNotesHeight(availableHeight: CGFloat) -> CGFloat {
+        min(
+            maxNotesHeight,
+            max(minNotesHeight, availableHeight - minTranscriptHeight - dividerHeight)
+        )
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            transcript
-                .frame(maxHeight: .infinity)
-            
-            // Drag handle
-            Rectangle()
-                .fill(Color(hex: "1C1C1F"))
-                .frame(height: 8)
-                .frame(maxWidth: .infinity)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(Color(hex: "3F3F46"))
-                        .frame(width: 32, height: 2)
-                )
-                .contentShape(Rectangle())
-                .onHover { hovering in
-                    if hovering {
-                        NSCursor.resizeUpDown.push()
-                    } else {
-                        NSCursor.pop()
+        GeometryReader { geometry in
+            let maximumNotesHeight = maximumNotesHeight(availableHeight: geometry.size.height)
+            let effectiveHeight = min(
+                max(notesHeight - dragOffset, minNotesHeight),
+                maximumNotesHeight
+            )
+
+            VStack(spacing: 0) {
+                transcript
+                    .frame(maxHeight: .infinity)
+
+                // Drag handle
+                Rectangle()
+                    .fill(Color(hex: "1C1C1F"))
+                    .frame(height: dividerHeight)
+                    .frame(maxWidth: .infinity)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 1)
+                            .fill(Color(hex: "3F3F46"))
+                            .frame(width: 32, height: 2)
+                    )
+                    .contentShape(Rectangle())
+                    .onHover { hovering in
+                        if hovering {
+                            NSCursor.resizeUpDown.push()
+                        } else {
+                            NSCursor.pop()
+                        }
                     }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                        .updating($dragOffset) { value, state, _ in
-                            state = value.translation.height
-                        }
-                        .onEnded { value in
-                            notesHeight = min(max(notesHeight - value.translation.height, minNotesHeight), maxNotesHeight)
-                        }
-                )
-            
-            notes
-                .frame(height: effectiveHeight)
-                .clipped()
+                    .gesture(
+                        DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                            .updating($dragOffset) { value, state, _ in
+                                state = value.translation.height
+                            }
+                            .onEnded { value in
+                                notesHeight = min(
+                                    max(notesHeight - value.translation.height, minNotesHeight),
+                                    maximumNotesHeight
+                                )
+                            }
+                    )
+
+                notes
+                    .frame(height: effectiveHeight)
+                    .clipped()
+            }
         }
     }
 }
@@ -2237,6 +2375,7 @@ struct TerminalHeader: View {
                 }
 
                 if appState.isRecording {
+                    InvestigationButton()
                     ZonedOutButton()
                 }
 
@@ -2890,6 +3029,207 @@ struct CalendarNudgeCard: View {
     }
 }
 
+// MARK: - Investigation handoff
+
+private struct InvestigationViewMac: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.standard) {
+                Image(systemName: appState.activeInvestigationScope == .web ? "globe" : "chevron.left.forwardslash.chevron.right")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.hairline) {
+                    Text(appState.activeInvestigationScope == .web ? "web investigation" : "codebase investigation")
+                        .font(.system(size: 14, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    Text(appState.activeInvestigationFocus)
+                        .font(.system(size: 12, weight: .regular, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                Button("Done") { appState.dismissInvestigation() }
+            }
+            .padding(MinitiDesignSystem.Spacing.section)
+
+            Divider().background(ColorPalette.Border.primary)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+                    if let result = appState.investigationResult {
+                        Text(LocalizedStringKey(result.answer))
+                            .font(.system(size: 13, weight: .regular, design: .default))
+                            .foregroundStyle(ColorPalette.Text.primary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if !result.sources.isEmpty {
+                            investigationSection(title: "sources") {
+                                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                                    ForEach(result.sources) { source in
+                                        if let url = URL(string: source.url) {
+                                            Link(destination: url) {
+                                                Label(source.title, systemImage: "arrow.up.right.square")
+                                                    .font(.system(size: 11, weight: .medium, design: .default))
+                                                    .foregroundStyle(ColorPalette.Accent.blue)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if !result.referencedFiles.isEmpty {
+                            investigationSection(title: "files reviewed") {
+                                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.hairline) {
+                                    ForEach(result.referencedFiles, id: \.self) { file in
+                                        Text(file)
+                                            .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                            .foregroundStyle(ColorPalette.Text.secondary)
+                                            .textSelection(.enabled)
+                                    }
+                                }
+                            }
+                        }
+                    } else if appState.isGeneratingInvestigation {
+                        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                            ProgressView().controlSize(.small)
+                            Text(appState.activeInvestigationScope == .web ? "researching with OpenAI…" : "reviewing code with OpenAI…")
+                                .font(.system(size: 12, weight: .regular, design: .default))
+                                .foregroundStyle(ColorPalette.Text.muted)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, MinitiDesignSystem.Spacing.section)
+                    }
+
+                    if let error = appState.investigationError {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundStyle(ColorPalette.Accent.amber)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(MinitiDesignSystem.Spacing.section)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            Divider().background(ColorPalette.Border.primary)
+
+            HStack {
+                Text("runs only when you click investigate")
+                    .font(.system(size: 10, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                Spacer()
+                Button("Run again") { appState.refreshInvestigation() }
+                    .disabled(appState.isGeneratingInvestigation)
+            }
+            .padding(MinitiDesignSystem.Spacing.section)
+        }
+        .background(ColorPalette.Background.primary)
+    }
+
+    private func investigationSection<Content: View>(
+        title: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+            Text(title)
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Text.dim)
+            content()
+        }
+    }
+}
+
+private struct InvestigationButton: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var isScopePickerPresented = false
+
+    var body: some View {
+        Button {
+            isScopePickerPresented.toggle()
+        } label: {
+            MinitiControlLabel(role: .secondary) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 10, weight: .semibold))
+                        .frame(width: 11)
+                    Text("investigate")
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(ColorPalette.Text.meta)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+        .fixedSize()
+        .disabled(!appState.canInvestigateCurrentConversation)
+        .popover(isPresented: $isScopePickerPresented, arrowEdge: .bottom) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                Text("investigate")
+                    .font(.system(size: 12, weight: .semibold, design: .default))
+                    .foregroundStyle(ColorPalette.Text.primary)
+
+                investigationScopeButton(
+                    title: "research the web",
+                    detail: "current information with citations",
+                    icon: "globe",
+                    scope: .web
+                )
+
+                investigationScopeButton(
+                    title: "investigate codebase",
+                    detail: "selected local folder excerpts",
+                    icon: "chevron.left.forwardslash.chevron.right",
+                    scope: .codebase
+                )
+            }
+            .padding(MinitiDesignSystem.Spacing.section)
+            .frame(width: 280)
+            .background(ColorPalette.Background.primary)
+        }
+        .help("Investigate recent meeting context")
+        .accessibilityHint("Runs an OpenAI investigation using recent meeting context")
+    }
+
+    private func investigationScopeButton(
+        title: String,
+        detail: String,
+        icon: String,
+        scope: InvestigationScope
+    ) -> some View {
+        Button {
+            isScopePickerPresented = false
+            appState.triggerInvestigation(scope: scope)
+        } label: {
+            MinitiControlLabel(role: .secondary, height: 46) {
+                HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                    Image(systemName: icon)
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.hairline) {
+                        Text(title)
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                        Text(detail)
+                            .font(.system(size: 10, weight: .regular, design: .default))
+                            .foregroundStyle(ColorPalette.Text.dim)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .focusable(false)
+    }
+}
+
 // MARK: - Zoned Out button + popover
 
 struct ZonedOutButton: View {
@@ -2905,8 +3245,8 @@ struct ZonedOutButton: View {
         } label: {
             MinitiControlLabel(role: .secondary) {
                 HStack(spacing: 6) {
-                    Text("😶")
-                        .font(.system(size: 12))
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: 10, weight: .semibold))
                         .frame(width: 11)
                     Text("zoned out")
                         .font(.system(size: 11, weight: .medium, design: .default))
@@ -2958,8 +3298,9 @@ private struct ZonedOutPopoverContent: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Text("😶")
-                    .font(.system(size: 14))
+                Image(systemName: "clock.arrow.circlepath")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accent)
                 Text("catch me up")
                     .font(.system(size: 12, weight: .semibold, design: .default))
                     .foregroundStyle(accent)
