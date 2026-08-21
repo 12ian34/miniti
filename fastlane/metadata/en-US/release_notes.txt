@@ -1,8 +1,3 @@
-NEW
-
-- Add locally stored prep notes to upcoming calendar meetings and carry them into live notes automatically.
-- Get timely investigation suggestions and run focused OpenAI web research inside Miniti with cited sources, only when you choose.
-
 IMPROVED
 
-- Home shows your next five connected-calendar meetings across the coming days, with a preparation view before you start.
+- Smart meetings can now notice prolonged quiet in calendar-linked recordings, so it is easier to tell when a meeting has ended without changing your auto-stop setting.

@@ -50,18 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        guard let mainWindow = sender.windows.first(where: Self.isMainAppWindow) else {
-            Self.lifecycleLogger.info("Dock reopen requested main scene recreation")
-            openMainWindow?()
-            return openMainWindow == nil
-        }
-
-        Self.lifecycleLogger.info("Dock reopen restoring identified main window")
-        sender.activate(ignoringOtherApps: true)
-        if mainWindow.isMiniaturized {
-            mainWindow.deminiaturize(nil)
-        }
-        mainWindow.makeKeyAndOrderFront(nil)
+        openOrRestoreMainWindow()
         return false
     }
 
@@ -109,7 +98,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
 
     static func restoreMainWindowIfPresent() -> Bool {
-        guard let window = NSApp.windows.first(where: isMainAppWindow) else { return false }
+        guard let window = NSApp.windows.first(where: {
+            isRestorableMainWindow($0, applicationIsHidden: NSApp.isHidden)
+        }) else { return false }
         NSApp.activate(ignoringOtherApps: true)
         if window.isMiniaturized {
             window.deminiaturize(nil)
@@ -117,6 +108,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         window.makeKeyAndOrderFront(nil)
         lifecycleLogger.info("Restored identified main window")
         return true
+    }
+
+    /// Restore a live main window or ask SwiftUI to create a new scene after the old
+    /// window was closed. A closed WindowGroup window can linger briefly in NSApp.windows;
+    /// treating that stale object as restorable makes `makeKeyAndOrderFront` a no-op.
+    func openOrRestoreMainWindow() {
+        if Self.restoreMainWindowIfPresent() { return }
+
+        Self.lifecycleLogger.info("Main window recreation requested")
+        NSApp.activate(ignoringOtherApps: true)
+        openMainWindow?()
+
+        // Scene creation completes asynchronously. Re-activate and restore the newly
+        // identified window on the next runloop so the action works from a floating panel.
+        DispatchQueue.main.async { [weak self] in
+            guard self != nil else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            _ = Self.restoreMainWindowIfPresent()
+        }
+    }
+
+    static func isRestorableMainWindow(
+        _ window: NSWindow,
+        applicationIsHidden: Bool
+    ) -> Bool {
+        isMainAppWindow(window)
+            && (window.isVisible || window.isMiniaturized || applicationIsHidden)
     }
 
     private static func isMainAppWindow(_ window: NSWindow) -> Bool {
@@ -134,10 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             if actionIdentifier != UNNotificationDefaultActionIdentifier {
                 self?.appState?.handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
             }
-            if !Self.restoreMainWindowIfPresent() {
-                Self.lifecycleLogger.info("Notification requested main scene recreation")
-                self?.openMainWindow?()
-            }
+            self?.openOrRestoreMainWindow()
         }
         completionHandler()
     }
@@ -221,6 +236,7 @@ struct MinitiApp: App {
             .minitiReduceMotionAware()
             .onAppear {
                 appDelegate.appState = appState
+                RecordingIndicatorCoordinator.shared.configure(appState: appState)
             }
             .background {
                 MainWindowIdentifierInstaller()
@@ -328,9 +344,14 @@ struct MinitiApp: App {
         } label: {
             MenuBarIcon(
                 isRecording: appState.isRecording,
+                elapsedText: AppState.presenceDuration(appState.recordingDuration),
+                graceRemainingSeconds: appState.endingGrace?.remainingSeconds,
                 nextEventTitle: appState.nextEvent?.title,
                 nextEventTime: menuBarNextEventTime
             )
+            .onAppear {
+                RecordingIndicatorCoordinator.shared.configure(appState: appState)
+            }
         }
     }
     
@@ -411,30 +432,60 @@ struct MinitiApp: App {
 
 struct MenuBarIcon: View {
     let isRecording: Bool
+    let elapsedText: String
+    let graceRemainingSeconds: Int?
     let nextEventTitle: String?
     let nextEventTime: String?
     @State private var isPulsing: Bool = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
-            if isRecording {
+            if let remaining = graceRemainingSeconds {
+                // Ending grace: distinguished by glyph and wording, not colour alone.
                 HStack(spacing: 4) {
-                    Circle()
-                        .fill(.white)
-                        .frame(width: 6, height: 6)
-                        .opacity(isPulsing ? 1.0 : 0.5)
-
-                    Text("REC")
-                        .font(.system(size: 10, weight: .bold, design: .default))
+                    Image(systemName: "phone.down.fill")
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(.white)
+                    Text("ENDING \(remaining)s")
+                        .font(.system(size: 10, weight: .bold, design: .default))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: true)
                 }
+                .fixedSize(horizontal: true, vertical: true)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(
                     Capsule()
-                        .fill(.red)
+                        .fill(ColorPalette.Status.recording)
+                )
+            } else if isRecording {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 6, height: 6)
+                        .opacity(isPulsing && !reduceMotion ? 1.0 : 0.5)
+
+                    // Keep REC and elapsed time in one fixed-size text run. MenuBarExtra's
+                    // label can otherwise compress the trailing Text away entirely.
+                    Text("REC \(elapsedText)")
+                        .font(.system(size: 10, weight: .bold, design: .default))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: true)
+                }
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    Capsule()
+                        .fill(ColorPalette.Status.recording)
                 )
                 .onAppear {
+                    guard !reduceMotion else { return }
                     withAnimation(.easeInOut(duration: 0.6).repeatForever(autoreverses: true)) {
                         isPulsing = true
                     }
@@ -456,6 +507,9 @@ struct MenuBarIcon: View {
                             .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
+                            // Long event names must not expand the menu bar excessively.
+                            .frame(maxWidth: 140, alignment: .leading)
+                            .truncationMode(.tail)
                     }
                 }
             }
@@ -467,10 +521,34 @@ struct MenuBarIcon: View {
 
 struct MenuBarView: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.openWindow) private var openWindow
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let grace = appState.endingGrace {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(grace.appDisplayName) call ended")
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                    Text("Finishing in \(grace.remainingSeconds)s")
+                        .font(.system(size: 10))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Keep recording") {
+                            appState.keepRecordingFromEndingGrace()
+                        }
+                        Button("End now") {
+                            appState.endEndingGraceNow()
+                        }
+                    }
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                Divider()
+            }
+
             if let prompt = appState.smartMeetingPrompt {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(prompt.title)
@@ -481,17 +559,41 @@ struct MenuBarView: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                     HStack {
-                        if prompt.kind == .calendar, let eventID = prompt.eventID {
-                            Button("End & start") {
-                                appState.endAndStartCalendarMeeting(eventID: eventID)
+                        switch prompt.kind {
+                        case .calendar:
+                            if let eventID = prompt.eventID {
+                                Button("End & start") {
+                                    appState.endAndStartCalendarMeeting(eventID: eventID)
+                                }
+                            } else {
+                                Button("End") {
+                                    appState.endMeetingFromSmartPrompt()
+                                }
                             }
-                        } else {
+                            Button("Keep") {
+                                appState.keepRecordingFromSmartMeetingPrompt()
+                            }
+                        case .quiet, .callEnd:
                             Button("End") {
                                 appState.endMeetingFromSmartPrompt()
                             }
-                        }
-                        Button("Keep") {
-                            appState.keepRecordingFromSmartMeetingPrompt()
+                            Button("Keep") {
+                                appState.keepRecordingFromSmartMeetingPrompt()
+                            }
+                        case .callStart:
+                            Button("Take notes") {
+                                appState.startMeetingFromDetectedCall()
+                            }
+                            Button("Not now") {
+                                appState.dismissDetectedCallStartPrompt()
+                            }
+                        case .callTransition:
+                            Button("End & start next") {
+                                appState.endAndStartNewMeeting()
+                            }
+                            Button("Keep") {
+                                appState.keepRecordingFromSmartMeetingPrompt()
+                            }
                         }
                     }
                     .controlSize(.small)
@@ -506,7 +608,7 @@ struct MenuBarView: View {
             if appState.isRecording {
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(Color.red)
+                        .fill(ColorPalette.Status.recording)
                         .frame(width: 8, height: 8)
                     Text("Recording")
                         .font(.system(size: 12, weight: .semibold))
@@ -518,20 +620,30 @@ struct MenuBarView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color.red.opacity(0.1))
-                
+                .background(ColorPalette.Status.recording.opacity(0.1))
+
+                if let lifecycle = appState.recordingPresence.lifecycleStatus {
+                    Text(lifecycle)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 4)
+                }
+
                 Divider()
             }
-            
+
             // Current meeting info
             if let meeting = appState.currentMeeting {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(meeting.displayTitle)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
-                    
+
                     HStack(spacing: 8) {
-                        Text("\(appState.liveSegments.filter { $0.isFinal }.count) segments")
+                        // liveSegments is finalized-only by contract; no O(n) filter per tick.
+                        Text("\(appState.liveSegments.count) segments")
                         if !appState.liveSummary.isEmpty {
                             Text("•")
                             Text("insights ready")
@@ -588,9 +700,7 @@ struct MenuBarView: View {
             Divider()
             
             Button {
-                if !AppDelegate.restoreMainWindowIfPresent() {
-                    openWindow(id: "main")
-                }
+                (NSApp.delegate as? AppDelegate)?.openOrRestoreMainWindow()
             } label: {
                 Label("Open Miniti", systemImage: "macwindow")
             }

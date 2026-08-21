@@ -1099,7 +1099,7 @@ struct AudioSettingsView: View {
                     Text("15 minutes").tag(15)
                 }
                 .id("recording.autoStop")
-                Text("Automatically stop recording when no speech is detected for the selected duration.")
+                Text("Advanced fallback: stops recording after prolonged silence. Intended for in-person meetings and unsupported call apps — supported calls end automatically when the call ends.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1134,6 +1134,7 @@ struct PermissionStatusBadge: View {
 }
 
 struct GeneralSettingsView: View {
+    @EnvironmentObject var appState: AppState
     @AppStorage("launchAtLogin") private var launchAtLogin: Bool = false
     @AppStorage("showInMenuBar") private var showInMenuBar: Bool = true
 
@@ -1153,6 +1154,12 @@ struct GeneralSettingsView: View {
                 Text(showInMenuBar
                      ? "Miniti icon is shown in the menu bar."
                      : "Turn this back on to restore the Miniti menu bar icon.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Show recording indicator", isOn: $appState.showRecordingIndicator)
+                    .id("general.recordingIndicator")
+                Text("Floating strip with the recording timer and controls, visible even when the main window is closed. Independent of Smart meetings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1375,7 +1382,7 @@ struct IntegrationsSettingsView: View {
             Section("Calendar & Meeting Automation") {
                 Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
                     .id("integrations.smartMeetings")
-                Text("Notices when a meeting may have ended or another meeting is approaching, then helps you finish, save, and start the right recording. Works with or without Google Calendar.")
+                Text("Detects calls from apps like Zoom, Teams, Meet and Slack, keeps recordings separated, and finishes when a call ends — after a visible, cancellable countdown. Works with or without Google Calendar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
@@ -1435,7 +1442,7 @@ struct IntegrationsSettingsView: View {
                         
                         Toggle("Auto-stop after meeting ends", isOn: $appState.autoStopFromCalendar)
                             .id("integrations.calendarAutoStop")
-                        Text("Automatically stop recording when the calendar event ends and no one is speaking.")
+                        Text("Advanced fallback: stop when the calendar event ends and no one is speaking. Supported calls already end automatically when the call ends.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
