@@ -457,6 +457,26 @@ final class CallLifecycleTests: XCTestCase {
         )
     }
 
+    func testIndicatorDisclosureDistinguishesClicksFromWindowDrags() {
+        XCTAssertFalse(
+            RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(
+                for: CGSize(width: 0, height: 0)
+            )
+        )
+        XCTAssertFalse(
+            RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(
+                for: CGSize(width: 2, height: 2)
+            ),
+            "Small pointer jitter should remain a click"
+        )
+        XCTAssertTrue(
+            RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(
+                for: CGSize(width: 12, height: -4)
+            ),
+            "Moving the floating window must not toggle disclosure on mouse-up"
+        )
+    }
+
     func testIndicatorExpansionAnchorsRightEdgeAndStaysFullyVisible() {
         let visible = NSRect(x: 0, y: 0, width: 1_000, height: 800)
         let collapsed = NSRect(x: 900, y: 740, width: 84, height: 44)
@@ -510,6 +530,24 @@ final class CallLifecycleTests: XCTestCase {
             AppDelegate.isRestorableMainWindow(window, applicationIsHidden: true),
             "Hiding the app must not create a duplicate main window"
         )
+    }
+
+    @MainActor
+    func testPresentMainWindowDeminiaturizesAndOrdersItFront() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        defer { window.close() }
+        window.identifier = AppDelegate.mainWindowIdentifier
+        window.miniaturize(nil)
+
+        AppDelegate.presentMainWindow(window)
+
+        XCTAssertFalse(window.isMiniaturized)
+        XCTAssertTrue(window.isVisible)
     }
     #endif
 }

@@ -101,13 +101,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         guard let window = NSApp.windows.first(where: {
             isRestorableMainWindow($0, applicationIsHidden: NSApp.isHidden)
         }) else { return false }
-        NSApp.activate(ignoringOtherApps: true)
+        presentMainWindow(window)
+        lifecycleLogger.info("Restored identified main window")
+        return true
+    }
+
+    /// A non-activating floating panel cannot rely on ordinary SwiftUI ordering to bring
+    /// the main scene above another app. Unhide and activate the application, then order
+    /// the identified window to the front regardless of the caller's activation state.
+    static func presentMainWindow(_ window: NSWindow) {
+        if NSApp.isHidden {
+            NSApp.unhide(nil)
+        }
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeMain()
         window.makeKeyAndOrderFront(nil)
-        lifecycleLogger.info("Restored identified main window")
-        return true
     }
 
     /// Restore a live main window or ask SwiftUI to create a new scene after the old
@@ -117,15 +130,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if Self.restoreMainWindowIfPresent() { return }
 
         Self.lifecycleLogger.info("Main window recreation requested")
+        if NSApp.isHidden {
+            NSApp.unhide(nil)
+        }
         NSApp.activate(ignoringOtherApps: true)
         openMainWindow?()
+        restoreRecreatedMainWindow(attempt: 0)
+    }
 
-        // Scene creation completes asynchronously. Re-activate and restore the newly
-        // identified window on the next runloop so the action works from a floating panel.
-        DispatchQueue.main.async { [weak self] in
-            guard self != nil else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            _ = Self.restoreMainWindowIfPresent()
+    private func restoreRecreatedMainWindow(attempt: Int) {
+        // SwiftUI scene creation and the identifier installer each complete
+        // asynchronously. Retry briefly instead of assuming both finish in one runloop.
+        let delay = attempt == 0 ? 0 : 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else { return }
+            if Self.restoreMainWindowIfPresent() { return }
+            guard attempt < 8 else {
+                Self.lifecycleLogger.error("Main window recreation did not become restorable")
+                return
+            }
+            self.restoreRecreatedMainWindow(attempt: attempt + 1)
         }
     }
 
