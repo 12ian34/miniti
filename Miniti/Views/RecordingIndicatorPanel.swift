@@ -135,6 +135,14 @@ enum RecordingIndicatorAttentionPolicy {
     }
 }
 
+enum RecordingIndicatorDisclosurePolicy {
+    static let dragTolerance: CGFloat = 3
+
+    static func shouldSuppressToggle(for translation: CGSize) -> Bool {
+        hypot(translation.width, translation.height) > dragTolerance
+    }
+}
+
 enum RecordingIndicatorGeometry {
     static let screenMargin: CGFloat = 8
 
@@ -409,6 +417,7 @@ private extension NSRect {
 private struct RecordingIndicatorView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var model: RecordingIndicatorModel
+    @State private var headerDragSuppressesToggle = false
 
     var body: some View {
         let presence = appState.recordingPresence
@@ -437,6 +446,7 @@ private struct RecordingIndicatorView: View {
         prompt: AppState.SmartMeetingPrompt?
     ) -> some View {
         Button {
+            guard !headerDragSuppressesToggle else { return }
             model.expanded.toggle()
         } label: {
             HStack(spacing: 8) {
@@ -491,6 +501,23 @@ private struct RecordingIndicatorView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    if RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(
+                        for: value.translation
+                    ) {
+                        headerDragSuppressesToggle = true
+                    }
+                }
+                .onEnded { _ in
+                    // Keep suppression through the Button's mouse-up action, then reset
+                    // before the next click begins.
+                    DispatchQueue.main.async {
+                        headerDragSuppressesToggle = false
+                    }
+                }
+        )
         .accessibilityLabel(collapsedAccessibilityLabel(presence, prompt: prompt))
         .accessibilityHint(model.expanded ? "Collapses meeting controls" : "Expands meeting controls")
         .help(model.expanded ? "Collapse meeting controls" : "Expand meeting controls")
