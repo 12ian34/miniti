@@ -17,6 +17,10 @@ struct MeetingView: View {
                         RecordingIssueBanner(message: error)
                     }
 
+                    if let grace = appState.endingGrace {
+                        EndingGraceBanner(grace: grace)
+                    }
+
                     if let prompt = appState.smartMeetingPrompt {
                         SmartMeetingBanner(prompt: prompt)
                     }
@@ -76,7 +80,12 @@ struct MeetingView: View {
                 }
             } else {
                 // Ready state - no active session (or starting)
-                ReadyStateView(meetings: meetings)
+                VStack(spacing: 0) {
+                    if let prompt = appState.smartMeetingPrompt, prompt.kind == .callStart {
+                        SmartMeetingBanner(prompt: prompt)
+                    }
+                    ReadyStateView(meetings: meetings)
+                }
             }
         }
         .background(Color(hex: "09090B"))
@@ -177,13 +186,55 @@ private struct InvestigationSuggestionBanner: View {
     }
 }
 
+/// The reversible ending-grace countdown: the strongest end signal fired, capture is
+/// suspended, and nothing finalizes until the countdown lapses or the user decides.
+private struct EndingGraceBanner: View {
+    @EnvironmentObject private var appState: AppState
+    let grace: EndingGraceState
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "phone.down.fill")
+                .foregroundStyle(ColorPalette.Status.recording)
+                .accessibilityHidden(true)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(grace.appDisplayName) call ended")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text("Finishing in \(grace.remainingSeconds)s")
+                    .font(.system(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(ColorPalette.Text.muted)
+            }
+
+            Spacer(minLength: 8)
+
+            Button("Keep recording") {
+                appState.keepRecordingFromEndingGrace()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.green)
+
+            Button("End now") {
+                appState.endEndingGraceNow()
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Status.recording.opacity(0.1))
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct SmartMeetingBanner: View {
     @EnvironmentObject private var appState: AppState
     let prompt: AppState.SmartMeetingPrompt
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: prompt.kind == .calendar ? "calendar.badge.clock" : "moon.zzz.fill")
+            Image(systemName: iconName)
                 .foregroundStyle(ColorPalette.Accent.amber)
                 .accessibilityHidden(true)
 
@@ -198,7 +249,28 @@ private struct SmartMeetingBanner: View {
 
             Spacer(minLength: 8)
 
-            if prompt.kind == .calendar, let eventID = prompt.eventID {
+            actionButtons
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(ColorPalette.Accent.amber.opacity(0.1))
+        .accessibilityElement(children: .contain)
+    }
+
+    private var iconName: String {
+        switch prompt.kind {
+        case .calendar: return "calendar.badge.clock"
+        case .quiet: return "moon.zzz.fill"
+        case .callStart, .callTransition: return "phone.fill"
+        case .callEnd: return "phone.down.fill"
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        switch prompt.kind {
+        case .calendar:
+            if let eventID = prompt.eventID {
                 Button("End & start next") {
                     appState.endAndStartCalendarMeeting(eventID: eventID)
                 }
@@ -216,16 +288,43 @@ private struct SmartMeetingBanner: View {
                 .buttonStyle(.borderedProminent)
                 .tint(ColorPalette.Accent.amber)
             }
+            keepRecordingButton
 
-            Button("Keep recording") {
-                appState.keepRecordingFromSmartMeetingPrompt()
+        case .quiet, .callEnd:
+            Button("End meeting") {
+                appState.endMeetingFromSmartPrompt()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.amber)
+            keepRecordingButton
+
+        case .callStart:
+            Button("Take notes") {
+                appState.startMeetingFromDetectedCall()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.green)
+
+            Button("Not now") {
+                appState.dismissDetectedCallStartPrompt()
             }
             .buttonStyle(.bordered)
+
+        case .callTransition:
+            Button("End & start next") {
+                appState.endAndStartNewMeeting()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.green)
+            keepRecordingButton
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(ColorPalette.Accent.amber.opacity(0.1))
-        .accessibilityElement(children: .contain)
+    }
+
+    private var keepRecordingButton: some View {
+        Button("Keep recording") {
+            appState.keepRecordingFromSmartMeetingPrompt()
+        }
+        .buttonStyle(.bordered)
     }
 
     private var countdownMessage: String {

@@ -12,6 +12,26 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-21 - v2.4.0
+
+This release makes meeting boundaries automatic on Mac: Miniti notices when a supported call starts and ends, and finishes the recording for you after a visible, cancellable countdown. Smart meeting prompts are also more dependable for calendar-linked recordings on every platform.
+
+Available now on Mac. The iPhone and iPad update is with Apple for review and will release automatically after approval.
+
+#### New
+
+- new: (macOS) When a supported call app like Zoom, Teams, Slack, FaceTime, Webex or Discord starts using your microphone, Miniti opens a small floating prompt offering to take notes — nothing records until you say so
+- new: (macOS) When the call ends, Miniti finishes the recording automatically after a short on-screen countdown you can cancel with one click, and continues the same meeting if the call comes back
+- new: (macOS) A floating recording indicator opens for important start and ending decisions, then shows the timer, call status and controls even when the main window is closed or covered; drag it anywhere, collapse it, or turn it off under Settings → General → Appearance
+- new: (macOS) The menu bar now shows a red REC badge with the elapsed time while recording, and the ending countdown when a call finishes
+
+#### Experience improvements
+
+- improvement: (macOS and iOS) Smart meetings can now notice prolonged quiet in calendar-linked recordings instead of relying only on the separate calendar handoff path
+- improvement: (macOS) Silence-based auto-stop is now described as an advanced fallback for in-person meetings and unsupported call apps; supported calls end from the call itself
+- improvement: (macOS) Browser calls use more conservative ending checks, since Miniti cannot tell which site or tab is using the microphone
+- improvement: (macOS) A meeting whose title improved after finishing no longer leaves two exported markdown files behind
+
 ### 2026-08-20 - v2.3.0
 
 This release helps you prepare for upcoming meetings and investigate important moments without interrupting the conversation.

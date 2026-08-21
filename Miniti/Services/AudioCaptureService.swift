@@ -17,7 +17,28 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var tapDeviceProcID: AudioDeviceIOProcID?
     
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (Data) -> Void)?
-    
+
+    /// Ending-grace suspension. While true, captured audio is dropped before it reaches
+    /// `onAudioBuffer` (mic, interleave, and direct system paths) so nothing lands in
+    /// Deepgram, while level metering and tap callbacks keep running. Written on the main
+    /// actor via suspend/resumeSending, read from audio threads. The gate sits before all
+    /// sample accounting so the socket sample clock and source log pause together.
+    nonisolated(unsafe) private(set) var isSendSuspended = false
+
+    func suspendSending() {
+        guard !isSendSuspended else { return }
+        isSendSuspended = true
+        DebugLogger.shared.log(.audio, "Audio sending suspended (ending grace)")
+    }
+
+    func resumeSending() {
+        guard isSendSuspended else { return }
+        isSendSuspended = false
+        // Drop any stale system audio buffered while suspended.
+        resetRingBuffer()
+        DebugLogger.shared.log(.audio, "Audio sending resumed")
+    }
+
     private let targetSampleRate: Double = 16000
     private let targetChannels: AVAudioChannelCount = 1
     
@@ -759,6 +780,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         expectsMicAudio = false
         expectsSystemAudio = false
         isCapturing = false
+        isSendSuspended = false
         setMicActive(false)
         setSystemAudioActive(false)
         resetRingBuffer()
@@ -787,6 +809,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         expectsMicAudio = false
         expectsSystemAudio = false
         isCapturing = false
+        isSendSuspended = false
         setMicActive(false)
         setSystemAudioActive(false)
         resetRingBuffer()
@@ -1740,7 +1763,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let silenceDuration = now - lastSystemNonSilentAt
             let hadPriorSignal = sysNonSilentCallbacks >= 40
             let cooldownElapsed = (now - lastSystemAutoRestartAt) > 30.0
-            if hadPriorSignal && cooldownElapsed && silenceDuration > 8.0 {
+            // Real post-call silence is exactly this detector's trigger condition, so a
+            // deliberate ending-grace suspension must not provoke a tap rebuild.
+            if hadPriorSignal && cooldownElapsed && silenceDuration > 8.0 && !isSendSuspended {
                 lastSystemAutoRestartAt = now
                 DebugLogger.shared.log(
                     .audio,
@@ -1789,7 +1814,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 )
                 postRecoveryHeartbeatsRemaining -= 1
 
-                if postRecoveryDegradedHeartbeats >= 2 && !isEscalatingFullRestart {
+                if postRecoveryDegradedHeartbeats >= 2 && !isEscalatingFullRestart && !isSendSuspended {
                     DebugLogger.shared.log(
                         .audio,
                         "Post-recovery health: degraded \(postRecoveryDegradedHeartbeats)/2 heartbeats — escalating to full capture restart"
@@ -1815,7 +1840,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         // `Data` owns an immutable copy before the preallocated scratch storage is reused.
         let data = Data(bytes: int16Out, count: outputFrames * MemoryLayout<Int16>.size)
-        
+
+        // Ending-grace suspension: drop system audio instead of buffering or sending it.
+        guard !isSendSuspended else { return }
+
         if mixWithMic {
             appendToRingBuffer(data)
         } else {
@@ -1923,6 +1951,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             )
         }
         
+        // Ending-grace suspension: metering above stays live, but no samples are accounted
+        // or delivered, so the Deepgram sample clock and source log pause in step.
+        guard !isSendSuspended else { return }
+
         let wantsMultichannel = expectsMicAudio && expectsSystemAudio
         if micSamples > sysScratchCapacity && now - lastNoSystemInterleaveWarning > 5.0 {
             lastNoSystemInterleaveWarning = now

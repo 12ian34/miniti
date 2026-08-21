@@ -270,6 +270,7 @@ enum SettingsSearchCatalog {
     static let items: [SettingsSearchItem] = [
         .init("general.launchAtLogin", "Launch at Login", section: "Startup", destination: .general, keywords: ["open automatically", "startup"], platforms: [.macOS]),
         .init("general.showInMenuBar", "Show in Menu Bar", section: "Appearance", destination: .general, keywords: ["status item", "menu icon"], platforms: [.macOS]),
+        .init("general.recordingIndicator", "Show Recording Indicator", section: "Appearance", destination: .general, keywords: ["floating", "panel", "overlay", "REC"], platforms: [.macOS]),
         .init("general.interfaceScale", "Interface Scale", section: "Appearance", destination: .general, keywords: ["compact", "standard", "large", "text size"]),
 
         .init("account.subscription", "Subscription", section: "Plan", destination: .account, keywords: ["free", "pro", "upgrade", "manage", "restore"]),
@@ -282,7 +283,7 @@ enum SettingsSearchCatalog {
         .init("recording.microphone", "Capture Microphone", section: "Audio Sources", destination: .recording, keywords: ["mic", "audio input"], platforms: [.macOS]),
         .init("recording.systemAudio", "Capture System Audio", section: "Audio Sources", destination: .recording, keywords: ["screen audio", "video calls"], platforms: [.macOS]),
         .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
-        .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes"]),
+        .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
@@ -297,7 +298,7 @@ enum SettingsSearchCatalog {
         .init("notifications.fillers", "Filler Word Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["um", "uh", "coaching"]),
         .init("notifications.upcomingMeeting", "Upcoming Meeting Reminders", section: "Calendar Reminders", destination: .notifications, keywords: ["1 minute", "calendar", "alert"]),
 
-        .init("integrations.smartMeetings", "Smart Meetings", section: "Meeting Automation", destination: .calendar, keywords: ["meeting ended", "handoff", "transition"]),
+        .init("integrations.smartMeetings", "Smart Meetings", section: "Meeting Automation", destination: .calendar, keywords: ["meeting ended", "handoff", "transition", "call detection", "zoom", "call ended"]),
         .init("integrations.googleCalendar", "Google Calendar", section: "Google Calendar", destination: .calendar, keywords: ["connect", "disconnect", "events"]),
         .init("integrations.autoStart", "Auto-start Recording", section: "Meeting Automation", destination: .calendar, keywords: ["countdown", "calendar"]),
         .init("integrations.calendarAutoStop", "Auto-stop After Meeting Ends", section: "Meeting Automation", destination: .calendar, keywords: ["calendar", "quiet"]),
@@ -346,6 +347,13 @@ final class AppState: ObservableObject {
         enum Kind: Equatable {
             case quiet
             case calendar
+            /// A recognized call app held the mic while no recording existed: offer notes.
+            case callStart
+            /// The associated call ended but the session is too short/empty for automatic
+            /// ending (or no countdown surface is visible): ask instead.
+            case callEnd
+            /// A different recognized call app became active during the recording.
+            case callTransition
         }
 
         let id: String
@@ -381,11 +389,13 @@ final class AppState: ObservableObject {
     enum AutoStopReason: String {
         case silence
         case stalledPipeline
+        case callEnded
 
         var label: String {
             switch self {
             case .silence: return "auto-stopped — no speech detected"
             case .stalledPipeline: return "auto-stopped — live transcription stopped responding"
+            case .callEnded: return "ended automatically — call ended"
             }
         }
 
@@ -393,6 +403,7 @@ final class AppState: ObservableObject {
             switch self {
             case .silence: return "moon.zzz.fill"
             case .stalledPipeline: return "wifi.exclamationmark"
+            case .callEnded: return "phone.down.fill"
             }
         }
     }
@@ -803,6 +814,9 @@ final class AppState: ObservableObject {
     @AppStorage("markdownExportFolderPath") var markdownExportFolderPath: String = ""
     @AppStorage("markdownExportBookmark") var markdownExportBookmarkData: Data = Data()
     @AppStorage("generateAgentsMd") var generateAgentsMd: Bool = false
+    /// Last markdown filename written per meeting, so a re-export after an AI title change
+    /// removes the stale file instead of leaving two exports for one meeting. In-memory only.
+    var lastExportedMarkdownFilenames: [UUID: String] = [:]
     #endif
 
     // MARK: - Update Check
@@ -1049,8 +1063,16 @@ final class AppState: ObservableObject {
         didSet {
             if !smartMeetingsEnabled {
                 clearSmartMeetingPrompt()
+                #if os(macOS)
+                // A pending automatic-end countdown belongs to the feature being turned
+                // off: cancel it and resume the recording rather than letting it finish.
+                cancelEndingGrace(reason: .smartMeetingsDisabled)
+                #endif
             }
             restartMeetingAutomationMonitoring()
+            #if os(macOS)
+            updateCallActivityMonitoringState()
+            #endif
         }
     }
     @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
@@ -1062,6 +1084,11 @@ final class AppState: ObservableObject {
     @AppStorage("autoStopFromCalendar") var autoStopFromCalendar: Bool = false {
         didSet { restartMeetingAutomationMonitoring() }
     }
+    #if os(macOS)
+    /// Floating recording indicator visibility. Independent of Smart meetings and the menu
+    /// bar item: hiding the strip must not disable lifecycle automation or vice versa.
+    @AppStorage("showRecordingIndicator") var showRecordingIndicator: Bool = true
+    #endif
     @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
     @AppStorage("notifyOnMonologue") var notifyOnMonologue: Bool = false
     @AppStorage("notifyOnHighFillerRate") var notifyOnHighFillerRate: Bool = false
@@ -1135,6 +1162,33 @@ final class AppState: ObservableObject {
     private var smartMeetingSnoozedUntilByEventID: [String: Date] = [:]
     private var smartMeetingSuppressedUntil: Date?
     private var smartQuietEpisodePrompted = false
+
+    // MARK: - Call lifecycle (macOS)
+    #if os(macOS)
+    private var callActivityMonitor: CallActivityMonitor?
+    private(set) var callLifecycleEngine = CallLifecycleEngine()
+    private(set) var latestCallSnapshot: CallActivitySnapshot?
+    /// Reversible pre-finalization countdown after a strong call end. A deferred stop:
+    /// while non-nil, sending is suspended, the Deepgram socket stays open on KeepAlive,
+    /// and none of the finalization path has run. See the call-lifecycle plan §4.
+    @Published private(set) var endingGrace: EndingGraceState?
+    private var endingGraceTimer: Timer?
+    /// Wall-clock moment sending was suspended; restores the Deepgram timeline offset on resume.
+    private var endingGraceSuspendedAt: Date?
+    /// Set by the start-notes prompt so the next startRecording associates with that app.
+    private var pendingCallAssociationApp: ActiveCallApplication?
+    /// App backing the visible call-start prompt.
+    private var startPromptApp: ActiveCallApplication?
+    /// After `Keep recording` during grace or a call-end ask, hold off automatic ending for a
+    /// while. Deliberately not cleared by speech: an in-person continuation should not re-arm
+    /// the countdown the person just cancelled.
+    private var suppressAutoCallEndUntil: Date?
+    private var sleepWakeObserversInstalled = false
+    /// The grace deadline lapsed while the Mac was asleep (or sleep interrupted it):
+    /// finalize on wake, when async save/report work can actually run.
+    private var finalizeGraceOnWake = false
+    static let endingGraceDuration: TimeInterval = 10
+    #endif
     
     @Published var wasAutoStopped = false
     @Published var autoStopReason: AutoStopReason?
@@ -1615,8 +1669,12 @@ final class AppState: ObservableObject {
                 .store(in: &cancellables)
             #endif
         }
+
+        #if os(macOS)
+        setupCallLifecycleMonitoring()
+        #endif
     }
-    
+
     private func handleTranscriptUpdate(_ update: DeepgramService.TranscriptUpdate) {
         // Skip empty updates
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -1835,14 +1893,21 @@ final class AppState: ObservableObject {
     }
 
     private func checkMeetingSilencePolicies() {
+        #if os(macOS)
+        // The deferred-stop grace owns the ending decision; silence policies stand down.
+        guard endingGrace == nil else { return }
+        #endif
         checkSmartQuietMeetingPrompt()
         checkAutoStop()
     }
 
     private func checkSmartQuietMeetingPrompt() {
+        // The quiet fallback applies to calendar-linked and non-calendar meetings alike
+        // (call-lifecycle plan, weak fallback signals). It only stands down while another
+        // prompt or countdown — calendar transition, call end, call start — is on screen.
         guard smartMeetingsEnabled,
               isRecording,
-              selectedCalendarEvent == nil,
+              smartMeetingPrompt == nil,
               lastTranscriptReceivedAt > 0 else { return }
 
         let nowAbsolute = CFAbsoluteTimeGetCurrent()
@@ -1895,6 +1960,13 @@ final class AppState: ObservableObject {
             if prompt.countdown != nil {
                 cancelSmartMeetingCountdown(keepPrompt: true)
             }
+        case .callEnd:
+            // Speech resumed after the call ended: treat like the quiet ask. If quiet
+            // returns, the fallback prompt machinery re-raises the question later.
+            clearSmartMeetingPrompt()
+        case .callStart, .callTransition:
+            // Driven by another app's lifecycle, not by our audio activity.
+            break
         }
     }
 
@@ -1919,6 +1991,13 @@ final class AppState: ObservableObject {
         } else {
             smartMeetingSuppressedUntil = Date().addingTimeInterval(5 * 60)
         }
+        #if os(macOS)
+        if prompt.kind == .callEnd || prompt.kind == .callTransition {
+            // Keeping after a call-end ask also holds off the automatic call-end path,
+            // and deliberately survives resumed speech.
+            suppressAutoCallEndUntil = Date().addingTimeInterval(5 * 60)
+        }
+        #endif
         clearSmartMeetingPrompt()
     }
 
@@ -1932,7 +2011,402 @@ final class AppState: ObservableObject {
         clearSmartMeetingPrompt()
         finishCurrentMeeting(then: .returnHome)
     }
-    
+
+    // MARK: - Call lifecycle detection (macOS)
+    #if os(macOS)
+
+    private func setupCallLifecycleMonitoring() {
+        if callActivityMonitor == nil {
+            let monitor = CallActivityMonitor()
+            monitor.onSnapshot = { [weak self] snapshot in
+                self?.handleCallActivitySnapshot(snapshot)
+            }
+            callActivityMonitor = monitor
+        }
+        installSleepWakeObserversIfNeeded()
+        updateCallActivityMonitoringState()
+    }
+
+    private func updateCallActivityMonitoringState() {
+        guard let monitor = callActivityMonitor else { return }
+        if smartMeetingsEnabled {
+            monitor.start()
+        } else {
+            monitor.stop()
+        }
+    }
+
+    private func installSleepWakeObserversIfNeeded() {
+        guard !sleepWakeObserversInstalled else { return }
+        sleepWakeObserversInstalled = true
+        let center = NSWorkspace.shared.notificationCenter
+        center.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleSystemWillSleep() }
+        }
+        center.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.handleSystemDidWake() }
+        }
+    }
+
+    private func handleSystemWillSleep() {
+        // Sleep ends the deliberation, but macOS may suspend async save/report work started
+        // now — so record the decision and run the actual finalization on wake, when the
+        // durable transaction can complete. The monitor pauses so a sleeping Mac takes no
+        // HAL wakeups.
+        if endingGrace != nil {
+            endingGraceTimer?.invalidate()
+            endingGraceTimer = nil
+            finalizeGraceOnWake = true
+            DebugLogger.shared.log(.app, "ending_grace_deferred_to_wake")
+        }
+        callActivityMonitor?.stop()
+    }
+
+    private func handleSystemDidWake() {
+        updateCallActivityMonitoringState()
+        if finalizeGraceOnWake {
+            finalizeGraceOnWake = false
+            finalizeEndingGrace(trigger: "wake_after_sleep", markAutoStopped: true)
+        }
+    }
+
+    private func handleCallActivitySnapshot(_ snapshot: CallActivitySnapshot) {
+        let previous = latestCallSnapshot
+        latestCallSnapshot = snapshot
+        if previous == nil || !snapshot.hasSameCalls(as: previous!) {
+            // Known-app display names only — bounded by the directory, never raw bundle IDs.
+            let names = snapshot.activeCalls.map(\.displayName).joined(separator: ", ")
+            DebugLogger.shared.log(.app, "call_activity_changed [\(names)]")
+        }
+        guard smartMeetingsEnabled else { return }
+
+        let nowAbsolute = CFAbsoluteTimeGetCurrent()
+        let transcriptGap = lastTranscriptReceivedAt > 0
+            ? nowAbsolute - lastTranscriptReceivedAt
+            : .infinity
+        let context = CallLifecycleContext(
+            isRecording: isRecording,
+            smartMeetingsEnabled: smartMeetingsEnabled,
+            hasMeaningfulContent: !liveSegments.isEmpty,
+            recordingDuration: recordingDuration,
+            transcriptGap: transcriptGap,
+            audioGap: audioActivityGap(at: nowAbsolute),
+            isInEndingGrace: endingGrace != nil
+        )
+        let events = callLifecycleEngine.ingest(snapshot: snapshot, context: context)
+        for event in events {
+            handleCallLifecycleEvent(event)
+        }
+    }
+
+    private func handleCallLifecycleEvent(_ event: CallLifecycleEvent) {
+        switch event {
+        case .offerStartPrompt(let app):
+            guard currentMeeting == nil, !isRecording, !requiresForceUpdate, hasAcceptedTerms,
+                  pendingAutoStartEvent == nil else {
+                // Not showable right now (stopped session open, terms gate, calendar start
+                // pending…). Un-mark it so the same call is offered once the gate clears.
+                callLifecycleEngine.noteStartPromptNotShown(bundleID: app.bundleID)
+                return
+            }
+            startPromptApp = app
+            DebugLogger.shared.log(.app, "supported_call_started (\(app.displayName))")
+            presentSmartMeetingPrompt(
+                SmartMeetingPrompt(
+                    id: "call-start-\(app.bundleID)",
+                    kind: .callStart,
+                    title: "Meeting detected",
+                    message: "Take notes with Miniti",
+                    eventID: nil,
+                    countdown: nil
+                )
+            )
+
+        case .clearStartPrompt:
+            if smartMeetingPrompt?.kind == .callStart {
+                clearSmartMeetingPrompt()
+            }
+            startPromptApp = nil
+            DebugLogger.shared.log(.app, "start_prompt_cleared")
+
+        case .beginEndingGrace(let app, let askOnly):
+            guard isRecording, endingGrace == nil, !isFinalizingMeeting else { return }
+            if let until = suppressAutoCallEndUntil, until > Date() { return }
+            DebugLogger.shared.log(.app, "associated_call_missing (\(app.displayName), askOnly=\(askOnly))")
+            if askOnly {
+                presentCallEndAskPrompt(app: app)
+            } else {
+                requestEndingGrace(app: app)
+            }
+
+        case .cancelEndCandidate:
+            DebugLogger.shared.log(.app, "end_candidate_cancelled_reactivated")
+
+        case .reactivateDuringGrace:
+            cancelEndingGrace(reason: .reactivated)
+
+        case .offerTransition(let app):
+            guard isRecording, endingGrace == nil, smartMeetingPrompt == nil else { return }
+            DebugLogger.shared.log(.app, "transition_candidate (\(app.displayName))")
+            presentSmartMeetingPrompt(
+                SmartMeetingPrompt(
+                    id: "call-transition-\(app.bundleID)",
+                    kind: .callTransition,
+                    title: "New meeting detected",
+                    message: "End the current meeting and start a new one?",
+                    eventID: nil,
+                    countdown: nil
+                )
+            )
+        }
+    }
+
+    /// `Take notes` from the call-start prompt: applies an unambiguous nearby calendar
+    /// event's context before transcription connects and associates the recording with
+    /// the detected application.
+    func startMeetingFromDetectedCall() {
+        guard let app = startPromptApp else {
+            clearSmartMeetingPrompt()
+            return
+        }
+        clearSmartMeetingPrompt()
+        startPromptApp = nil
+        pendingCallAssociationApp = app
+        let event = unambiguousCurrentCalendarEvent()
+        DebugLogger.shared.log(.app, "start_prompt_accepted (\(app.displayName), calendar=\(event != nil))")
+        if let event {
+            _ = startNewMeeting(calendarEvent: event)
+        } else {
+            _ = startNewMeeting()
+        }
+    }
+
+    /// `Not now` from the call-start prompt: suppress until this uninterrupted call ends.
+    func dismissDetectedCallStartPrompt() {
+        if let app = startPromptApp {
+            callLifecycleEngine.noteStartPromptDismissed(bundleID: app.bundleID)
+        }
+        startPromptApp = nil
+        DebugLogger.shared.log(.app, "start_prompt_dismissed")
+        clearSmartMeetingPrompt()
+    }
+
+    /// Exactly one calendar event whose window (5 minutes early through its end) contains
+    /// now; anything ambiguous returns nil and the meeting starts without calendar context.
+    private func unambiguousCurrentCalendarEvent(now: Date = Date()) -> MinitiAPIService.CalendarEvent? {
+        let candidates = todayEvents.filter { event in
+            guard let start = event.startDate, let end = event.endDate else { return false }
+            return start.addingTimeInterval(-5 * 60) <= now && now < end
+        }
+        return candidates.count == 1 ? candidates.first : nil
+    }
+
+    private func presentCallEndAskPrompt(app: ActiveCallApplication) {
+        guard smartMeetingPrompt?.kind != .callEnd else { return }
+        presentSmartMeetingPrompt(
+            SmartMeetingPrompt(
+                id: "call-end-\(app.bundleID)",
+                kind: .callEnd,
+                title: app.confidence == .browser
+                    ? "Browser call ended"
+                    : "\(app.displayName) call ended",
+                message: "Has this meeting finished?",
+                eventID: nil,
+                countdown: nil
+            )
+        )
+    }
+
+    // MARK: - Ending grace (deferred stop)
+
+    /// Visibility rule: the countdown must be visible somewhere, or the automatic end
+    /// degrades to an ask-first prompt. `NSApp.isActive` is not proof — only Settings may
+    /// be open — so the main-window check looks for the identified main window itself.
+    /// Menu bar and floating indicator preferences are stored by their owning surfaces;
+    /// absent keys mean their default-on state.
+    private func graceCountdownHasVisibleSurface() -> Bool {
+        let mainWindowVisible = NSApp.windows.contains {
+            $0.identifier == AppDelegate.mainWindowIdentifier && $0.isVisible && !$0.isMiniaturized
+        }
+        if mainWindowVisible { return true }
+        let defaults = UserDefaults.standard
+        let menuBarVisible = defaults.object(forKey: "showInMenuBar") == nil
+            ? true : defaults.bool(forKey: "showInMenuBar")
+        let indicatorVisible = defaults.object(forKey: "showRecordingIndicator") == nil
+            ? true : defaults.bool(forKey: "showRecordingIndicator")
+        return menuBarVisible || indicatorVisible
+    }
+
+    private func requestEndingGrace(app: ActiveCallApplication) {
+        if graceCountdownHasVisibleSurface() {
+            startEndingGrace(app: app)
+            return
+        }
+        // No countdown surface. A notification can carry the countdown, but only when the
+        // app is inactive — foreground notifications are suppressed by default, so a
+        // technically-active app with no visible countdown must ask instead of auto-ending.
+        guard !isAppInForeground() else {
+            DebugLogger.shared.log(.app, "ending_grace_degraded_to_ask (no visible surface)")
+            presentCallEndAskPrompt(app: app)
+            return
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let authorized = settings.authorizationStatus == .authorized
+                || settings.authorizationStatus == .provisional
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if authorized {
+                    self.startEndingGrace(app: app)
+                } else {
+                    DebugLogger.shared.log(.app, "ending_grace_degraded_to_ask (no visible surface)")
+                    self.presentCallEndAskPrompt(app: app)
+                }
+            }
+        }
+    }
+
+    private func startEndingGrace(app: ActiveCallApplication) {
+        guard isRecording, endingGrace == nil, !isFinalizingMeeting else { return }
+        if let until = suppressAutoCallEndUntil, until > Date() { return }
+        audioCaptureService?.suspendSending()
+        endingGraceSuspendedAt = Date()
+        let deadline = Date().addingTimeInterval(Self.endingGraceDuration)
+        endingGrace = EndingGraceState(
+            appBundleID: app.bundleID,
+            appDisplayName: app.displayName,
+            deadline: deadline,
+            remainingSeconds: Int(Self.endingGraceDuration)
+        )
+        // Grace supersedes any pending quiet/transition prompt.
+        clearSmartMeetingPrompt()
+        endingGraceTimer?.invalidate()
+        endingGraceTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.tickEndingGrace()
+            }
+        }
+        DebugLogger.shared.log(.app, "ending_grace_started (\(app.displayName))")
+        sendEndingGraceNotificationIfNeeded(app: app)
+    }
+
+    private func tickEndingGrace() {
+        guard var grace = endingGrace else { return }
+        let remaining = grace.deadline.timeIntervalSinceNow
+        if remaining <= 0 {
+            finalizeEndingGrace(trigger: "timeout", markAutoStopped: true)
+        } else {
+            grace.remainingSeconds = Int(remaining.rounded(.up))
+            endingGrace = grace
+        }
+    }
+
+    /// `Keep recording` during grace: resume on the same socket and hold off automatic
+    /// ending for a while so the countdown the person just cancelled does not re-arm.
+    func keepRecordingFromEndingGrace() {
+        cancelEndingGrace(reason: .kept)
+    }
+
+    /// `End now` during grace: run the normal finish immediately, without the auto-stop banner.
+    func endEndingGraceNow() {
+        finalizeEndingGrace(trigger: "end_now", markAutoStopped: false)
+    }
+
+    enum EndingGraceCancelReason {
+        case kept
+        case reactivated
+        case smartMeetingsDisabled
+    }
+
+    func cancelEndingGrace(reason: EndingGraceCancelReason) {
+        guard endingGrace != nil else { return }
+        endingGraceTimer?.invalidate()
+        endingGraceTimer = nil
+        endingGrace = nil
+        finalizeGraceOnWake = false
+        clearEndingGraceNotification()
+        // Deepgram's clock is driven by received samples and paused with them; keep the
+        // socket-to-meeting timeline offset honest about the wall-clock gap.
+        if let suspendedAt = endingGraceSuspendedAt {
+            deepgramTimelineOffset += Date().timeIntervalSince(suspendedAt)
+        }
+        endingGraceSuspendedAt = nil
+        audioCaptureService?.resumeSending()
+        switch reason {
+        case .kept:
+            suppressAutoCallEndUntil = Date().addingTimeInterval(5 * 60)
+            DebugLogger.shared.log(.app, "ending_grace_kept")
+        case .reactivated:
+            DebugLogger.shared.log(.app, "end_candidate_cancelled_reactivated")
+        case .smartMeetingsDisabled:
+            DebugLogger.shared.log(.app, "ending_grace_cancelled_smart_meetings_off")
+        }
+    }
+
+    private func finalizeEndingGrace(trigger: String, markAutoStopped: Bool) {
+        guard endingGrace != nil else { return }
+        endingGraceTimer?.invalidate()
+        endingGraceTimer = nil
+        endingGrace = nil
+        endingGraceSuspendedAt = nil
+        finalizeGraceOnWake = false
+        clearEndingGraceNotification()
+        callLifecycleEngine.noteRecordingEnded()
+        if markAutoStopped {
+            wasAutoStopped = true
+            autoStopReason = .callEnded
+        }
+        DebugLogger.shared.log(.app, "ending_grace_completed (trigger=\(trigger))")
+        // stopCapture inside stopRecording resets the send suspension; the existing durable
+        // finish/save/finalization transaction runs exactly once from here.
+        stopRecording()
+    }
+
+    private static let endingGraceNotificationIdentifier = "miniti.smart-meeting.call-grace"
+
+    private func sendEndingGraceNotificationIfNeeded(app: ActiveCallApplication) {
+        guard !isAppInForeground() else { return }
+        let title = app.confidence == .browser
+            ? "Browser call ended"
+            : "\(app.displayName) call ended"
+        let body = "Finishing in \(Int(Self.endingGraceDuration))s — Keep recording to continue."
+        // Hoisted out of the @Sendable closure: these are main-actor-isolated statics.
+        let category = Self.smartMeetingNotificationCategory + ".call-grace"
+        let identifier = Self.endingGraceNotificationIdentifier
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized
+                    || settings.authorizationStatus == .provisional else { return }
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = body
+            content.sound = .default
+            content.categoryIdentifier = category
+            UNUserNotificationCenter.current().add(
+                UNNotificationRequest(
+                    identifier: identifier,
+                    content: content,
+                    trigger: nil
+                )
+            ) { error in
+                if let error {
+                    DebugLogger.shared.log(.app, "Ending grace notification failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private func clearEndingGraceNotification() {
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [Self.endingGraceNotificationIdentifier])
+        center.removeDeliveredNotifications(withIdentifiers: [Self.endingGraceNotificationIdentifier])
+    }
+
+    #endif
+
+
     enum AutoStopDecision: Equatable {
         case keepRecording
         /// Silence for the configured auto-stop window.
@@ -2178,6 +2652,11 @@ final class AppState: ObservableObject {
     
     private func checkTranscriptHealth() {
         guard isRecording else { return }
+        #if os(macOS)
+        // Sending is deliberately suspended during ending grace; a transcript gap is expected
+        // and must not trigger a starvation reconnect.
+        guard endingGrace == nil else { return }
+        #endif
         guard let deepgramService else { return }
         
         let now = CFAbsoluteTimeGetCurrent()
@@ -5763,6 +6242,16 @@ final class AppState: ObservableObject {
         consecutiveTranscriptRecoveries = 0
         lastTranscriptHealthDebugLogAt = 0
         lastAudioActivityAt = 0
+        #if os(macOS)
+        // Association forms only here: from the start prompt's app, or from exactly one
+        // recognized call being active right now. Mid-recording calls never associate.
+        callLifecycleEngine.noteRecordingStarted(
+            activeCalls: latestCallSnapshot?.activeCalls ?? [],
+            startedFrom: pendingCallAssociationApp
+        )
+        pendingCallAssociationApp = nil
+        suppressAutoCallEndUntil = nil
+        #endif
         startTranscriptHealthMonitoring()
         
         configureDeepgramServiceCredential()
@@ -5973,6 +6462,26 @@ final class AppState: ObservableObject {
             DebugLogger.shared.log(.app, "stopRecording ignored: finalization already in progress")
             return
         }
+        // The no-content stop branch never sets isFinalizingMeeting, so without this gate a
+        // second stop (for example a late capture-failure cleanup racing a user stop) re-runs
+        // the whole body — including a second managed session-end report.
+        guard isRecording else {
+            DebugLogger.shared.log(.app, "stopRecording ignored: not recording")
+            return
+        }
+        #if os(macOS)
+        // A direct user Stop during ending grace commits the end: clear the countdown
+        // without resuming sending (capture is torn down just below either way).
+        if endingGrace != nil {
+            endingGraceTimer?.invalidate()
+            endingGraceTimer = nil
+            endingGrace = nil
+            endingGraceSuspendedAt = nil
+            finalizeGraceOnWake = false
+            clearEndingGraceNotification()
+        }
+        callLifecycleEngine.noteRecordingEnded()
+        #endif
         DebugLogger.shared.log(.app, "stopRecording (duration=\(formattedDuration))")
         if let startDate = recordingStartDate {
             recordingDuration = Date().timeIntervalSince(startDate)
@@ -6167,6 +6676,18 @@ final class AppState: ObservableObject {
         clearSmartMeetingPrompt()
         smartMeetingSuppressedUntil = nil
         smartQuietEpisodePrompted = false
+        #if os(macOS)
+        endingGraceTimer?.invalidate()
+        endingGraceTimer = nil
+        endingGrace = nil
+        endingGraceSuspendedAt = nil
+        finalizeGraceOnWake = false
+        suppressAutoCallEndUntil = nil
+        startPromptApp = nil
+        pendingCallAssociationApp = nil
+        clearEndingGraceNotification()
+        callLifecycleEngine.noteRecordingEnded()
+        #endif
         recordingErrorMessage = nil
         currentMeeting = nil
         isStartingMeeting = false
@@ -8123,8 +8644,17 @@ final class AppState: ObservableObject {
         let filename = Self.exportFilename(for: meeting)
         let fileURL = folderURL.appendingPathComponent(filename)
 
+        // A meeting can export more than once (goHome, then again when final insights land).
+        // If the AI title changed between exports the filename changes too; remove the stale
+        // file so one meeting never leaves two exports behind.
+        if let previous = lastExportedMarkdownFilenames[meeting.id], previous != filename {
+            try? fm.removeItem(at: folderURL.appendingPathComponent(previous))
+            DebugLogger.shared.log(.app, "Markdown export: removed stale export after title change")
+        }
+
         do {
             try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
+            lastExportedMarkdownFilenames[meeting.id] = filename
             DebugLogger.shared.log(.app, "Markdown exported: \(filename)")
         } catch {
             DebugLogger.shared.log(.app, "Markdown export FAILED '\(filename)' to '\(folderURL.path)': \(error.localizedDescription)")
@@ -8188,6 +8718,9 @@ final class AppState: ObservableObject {
     static let smartMeetingEndAction = "miniti.smart.end"
     static let smartMeetingEndAndStartAction = "miniti.smart.end-and-start"
     static let smartMeetingKeepAction = "miniti.smart.keep"
+    static let smartMeetingTakeNotesAction = "miniti.smart.take-notes"
+    static let smartMeetingNotNowAction = "miniti.smart.not-now"
+    static let smartMeetingEndNowAction = "miniti.smart.end-now"
 
     static func registerSmartMeetingNotificationCategory() {
         let endAndStart = UNNotificationAction(
@@ -8202,6 +8735,18 @@ final class AppState: ObservableObject {
             identifier: smartMeetingKeepAction,
             title: "Keep recording"
         )
+        let takeNotes = UNNotificationAction(
+            identifier: smartMeetingTakeNotesAction,
+            title: "Take notes"
+        )
+        let notNow = UNNotificationAction(
+            identifier: smartMeetingNotNowAction,
+            title: "Not now"
+        )
+        let endNow = UNNotificationAction(
+            identifier: smartMeetingEndNowAction,
+            title: "End now"
+        )
         let calendarCategory = UNNotificationCategory(
             identifier: smartMeetingNotificationCategory + ".calendar",
             actions: [endAndStart, keep],
@@ -8212,7 +8757,25 @@ final class AppState: ObservableObject {
             actions: [end, keep],
             intentIdentifiers: []
         )
-        UNUserNotificationCenter.current().setNotificationCategories([calendarCategory, quietCategory])
+        let callStartCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".call-start",
+            actions: [takeNotes, notNow],
+            intentIdentifiers: []
+        )
+        let callTransitionCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".call-transition",
+            actions: [endAndStart, keep],
+            intentIdentifiers: []
+        )
+        let callGraceCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".call-grace",
+            actions: [keep, endNow],
+            intentIdentifiers: []
+        )
+        // One installation call: categories not in this set are clobbered.
+        UNUserNotificationCenter.current().setNotificationCategories([
+            calendarCategory, quietCategory, callStartCategory, callTransitionCategory, callGraceCategory
+        ])
     }
 
     private func sendSmartMeetingNotificationIfNeeded(_ prompt: SmartMeetingPrompt) {
@@ -8221,9 +8784,14 @@ final class AppState: ObservableObject {
         let title = prompt.title
         let message = prompt.message
         let eventID = prompt.eventID
-        let category = prompt.kind == .calendar
-            ? Self.smartMeetingNotificationCategory + ".calendar"
-            : Self.smartMeetingNotificationCategory + ".quiet"
+        let categorySuffix: String
+        switch prompt.kind {
+        case .calendar: categorySuffix = ".calendar"
+        case .quiet, .callEnd: categorySuffix = ".quiet"
+        case .callStart: categorySuffix = ".call-start"
+        case .callTransition: categorySuffix = ".call-transition"
+        }
+        let category = Self.smartMeetingNotificationCategory + categorySuffix
 
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             guard settings.authorizationStatus == .authorized
@@ -8268,16 +8836,32 @@ final class AppState: ObservableObject {
         case Self.smartMeetingEndAndStartAction:
             if let eventID {
                 endAndStartCalendarMeeting(eventID: eventID)
+            } else {
+                endAndStartNewMeeting()
             }
         case Self.smartMeetingEndAction:
             endMeetingFromSmartPrompt()
         case Self.smartMeetingKeepAction:
+            #if os(macOS)
+            if endingGrace != nil {
+                keepRecordingFromEndingGrace()
+                return
+            }
+            #endif
             if let eventID {
                 dismissedAutoStartEventIDs.insert(eventID)
                 clearSmartMeetingPrompt()
             } else {
                 keepRecordingFromSmartMeetingPrompt()
             }
+        #if os(macOS)
+        case Self.smartMeetingTakeNotesAction:
+            startMeetingFromDetectedCall()
+        case Self.smartMeetingNotNowAction:
+            dismissDetectedCallStartPrompt()
+        case Self.smartMeetingEndNowAction:
+            endEndingGraceNow()
+        #endif
         default:
             break
         }
