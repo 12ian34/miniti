@@ -296,6 +296,7 @@ enum SettingsSearchCatalog {
         .init("notifications.questions", "Incisive Question Notifications", section: "Meeting Nudges", destination: .notifications, keywords: ["questions", "alert"]),
         .init("notifications.monologue", "Monologue Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["talking too long", "coaching"]),
         .init("notifications.fillers", "Filler Word Nudges", section: "Meeting Nudges", destination: .notifications, keywords: ["um", "uh", "coaching"]),
+        .init("notifications.salesDetection", "Sales Conversation Suggestions", section: "Meeting Nudges", destination: .notifications, keywords: ["MEDDPICC", "sales", "detect", "suggest"]),
         .init("notifications.upcomingMeeting", "Upcoming Meeting Reminders", section: "Calendar Reminders", destination: .notifications, keywords: ["1 minute", "calendar", "alert"]),
 
         .init("integrations.smartMeetings", "Smart Meetings", section: "Meeting Automation", destination: .calendar, keywords: ["meeting ended", "handoff", "transition", "call detection", "zoom", "call ended"]),
@@ -362,6 +363,20 @@ final class AppState: ObservableObject {
         let message: String
         let eventID: String?
         var countdown: Int?
+    }
+
+    struct RecordingNudge: Identifiable, Equatable {
+        enum Kind: Equatable {
+            case question
+            case monologue
+            case fillerRate
+            case salesDetected
+        }
+
+        let id: String
+        let kind: Kind
+        let title: String
+        let message: String
     }
 
     struct LiveInsightCadencePolicy: Equatable {
@@ -458,6 +473,7 @@ final class AppState: ObservableObject {
         let text: String
         let speaker: Int
         let timestamp: TimeInterval
+        var sourceRaw: String? = nil
     }
 
     struct PersistedSegmentSnapshot: Sendable {
@@ -465,6 +481,7 @@ final class AppState: ObservableObject {
         let text: String
         let speaker: Int
         let timestamp: TimeInterval
+        var sourceRaw: String? = nil
     }
 
     struct SegmentSyncPlan: Sendable {
@@ -571,6 +588,15 @@ final class AppState: ObservableObject {
         didSet { updateLiveTranscriptCaches(previous: oldValue, current: liveSegments) }
     }
     @Published var detectedSpeakers: Set<Int> = []  // Track unique speakers
+    /// Distinct app speaker IDs confirmed on the microphone source this session.
+    /// Drives the implicit-"You" rule: once a second mic speaker exists, nobody
+    /// is assumed to be the user.
+    @Published var liveMicSpeakerIDs: Set<Int> = []
+    /// Internal, diagnostic-only inferred meeting environment. Never a user-facing
+    /// choice or badge; never changes capture routing, meeting boundaries,
+    /// persistence rules, usage reporting, or transcript content.
+    private(set) var inferredMeetingEnvironment: InferredMeetingEnvironment = .unknown
+    private var environmentEvidence = MeetingEnvironmentEvidence()
     private var liveTranscriptRevision: UInt64 = 0
     private var cachedFullTranscript = ""
     private var cachedSpeakerIDTranscript = ""
@@ -1092,6 +1118,10 @@ final class AppState: ObservableObject {
     @AppStorage("notifyOnIncisiveQuestions") var notifyOnIncisiveQuestions: Bool = false
     @AppStorage("notifyOnMonologue") var notifyOnMonologue: Bool = false
     @AppStorage("notifyOnHighFillerRate") var notifyOnHighFillerRate: Bool = false
+    /// Suggest enabling Sales (MEDDPICC) analysis when a live meeting sounds like a
+    /// sales conversation. Default-on because it fires at most once per meeting and
+    /// only while Sales analysis is off.
+    @AppStorage("notifyOnSalesDetection") var notifyOnSalesDetection: Bool = true
     @AppStorage("notifyOnUpcomingMeeting") var notifyOnUpcomingMeeting: Bool = false
     @AppStorage("autoInferSpeakerNames") var autoInferSpeakerNames: Bool = true
     /// Timestamp (TimeInterval since 1970) after which the calendar nudge card on the
@@ -1102,6 +1132,14 @@ final class AppState: ObservableObject {
     private var notifiedQuestionIDs: Set<String> = []
     private var lastQuestionNotificationAt: Date?
     private static let questionNotificationMinInterval: TimeInterval = 120 // 2 minutes
+    #if os(macOS)
+    /// Transient live guidance shown by the floating recording surface while Miniti is
+    /// frontmost. When the app is behind another app (or the surface is disabled), the
+    /// same guidance is delivered through Notification Center instead.
+    @Published private(set) var recordingNudge: RecordingNudge?
+    private var recordingNudgeDismissTask: Task<Void, Never>?
+    nonisolated static let recordingNudgeDuration: TimeInterval = 10
+    #endif
 
     // Real-time nudges (local, no LLM)
     private var lastMonologueNudgeAt: Date?
@@ -1119,6 +1157,35 @@ final class AppState: ObservableObject {
     nonisolated private static let fillerWindowSeconds: TimeInterval = 60           // rolling filler-rate window
     nonisolated private static let fillerNudgeMinFillersPerMinute: Double = 8       // threshold (you-only)
     nonisolated private static let fillerWindowMinYouWords: Int = 20                // don't nudge on a few words
+
+    // Sales-conversation detection (local keyword heuristic, no LLM). Distinct signal
+    // phrases accumulate across finalized segments; one suggestion per meeting at most.
+    private var salesDetectionSignalsSeen: Set<String> = []
+    private var salesDetectionNudgeFired = false
+    nonisolated static let salesDetectionMinDistinctSignals = 3
+    /// Deliberately commercial-only vocabulary: generic meeting words ("decision",
+    /// "timeline") are excluded so ordinary planning meetings don't trigger this.
+    nonisolated static let salesSignalPhrases: [String] = [
+        "pricing", "price point", "budget", "contract", "procurement", "renewal",
+        "discount", "quote", "proposal", "decision maker", "purchase order",
+        "licensing", "per seat", "annual plan", "sales cycle", "close the deal"
+    ]
+
+    /// Which sales-signal phrases occur in `text` (case-insensitive, word-boundary
+    /// tokens so "contract" doesn't match "contractor").
+    nonisolated static func salesSignalMatches(in text: String) -> Set<String> {
+        let tokens = TrainingMetrics.tokenize(text)
+        guard !tokens.isEmpty else { return [] }
+        var matches: Set<String> = []
+        for phrase in salesSignalPhrases {
+            let phraseTokens = TrainingMetrics.tokenize(phrase)
+            guard !phraseTokens.isEmpty else { continue }
+            if TrainingMetrics.countPhraseOccurrences(of: phraseTokens, in: tokens) > 0 {
+                matches.insert(phrase)
+            }
+        }
+        return matches
+    }
     
     @Published var isGoogleCalendarConnected: Bool = false
     @Published var googleCalendarEmail: String?
@@ -1275,14 +1342,26 @@ final class AppState: ObservableObject {
         let speaker: Int
         let timestamp: TimeInterval
         var isFinal: Bool
-        
+        /// Explicit capture source. Nil for legacy segments recorded before
+        /// source tracking; those fall back to the reserved mic ID range.
+        var source: TranscriptSource? = nil
+
         /// Whether this segment came from the local microphone (vs system/remote audio).
+        /// Reads the explicit source; the ID-range check only covers legacy data.
         var isLocalMic: Bool {
-            speaker == DeepgramService.micSpeakerID
+            if let source { return source == .microphone }
+            return DeepgramService.isMicAppSpeakerID(speaker)
         }
-        
+
+        /// Stable per-segment label used for LLM-facing transcripts. Not for UI —
+        /// views resolve names/self marks via `resolvedSpeakerLabel`.
         var speakerLabel: String {
-            isLocalMic ? "You" : "Speaker \(speaker + 1)"
+            if isLocalMic {
+                return speaker == DeepgramService.micSpeakerID
+                    ? "You"
+                    : "Speaker \(speaker - DeepgramService.micSpeakerID + 1) (mic)"
+            }
+            return "Speaker \(speaker + 1)"
         }
     }
 
@@ -1315,7 +1394,20 @@ final class AppState: ObservableObject {
             let isInSuffix = index >= suffixStart
             if !isInSuffix,
                existing.timestamp > newSegment.timestamp + delayedFinalSearchWindow { continue }
-            guard existing.isFinal, existing.speaker == newSegment.speaker else { continue }
+            guard existing.isFinal else { continue }
+            let sameSpeaker = existing.speaker == newSegment.speaker
+            // Mic diarization can flip a cumulative Deepgram final to a
+            // different mic speaker between passes. Allow cross-speaker dedup
+            // only for mic-source segments that are near-simultaneous and
+            // substantial enough that a coincidental short repeat ("Yeah.",
+            // "Thank you.") from another person in the room cannot be
+            // swallowed — a genuinely flipped cumulative final spans at least
+            // a full speaker-change run (4+ words).
+            let crossSpeakerMicMatch = !sameSpeaker
+                && existing.isLocalMic && newSegment.isLocalMic
+                && abs(existing.timestamp - newSegment.timestamp) <= 1.5
+                && newSegment.text.split(separator: " ").count >= 4
+            guard sameSpeaker || crossSpeakerMicMatch else { continue }
             if existing.text == newSegment.text {
                 return .skippedExactDuplicate
             }
@@ -1334,7 +1426,8 @@ final class AppState: ObservableObject {
                 text: newSegment.text,
                 speaker: existing.speaker,
                 timestamp: existing.timestamp,
-                isFinal: true
+                isFinal: true,
+                source: existing.source ?? newSegment.source
             )
             return .replacedSuperset
         }
@@ -1397,6 +1490,7 @@ final class AppState: ObservableObject {
         _ text: String,
         speaker: Int,
         timestamp: TimeInterval,
+        source: TranscriptSource? = nil,
         into segments: inout [LiveSegment]
     ) -> FinalSegmentMergeResult? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1408,7 +1502,8 @@ final class AppState: ObservableObject {
                 text: trimmed,
                 speaker: speaker,
                 timestamp: timestamp,
-                isFinal: true
+                isFinal: true,
+                source: source
             ),
             into: &segments
         )
@@ -1812,8 +1907,10 @@ final class AppState: ObservableObject {
                 #endif
                 #if os(macOS)
                 let useMultichannel = self.captureMicrophone && self.captureSystemAudio
+                let monoSource: TranscriptSource = self.captureMicrophone ? .microphone : .system
                 #else
                 let useMultichannel = false
+                let monoSource: TranscriptSource = .microphone
                 #endif
                 let configured = await self.configureDeepgramCredentialForConnect()
                 guard configured else {
@@ -1827,7 +1924,9 @@ final class AppState: ObservableObject {
                     language: self.meetingLanguage,
                     personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
                     sessionKeyterms: self.deepgramSessionKeyterms(),
-                    multichannel: useMultichannel
+                    multichannel: useMultichannel,
+                    monoSource: monoSource,
+                    preserveSpeakerIdentities: true
                 )
                 
                 // Give the socket a short window to establish before next retry.
@@ -1972,6 +2071,9 @@ final class AppState: ObservableObject {
 
     private func presentSmartMeetingPrompt(_ prompt: SmartMeetingPrompt) {
         guard smartMeetingPrompt != prompt else { return }
+        #if os(macOS)
+        clearRecordingNudge()
+        #endif
         clearSmartMeetingNotification()
         smartMeetingPrompt = prompt
         sendSmartMeetingNotificationIfNeeded(prompt)
@@ -2272,6 +2374,7 @@ final class AppState: ObservableObject {
     private func startEndingGrace(app: ActiveCallApplication) {
         guard isRecording, endingGrace == nil, !isFinalizingMeeting else { return }
         if let until = suppressAutoCallEndUntil, until > Date() { return }
+        clearRecordingNudge()
         audioCaptureService?.suspendSending()
         endingGraceSuspendedAt = Date()
         let deadline = Date().addingTimeInterval(Self.endingGraceDuration)
@@ -2368,7 +2471,10 @@ final class AppState: ObservableObject {
     private static let endingGraceNotificationIdentifier = "miniti.smart-meeting.call-grace"
 
     private func sendEndingGraceNotificationIfNeeded(app: ActiveCallApplication) {
-        guard !isAppInForeground() else { return }
+        guard MacNotificationRoutingPolicy.shouldMirrorToSystem(
+            isAppActive: isAppInForeground(),
+            recordingIndicatorEnabled: showRecordingIndicator
+        ) else { return }
         let title = app.confidence == .browser
             ? "Browser call ended"
             : "\(app.displayName) call ended"
@@ -3090,10 +3196,10 @@ final class AppState: ObservableObject {
             let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { continue }
             receivedTranscriptContent = true
-            
+
             // Track this speaker
             detectedSpeakers.insert(segment.speaker)
-            
+
             // Create live segment
             let proposedTimestamp = timelineOffset.map {
                 Self.transcriptTimelineTimestamp(
@@ -3110,10 +3216,21 @@ final class AppState: ObservableObject {
                 text: text,
                 speaker: segment.speaker,
                 timestamp: timestamp,
-                isFinal: true
+                isFinal: true,
+                source: segment.source
             )
-            
+
             let mergeResult = Self.mergeFinalSegment(liveSegment, into: &updated)
+            // Duplicate/cumulative re-emissions must not accumulate evidence twice:
+            // mic-speaker confirmation, environment durations, and sales-vocabulary
+            // hits only count for genuinely new transcript content.
+            if mergeResult == .appended {
+                if segment.source == .microphone {
+                    liveMicSpeakerIDs.insert(segment.speaker)
+                }
+                recordEnvironmentEvidence(for: segment)
+                evaluateSalesDetection(for: text)
+            }
             switch mergeResult {
             case .appended:
                 break
@@ -4070,33 +4187,116 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "Self speaker toggle: id=\(id), isSelf=\(isSelf), total=\(liveSelfSpeakerIDs.count)")
     }
 
-    /// The effective self-speaker set during the live session — explicit markings, or the
-    /// mic speaker as a default. Always non-empty.
-    var effectiveLiveSelfSpeakerIDs: Set<Int> {
-        liveSelfSpeakerIDs.isEmpty ? [DeepgramService.micSpeakerID] : liveSelfSpeakerIDs
+    /// Whether the implicit "the sole mic speaker is You" default applies to this live
+    /// session. Only dual-source (mic+system) capture carries that assumption — a
+    /// mic-only recording (iOS, macOS mic-only) can be someone else's lecture or an
+    /// interview and never labeled anyone "You" before mic diarization either.
+    private var liveImplicitSelfAllowed: Bool {
+        guard liveMicSpeakerIDs.count <= 1 else { return false }
+        #if os(macOS)
+        return captureMicrophone && captureSystemAudio
+        #else
+        return false
+        #endif
     }
 
-    func resetSpeakerIdentityForDeepgramReconnect() {
-        let micKey = String(DeepgramService.micSpeakerID)
-        let previousNameCount = liveSpeakerNames.count
-        let previousOverrideCount = liveSpeakerOverrides.count
-        let previousSelfCount = liveSelfSpeakerIDs.count
+    /// The effective self-speaker set during the live session, for membership checks —
+    /// explicit markings win; otherwise the primary mic speaker (1000) is implicitly
+    /// "You" only in a dual-source session with at most one detected microphone
+    /// speaker. Once several people share the microphone, or in mic-only capture,
+    /// no one is assumed to be the user (rename / `mark as you` correct it).
+    var effectiveLiveSelfSpeakerIDs: Set<Int> {
+        if !liveSelfSpeakerIDs.isEmpty { return liveSelfSpeakerIDs }
+        return liveImplicitSelfAllowed ? [DeepgramService.micSpeakerID] : []
+    }
 
-        liveSpeakerNames = liveSpeakerNames.filter { $0.key == micKey }
-        liveSpeakerOverrides = liveSpeakerOverrides.filter { $0 == micKey }
-        liveSelfSpeakerIDs = liveSelfSpeakerIDs.filter { $0 == DeepgramService.micSpeakerID }
-        lastSpeakerNamesSegmentCount = 0
-        lastSpeakerNamesRequestAt = nil
+    /// Live-session self context for label/metrics resolution. Nil = no marks and the
+    /// implicit mic default applies (resolver applies it *after* inferred names);
+    /// empty = no implicit "You" at all.
+    var liveSpeakerLabelSelfIDs: Set<Int>? {
+        if !liveSelfSpeakerIDs.isEmpty { return liveSelfSpeakerIDs }
+        return liveImplicitSelfAllowed ? nil : []
+    }
 
-        if let meeting = currentMeeting {
-            meeting.speakerNames = liveSpeakerNames
-            meeting.speakerOverrides = liveSpeakerOverrides
-            meeting.selfSpeakerIDs = liveSelfSpeakerIDs
+    // MARK: - Automatic environment inference (internal, diagnostic only)
+
+    /// Update the evidence snapshot from one meaningful finalized segment, then
+    /// re-evaluate the inferred environment. Reads call-lifecycle and calendar
+    /// context lazily so this stays decoupled from monitor callbacks. Must never
+    /// perform any action beyond logging, diagnostics, and optional metadata.
+    private func recordEnvironmentEvidence(for segment: DeepgramService.SpeakerSegment) {
+        let wordCount = segment.text.split(separator: " ").count
+        guard wordCount >= MeetingEnvironmentInferenceEngine.meaningfulFinalMinimumWordCount else { return }
+
+        #if os(macOS)
+        // Monitor unreliability is "no information", never in-room evidence.
+        let snapshot = latestCallSnapshot
+        let monitorReliable = snapshot?.isReliable ?? false
+        environmentEvidence.hasAssociatedCallApp = callLifecycleEngine.associatedApp != nil
+        environmentEvidence.recognizedCallAppActive =
+            monitorReliable && !(snapshot?.activeCalls.isEmpty ?? true)
+        #endif
+        if let event = selectedCalendarEvent {
+            let hasConference = [event.conferenceUrl, event.meetLink]
+                .contains { !($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            environmentEvidence.calendarEventHasConferenceURL = hasConference
         }
 
+        switch segment.source {
+        case .microphone:
+            environmentEvidence.hasMeaningfulMicFinal = true
+            environmentEvidence.meaningfulMicSpeechSeconds += max(0, segment.endTime - segment.startTime)
+            environmentEvidence.confirmedMicSpeakerCount = liveMicSpeakerIDs.count
+        case .system:
+            environmentEvidence.hasMeaningfulSystemFinal = true
+            if environmentEvidence.hasAssociatedCallApp
+                || environmentEvidence.recognizedCallAppActive
+                || environmentEvidence.calendarEventHasConferenceURL == true {
+                environmentEvidence.systemFinalWithCallContext = true
+            }
+        case .unknown:
+            break
+        }
+        evaluateEnvironmentInference()
+    }
+
+    private func evaluateEnvironmentInference() {
+        let next = MeetingEnvironmentInferenceEngine.infer(environmentEvidence)
+        guard next != inferredMeetingEnvironment else { return }
+        let previous = inferredMeetingEnvironment
+        inferredMeetingEnvironment = next
         DebugLogger.shared.log(
             .app,
-            "Speaker identity reset for Deepgram reconnect: names \(previousNameCount)->\(liveSpeakerNames.count), overrides \(previousOverrideCount)->\(liveSpeakerOverrides.count), self \(previousSelfCount)->\(liveSelfSpeakerIDs.count)"
+            "Environment inference: \(previous.rawValue) -> \(next.rawValue) (micSpeakers=\(environmentEvidence.confirmedMicSpeakerCount), systemFinal=\(environmentEvidence.hasMeaningfulSystemFinal), callApp=\(environmentEvidence.hasAssociatedCallApp), micSpeech=\(Int(environmentEvidence.meaningfulMicSpeechSeconds))s)"
+        )
+        // Privacy-safe counter: state names only — no transcript, titles,
+        // attendee names, URLs, or bundle IDs.
+        enqueueDiagnosticEvent(
+            "environment_inference_transition",
+            category: .app,
+            details: ["from": previous.rawValue, "to": next.rawValue]
+        )
+        // Optional metadata for recovery/diagnostics. Old meetings stay nil and
+        // decode as unknown; no migration required.
+        currentMeeting?.inferredEnvironmentRaw = next == .unknown ? nil : next.rawValue
+    }
+
+    private func resetEnvironmentInference() {
+        environmentEvidence = MeetingEnvironmentEvidence()
+        inferredMeetingEnvironment = .unknown
+    }
+
+    /// App speaker IDs allocated to earlier sockets stay valid after a reconnect —
+    /// the identity allocator hands the new socket fresh, collision-free IDs (with
+    /// single-mic continuity for the primary `1000` identity), so names, overrides,
+    /// and self marks attached to existing segments must be preserved. Only the
+    /// naming-request pacing resets so inference re-runs for the new identities.
+    func resetSpeakerIdentityForDeepgramReconnect() {
+        lastSpeakerNamesSegmentCount = 0
+        lastSpeakerNamesRequestAt = nil
+        DebugLogger.shared.log(
+            .app,
+            "Deepgram reconnect: speaker identities preserved (names=\(liveSpeakerNames.count), overrides=\(liveSpeakerOverrides.count), self=\(liveSelfSpeakerIDs.count)); naming pacing reset"
         )
     }
 
@@ -4641,7 +4841,8 @@ final class AppState: ObservableObject {
             id: segment.id,
             text: segment.text.trimmingCharacters(in: .whitespacesAndNewlines),
             speaker: segment.speaker,
-            timestamp: segment.timestamp
+            timestamp: segment.timestamp,
+            sourceRaw: segment.source?.rawValue
         )
     }
 
@@ -4960,6 +5161,10 @@ final class AppState: ObservableObject {
         currentSpeaker = 0
         interimSpeaker = nil
         detectedSpeakers = []
+        liveMicSpeakerIDs = []
+        salesDetectionSignalsSeen = []
+        salesDetectionNudgeFired = false
+        resetEnvironmentInference()
         recordingDuration = 0
         recordingStartDate = nil
         accumulatedRecordedDuration = 0
@@ -5086,7 +5291,7 @@ final class AppState: ObservableObject {
                 let segments = liveSegments.map {
                     TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
                 }
-                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSelfSpeakerIDs)
+                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSpeakerLabelSelfIDs)
             }
             let markdown = fullMeetingAsMarkdown()
             exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
@@ -5096,7 +5301,7 @@ final class AppState: ObservableObject {
         // Fire webhook with live in-memory state before clearing
         if !webhookURL.isEmpty, let meeting = currentMeeting {
             let names = liveSpeakerNames
-            let selfIDs = liveSelfSpeakerIDs
+            let selfIDs = liveSpeakerLabelSelfIDs
             let transcriptEntries = liveSegments
                 .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 .sorted { $0.timestamp < $1.timestamp }
@@ -5485,7 +5690,8 @@ final class AppState: ObservableObject {
                     speaker: $0.speaker,
                     timestamp: $0.timestamp,
                     isFinal: $0.isFinal,
-                    confidence: $0.confidence
+                    confidence: $0.confidence,
+                    sourceRaw: $0.sourceRaw
                 )
             }
         meeting.markTranscriptEdited()
@@ -5582,7 +5788,8 @@ final class AppState: ObservableObject {
                     text: seg.text,
                     speaker: seg.speaker,
                     timestamp: seg.timestamp,
-                    isFinal: seg.isFinal
+                    isFinal: seg.isFinal,
+                    source: seg.source
                 )
             }
         
@@ -5618,8 +5825,10 @@ final class AppState: ObservableObject {
             accumulatedRecordedDuration = recordingDuration
         }
         
-        // Restore detected speakers
+        // Restore detected speakers. Legacy segments without a source fall back to
+        // the reserved mic ID range for the mic-speaker set.
         detectedSpeakers = Set(liveSegments.map(\.speaker))
+        liveMicSpeakerIDs = Set(liveSegments.filter(\.isLocalMic).map(\.speaker))
         
         // Restore title tracking (handles both old timestamp-prefixed and new clean titles)
         if let (_, suffix) = Self.parseMeetingTitle(interrupted.title) {
@@ -5735,7 +5944,7 @@ final class AppState: ObservableObject {
                 timestamp: $0.timestamp
             )
         }
-        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSelfSpeakerIDs)
+        trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSpeakerLabelSelfIDs)
     }
 
     private func scheduleTrainingMetricsRecompute() {
@@ -5752,7 +5961,7 @@ final class AppState: ObservableObject {
         let duration = recordingDuration
         let language = meetingLanguage
         let names = liveSpeakerNames
-        let selfIDs = liveSelfSpeakerIDs
+        let selfIDs = liveSpeakerLabelSelfIDs
 
         trainingMetricsTask = Task { [weak self] in
             let metrics = await Task.detached(priority: .utility) {
@@ -5967,7 +6176,8 @@ final class AppState: ObservableObject {
                 id: $0.id,
                 text: $0.text,
                 speaker: $0.speaker,
-                timestamp: $0.timestamp
+                timestamp: $0.timestamp,
+                sourceRaw: $0.sourceRaw
             )
         }
         let finalSegmentSnapshots = payload.finalSegments
@@ -6098,6 +6308,7 @@ final class AppState: ObservableObject {
             guard let existing = existingByID[segment.id] else { return true }
             return existing.text != segment.text ||
                 existing.speaker != segment.speaker ||
+                existing.sourceRaw != segment.sourceRaw ||
                 abs(existing.timestamp - segment.timestamp) > 0.001
         }
 
@@ -6128,13 +6339,15 @@ final class AppState: ObservableObject {
                 existing.speaker = upsert.speaker
                 existing.timestamp = upsert.timestamp
                 existing.isFinal = true
+                existing.sourceRaw = upsert.sourceRaw
             } else {
                 let newSegment = TranscriptSegment(
                     id: upsert.id,
                     text: upsert.text,
                     speaker: upsert.speaker,
                     timestamp: upsert.timestamp,
-                    isFinal: true
+                    isFinal: true,
+                    sourceRaw: upsert.sourceRaw
                 )
                 insertedSegments.append(newSegment)
                 existingByID[upsert.id] = newSegment
@@ -6258,27 +6471,36 @@ final class AppState: ObservableObject {
         
         #if os(macOS)
         let useMultichannel = captureMicrophone && captureSystemAudio
+        // Mono capture attributes every response to the active source explicitly;
+        // multichannel attributes by channel (0 mic, 1 system).
+        let monoSource: TranscriptSource = captureMicrophone ? .microphone : .system
         if useMultichannel {
             resetEchoReconciliation(flushPending: true)
-            // Multichannel attributes mic via channel 0 — no energy-based sourceLookup.
             audioCaptureService.resetSourceTracking()
-            deepgramService.sourceLookup = nil
-        } else {
-            deepgramService.sourceLookup = nil
         }
         #else
         let useMultichannel = false
-        deepgramService.sourceLookup = nil
+        let monoSource: TranscriptSource = .microphone
         #endif
 
         // Initial and resumed sockets use the duration already accumulated before this active
         // recording interval. Deepgram's word clock begins at zero for the new connection.
+        // Resumed sockets within one meeting keep the speaker identity allocation so app
+        // speaker IDs never collide across sockets; a fresh meeting resets it.
         deepgramTimelineOffset = accumulatedRecordedDuration
+        let isResumedSession = accumulatedRecordedDuration > 0
+        if isResumedSession {
+            // After an app relaunch the allocator is empty but restored segments
+            // still hold their speaker IDs — seed so new allocations can't collide.
+            deepgramService.seedRestoredSpeakerIdentities(Set(liveSegments.map(\.speaker)))
+        }
         deepgramService.connect(
             language: meetingLanguage,
             personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
             sessionKeyterms: deepgramSessionKeyterms(),
-            multichannel: useMultichannel
+            multichannel: useMultichannel,
+            monoSource: monoSource,
+            preserveSpeakerIdentities: isResumedSession
         )
 
         // Configure audio capture
@@ -6697,6 +6919,10 @@ final class AppState: ObservableObject {
         currentSpeaker = 0
         interimSpeaker = nil
         detectedSpeakers = []
+        liveMicSpeakerIDs = []
+        salesDetectionSignalsSeen = []
+        salesDetectionNudgeFired = false
+        resetEnvironmentInference()
         recordingDuration = 0
         recordingStartDate = nil
         accumulatedRecordedDuration = 0
@@ -8422,10 +8648,10 @@ final class AppState: ObservableObject {
         var currentKey: String? = nil
         let names = liveSpeakerNames.isEmpty ? nil : liveSpeakerNames
         for segment in finalSegments {
-            let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: liveSelfSpeakerIDs)
+            let key = SelectableAttributed.displayGroupKey(speaker: segment.speaker, names: names, selfIDs: liveSpeakerLabelSelfIDs)
             if key != currentKey {
                 currentKey = key
-                md += "\n**\(resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: liveSelfSpeakerIDs)):**\n"
+                md += "\n**\(resolvedSpeakerLabel(for: segment.speaker, names: names, selfIDs: liveSpeakerLabelSelfIDs)):**\n"
             }
             md += "\(segment.text) "
         }
@@ -8779,7 +9005,15 @@ final class AppState: ObservableObject {
     }
 
     private func sendSmartMeetingNotificationIfNeeded(_ prompt: SmartMeetingPrompt) {
-        guard smartMeetingsEnabled, !isAppInForeground() else { return }
+        guard smartMeetingsEnabled else { return }
+        #if os(macOS)
+        guard MacNotificationRoutingPolicy.shouldMirrorToSystem(
+            isAppActive: isAppInForeground(),
+            recordingIndicatorEnabled: showRecordingIndicator
+        ) else { return }
+        #else
+        guard !isAppInForeground() else { return }
+        #endif
         let identifier = "miniti.smart-meeting.\(prompt.id)"
         let title = prompt.title
         let message = prompt.message
@@ -8881,12 +9115,121 @@ final class AppState: ObservableObject {
         #endif
     }
 
+    #if os(macOS)
+    func presentRecordingNudge(
+        _ nudge: RecordingNudge,
+        duration: TimeInterval = AppState.recordingNudgeDuration
+    ) {
+        // Ending and transition decisions always outrank coaching guidance. The nudge is
+        // deliberately ephemeral and never delays or mutates recording state.
+        guard isRecording, smartMeetingPrompt == nil, endingGrace == nil else { return }
+        recordingNudgeDismissTask?.cancel()
+        recordingNudge = nudge
+        let nudgeID = nudge.id
+        recordingNudgeDismissTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(duration))
+            guard !Task.isCancelled, self?.recordingNudge?.id == nudgeID else { return }
+            self?.clearRecordingNudge()
+        }
+    }
+
+    func dismissRecordingNudge() {
+        clearRecordingNudge()
+    }
+
+
+    private func clearRecordingNudge() {
+        recordingNudgeDismissTask?.cancel()
+        recordingNudgeDismissTask = nil
+        if recordingNudge != nil {
+            recordingNudge = nil
+        }
+    }
+    #endif
+
+    /// "Don't remind me about these" from a nudge card: turns off that nudge kind's
+    /// setting (the same toggle in Settings → Notifications, where it can be re-enabled)
+    /// and dismisses the current card.
+    func disableNudges(ofKind kind: RecordingNudge.Kind) {
+        switch kind {
+        case .question: notifyOnIncisiveQuestions = false
+        case .monologue: notifyOnMonologue = false
+        case .fillerRate: notifyOnHighFillerRate = false
+        case .salesDetected: notifyOnSalesDetection = false
+        }
+        #if os(macOS)
+        clearRecordingNudge()
+        #endif
+        DebugLogger.shared.log(.app, "Nudge kind disabled from card: \(kind)")
+    }
+
+    /// Primary action on the sales-detection nudge: turn on Sales (MEDDPICC) analysis
+    /// and switch the insights view to it, exactly as the specialist insights menu does.
+    func enableSalesAnalysisFromNudge() {
+        setInsightModeEnabled(.meddpicc, enabled: true)
+        insightsMode = .meddpicc
+        #if os(macOS)
+        clearRecordingNudge()
+        #endif
+        DebugLogger.shared.log(.app, "Sales analysis enabled from detection nudge")
+    }
+
+    /// Accumulate sales-vocabulary evidence from one finalized segment and suggest
+    /// enabling Sales analysis once per meeting when it looks like a sales call.
+    /// Cheap: a bounded phrase scan of the single new segment, no transcript re-reads.
+    private func evaluateSalesDetection(for text: String) {
+        guard notifyOnSalesDetection, !salesDetectionNudgeFired, !salesInsightsEnabled else { return }
+        let matches = Self.salesSignalMatches(in: text)
+        if !matches.isEmpty {
+            salesDetectionSignalsSeen.formUnion(matches)
+        }
+        guard salesDetectionSignalsSeen.count >= Self.salesDetectionMinDistinctSignals else { return }
+        // Consume the once-per-meeting shot only when a surface actually accepted the
+        // alert — iOS declines foreground delivery, so the suggestion stays pending
+        // and lands when the app is next in the background.
+        let delivered = deliverLiveRecordingAlert(
+            identifier: "miniti.nudge.sales.\(UUID().uuidString)",
+            kind: .salesDetected,
+            title: "sales conversation?",
+            body: "this sounds like a sales call — enable live Sales (MEDDPICC) analysis for this meeting?"
+        )
+        guard delivered else { return }
+        salesDetectionNudgeFired = true
+        DebugLogger.shared.log(.app, "Sales detection nudge fired: signals=\(salesDetectionSignalsSeen.sorted())")
+    }
+
+    /// Routes live questions/coaching without assuming that a frontmost Miniti window
+    /// proves the relevant information is visible. On macOS the floating recording
+    /// surface is primary while Miniti is active; Notification Center remains the
+    /// background and disabled-surface fallback. iOS preserves its background-only rule.
+    @discardableResult
+    private func deliverLiveRecordingAlert(
+        identifier: String,
+        kind: RecordingNudge.Kind,
+        title: String,
+        body: String
+    ) -> Bool {
+        #if os(macOS)
+        if MacNotificationRoutingPolicy.shouldUseFloatingNudge(
+            isAppActive: isAppInForeground(),
+            recordingIndicatorEnabled: showRecordingIndicator
+        ) {
+            presentRecordingNudge(
+                RecordingNudge(id: identifier, kind: kind, title: title, message: body)
+            )
+            return true
+        }
+        #else
+        guard !isAppInForeground() else { return false }
+        #endif
+
+        sendLocalNudge(identifier: identifier, title: title, body: body)
+        return true
+    }
+
     private func notifyNewHighPriorityQuestions(_ questions: [SuggestedQuestion]) {
         guard notifyOnIncisiveQuestions else { return }
         guard isRecording else { return }
-
-        // Don't notify when the user is already looking at the app.
-        if isAppInForeground() { return }
 
         let newHighs = questions.filter { $0.isHighPriority && !notifiedQuestionIDs.contains($0.id) }
         guard let question = newHighs.first else { return }
@@ -8898,21 +9241,12 @@ final class AppState: ObservableObject {
             return
         }
 
-        let content = UNMutableNotificationContent()
-        content.title = "incisive question"
-        content.body = question.question
-        content.sound = .default
-
-        let request = UNNotificationRequest(
+        guard deliverLiveRecordingAlert(
             identifier: "miniti.question.\(UUID().uuidString)",
-            content: content,
-            trigger: nil
-        )
-        UNUserNotificationCenter.current().add(request) { error in
-            if let error {
-                DebugLogger.shared.log(.app, "Question notification failed: \(error.localizedDescription)")
-            }
-        }
+            kind: .question,
+            title: "incisive question",
+            body: question.question
+        ) else { return }
 
         lastQuestionNotificationAt = Date()
         for q in newHighs { notifiedQuestionIDs.insert(q.id) }
@@ -9244,9 +9578,7 @@ final class AppState: ObservableObject {
 
         for segment in segments.reversed() {
             guard segment.isFinal else { continue }
-            let label = segment.speaker == DeepgramService.micSpeakerID
-                ? "You"
-                : "Speaker \(segment.speaker + 1)"
+            let label = segment.speakerLabel
             let line = String("\(label): \(segment.text)".prefix(perTurnLimit))
             if !recentLines.isEmpty, recentCharacterCount + line.count > contextBudget { break }
             recentLines.append(line)
@@ -9427,6 +9759,9 @@ final class AppState: ObservableObject {
         lastEvaluatedFinalSegmentID = nil
         cachedFillerTokensLanguage = nil
         cachedFillerTokens = []
+        #if os(macOS)
+        clearRecordingNudge()
+        #endif
     }
 
     /// Returns the tokenized filler phrases for the given language, rebuilding the
@@ -9456,8 +9791,11 @@ final class AppState: ObservableObject {
         guard lastFinal.id != lastEvaluatedFinalSegmentID else { return }
         lastEvaluatedFinalSegmentID = lastFinal.id
 
-        // Don't interrupt when the user is looking at the app — nudges are for when attention is elsewhere.
+        // iOS keeps its existing background-only notification behavior. macOS routes
+        // foreground guidance through the floating recording surface instead.
+        #if os(iOS)
         if isAppInForeground() { return }
+        #endif
 
         guard let targetSpeakerIDs = Self.realtimeNudgeTargetSpeakerIDs(
             lastFinalSpeaker: lastFinal.speaker,
@@ -9520,8 +9858,9 @@ final class AppState: ObservableObject {
         }
         guard !monologueNudgedForRun else { return }
 
-        sendLocalNudge(
+        _ = deliverLiveRecordingAlert(
             identifier: "miniti.nudge.monologue.\(UUID().uuidString)",
+            kind: .monologue,
             title: "heads up",
             body: "you've been talking for a while — consider pausing to check in."
         )
@@ -9564,8 +9903,9 @@ final class AppState: ObservableObject {
         let fillersPerMinute = Double(fillerCount) / windowMinutes
         guard fillersPerMinute >= Self.fillerNudgeMinFillersPerMinute else { return }
 
-        sendLocalNudge(
+        _ = deliverLiveRecordingAlert(
             identifier: "miniti.nudge.filler.\(UUID().uuidString)",
+            kind: .fillerRate,
             title: "heads up",
             body: "you've used a lot of filler words recently (\(Int(fillersPerMinute.rounded()))/min)."
         )

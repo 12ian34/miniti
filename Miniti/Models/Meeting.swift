@@ -63,6 +63,11 @@ final class Meeting {
     // Supports the case where diarization splits one person across multiple speaker IDs —
     // marking each of those IDs as "You" unifies their training stats and transcript label.
     var selfSpeakerIDsJSON: String?
+
+    // Optional internal environment inference (InferredMeetingEnvironment raw value).
+    // Diagnostic metadata only — never user-facing, never required to load, trim,
+    // export, search, or regenerate insights. Nil (all legacy meetings) = unknown.
+    var inferredEnvironmentRaw: String?
     
     init(
         id: UUID = UUID(),
@@ -277,11 +282,65 @@ final class Meeting {
         }
     }
 
-    /// Effective "self" set used by resolvers and training metrics. If the user hasn't
-    /// marked anyone, we fall back to the mic speaker — keeping macOS working out of the box.
+    /// One pass over segments summarizing speaker sources. Explicit source wins;
+    /// legacy segments without one fall back to the reserved mic ID range.
+    private struct SpeakerSourceSummary {
+        var micIDs: Set<Int> = []
+        var hasSystemSource = false
+        var hasLegacySegments = false
+    }
+
+    private var speakerSourceSummary: SpeakerSourceSummary {
+        var summary = SpeakerSourceSummary()
+        for segment in segments {
+            if let source = segment.source {
+                switch source {
+                case .microphone: summary.micIDs.insert(segment.speaker)
+                case .system: summary.hasSystemSource = true
+                case .unknown: break
+                }
+            } else {
+                summary.hasLegacySegments = true
+                if DeepgramService.isMicAppSpeakerID(segment.speaker) {
+                    summary.micIDs.insert(segment.speaker)
+                }
+            }
+        }
+        return summary
+    }
+
+    /// Distinct app speaker IDs attributed to the device microphone.
+    var micSpeakerIDs: Set<Int> {
+        speakerSourceSummary.micIDs
+    }
+
+    /// Whether the implicit "the sole mic speaker is You" default applies when nobody
+    /// is explicitly marked. It only ever applied to dual-source (mic+system) meetings
+    /// — mic-only recordings (iOS, macOS mic-only) never labeled anyone "You", and must
+    /// not start now: a solo recording can be someone else's lecture or an interview.
+    /// Legacy meetings (no source metadata) predate mic diarization and keep it.
+    private func implicitSelfAllowed(_ summary: SpeakerSourceSummary) -> Bool {
+        guard summary.micIDs.count <= 1 else { return false }
+        return summary.hasSystemSource || summary.hasLegacySegments || segments.isEmpty
+    }
+
+    /// Effective "self" set used for membership checks (rename UI, nudges). Explicit
+    /// markings win; otherwise the implicit mic default applies only in dual-source or
+    /// legacy meetings with at most one microphone speaker.
     var effectiveSelfSpeakerIDs: Set<Int> {
         let explicit = selfSpeakerIDs
-        return explicit.isEmpty ? [DeepgramService.micSpeakerID] : explicit
+        if !explicit.isEmpty { return explicit }
+        return implicitSelfAllowed(speakerSourceSummary) ? [DeepgramService.micSpeakerID] : []
+    }
+
+    /// Self context for label/metrics resolution, which must let an inferred name beat
+    /// the *implicit* "You" (but never an explicit mark): explicit marks → that set;
+    /// implicit default applicable → nil (resolver applies it after names); otherwise
+    /// an empty set (no implicit "You" at all).
+    var speakerLabelSelfIDs: Set<Int>? {
+        let explicit = selfSpeakerIDs
+        if !explicit.isEmpty { return explicit }
+        return implicitSelfAllowed(speakerSourceSummary) ? nil : []
     }
     
     var hasMEDDPICC: Bool {
@@ -338,7 +397,7 @@ final class Meeting {
     
     var fullTranscript: String {
         let names = speakerNames
-        let selfIDs = selfSpeakerIDs
+        let selfIDs = speakerLabelSelfIDs
         return segments
             .filter { $0.isFinal }
             .sorted { $0.timestamp < $1.timestamp }
@@ -411,7 +470,7 @@ final class Meeting {
 
         let sortedSegments = segments.filter { $0.isFinal }.sorted { $0.timestamp < $1.timestamp }
         let names = speakerNames
-        let selfIDs = selfSpeakerIDs
+        let selfIDs = speakerLabelSelfIDs
 
         var currentKey: String? = nil
         for segment in sortedSegments {
@@ -525,7 +584,7 @@ final class Meeting {
             duration: duration,
             language: language,
             names: speakerNames,
-            selfIDs: selfSpeakerIDs
+            selfIDs: speakerLabelSelfIDs
         )
         guard !metrics.speakers.isEmpty else { return "" }
 
@@ -597,16 +656,22 @@ final class Meeting {
 }
 
 /// Resolve a display label for a speaker ID. Priority:
-/// 1. Explicit user-marked self (`selfIDs` contains speaker) → "You" (wins over mapped name)
+/// 1. Explicit or effective self (`selfIDs` contains speaker) → "You" (wins over mapped name)
 /// 2. Inferred/custom name from `names`
-/// 3. Implicit default (mic speaker when `selfIDs` is nil/empty) → "You"
-/// 4. "Speaker N" fallback
+/// 3. Implicit default (mic speaker when self context is unknown, i.e. `selfIDs` is nil) → "You"
+/// 4. Neutral fallback. Microphone-range speakers (1000+n) label by mic ordinal with a
+///    "(mic)" tag so a hybrid meeting cannot show two different people as "Speaker 2";
+///    an empty (non-nil) `selfIDs` means several people share the microphone and nobody
+///    is assumed to be the user.
 func resolvedSpeakerLabel(for speaker: Int, names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> String {
     if let selfIDs, selfIDs.contains(speaker) { return "You" }
     if let mapped = names?[String(speaker)]?.trimmingCharacters(in: .whitespacesAndNewlines), !mapped.isEmpty {
         return mapped
     }
-    if (selfIDs ?? []).isEmpty, speaker == DeepgramService.micSpeakerID { return "You" }
+    if selfIDs == nil, speaker == DeepgramService.micSpeakerID { return "You" }
+    if DeepgramService.isMicAppSpeakerID(speaker) {
+        return "Speaker \(speaker - DeepgramService.micSpeakerID + 1) (mic)"
+    }
     return "Speaker \(speaker + 1)"
 }
 
@@ -616,7 +681,12 @@ func resolvedShortSpeakerLabel(for speaker: Int, names: [String: String]? = nil,
     if let mapped = names?[String(speaker)]?.trimmingCharacters(in: .whitespacesAndNewlines), !mapped.isEmpty {
         return mapped
     }
-    if (selfIDs ?? []).isEmpty, speaker == DeepgramService.micSpeakerID { return "You" }
+    if selfIDs == nil, speaker == DeepgramService.micSpeakerID { return "You" }
+    if DeepgramService.isMicAppSpeakerID(speaker) {
+        // Compact contexts drop the "(mic)" disambiguation — color and grouping
+        // keep mic/system speakers distinct where space is tight.
+        return "S\(speaker - DeepgramService.micSpeakerID + 1)"
+    }
     return "S\(speaker + 1)"
 }
 
@@ -638,14 +708,19 @@ final class TranscriptSegment {
     var timestamp: TimeInterval
     var isFinal: Bool
     var confidence: Double
-    
+    /// Explicit capture source (TranscriptSource raw value). Optional and additive so
+    /// existing stores lightweight-migrate; nil (all legacy segments) falls back to the
+    /// reserved mic ID range where source matters.
+    var sourceRaw: String?
+
     init(
         id: UUID = UUID(),
         text: String,
         speaker: Int = 0,
         timestamp: TimeInterval,
         isFinal: Bool = false,
-        confidence: Double = 1.0
+        confidence: Double = 1.0,
+        sourceRaw: String? = nil
     ) {
         self.id = id
         self.text = text
@@ -653,10 +728,19 @@ final class TranscriptSegment {
         self.timestamp = timestamp
         self.isFinal = isFinal
         self.confidence = confidence
+        self.sourceRaw = sourceRaw
     }
-    
+
+    var source: TranscriptSource? {
+        sourceRaw.flatMap(TranscriptSource.init(rawValue:))
+    }
+
     var speakerLabel: String {
-        speaker == DeepgramService.micSpeakerID ? "You" : "Speaker \(speaker + 1)"
+        if speaker == DeepgramService.micSpeakerID { return "You" }
+        if DeepgramService.isMicAppSpeakerID(speaker) {
+            return "Speaker \(speaker - DeepgramService.micSpeakerID + 1) (mic)"
+        }
+        return "Speaker \(speaker + 1)"
     }
     
     var formattedTimestamp: String {
@@ -692,6 +776,7 @@ struct TranscriptSegmentSnapshot: Equatable {
     let text: String
     let isFinal: Bool
     let confidence: Double
+    var sourceRaw: String? = nil
 }
 
 // MARK: - Meeting Search

@@ -455,6 +455,105 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertTrue(
             RecordingIndicatorAttentionPolicy.shouldAutoExpand(from: recording, to: ending)
         )
+
+        let nudge = RecordingIndicatorAttentionState(
+            promptID: nil,
+            nudgeID: "miniti.nudge.monologue.test",
+            isRecording: true,
+            isEnding: false
+        )
+        XCTAssertTrue(
+            RecordingIndicatorAttentionPolicy.shouldAutoExpand(from: recording, to: nudge),
+            "A new foreground coaching nudge must become apparent in the floating surface"
+        )
+        XCTAssertFalse(
+            RecordingIndicatorAttentionPolicy.shouldAutoExpand(from: nudge, to: nudge),
+            "An unchanged nudge must not repeatedly reopen the surface"
+        )
+    }
+
+    func testIndicatorOrdersFrontForEveryMeaningfulAttentionTransition() {
+        XCTAssertTrue(
+            RecordingIndicatorWindowPolicy.shouldOrderFront(
+                isVisible: false,
+                attentionRequested: false
+            ),
+            "A newly shown surface must be ordered front"
+        )
+        XCTAssertTrue(
+            RecordingIndicatorWindowPolicy.shouldOrderFront(
+                isVisible: true,
+                attentionRequested: true
+            ),
+            "An already-visible surface must be raised when a meeting decision arrives"
+        )
+        XCTAssertFalse(
+            RecordingIndicatorWindowPolicy.shouldOrderFront(
+                isVisible: true,
+                attentionRequested: false
+            ),
+            "Timer ticks must not continuously reorder the surface"
+        )
+    }
+
+    func testMacNotificationRoutingUsesSurfaceWhileActiveAndSystemFallbackOtherwise() {
+        XCTAssertTrue(
+            MacNotificationRoutingPolicy.shouldUseFloatingNudge(
+                isAppActive: true,
+                recordingIndicatorEnabled: true
+            )
+        )
+        XCTAssertFalse(
+            MacNotificationRoutingPolicy.shouldMirrorToSystem(
+                isAppActive: true,
+                recordingIndicatorEnabled: true
+            )
+        )
+
+        for state in [
+            (isAppActive: false, indicatorEnabled: true),
+            (isAppActive: true, indicatorEnabled: false),
+            (isAppActive: false, indicatorEnabled: false),
+        ] {
+            XCTAssertFalse(
+                MacNotificationRoutingPolicy.shouldUseFloatingNudge(
+                    isAppActive: state.isAppActive,
+                    recordingIndicatorEnabled: state.indicatorEnabled
+                )
+            )
+            XCTAssertTrue(
+                MacNotificationRoutingPolicy.shouldMirrorToSystem(
+                    isAppActive: state.isAppActive,
+                    recordingIndicatorEnabled: state.indicatorEnabled
+                )
+            )
+        }
+    }
+
+    @MainActor
+    func testRecordingNudgeExpiresWithoutClearingItsReplacement() async throws {
+        let state = AppState()
+        state.isRecording = true
+        let first = AppState.RecordingNudge(
+            id: "first",
+            kind: .monologue,
+            title: "heads up",
+            message: "first"
+        )
+        let replacement = AppState.RecordingNudge(
+            id: "replacement",
+            kind: .question,
+            title: "incisive question",
+            message: "replacement"
+        )
+
+        state.presentRecordingNudge(first, duration: 0.02)
+        state.presentRecordingNudge(replacement, duration: 1)
+        try await Task.sleep(for: .milliseconds(80))
+
+        XCTAssertEqual(state.recordingNudge, replacement)
+        state.dismissRecordingNudge()
+        XCTAssertNil(state.recordingNudge)
     }
 
     func testIndicatorDisclosureDistinguishesClicksFromWindowDrags() {
@@ -507,47 +606,46 @@ final class CallLifecycleTests: XCTestCase {
 
     @MainActor
     func testClosedMainWindowIsRecreatedInsteadOfTreatedAsRestorable() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        defer { window.close() }
-        window.identifier = AppDelegate.mainWindowIdentifier
-
-        window.orderOut(nil)
         XCTAssertFalse(
-            AppDelegate.isRestorableMainWindow(window, applicationIsHidden: false),
+            AppDelegate.isRestorableMainWindowState(
+                hasMainIdentifier: true,
+                isVisible: false,
+                isMiniaturized: false,
+                applicationIsHidden: false
+            ),
             "An X-closed WindowGroup window must fall through to openWindow(id:)"
         )
-
-        window.makeKeyAndOrderFront(nil)
-        XCTAssertTrue(AppDelegate.isRestorableMainWindow(window, applicationIsHidden: false))
-
-        window.orderOut(nil)
         XCTAssertTrue(
-            AppDelegate.isRestorableMainWindow(window, applicationIsHidden: true),
+            AppDelegate.isRestorableMainWindowState(
+                hasMainIdentifier: true,
+                isVisible: true,
+                isMiniaturized: false,
+                applicationIsHidden: false
+            )
+        )
+        XCTAssertTrue(
+            AppDelegate.isRestorableMainWindowState(
+                hasMainIdentifier: true,
+                isVisible: false,
+                isMiniaturized: false,
+                applicationIsHidden: true
+            ),
             "Hiding the app must not create a duplicate main window"
+        )
+        XCTAssertFalse(
+            AppDelegate.isRestorableMainWindowState(
+                hasMainIdentifier: false,
+                isVisible: true,
+                isMiniaturized: false,
+                applicationIsHidden: false
+            )
         )
     }
 
     @MainActor
-    func testPresentMainWindowDeminiaturizesAndOrdersItFront() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
-        defer { window.close() }
-        window.identifier = AppDelegate.mainWindowIdentifier
-        window.miniaturize(nil)
-
-        AppDelegate.presentMainWindow(window)
-
-        XCTAssertFalse(window.isMiniaturized)
-        XCTAssertTrue(window.isVisible)
+    func testPresentMainWindowDeminiaturizesOnlyWhenNeeded() {
+        XCTAssertTrue(AppDelegate.shouldDeminiaturizeMainWindow(true))
+        XCTAssertFalse(AppDelegate.shouldDeminiaturizeMainWindow(false))
     }
     #endif
 }

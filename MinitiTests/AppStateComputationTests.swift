@@ -647,8 +647,11 @@ final class AppStateComputationTests: XCTestCase {
 
     // MARK: - Speaker identity recovery
 
+    /// The identity allocator gives a reconnected socket fresh, collision-free app
+    /// speaker IDs, so names, overrides, and self marks attached to segments from
+    /// earlier sockets must survive a reconnect untouched.
     @MainActor
-    func testResetSpeakerIdentityForDeepgramReconnectKeepsOnlyMicIdentity() {
+    func testResetSpeakerIdentityForDeepgramReconnectPreservesIdentities() {
         let state = AppState()
         let meeting = Meeting(title: "live")
         let micKey = String(DeepgramService.micSpeakerID)
@@ -664,12 +667,59 @@ final class AppStateComputationTests: XCTestCase {
 
         state.resetSpeakerIdentityForDeepgramReconnect()
 
-        XCTAssertEqual(state.liveSpeakerNames, [micKey: "Ian"])
-        XCTAssertEqual(state.liveSpeakerOverrides, [micKey])
-        XCTAssertEqual(state.liveSelfSpeakerIDs, [DeepgramService.micSpeakerID])
-        XCTAssertEqual(meeting.speakerNames, [micKey: "Ian"])
-        XCTAssertEqual(meeting.speakerOverrides, [micKey])
-        XCTAssertEqual(meeting.selfSpeakerIDs, [DeepgramService.micSpeakerID])
+        XCTAssertEqual(state.liveSpeakerNames, ["0": "Alice", "2": "Bob", micKey: "Ian"])
+        XCTAssertEqual(state.liveSpeakerOverrides, ["0", micKey])
+        XCTAssertEqual(state.liveSelfSpeakerIDs, [DeepgramService.micSpeakerID, 2])
+    }
+
+    /// Reconnect allocation contract: the sole primary mic identity continues as 1000
+    /// across sockets; system speakers and additional mic speakers get fresh IDs that
+    /// never collide with earlier ones, even though Deepgram numbering restarts at 0.
+    func testSpeakerIdentityAllocationAcrossReconnects() {
+        var identity = SpeakerIdentityState()
+        identity.beginConnection(preservingIdentities: false)
+
+        // First socket: mic provider 0 -> 1000, system providers keep their numbers.
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 0), 1000)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 0), 0)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 1), 1)
+        // Stable within the socket.
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 0), 1000)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 1), 1)
+
+        // Reconnect with a single mic speaker: mic continuity keeps 1000; system
+        // provider 0 is a fresh person and must not collide with earlier speaker 0.
+        identity.beginConnection(preservingIdentities: true)
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 0), 1000)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 0), 2)
+        // A second mic speaker on the new socket gets a fresh mic-range ID.
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 1), 1001)
+
+        // Next reconnect: several mic speakers existed, so nobody can claim 1000.
+        identity.beginConnection(preservingIdentities: true)
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 0), 1002)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 0), 3)
+    }
+
+    func testSpeakerIdentitySeedingAfterRelaunchAvoidsCollisions() {
+        var identity = SpeakerIdentityState()
+        identity.seedRestoredAppSpeakerIDs([0, 1, 1000])
+        identity.beginConnection(preservingIdentities: true)
+
+        XCTAssertEqual(identity.appSpeakerID(source: .microphone, providerID: 0), 1000)
+        XCTAssertEqual(identity.appSpeakerID(source: .system, providerID: 0), 2)
+
+        var multiMic = SpeakerIdentityState()
+        multiMic.seedRestoredAppSpeakerIDs([0, 1000, 1001])
+        multiMic.beginConnection(preservingIdentities: true)
+        // Restored meeting already had two mic speakers — no 1000 continuity.
+        XCTAssertEqual(multiMic.appSpeakerID(source: .microphone, providerID: 0), 1002)
+    }
+
+    func testUnknownSourcePassesProviderIDThrough() {
+        var identity = SpeakerIdentityState()
+        identity.beginConnection(preservingIdentities: false)
+        XCTAssertEqual(identity.appSpeakerID(source: .unknown, providerID: 4), 4)
     }
 
     func testTranscriptSupportedSpeakerNamesRejectsUnsupportedCandidateGuess() {
@@ -2320,5 +2370,109 @@ final class AppStateComputationTests: XCTestCase {
     private static func makeInMemoryModelContainer() throws -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
         return try ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
+    }
+}
+
+// MARK: - Cross-speaker mic dedup (cumulative finals whose diarized speaker flips)
+
+final class MicFinalDedupTests: XCTestCase {
+    private func micSegment(_ text: String, speaker: Int, timestamp: TimeInterval) -> AppState.LiveSegment {
+        AppState.LiveSegment(
+            id: UUID(), text: text, speaker: speaker, timestamp: timestamp,
+            isFinal: true, source: .microphone
+        )
+    }
+
+    func testCumulativeMicFinalWithFlippedSpeakerMergesInsteadOfDuplicating() {
+        var segments = [micSegment("we should ship on friday", speaker: 1000, timestamp: 10.0)]
+        let flipped = micSegment("we should ship on friday", speaker: 1001, timestamp: 10.4)
+        let result = AppState.mergeFinalSegment(flipped, into: &segments)
+        XCTAssertEqual(result, .skippedExactDuplicate)
+        XCTAssertEqual(segments.count, 1)
+    }
+
+    func testCumulativeMicFinalSupersetWithFlippedSpeakerReplaces() {
+        var segments = [micSegment("we should ship", speaker: 1000, timestamp: 10.0)]
+        let superset = micSegment("we should ship on friday", speaker: 1001, timestamp: 10.6)
+        let result = AppState.mergeFinalSegment(superset, into: &segments)
+        XCTAssertEqual(result, .replacedSuperset)
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].text, "we should ship on friday")
+        // Presentation identity of the original segment is preserved.
+        XCTAssertEqual(segments[0].speaker, 1000)
+    }
+
+    func testShortRepeatFromDifferentRoomSpeakerIsNotSwallowed() {
+        var segments = [micSegment("yeah", speaker: 1000, timestamp: 10.0)]
+        let echoOfAgreement = micSegment("yeah", speaker: 1001, timestamp: 10.8)
+        let result = AppState.mergeFinalSegment(echoOfAgreement, into: &segments)
+        XCTAssertEqual(result, .appended)
+        XCTAssertEqual(segments.count, 2)
+
+        // Short polite repeats up to three words are also protected — one person
+        // saying "thank you" right after another must not be deduped.
+        var thanks = [micSegment("Thank you.", speaker: 1000, timestamp: 20.0)]
+        let secondThanks = micSegment("Thank you.", speaker: 1001, timestamp: 20.7)
+        XCTAssertEqual(AppState.mergeFinalSegment(secondThanks, into: &thanks), .appended)
+        XCTAssertEqual(thanks.count, 2)
+    }
+
+    func testDistantMicFinalFromOtherSpeakerIsNotDeduped() {
+        var segments = [micSegment("we should ship on friday", speaker: 1000, timestamp: 10.0)]
+        let laterRepeat = micSegment("we should ship on friday", speaker: 1001, timestamp: 14.0)
+        let result = AppState.mergeFinalSegment(laterRepeat, into: &segments)
+        XCTAssertEqual(result, .appended)
+        XCTAssertEqual(segments.count, 2)
+    }
+
+    func testCrossSpeakerDedupNeverAppliesToSystemSegments() {
+        var segments = [AppState.LiveSegment(
+            id: UUID(), text: "sounds good to me", speaker: 0, timestamp: 10.0,
+            isFinal: true, source: .system
+        )]
+        let otherRemote = AppState.LiveSegment(
+            id: UUID(), text: "sounds good to me", speaker: 1, timestamp: 10.4,
+            isFinal: true, source: .system
+        )
+        let result = AppState.mergeFinalSegment(otherRemote, into: &segments)
+        XCTAssertEqual(result, .appended)
+        XCTAssertEqual(segments.count, 2)
+    }
+
+    func testLegacySegmentsWithoutSourceStillDedupMicRange() {
+        var segments = [AppState.LiveSegment(
+            id: UUID(), text: "we should ship on friday", speaker: 1000, timestamp: 10.0, isFinal: true
+        )]
+        let flipped = AppState.LiveSegment(
+            id: UUID(), text: "we should ship on friday", speaker: 1001, timestamp: 10.4, isFinal: true
+        )
+        XCTAssertEqual(AppState.mergeFinalSegment(flipped, into: &segments), .skippedExactDuplicate)
+    }
+}
+
+// MARK: - Sales-conversation detection heuristic
+
+final class SalesDetectionTests: XCTestCase {
+    func testSalesSignalMatchesFindCommercialPhrases() {
+        let matches = AppState.salesSignalMatches(
+            in: "Let's talk pricing and whether the contract covers procurement."
+        )
+        XCTAssertEqual(matches, ["pricing", "contract", "procurement"])
+    }
+
+    func testSalesSignalMatchesRespectWordBoundaries() {
+        // "contractor" must not count as "contract".
+        XCTAssertTrue(AppState.salesSignalMatches(in: "The contractor rewired the office.").isEmpty)
+    }
+
+    func testOrdinaryPlanningTalkDoesNotMatch() {
+        XCTAssertTrue(AppState.salesSignalMatches(
+            in: "We need a decision on the timeline before the next sprint."
+        ).isEmpty)
+    }
+
+    func testMultiWordPhrasesMatch() {
+        let matches = AppState.salesSignalMatches(in: "Who is the decision maker for the annual plan?")
+        XCTAssertEqual(matches, ["decision maker", "annual plan"])
     }
 }

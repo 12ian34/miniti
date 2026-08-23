@@ -1198,7 +1198,7 @@ struct NotificationsSettingsView: View {
                             appState.requestQuestionNotificationPermission()
                         }
                     }
-                Text("Sends a system notification during recording when the AI spots a high-priority question you should ask. Only fires when the app is in the background, limited to one every 2 minutes.")
+                Text("Shows a floating prompt while you're using Miniti, or a system notification when your attention is elsewhere or the recording indicator is off. Limited to one every 2 minutes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1209,7 +1209,7 @@ struct NotificationsSettingsView: View {
                             appState.requestNudgeNotificationPermission()
                         }
                     }
-                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Only fires when the app is in the background, limited to one every 3 minutes.")
+                Text("Gently alerts you if you've been talking for roughly a minute or more without interruption. Uses the floating recording surface in Miniti and a system notification elsewhere, limited to one every 3 minutes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1220,7 +1220,13 @@ struct NotificationsSettingsView: View {
                             appState.requestNudgeNotificationPermission()
                         }
                     }
-                Text("Alerts you when filler words like \"um\" and \"uh\" spike in your last minute of speaking. Uses your configured filler list per language. Only fires when the app is in the background, limited to one every 3 minutes.")
+                Text("Alerts you when filler words like \"um\" and \"uh\" spike in your last minute of speaking. Uses your configured filler list per language, the floating recording surface in Miniti, and a system notification elsewhere. Limited to one every 3 minutes.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Suggest Sales analysis when a meeting sounds like a sales call", isOn: $appState.notifyOnSalesDetection)
+                    .id("notifications.salesDetection")
+                Text("When Sales analysis is off and the conversation mentions several commercial terms (pricing, contract, procurement, …), offers to enable live MEDDPICC analysis. At most once per meeting; detection runs locally on your transcript.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1238,6 +1244,12 @@ struct NotificationsSettingsView: View {
                         }
                     }
                 Text("Fires a system notification about 60 seconds before each upcoming Google Calendar event starts. Requires Google Calendar to be connected. In addition to Calendar's own alerts.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Meeting Decisions") {
+                Text("Smart meeting start, ending, and handoff decisions raise the floating recording surface. When Miniti is behind another app or the surface is turned off, an actionable system notification is used when notification permission is available.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

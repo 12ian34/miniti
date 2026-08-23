@@ -195,10 +195,109 @@ enum PersonalDictionaryPreferences {
 enum DeepgramAuthorizationScheme: String, Equatable {
     case bearer = "Bearer"
     case token = "Token"
-    
+
     func authorizationHeader(credential: String) -> String {
         "\(rawValue) \(credential)"
     }
+}
+
+/// Which capture source a transcript word/segment came from. Explicit — never
+/// inferred from a speaker ID. `unknown` covers malformed multichannel
+/// responses (missing or out-of-range `channel_index`).
+enum TranscriptSource: String, Codable, Sendable, Equatable {
+    case microphone
+    case system
+    case unknown
+}
+
+/// Allocates collision-free app speaker IDs from Deepgram's channel-local,
+/// socket-local speaker numbers. Provider identity is `(source, providerID,
+/// generation)`; the app ID is the presentation/persistence key.
+///
+/// Mapping contract:
+/// - Microphone speakers occupy `micSpeakerID + n` (1000, 1001, …) by
+///   first-seen ordinal, preserving `1000` for the first microphone speaker
+///   and legacy meetings.
+/// - System speakers on the first socket keep their provider number (0, 1, …)
+///   so existing display behaviour is unchanged; later sockets allocate fresh
+///   sequential low IDs (provider numbers restart at 0 per socket and must
+///   not collide with earlier speakers).
+/// - Reconnect continuity: while the meeting has seen at most one microphone
+///   speaker (the `1000` primary), the first microphone speaker of the next
+///   socket maps back to `1000` — preserving the shipped single-user "You"
+///   contract. Once several microphone speakers exist, a reconnect cannot
+///   tell who is who, so every mic speaker gets a fresh identity.
+struct SpeakerIdentityState: Sendable, Equatable {
+    private var assignments: [String: Int] = [:]
+    private var nextSystemAppID: Int = 0
+    private var nextMicOffset: Int = 0
+    private var allocatedMicAppIDs: Set<Int> = []
+    private(set) var generation: UInt64 = 0
+    private var micContinuityAvailable: Bool = false
+
+    /// Begin a new WebSocket connection. `preservingIdentities` keeps earlier
+    /// allocations (reconnect within one meeting); false resets for a fresh
+    /// recording session.
+    mutating func beginConnection(preservingIdentities: Bool) {
+        guard preservingIdentities else {
+            self = SpeakerIdentityState()
+            return
+        }
+        generation &+= 1
+        micContinuityAvailable = allocatedMicAppIDs.isEmpty
+            || allocatedMicAppIDs == [DeepgramService.micSpeakerID]
+    }
+
+    /// Register app speaker IDs restored from a persisted meeting (resume after
+    /// relaunch), so allocations for the next socket cannot collide with them.
+    mutating func seedRestoredAppSpeakerIDs(_ ids: Set<Int>) {
+        for id in ids {
+            if DeepgramService.isMicAppSpeakerID(id) {
+                allocatedMicAppIDs.insert(id)
+                nextMicOffset = max(nextMicOffset, id - DeepgramService.micSpeakerID + 1)
+            } else {
+                nextSystemAppID = max(nextSystemAppID, id + 1)
+            }
+        }
+    }
+
+    mutating func appSpeakerID(source: TranscriptSource, providerID: Int) -> Int {
+        guard source != .unknown else { return providerID }
+        let key = "\(source.rawValue)#\(providerID)#\(generation)"
+        if let existing = assignments[key] { return existing }
+
+        let appID: Int
+        switch source {
+        case .microphone:
+            if micContinuityAvailable {
+                appID = DeepgramService.micSpeakerID
+                micContinuityAvailable = false
+            } else {
+                var candidate = DeepgramService.micSpeakerID + nextMicOffset
+                while allocatedMicAppIDs.contains(candidate) {
+                    nextMicOffset += 1
+                    candidate = DeepgramService.micSpeakerID + nextMicOffset
+                }
+                appID = candidate
+                nextMicOffset += 1
+            }
+            allocatedMicAppIDs.insert(appID)
+        case .system:
+            if generation == 0 {
+                appID = providerID
+                nextSystemAppID = max(nextSystemAppID, providerID + 1)
+            } else {
+                appID = nextSystemAppID
+                nextSystemAppID += 1
+            }
+        case .unknown:
+            appID = providerID
+        }
+        assignments[key] = appID
+        return appID
+    }
+
+    var micAppSpeakerIDs: Set<Int> { allocatedMicAppIDs }
 }
 
 @MainActor
@@ -224,17 +323,36 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     private var speakerHistory: [Int: SpeakerInfo] = [:]
     private var keepAliveTimer: Timer?
     
-    /// Optional callback to determine audio source for a time range.
-    /// Legacy mono-mix path only. Prefer multichannel (ch0=mic) when mic+system
-    /// are both active — then `sourceLookup` stays nil.
-    var sourceLookup: (@Sendable (Double, Double) -> AudioCaptureService.AudioSource)?
-    
     /// When true, streaming audio is stereo and results arrive per-channel via
-    /// `channel_index`. Channel 0 is always the local mic ("You").
+    /// `channel_index`. Channel 0 is always the local mic.
     private var isMultichannel = false
-    
-    /// Reserved speaker ID for the local microphone ("You").
+
+    /// Source attributed to mono (single-channel) responses, decided by the
+    /// caller from the active capture topology (mic-only vs system-only).
+    private var monoSource: TranscriptSource = .microphone
+
+    /// Collision-free app speaker ID allocation across sources and reconnects.
+    /// Survives reconnects within one meeting; reset for a fresh session.
+    private var speakerIdentityState = SpeakerIdentityState()
+
+    /// App speaker IDs allocated to microphone-channel speakers this session.
+    var micAppSpeakerIDs: Set<Int> { speakerIdentityState.micAppSpeakerIDs }
+
+    /// Register app speaker IDs restored from a persisted meeting before a
+    /// resume connect, so new allocations cannot collide with restored ones.
+    func seedRestoredSpeakerIdentities(_ ids: Set<Int>) {
+        speakerIdentityState.seedRestoredAppSpeakerIDs(ids)
+    }
+
+    /// Reserved app speaker ID for the first microphone speaker ("You" in
+    /// single-speaker meetings, and all mic speech in legacy meetings).
+    /// Microphone speakers occupy `micSpeakerID + n`.
     nonisolated static let micSpeakerID = 1000
+
+    /// Whether an app speaker ID belongs to the microphone range.
+    nonisolated static func isMicAppSpeakerID(_ id: Int) -> Bool {
+        id >= micSpeakerID
+    }
     /// Deepgram channel index for local mic in multichannel mode.
     nonisolated static let micChannelIndex = 0
     /// Deepgram channel index for system/remote audio in multichannel mode.
@@ -256,7 +374,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         /// Deepgram stream channel for multichannel audio (`0` mic, `1` system).
         /// Nil for mono responses that omit `channel_index`.
         let channelIndex: Int?
-        
+        /// Explicit capture source for this response.
+        let source: TranscriptSource
+
         struct Word: Equatable, Sendable {
             let text: String
             let start: Double
@@ -266,7 +386,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             let speakerConfidence: Double?
         }
     }
-    
+
     // Represents a continuous segment from one speaker
     struct SpeakerSegment: Identifiable, Equatable, Sendable {
         let id: UUID
@@ -279,6 +399,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         /// Deepgram stream channel for multichannel audio (`0` mic, `1` system).
         /// Nil for mono responses that omit `channel_index`.
         let channelIndex: Int?
+        /// Explicit capture source for this segment.
+        let source: TranscriptSource
     }
     
     // Track info about each speaker
@@ -359,11 +481,20 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         audioPacketsSent
     }
     
+    /// - Parameters:
+    ///   - multichannel: stereo mic+system capture (macOS dual-source).
+    ///   - monoSource: source attributed to mono responses when `multichannel`
+    ///     is false (mic-only vs system-only capture).
+    ///   - preserveSpeakerIdentities: true on reconnect within one meeting so
+    ///     app speaker IDs stay collision-free across sockets; false for a
+    ///     fresh recording session.
     func connect(
         language: String = "en",
         personalDictionaryTerms: [String] = [],
         sessionKeyterms: [String] = [],
-        multichannel: Bool = false
+        multichannel: Bool = false,
+        monoSource: TranscriptSource = .microphone,
+        preserveSpeakerIdentities: Bool = false
     ) {
         guard !credential.isEmpty else {
             DebugLogger.shared.log(.deepgram, "No credential — cannot connect")
@@ -389,6 +520,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         confirmedSpeakerIDs = []
         pendingSpeakerEvidence = [:]
         isMultichannel = multichannel
+        self.monoSource = monoSource
+        speakerIdentityState.beginConnection(preservingIdentities: preserveSpeakerIdentities)
         resetSessionCounters()
         isConnected = false
         _sendConnected = false
@@ -540,14 +673,13 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let update: TranscriptUpdate
         let segments: [SpeakerSegment]
         let segmentationState: SegmentationState
+        let identityState: SpeakerIdentityState
         let deepgramIsFinal: Bool
         let speechFinal: Bool
         let hasTranscriptText: Bool
         let originalWordCount: Int
         let originalSpeakerIDs: [Int]
-        let micTaggedWordCount: Int
-        let unknownTaggedWordCount: Int
-        let usedSourceLookup: Bool
+        let mappedSpeakerIDs: [Int]
         let wasMultichannel: Bool
     }
 
@@ -576,13 +708,15 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                             pendingSpeakerEvidence: self.pendingSpeakerEvidence
                         )
                         let multichannel = self.isMultichannel
-                        let lookup = self.sourceLookup
+                        let mono = self.monoSource
+                        let identity = self.speakerIdentityState
                         let parsed = await Task.detached(priority: .userInitiated) {
                             Self.processTranscriptJSON(
                                 json,
                                 isMultichannel: multichannel,
-                                sourceLookup: lookup,
-                                segmentationState: state
+                                monoSource: mono,
+                                segmentationState: state,
+                                identityState: identity
                             )
                         }.value
                         guard generation == self.connectionGeneration,
@@ -612,11 +746,26 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
 
+    /// Determine the capture source of one streaming response.
+    nonisolated static func responseSource(
+        isMultichannel: Bool,
+        streamChannel: Int?,
+        monoSource: TranscriptSource
+    ) -> TranscriptSource {
+        guard isMultichannel else { return monoSource }
+        switch streamChannel {
+        case micChannelIndex: return .microphone
+        case systemChannelIndex: return .system
+        default: return .unknown
+        }
+    }
+
     nonisolated private static func processTranscriptJSON(
         _ json: String,
         isMultichannel: Bool,
-        sourceLookup: (@Sendable (Double, Double) -> AudioCaptureService.AudioSource)?,
-        segmentationState: SegmentationState
+        monoSource: TranscriptSource,
+        segmentationState: SegmentationState,
+        identityState: SpeakerIdentityState
     ) -> BackgroundParseResult {
         guard let data = json.data(using: .utf8) else { return .ignored }
         let response: DeepgramResponse
@@ -636,32 +785,25 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let isFinal = deepgramIsFinal || speechFinal
         let hasTranscriptText = !alternative.transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let streamChannel = response.channelIndex?.first
-        let forceMicSpeaker = isMultichannel && streamChannel == micChannelIndex
-        var micTaggedWordCount = 0
-        var unknownTaggedWordCount = 0
+        let source = responseSource(
+            isMultichannel: isMultichannel,
+            streamChannel: streamChannel,
+            monoSource: monoSource
+        )
 
+        // Preserve Deepgram's per-channel diarization: map channel-local
+        // provider speaker numbers to collision-free app speaker IDs. The
+        // mic channel is no longer flattened to a single reserved ID.
+        var nextIdentityState = identityState
         let words = alternative.words.map { word in
-            var speaker = word.speaker ?? 0
-            if forceMicSpeaker {
-                speaker = micSpeakerID
-                micTaggedWordCount += 1
-            } else if let sourceLookup {
-                switch sourceLookup(word.start, word.end) {
-                case .mic:
-                    speaker = micSpeakerID
-                    micTaggedWordCount += 1
-                case .unknown:
-                    unknownTaggedWordCount += 1
-                case .system:
-                    break
-                }
-            }
+            let providerSpeaker = word.speaker ?? 0
+            let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: providerSpeaker)
             return TranscriptUpdate.Word(
                 text: word.punctuatedWord ?? word.word,
                 start: word.start,
                 end: word.end,
                 confidence: word.confidence,
-                speaker: speaker,
+                speaker: appSpeaker,
                 speakerConfidence: word.speakerConfidence
             )
         }
@@ -672,6 +814,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             isFinal: isFinal,
             confidence: alternative.confidence,
             channelIndex: streamChannel,
+            source: source,
             state: &nextState
         )
         if isFinal {
@@ -690,20 +833,20 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             isFinal: isFinal,
             confidence: alternative.confidence,
             words: words,
-            channelIndex: streamChannel
+            channelIndex: streamChannel,
+            source: source
         )
         return .transcript(ProcessedTranscript(
             update: update,
             segments: segments,
             segmentationState: nextState,
+            identityState: nextIdentityState,
             deepgramIsFinal: deepgramIsFinal,
             speechFinal: speechFinal,
             hasTranscriptText: hasTranscriptText,
             originalWordCount: alternative.words.count,
             originalSpeakerIDs: Array(Set(alternative.words.compactMap(\.speaker))).sorted(),
-            micTaggedWordCount: micTaggedWordCount,
-            unknownTaggedWordCount: unknownTaggedWordCount,
-            usedSourceLookup: sourceLookup != nil,
+            mappedSpeakerIDs: Array(Set(words.map(\.speaker))).sorted(),
             wasMultichannel: isMultichannel
         ))
     }
@@ -729,12 +872,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             if parsed.update.isFinal && parsed.originalWordCount > 0 {
                 DebugLogger.shared.log(
                     .deepgram,
-                    "Final transcript received: words=\(parsed.originalWordCount), speakers=\(parsed.originalSpeakerIDs)"
+                    "Final transcript received: words=\(parsed.originalWordCount), providerSpeakers=\(parsed.originalSpeakerIDs), appSpeakers=\(parsed.mappedSpeakerIDs)"
                 )
-                if parsed.wasMultichannel || parsed.usedSourceLookup {
+                if parsed.wasMultichannel {
                     DebugLogger.shared.log(
                         .deepgram,
-                        "Speaker tagging: channel=\(parsed.update.channelIndex.map(String.init) ?? "n/a"), multichannel=\(parsed.wasMultichannel), mic=\(parsed.micTaggedWordCount), unknown=\(parsed.unknownTaggedWordCount), total=\(parsed.originalWordCount)"
+                        "Speaker mapping: channel=\(parsed.update.channelIndex.map(String.init) ?? "n/a"), source=\(parsed.update.source.rawValue), total=\(parsed.originalWordCount)"
                     )
                 }
                 for word in parsed.update.words {
@@ -746,6 +889,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             }
             confirmedSpeakerIDs = parsed.segmentationState.confirmedSpeakerIDs
             pendingSpeakerEvidence = parsed.segmentationState.pendingSpeakerEvidence
+            speakerIdentityState = parsed.identityState
             speakerSegments = parsed.segments
             transcriptUpdate = parsed.update
         }
@@ -768,6 +912,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
     
+    /// Keys are app speaker IDs, which are already source-scoped by the
+    /// identity mapping (mic ≥ 1000, system < 1000), so a speaker confirmed
+    /// on the system channel can never make a mic-channel provider ID look
+    /// confirmed, and vice versa.
     struct SegmentationState: Sendable {
         var confirmedSpeakerIDs: Set<Int> = []
         var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
@@ -778,6 +926,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         isFinal: Bool,
         confidence: Double,
         channelIndex: Int? = nil,
+        source: TranscriptSource = .unknown,
         state: inout SegmentationState
     ) -> [SpeakerSegment] {
         guard !words.isEmpty else { return [] }
@@ -824,9 +973,22 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 let passesGeneralSwitchChecks =
                     candidateWordCount >= minWordsForSpeakerChange &&
                     candidateDuration >= minDurationForSpeakerChange
-                let passesSwitchConfidenceCheck = (newSpeaker == DeepgramService.micSpeakerID) ||
+                // The primary mic identity (1000) keeps the historical
+                // confidence/promotion exemption ONLY while it is the sole mic
+                // speaker — that preserves the shipped single-user contract.
+                // Once a second mic speaker is confirmed, switches back to 1000
+                // must pass the same confidence gate as everyone else; otherwise
+                // borderline diarizer words preferentially flip to the primary
+                // speaker and shred turn boundaries in shared-mic meetings.
+                // Additional mic speakers (1001+) always earn promotion like
+                // system speakers so diarizer churn cannot invent room speakers.
+                let otherMicSpeakerConfirmed = state.confirmedSpeakerIDs.contains {
+                    DeepgramService.isMicAppSpeakerID($0) && $0 != DeepgramService.micSpeakerID
+                }
+                let micPrimaryPrivileged = newSpeaker == DeepgramService.micSpeakerID && !otherMicSpeakerConfirmed
+                let passesSwitchConfidenceCheck = micPrimaryPrivileged ||
                     ((candidateAverageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForSwitch)
-                let isKnownSpeaker = state.confirmedSpeakerIDs.contains(newSpeaker) || newSpeaker == DeepgramService.micSpeakerID
+                let isKnownSpeaker = state.confirmedSpeakerIDs.contains(newSpeaker) || micPrimaryPrivileged
                 
                 var allowSwitch = passesGeneralSwitchChecks && passesSwitchConfidenceCheck
                 if allowSwitch && !isKnownSpeaker {
@@ -857,7 +1019,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                             endTime: currentWords.last?.end ?? startTime,
                             isFinal: isFinal,
                             confidence: confidence,
-                            channelIndex: channelIndex
+                            channelIndex: channelIndex,
+                            source: source
                         )
                         segments.append(segment)
                     }
@@ -887,11 +1050,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 endTime: currentWords.last?.end ?? startTime,
                 isFinal: isFinal,
                 confidence: confidence,
-                channelIndex: channelIndex
+                channelIndex: channelIndex,
+                source: source
             )
             segments.append(segment)
         }
-        
+
         return segments
     }
 

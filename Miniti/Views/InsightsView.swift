@@ -1565,7 +1565,7 @@ struct SavedTrainingContent: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.selfSpeakerIDs)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.speakerLabelSelfIDs)
     }
 
     var body: some View {
@@ -1970,7 +1970,8 @@ private struct CoachingMeetingInput: Sendable {
     let duration: TimeInterval
     let language: String
     let speakerNames: [String: String]
-    let selfSpeakerIDs: Set<Int>
+    /// Nil = implicit single-mic default; empty = several unmarked mic speakers.
+    let selfSpeakerIDs: Set<Int>?
 }
 
 /// Keeps locally derived Coaching rows alive while users move between destinations.
@@ -2118,7 +2119,7 @@ final class CoachingOverviewStore: ObservableObject {
             duration: duration,
             language: meeting.language,
             speakerNames: meeting.speakerNames,
-            selfSpeakerIDs: meeting.selfSpeakerIDs
+            selfSpeakerIDs: meeting.speakerLabelSelfIDs
         )
     }
 
@@ -2141,7 +2142,7 @@ final class CoachingOverviewStore: ObservableObject {
             meetingTitle: input.title,
             meetingDate: input.startTime,
             segments: input.segments,
-            selfIDs: input.selfSpeakerIDs,
+            selfIDs: input.selfSpeakerIDs ?? [],
             detectedFillers: speaker.fillers.map(\.word),
             topFiller: topFiller,
             talkRatio: hasOtherSpeaker ? metrics.talkRatioYou : nil

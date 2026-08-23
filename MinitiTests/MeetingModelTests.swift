@@ -587,10 +587,27 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
 
     func testResolvedSpeakerLabelHonorsExplicitSelfID() {
         XCTAssertEqual(resolvedSpeakerLabel(for: 2, names: nil, selfIDs: [2]), "You")
+        // With an explicit self mark elsewhere, the mic speaker is a neutral
+        // mic-ordinal label, not "You" and not raw ID arithmetic.
         XCTAssertEqual(
             resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil, selfIDs: [2]),
-            "Speaker \(DeepgramService.micSpeakerID + 1)"
+            "Speaker 1 (mic)"
         )
+    }
+
+    func testResolvedSpeakerLabelForAdditionalMicSpeakers() {
+        // Nil self context: primary mic speaker keeps the implicit "You";
+        // additional mic speakers are neutral mic-ordinal labels.
+        XCTAssertEqual(resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil, selfIDs: nil), "You")
+        XCTAssertEqual(resolvedSpeakerLabel(for: DeepgramService.micSpeakerID + 1, names: nil, selfIDs: nil), "Speaker 2 (mic)")
+        // Empty (non-nil) self context: several unmarked mic speakers — nobody is "You".
+        XCTAssertEqual(resolvedSpeakerLabel(for: DeepgramService.micSpeakerID, names: nil, selfIDs: []), "Speaker 1 (mic)")
+        // Inferred names still win over the implicit default.
+        XCTAssertEqual(
+            resolvedSpeakerLabel(for: DeepgramService.micSpeakerID + 1, names: ["1001": "Priya"], selfIDs: []),
+            "Priya"
+        )
+        XCTAssertEqual(resolvedShortSpeakerLabel(for: DeepgramService.micSpeakerID + 1, names: nil, selfIDs: []), "S2")
     }
 
     func testResolvedShortSpeakerLabelHonorsExplicitSelfID() {
@@ -928,5 +945,200 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
 
     private func csvEscaped(_ value: String) -> String {
         value.replacingOccurrences(of: "\"", with: "\"\"")
+    }
+}
+
+// MARK: - Automatic environment inference (table-driven, per the diarization plan)
+
+final class MeetingEnvironmentInferenceTests: XCTestCase {
+    private func evidence(
+        associatedCallApp: Bool = false,
+        callAppActive: Bool = false,
+        calendarConference: Bool? = nil,
+        micSpeakers: Int = 0,
+        micFinal: Bool = false,
+        systemFinal: Bool = false,
+        systemFinalWithContext: Bool = false,
+        micSeconds: Double = 0
+    ) -> MeetingEnvironmentEvidence {
+        var e = MeetingEnvironmentEvidence()
+        e.hasAssociatedCallApp = associatedCallApp
+        e.recognizedCallAppActive = callAppActive
+        e.calendarEventHasConferenceURL = calendarConference
+        e.confirmedMicSpeakerCount = micSpeakers
+        e.hasMeaningfulMicFinal = micFinal
+        e.hasMeaningfulSystemFinal = systemFinal
+        e.systemFinalWithCallContext = systemFinalWithContext
+        e.meaningfulMicSpeechSeconds = micSeconds
+        return e
+    }
+
+    private func infer(_ e: MeetingEnvironmentEvidence) -> InferredMeetingEnvironment {
+        MeetingEnvironmentInferenceEngine.infer(e)
+    }
+
+    func testNoEvidenceIsUnknown() {
+        XCTAssertEqual(infer(evidence()), .unknown)
+    }
+
+    func testAssociatedCallAppIsRemoteLikely() {
+        XCTAssertEqual(infer(evidence(associatedCallApp: true)), .remoteLikely)
+    }
+
+    func testSystemFinalWithCallContextIsRemoteLikely() {
+        XCTAssertEqual(infer(evidence(systemFinal: true, systemFinalWithContext: true)), .remoteLikely)
+    }
+
+    func testSingleSupportingSignalsStayUnknown() {
+        // System speech alone can be media playback in a room.
+        XCTAssertEqual(infer(evidence(systemFinal: true)), .unknown)
+        // A conference URL alone: the user may join late, muted, or not at all.
+        XCTAssertEqual(infer(evidence(calendarConference: true)), .unknown)
+        // An active-but-unassociated call app alone is not proof.
+        XCTAssertEqual(infer(evidence(callAppActive: true)), .unknown)
+    }
+
+    func testTwoSupportingSignalsAreRemoteLikely() {
+        XCTAssertEqual(infer(evidence(callAppActive: true, calendarConference: true)), .remoteLikely)
+        XCTAssertEqual(infer(evidence(callAppActive: true, systemFinal: true)), .remoteLikely)
+    }
+
+    func testInRoomNeedsSpeakersSilentSystemAndObservationWindow() {
+        let inRoom = evidence(micSpeakers: 2, micFinal: true, micSeconds: 35)
+        XCTAssertEqual(infer(inRoom), .inRoomLikely)
+
+        // Below the meaningful-speech window: unknown.
+        XCTAssertEqual(infer(evidence(micSpeakers: 2, micFinal: true, micSeconds: 10)), .unknown)
+        // A single mic speaker is never in-room evidence.
+        XCTAssertEqual(infer(evidence(micSpeakers: 1, micFinal: true, micSeconds: 60)), .unknown)
+        // Any remote signal blocks the in-room conclusion.
+        XCTAssertEqual(infer(evidence(calendarConference: true, micSpeakers: 2, micFinal: true, micSeconds: 60)), .unknown)
+        XCTAssertEqual(infer(evidence(callAppActive: true, micSpeakers: 2, micFinal: true, micSeconds: 60)), .unknown)
+    }
+
+    func testCalendarWithoutConferenceURLDoesNotBlockInRoom() {
+        XCTAssertEqual(
+            infer(evidence(calendarConference: false, micSpeakers: 2, micFinal: true, micSeconds: 40)),
+            .inRoomLikely
+        )
+    }
+
+    func testLateSystemSpeechUpgradesInRoomToHybrid() {
+        var e = evidence(micSpeakers: 2, micFinal: true, micSeconds: 40)
+        XCTAssertEqual(infer(e), .inRoomLikely)
+        // A remote participant finally speaks on an associated call.
+        e.hasAssociatedCallApp = true
+        e.hasMeaningfulSystemFinal = true
+        e.systemFinalWithCallContext = true
+        XCTAssertEqual(infer(e), .hybridLikely)
+    }
+
+    func testHybridNeedsBothRoomAndRemoteEvidence() {
+        XCTAssertEqual(
+            infer(evidence(associatedCallApp: true, micSpeakers: 2, micFinal: true, systemFinal: true, micSeconds: 40)),
+            .hybridLikely
+        )
+        // Associated call with several mic speakers but no system speech yet: remote.
+        XCTAssertEqual(
+            infer(evidence(associatedCallApp: true, micSpeakers: 2, micFinal: true, micSeconds: 40)),
+            .remoteLikely
+        )
+    }
+
+    func testMediaPlaybackDuringInRoomMeetingStaysUnknown() {
+        // Two room speakers + system speech without call/calendar context: conflicting.
+        XCTAssertEqual(
+            infer(evidence(micSpeakers: 2, micFinal: true, systemFinal: true, micSeconds: 40)),
+            .unknown
+        )
+    }
+
+    func testEnvironmentRawValueRoundTripsAndLegacyDecodesUnknown() {
+        XCTAssertEqual(InferredMeetingEnvironment(rawValue: "inRoomLikely"), .inRoomLikely)
+        XCTAssertNil(InferredMeetingEnvironment(rawValue: "banana"))
+        let meeting = Meeting(title: "legacy")
+        XCTAssertNil(meeting.inferredEnvironmentRaw)
+    }
+}
+
+// MARK: - Source-aware segments and self-set rules
+
+final class TranscriptSourceModelTests: XCTestCase {
+    func testTranscriptSegmentSourceRoundTrip() {
+        let segment = TranscriptSegment(text: "hi", speaker: 1001, timestamp: 0, isFinal: true, sourceRaw: "microphone")
+        XCTAssertEqual(segment.source, .microphone)
+        let legacy = TranscriptSegment(text: "hi", speaker: 1000, timestamp: 0, isFinal: true)
+        XCTAssertNil(legacy.source)
+    }
+
+    func testMeetingMicSpeakerIDsUsesSourceWithLegacyFallback() {
+        let meeting = Meeting(title: "m")
+        meeting.segments = [
+            TranscriptSegment(text: "a", speaker: 1000, timestamp: 0, isFinal: true),
+            TranscriptSegment(text: "b", speaker: 3, timestamp: 1, isFinal: true, sourceRaw: "microphone"),
+            TranscriptSegment(text: "c", speaker: 0, timestamp: 2, isFinal: true, sourceRaw: "system"),
+        ]
+        XCTAssertEqual(meeting.micSpeakerIDs, [1000, 3])
+    }
+
+    func testEffectiveSelfIDsWithdrawImplicitYouForMultipleMicSpeakers() {
+        // Dual-source meeting: the implicit "You" applies while there is one mic
+        // speaker, and withdraws when a second is confirmed.
+        let meeting = Meeting(title: "m")
+        meeting.segments = [
+            TranscriptSegment(text: "remote", speaker: 0, timestamp: 0, isFinal: true, sourceRaw: "system"),
+            TranscriptSegment(text: "a", speaker: 1000, timestamp: 1, isFinal: true, sourceRaw: "microphone"),
+        ]
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1000])
+        XCTAssertNil(meeting.speakerLabelSelfIDs)
+
+        meeting.segments.append(
+            TranscriptSegment(text: "b", speaker: 1001, timestamp: 2, isFinal: true, sourceRaw: "microphone")
+        )
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [])
+        XCTAssertEqual(meeting.speakerLabelSelfIDs, [])
+
+        meeting.selfSpeakerIDs = [1001]
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1001])
+        XCTAssertEqual(meeting.speakerLabelSelfIDs, [1001])
+    }
+
+    /// A mic-only recording can be someone else's lecture or an interview — its sole
+    /// speaker must not be assumed to be the user (that matches pre-diarization
+    /// behavior, where mic-only recordings never labeled anyone "You").
+    func testMicOnlyMeetingHasNoImplicitYou() {
+        let meeting = Meeting(title: "lecture")
+        meeting.segments = [
+            TranscriptSegment(text: "welcome to the talk", speaker: 1000, timestamp: 0, isFinal: true, sourceRaw: "microphone"),
+        ]
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [])
+        XCTAssertEqual(meeting.speakerLabelSelfIDs, [])
+        XCTAssertEqual(
+            resolvedSpeakerLabel(for: 1000, names: nil, selfIDs: meeting.speakerLabelSelfIDs),
+            "Speaker 1 (mic)"
+        )
+        // Explicit mark still wins.
+        meeting.selfSpeakerIDs = [1000]
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1000])
+    }
+
+    /// Legacy meetings (no source metadata) keep the historical implicit mic default.
+    func testLegacyMeetingKeepsImplicitYou() {
+        let meeting = Meeting(title: "legacy")
+        meeting.segments = [
+            TranscriptSegment(text: "hello", speaker: 1000, timestamp: 0, isFinal: true),
+            TranscriptSegment(text: "hi", speaker: 0, timestamp: 1, isFinal: true),
+        ]
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1000])
+        XCTAssertNil(meeting.speakerLabelSelfIDs)
+    }
+
+    func testLiveSegmentSourceDrivesIsLocalMic() {
+        let micByRange = AppState.LiveSegment(id: UUID(), text: "a", speaker: 1000, timestamp: 0, isFinal: true)
+        XCTAssertTrue(micByRange.isLocalMic)
+        let systemExplicit = AppState.LiveSegment(id: UUID(), text: "a", speaker: 1000, timestamp: 0, isFinal: true, source: .system)
+        XCTAssertFalse(systemExplicit.isLocalMic)
+        let micExplicitLowID = AppState.LiveSegment(id: UUID(), text: "a", speaker: 2, timestamp: 0, isFinal: true, source: .microphone)
+        XCTAssertTrue(micExplicitLowID.isLocalMic)
     }
 }

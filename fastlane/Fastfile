@@ -411,7 +411,6 @@ platform :mac do
 
     notarize(
       package: dmg_path,
-      bundle_id: MAC_BUNDLE_ID,
       api_key: options[:api_key],
       print_log: true
     )

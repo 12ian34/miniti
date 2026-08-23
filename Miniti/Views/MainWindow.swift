@@ -1778,7 +1778,7 @@ struct MeetingDetailView: View {
         )) { target in
             let key = String(target.id)
             let currentName = meeting.speakerNames[key]
-            let defaultName = resolvedSpeakerLabel(for: target.id, names: nil, selfIDs: meeting.selfSpeakerIDs)
+            let defaultName = resolvedSpeakerLabel(for: target.id, names: nil, selfIDs: meeting.speakerLabelSelfIDs)
             let isSelf = meeting.effectiveSelfSpeakerIDs.contains(target.id)
             let hasOtherSelves = meeting.effectiveSelfSpeakerIDs.subtracting([target.id]).isEmpty == false
             RenameSpeakerView(
@@ -2012,7 +2012,7 @@ struct MeetingDetailView: View {
                     speakers: uniqueSpeakers,
                     isRecording: false,
                     speakerNames: meeting.speakerNames,
-                    selfIDs: meeting.selfSpeakerIDs,
+                    selfIDs: meeting.speakerLabelSelfIDs,
                     onRename: { renamingSpeaker = $0 }
                 )
             }
@@ -2478,7 +2478,7 @@ struct SavedTrainingSection: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.selfSpeakerIDs)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.speakerLabelSelfIDs)
     }
 
     private var speakerPresentations: [TrainingMetrics.SpeakerPresentation] {

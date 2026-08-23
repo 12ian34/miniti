@@ -357,3 +357,104 @@ struct CallLifecycleEngine {
         return events
     }
 }
+
+// MARK: - Automatic meeting environment inference
+
+/// Internal, evidence-backed description of the meeting environment. Never
+/// shown as a user choice or status badge; never allowed to start, stop,
+/// split, or transition a meeting, change capture topology, or alter
+/// transcript content. Old meetings decode as `unknown`.
+enum InferredMeetingEnvironment: String, Codable, Sendable, Equatable {
+    case unknown
+    case remoteLikely
+    case inRoomLikely
+    case hybridLikely
+}
+
+/// Snapshot of the independent signals the inference combines. Absence of a
+/// signal is "no information", never evidence by itself (a missing system
+/// transcript is consistent with a muted call; call-monitor unreliability is
+/// not in-room evidence).
+struct MeetingEnvironmentEvidence: Sendable, Equatable {
+    /// A recognized call application is associated with this recording.
+    var hasAssociatedCallApp = false
+    /// A recognized call application is currently active (association may be
+    /// incomplete) while the call monitor is reliable.
+    var recognizedCallAppActive = false
+    /// The linked calendar event has a conference URL. Nil when there is no
+    /// calendar context for this meeting.
+    var calendarEventHasConferenceURL: Bool? = nil
+    /// Distinct speakers Deepgram has confirmed on the microphone source.
+    var confirmedMicSpeakerCount = 0
+    /// A meaningful finalized microphone transcript exists.
+    var hasMeaningfulMicFinal = false
+    /// A meaningful finalized system-channel transcript exists.
+    var hasMeaningfulSystemFinal = false
+    /// A meaningful system final arrived while independent call-app or
+    /// calendar-conference evidence was present (strong remote evidence, as
+    /// opposed to media playback in a room).
+    var systemFinalWithCallContext = false
+    /// Accumulated seconds of meaningful finalized microphone speech.
+    var meaningfulMicSpeechSeconds: Double = 0
+}
+
+/// Pure, deterministic policy mapping evidence to an inferred environment.
+/// Recomputed from the full evidence snapshot on each update, so stronger
+/// later evidence naturally supersedes earlier conclusions
+/// (e.g. `inRoomLikely` becomes `hybridLikely` when a remote participant
+/// finally speaks). The state is monotonic only with respect to evidence
+/// strength, not enum order.
+enum MeetingEnvironmentInferenceEngine {
+    /// Meaningful mic speech required before `inRoomLikely` may be concluded.
+    /// Speech time, not wall time. Policy constant — tune from fixtures and
+    /// field measurement, not in UI code.
+    static let inRoomObservationWindowSeconds: Double = 30
+
+    /// Words below this count are not "meaningful" transcript evidence.
+    static let meaningfulFinalMinimumWordCount = 3
+
+    static func infer(_ evidence: MeetingEnvironmentEvidence) -> InferredMeetingEnvironment {
+        let multipleMicSpeakers = evidence.confirmedMicSpeakerCount >= 2
+        let strongRemote = evidence.hasAssociatedCallApp || evidence.systemFinalWithCallContext
+
+        // Hybrid: several people in the room and confirmed remote participation.
+        if multipleMicSpeakers {
+            if evidence.systemFinalWithCallContext {
+                return .hybridLikely
+            }
+            if evidence.hasAssociatedCallApp && evidence.hasMeaningfulSystemFinal {
+                return .hybridLikely
+            }
+        }
+
+        if strongRemote {
+            return .remoteLikely
+        }
+
+        // Supporting remote evidence needs corroboration: any single signal
+        // alone (a conference URL on the calendar, an active but unassociated
+        // call app, system speech that could be media playback) stays unknown.
+        let supportingRemoteSignals = [
+            evidence.calendarEventHasConferenceURL == true,
+            evidence.recognizedCallAppActive,
+            evidence.hasMeaningfulSystemFinal
+        ].filter { $0 }.count
+        if supportingRemoteSignals >= 2 {
+            return .remoteLikely
+        }
+
+        // In-room: several confirmed mic speakers, a bounded observation window
+        // of meaningful speech, and no remote evidence of any strength.
+        if multipleMicSpeakers,
+           evidence.hasMeaningfulMicFinal,
+           !evidence.hasMeaningfulSystemFinal,
+           !evidence.hasAssociatedCallApp,
+           !evidence.recognizedCallAppActive,
+           evidence.calendarEventHasConferenceURL != true,
+           evidence.meaningfulMicSpeechSeconds >= inRoomObservationWindowSeconds {
+            return .inRoomLikely
+        }
+
+        return .unknown
+    }
+}
