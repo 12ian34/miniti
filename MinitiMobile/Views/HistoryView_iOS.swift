@@ -297,7 +297,7 @@ struct MeetingDetail_iOS: View {
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
         var currentKey: String? = nil
         let names = meeting.speakerNames
-        let selfIDs = meeting.selfSpeakerIDs
+        let selfIDs = meeting.speakerLabelSelfIDs
         for segment in meeting.segments
             .filter({ $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
             .sorted(by: { $0.timestamp < $1.timestamp }) {
@@ -389,7 +389,7 @@ struct MeetingDetail_iOS: View {
         )) { target in
             let key = String(target.id)
             let currentName = meeting.speakerNames[key]
-            let defaultName = resolvedSpeakerLabel(for: target.id, names: nil, selfIDs: meeting.selfSpeakerIDs)
+            let defaultName = resolvedSpeakerLabel(for: target.id, names: nil, selfIDs: meeting.speakerLabelSelfIDs)
             let isSelf = meeting.effectiveSelfSpeakerIDs.contains(target.id)
             let hasOtherSelves = meeting.effectiveSelfSpeakerIDs.subtracting([target.id]).isEmpty == false
             RenameSpeakerView(
@@ -544,7 +544,7 @@ struct MeetingDetail_iOS: View {
                 speakers: uniqueSpeakers,
                 isRecording: false,
                 speakerNames: meeting.speakerNames,
-                selfIDs: meeting.selfSpeakerIDs,
+                selfIDs: meeting.speakerLabelSelfIDs,
                 onRename: { renamingSpeaker = $0 }
             )
             TranscriptTrimView(meeting: meeting)
@@ -866,7 +866,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
             )
         }
         let duration = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
-        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.selfSpeakerIDs)
+        return TrainingMetrics.compute(from: segments, duration: duration, language: meeting.language, names: meeting.speakerNames, selfIDs: meeting.speakerLabelSelfIDs)
     }
 
     private var speakerPresentations: [TrainingMetrics.SpeakerPresentation] {

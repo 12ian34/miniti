@@ -12,6 +12,28 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-08-23 - v2.5.0
+
+Available now on Mac. The iPhone and iPad update has been submitted to Apple and will release automatically after approval.
+
+#### New features
+
+- new: (macOS) Several people sharing one microphone are now transcribed as distinct speakers — in-person and hybrid meetings keep per-person attribution on the Mac's mic alongside the existing remote-speaker separation, with automatic speaker naming, renaming, and "mark as you" working for everyone in the room
+- new: When more than one person is detected on the microphone, Miniti stops assuming any of them is you — speakers get neutral labels until names are inferred or you mark yourself, so coaching and talk-ratio stats are never silently attributed to the wrong person
+- new: Miniti offers to enable Sales (MEDDPICC) analysis when a live meeting sounds like a sales conversation — detected locally from commercial vocabulary, suggested at most once per meeting, and switchable off in Settings → Notifications
+
+#### Experience improvements
+
+- improvement: Reconnections mid-meeting no longer discard inferred speaker names or your "mark as you" choices
+- improvement: Shared-microphone meetings get cleaner turn boundaries — once a second voice is confirmed on the mic, borderline words no longer preferentially stick to the first speaker
+- improvement: (macOS) The floating recording surface now wraps long nudges and questions instead of stretching across the screen, and every nudge has dismiss and "don't remind me" buttons — the latter flips the matching toggle in Settings → Notifications, where it can be re-enabled any time
+- improvement: (macOS) Every meeting-ending decision now raises and expands the floating recording surface, including prolonged-quiet and calendar handoff prompts, so the choice cannot remain hidden behind the main window
+- improvement: (macOS) Optional question, monologue, and filler-word nudges now appear in the floating recording surface while you are using Miniti, with system notifications used when your attention is in another app or the recording indicator is turned off
+
+#### Fixes
+
+- fix: (macOS) "Open meeting" on the floating recording surface now reliably brings the main window to you when another app is in focus — including pulling the window over to your current Space instead of raising it somewhere out of sight
+
 ### 2026-08-21 - v2.4.1
 
 This Mac hotfix includes everything from 2.4.0 and fixes the two remaining floating-window interactions.

@@ -251,10 +251,10 @@ struct TrainingMetrics: Sendable {
     }
     
     static func compute(from segments: [Segment], duration: TimeInterval, language: String = "en", names: [String: String]? = nil, selfIDs: Set<Int>? = nil) -> TrainingMetrics {
-        let effectiveSelfIDs: Set<Int> = {
-            if let selfIDs, !selfIDs.isEmpty { return selfIDs }
-            return [DeepgramService.micSpeakerID]
-        }()
+        // Nil = self context unknown → legacy mic default. An empty (non-nil) set means
+        // several people share the microphone and nobody is assumed to be the user —
+        // then no "You" bucket exists rather than attributing a room speaker to the user.
+        let effectiveSelfIDs: Set<Int> = selfIDs ?? [DeepgramService.micSpeakerID]
         let finals = segments
             .enumerated()
             .filter { _, segment in
@@ -309,7 +309,7 @@ struct TrainingMetrics: Sendable {
             let label: String = {
                 switch group {
                 case .selfSpeaker: return "You"
-                case .other(let id): return resolvedSpeakerLabel(for: id, names: names, selfIDs: selfIDs)
+                case .other(let id): return resolvedSpeakerLabel(for: id, names: names, selfIDs: effectiveSelfIDs)
                 }
             }()
 
@@ -1859,7 +1859,7 @@ final class InsightsService: Sendable {
         let systemPrompt = "You help someone who just zoned out catch up on a live meeting in 5 seconds. You ground everything in the transcript — never invent questions, topics, or decisions that aren't there. You are concise, specific, and actionable."
 
         let prompt = """
-        \(languageInstruction)The person on the mic (labeled "You") just zoned out of their meeting. Give them a fast catch-up based strictly on what's in the transcript.
+        \(languageInstruction)A participant just requested a fast catch-up based strictly on what's in the transcript.
 
         \(fullContextBlock)Most recent portion of the meeting (focus here):
         \(recentTranscript)
@@ -1867,7 +1867,7 @@ final class InsightsService: Sendable {
         Hard rules:
         - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
         - "current_topic" must be a single short sentence describing what is being discussed RIGHT NOW (at the end of the transcript). If unclear, say so briefly.
-        - "questions_for_you" lists questions that were directed at "You" in the recent window that do NOT appear to have been answered. Quote or paraphrase faithfully. If none, return an empty array. Never invent.
+        - "questions_for_you" lists unanswered questions directed at the participant explicitly labeled "You" in the recent window. If there is no "You" label, or none were asked, return an empty array. Do not infer the user from microphone position. Never invent.
         - "recent_discussion" is a chronological bullet list (3-6 items) of what happened in the recent window. Each item is a short phrase, not a full sentence.
         - "key_decisions" lists any decisions, commitments, or agreements made in the recent window. Empty array if none.
         - Be specific. Reference names, numbers, and concrete terms from the transcript. Never generic.
@@ -2115,7 +2115,8 @@ final class InsightsService: Sendable {
     /// Infer real speaker names from the transcript.
     ///
     /// Input transcript should embed each turn as `[SpeakerID:N] text` so the model sees
-    /// the stable internal IDs (mic = 1000, remote = 0, 1, 2, ...). `candidates` is an
+    /// the stable internal IDs (microphone speakers = 1000, 1001, …; remote = 0, 1, 2, …).
+    /// `candidates` is an
     /// optional list of known attendee display names (from calendar) used to bias the
     /// model toward real names when available. Returns a `[speakerIDString: name]` map;
     /// IDs the model cannot confidently resolve are omitted.
@@ -2153,7 +2154,7 @@ final class InsightsService: Sendable {
         let prompt = """
         \(languageInstruction)\(candidateBlock)Infer the real first name (or first + last if clearly stated) for each speaker in the transcript.
 
-        The transcript is tagged with internal speaker IDs like `[SpeakerID:1000] ...` for the device's microphone (the user) and `[SpeakerID:0]`, `[SpeakerID:1]`, etc. for remote speakers.
+        The transcript is tagged with internal speaker IDs. IDs 1000 and above (`[SpeakerID:1000]`, `[SpeakerID:1001]`, ...) are people speaking into this device's microphone — several people may share the microphone in a room. IDs below 1000 (`[SpeakerID:0]`, `[SpeakerID:1]`, ...) are remote speakers heard through call audio. Do not assume any ID belongs to any particular person without transcript evidence.
 
         Hard rules:
         - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
@@ -2168,6 +2169,7 @@ final class InsightsService: Sendable {
         {
             "speakers": {
                 "1000": "First name or empty if unknown",
+                "1001": "First name or empty if unknown",
                 "0": "First name or empty if unknown"
             }
         }

@@ -755,7 +755,9 @@ enum SelectableAttributed {
     }
 
     private static func turnDisplayKey(_ speaker: Int, names: [String: String]?, selfIDs: Set<Int>?) -> String {
-        let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
+        // An empty (non-nil) self set means several people share the microphone and
+        // nobody is implicitly "You"; nil means self context is unknown (legacy default).
+        let effectiveSelves: Set<Int> = selfIDs ?? [DeepgramService.micSpeakerID]
         if effectiveSelves.contains(speaker) { return "self" }
         if let mapped = names?[String(speaker)]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !mapped.isEmpty {
@@ -836,7 +838,8 @@ struct TranscriptTrimView: View {
                 timestamp: $0.timestamp,
                 text: $0.text,
                 isFinal: $0.isFinal,
-                confidence: $0.confidence
+                confidence: $0.confidence,
+                sourceRaw: $0.sourceRaw
             )
         }
     }
@@ -924,7 +927,7 @@ struct TranscriptTrimView: View {
                 .init(id: $0.id, speaker: $0.speaker, timestamp: $0.timestamp, text: $0.text)
             },
             speakerNames: meeting.speakerNames,
-            selfIDs: meeting.selfSpeakerIDs,
+            selfIDs: meeting.speakerLabelSelfIDs,
             bodyFontSize: interfaceScale.transcriptBodySize,
             headerFontSize: interfaceScale.transcriptHeaderSize,
             lineSpacing: interfaceScale.transcriptLineSpacing

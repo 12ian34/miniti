@@ -15,7 +15,7 @@ struct LiveTranscriptInterimSnapshot {
     let startsNewTurn: Bool
     let hasFinalizedContent: Bool
     let speakerNames: [String: String]
-    let selfIDs: Set<Int>
+    let selfIDs: Set<Int>?
     let bodyFontSize: CGFloat
     let headerFontSize: CGFloat
     let lineSpacing: CGFloat

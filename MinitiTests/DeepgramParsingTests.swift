@@ -588,3 +588,199 @@ final class DeepgramParsingTests: XCTestCase {
     }
     #endif
 }
+
+// MARK: - Dual-channel diarization fixture (synthetic, per the documented Deepgram
+// streaming contract: per-channel messages tagged channel_index [n, 2], per-channel
+// speaker numbering starting at 0 — provider IDs overlap across channels).
+
+final class DualChannelDiarizationFixtureTests: XCTestCase {
+    private typealias Word = DeepgramService.TranscriptUpdate.Word
+
+    private func decodeWords(_ json: String) throws -> (words: [DeepgramResponse.Word], channelIndex: Int?) {
+        let response = try JSONDecoder().decode(DeepgramResponse.self, from: json.data(using: .utf8)!)
+        return (response.channel!.alternatives[0].words, response.channelIndex?.first)
+    }
+
+    private func micChannelMessage(speakers: [(String, Int, Double, Double)]) -> String {
+        channelMessage(channel: 0, speakers: speakers)
+    }
+
+    private func systemChannelMessage(speakers: [(String, Int, Double, Double)]) -> String {
+        channelMessage(channel: 1, speakers: speakers)
+    }
+
+    private func channelMessage(channel: Int, speakers: [(String, Int, Double, Double)]) -> String {
+        let words = speakers.map { word, speaker, start, end in
+            "{\"word\": \"\(word)\", \"start\": \(start), \"end\": \(end), \"confidence\": 0.95, \"speaker\": \(speaker), \"speaker_confidence\": 0.9}"
+        }.joined(separator: ",")
+        let transcript = speakers.map(\.0).joined(separator: " ")
+        return """
+        {
+            "type": "Results",
+            "channel": {"alternatives": [{"transcript": "\(transcript)", "confidence": 0.95, "words": [\(words)]}]},
+            "channel_index": [\(channel), 2],
+            "is_final": true,
+            "speech_final": true,
+            "start": 0.0,
+            "duration": 4.0
+        }
+        """
+    }
+
+    /// Two mic speakers and two system speakers, all using provider IDs 0/1 —
+    /// the mapping must keep the four people distinct and preserve mic diarization.
+    func testOverlappingProviderIDsAcrossChannelsStayDistinct() throws {
+        var identity = SpeakerIdentityState()
+        identity.beginConnection(preservingIdentities: false)
+        var segmentation = DeepgramService.SegmentationState()
+        // Promotion evidence gates are exercised elsewhere; confirm identities here.
+        segmentation.confirmedSpeakerIDs = [0, 1, 1000, 1001]
+
+        let mic = try decodeWords(micChannelMessage(speakers: [
+            ("shall", 0, 0.0, 0.4), ("we", 0, 0.4, 0.8), ("start", 0, 0.8, 1.2), ("now", 0, 1.2, 1.6),
+            ("yes", 1, 2.0, 2.4), ("lets", 1, 2.4, 2.8), ("go", 1, 2.8, 3.2), ("ahead", 1, 3.2, 3.6),
+        ]))
+        let micSource = DeepgramService.responseSource(isMultichannel: true, streamChannel: mic.channelIndex, monoSource: .microphone)
+        XCTAssertEqual(micSource, .microphone)
+        let micWords = mic.words.map { word in
+            Word(
+                text: word.punctuatedWord ?? word.word,
+                start: word.start,
+                end: word.end,
+                confidence: word.confidence,
+                speaker: identity.appSpeakerID(source: micSource, providerID: word.speaker ?? 0),
+                speakerConfidence: word.speakerConfidence
+            )
+        }
+        XCTAssertEqual(Set(micWords.map(\.speaker)), [1000, 1001])
+
+        let system = try decodeWords(systemChannelMessage(speakers: [
+            ("hearing", 0, 0.5, 0.9), ("you", 0, 0.9, 1.3), ("clearly", 0, 1.3, 1.7), ("thanks", 0, 1.7, 2.1),
+            ("same", 1, 2.5, 2.9), ("here", 1, 2.9, 3.3), ("all", 1, 3.3, 3.7), ("good", 1, 3.7, 4.1),
+        ]))
+        let systemSource = DeepgramService.responseSource(isMultichannel: true, streamChannel: system.channelIndex, monoSource: .microphone)
+        XCTAssertEqual(systemSource, .system)
+        let systemWords = system.words.map { word in
+            Word(
+                text: word.punctuatedWord ?? word.word,
+                start: word.start,
+                end: word.end,
+                confidence: word.confidence,
+                speaker: identity.appSpeakerID(source: systemSource, providerID: word.speaker ?? 0),
+                speakerConfidence: word.speakerConfidence
+            )
+        }
+        XCTAssertEqual(Set(systemWords.map(\.speaker)), [0, 1])
+
+        // Segmentation keeps the two mic speakers as distinct segments with source.
+        let micSegments = DeepgramService.segmentBySpeaker(
+            words: micWords,
+            isFinal: true,
+            confidence: 0.95,
+            channelIndex: 0,
+            source: .microphone,
+            state: &segmentation
+        )
+        XCTAssertEqual(micSegments.map(\.speaker), [1000, 1001])
+        XCTAssertTrue(micSegments.allSatisfy { $0.source == .microphone })
+
+        let systemSegments = DeepgramService.segmentBySpeaker(
+            words: systemWords,
+            isFinal: true,
+            confidence: 0.95,
+            channelIndex: 1,
+            source: .system,
+            state: &segmentation
+        )
+        XCTAssertEqual(systemSegments.map(\.speaker), [0, 1])
+        XCTAssertTrue(systemSegments.allSatisfy { $0.source == .system })
+    }
+
+    func testMalformedChannelIndexMapsToUnknownSource() {
+        XCTAssertEqual(
+            DeepgramService.responseSource(isMultichannel: true, streamChannel: nil, monoSource: .microphone),
+            .unknown
+        )
+        XCTAssertEqual(
+            DeepgramService.responseSource(isMultichannel: true, streamChannel: 5, monoSource: .microphone),
+            .unknown
+        )
+        XCTAssertEqual(
+            DeepgramService.responseSource(isMultichannel: false, streamChannel: nil, monoSource: .system),
+            .system
+        )
+    }
+
+    /// A second mic speaker below the promotion evidence bar is folded into the
+    /// current speaker instead of inventing a spurious room participant.
+    func testUnpromotedSecondMicSpeakerFoldsIntoCurrent() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [1000]
+        let words: [Word] = [
+            Word(text: "we", start: 0.0, end: 0.3, confidence: 0.9, speaker: 1000, speakerConfidence: 0.9),
+            Word(text: "should", start: 0.3, end: 0.6, confidence: 0.9, speaker: 1000, speakerConfidence: 0.9),
+            Word(text: "ship", start: 0.6, end: 0.9, confidence: 0.9, speaker: 1000, speakerConfidence: 0.9),
+            Word(text: "friday", start: 0.9, end: 1.2, confidence: 0.9, speaker: 1000, speakerConfidence: 0.9),
+            Word(text: "yes", start: 1.3, end: 1.5, confidence: 0.9, speaker: 1001, speakerConfidence: 0.9),
+        ]
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words,
+            isFinal: true,
+            confidence: 0.9,
+            channelIndex: 0,
+            source: .microphone,
+            state: &state
+        )
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].speaker, 1000)
+        XCTAssertFalse(state.confirmedSpeakerIDs.contains(1001))
+    }
+}
+
+// MARK: - Symmetric mic gating once several mic speakers exist
+
+final class MicPrimaryGatingTests: XCTestCase {
+    private typealias Word = DeepgramService.TranscriptUpdate.Word
+
+    private func word(_ text: String, speaker: Int, start: Double, confidence: Double?) -> Word {
+        Word(text: text, start: start, end: start + 0.3, confidence: 0.9, speaker: speaker, speakerConfidence: confidence)
+    }
+
+    /// Sole-mic meetings keep the historical exemption: low-confidence switches back
+    /// to the primary mic identity still succeed (shipped single-user behaviour).
+    func testSwitchToPrimaryMicBypassesConfidenceWhileSoleMicSpeaker() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [0, 1000]
+        let words = (0..<4).map { word("sys\($0)", speaker: 0, start: Double($0) * 0.4, confidence: 0.9) }
+            + (0..<4).map { word("mic\($0)", speaker: 1000, start: 2.0 + Double($0) * 0.4, confidence: 0.2) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words, isFinal: true, confidence: 0.9, source: .microphone, state: &state
+        )
+        XCTAssertEqual(segments.map(\.speaker), [0, 1000])
+    }
+
+    /// Once a second mic speaker is confirmed, switches back to 1000 must pass the
+    /// same confidence gate as everyone else — borderline diarizer words no longer
+    /// preferentially flip to the primary speaker.
+    func testSwitchToPrimaryMicNeedsConfidenceOnceSecondMicSpeakerConfirmed() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [1000, 1001]
+        let words = (0..<4).map { word("a\($0)", speaker: 1001, start: Double($0) * 0.4, confidence: 0.9) }
+            + (0..<4).map { word("b\($0)", speaker: 1000, start: 2.0 + Double($0) * 0.4, confidence: 0.2) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words, isFinal: true, confidence: 0.9, source: .microphone, state: &state
+        )
+        // The low-confidence run stays folded into the current speaker's segment.
+        XCTAssertEqual(segments.map(\.speaker), [1001])
+
+        // A confident switch back to 1000 still goes through.
+        var confidentState = DeepgramService.SegmentationState()
+        confidentState.confirmedSpeakerIDs = [1000, 1001]
+        let confidentWords = (0..<4).map { word("a\($0)", speaker: 1001, start: Double($0) * 0.4, confidence: 0.9) }
+            + (0..<4).map { word("b\($0)", speaker: 1000, start: 2.0 + Double($0) * 0.4, confidence: 0.9) }
+        let confidentSegments = DeepgramService.segmentBySpeaker(
+            words: confidentWords, isFinal: true, confidence: 0.9, source: .microphone, state: &confidentState
+        )
+        XCTAssertEqual(confidentSegments.map(\.speaker), [1001, 1000])
+    }
+}

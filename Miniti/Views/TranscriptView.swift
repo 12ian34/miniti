@@ -114,11 +114,11 @@ struct TranscriptView: View {
             SelectableAttributed.displayGroupKey(
                 speaker: $0,
                 names: appState.liveSpeakerNames,
-                selfIDs: appState.liveSelfSpeakerIDs
+                selfIDs: appState.liveSpeakerLabelSelfIDs
             ) != SelectableAttributed.displayGroupKey(
                 speaker: speaker,
                 names: appState.liveSpeakerNames,
-                selfIDs: appState.liveSelfSpeakerIDs
+                selfIDs: appState.liveSpeakerLabelSelfIDs
             )
         } ?? true
         return LiveTranscriptInterimSnapshot(
@@ -128,7 +128,7 @@ struct TranscriptView: View {
             startsNewTurn: startsNewTurn,
             hasFinalizedContent: cachedTranscript.length > 0,
             speakerNames: appState.liveSpeakerNames,
-            selfIDs: appState.liveSelfSpeakerIDs,
+            selfIDs: appState.liveSpeakerLabelSelfIDs,
             bodyFontSize: interfaceScale.transcriptBodySize,
             headerFontSize: interfaceScale.transcriptHeaderSize,
             lineSpacing: interfaceScale.transcriptLineSpacing
@@ -164,7 +164,7 @@ struct TranscriptView: View {
         }
 
         let names = appState.liveSpeakerNames
-        let selfIDs = appState.liveSelfSpeakerIDs
+        let selfIDs = appState.liveSpeakerLabelSelfIDs
         let canAppend = !forceFullRebuild
             && !cachedSourceSegments.isEmpty
             && liveSegments.count > cachedSourceSegments.count
@@ -295,7 +295,7 @@ struct TranscriptView: View {
     private func rebuildAllSegments(
         _ liveSegments: [AppState.LiveSegment],
         names: [String: String],
-        selfIDs: Set<Int>,
+        selfIDs: Set<Int>?,
         allowsLocalizedMutation: Bool = false
     ) {
         let visible = liveSegments.filter {
@@ -384,7 +384,7 @@ struct TranscriptView: View {
     private func renameSpeakerView(for speakerID: Int) -> some View {
         let key = String(speakerID)
         let currentName = appState.liveSpeakerNames[key]
-        let defaultName = resolvedSpeakerLabel(for: speakerID, names: nil, selfIDs: appState.liveSelfSpeakerIDs)
+        let defaultName = resolvedSpeakerLabel(for: speakerID, names: nil, selfIDs: appState.liveSpeakerLabelSelfIDs)
         let isSelf = appState.effectiveLiveSelfSpeakerIDs.contains(speakerID)
         let hasOtherSelves = appState.effectiveLiveSelfSpeakerIDs.subtracting([speakerID]).isEmpty == false
         RenameSpeakerView(
@@ -427,7 +427,7 @@ struct TranscriptView: View {
                             speakers: cachedUniqueSpeakers,
                             isRecording: appState.isRecording,
                             speakerNames: appState.liveSpeakerNames,
-                            selfIDs: appState.liveSelfSpeakerIDs,
+                            selfIDs: appState.liveSpeakerLabelSelfIDs,
                             onRename: { renamingSpeaker = $0 }
                         )
                         #if os(macOS)
@@ -498,7 +498,7 @@ struct TranscriptView: View {
                                                 turn: cachedDisplayTurns[index],
                                                 isFirst: index == cachedDisplayTurns.startIndex,
                                                 speakerNames: appState.liveSpeakerNames,
-                                                selfIDs: appState.liveSelfSpeakerIDs
+                                                selfIDs: appState.liveSpeakerLabelSelfIDs
                                             )
                                             .id("turn-\(index)")
                                         }
@@ -510,11 +510,11 @@ struct TranscriptView: View {
                                                 text: interimText,
                                                 speaker: interimSpeakerValue,
                                                 isNewTurn: cachedLastDisplaySpeaker.map {
-                                                    SelectableAttributed.displayGroupKey(speaker: $0, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
-                                                    != SelectableAttributed.displayGroupKey(speaker: interimSpeakerValue, names: appState.liveSpeakerNames, selfIDs: appState.liveSelfSpeakerIDs)
+                                                    SelectableAttributed.displayGroupKey(speaker: $0, names: appState.liveSpeakerNames, selfIDs: appState.liveSpeakerLabelSelfIDs)
+                                                    != SelectableAttributed.displayGroupKey(speaker: interimSpeakerValue, names: appState.liveSpeakerNames, selfIDs: appState.liveSpeakerLabelSelfIDs)
                                                 } ?? true,
                                                 speakerNames: appState.liveSpeakerNames,
-                                                selfIDs: appState.liveSelfSpeakerIDs
+                                                selfIDs: appState.liveSpeakerLabelSelfIDs
                                             )
                                             .id("interim")
                                         }
@@ -612,6 +612,15 @@ struct TranscriptView: View {
             )
         }
         .onChange(of: appState.liveSelfSpeakerIDs) { _, _ in
+            rebuildSegmentCaches(
+                liveSegments: appState.liveSegments,
+                detectedSpeakers: appState.detectedSpeakers,
+                forceFullRebuild: true
+            )
+        }
+        .onChange(of: appState.liveMicSpeakerIDs) { _, _ in
+            // A second confirmed mic speaker withdraws the implicit "You" from
+            // already-rendered turns, so cached turn headers must rebuild.
             rebuildSegmentCaches(
                 liveSegments: appState.liveSegments,
                 detectedSpeakers: appState.detectedSpeakers,
@@ -717,8 +726,9 @@ struct SpeakerLegend: View {
                 }
             }
 
-            // Show count
-            let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
+            // Show count. An empty (non-nil) self set means several people share the
+            // microphone and nobody is implicitly "You".
+            let effectiveSelves: Set<Int> = selfIDs ?? [DeepgramService.micSpeakerID]
             let selfCount = speakers.filter { effectiveSelves.contains($0) }.count
             let remoteCount = speakers.count - selfCount
             if speakers.count == 1 && !speakers.isEmpty {
@@ -764,9 +774,14 @@ private let remoteSpeakerColors: [Color] = [
 private let micSpeakerColor = Color(hex: "3FB950")
 
 func speakerColor(for speaker: Int, selfIDs: Set<Int>? = nil) -> Color {
-    let effectiveSelves: Set<Int> = (selfIDs?.isEmpty == false) ? selfIDs! : [DeepgramService.micSpeakerID]
+    let effectiveSelves: Set<Int> = selfIDs ?? [DeepgramService.micSpeakerID]
     if effectiveSelves.contains(speaker) {
         return micSpeakerColor
+    }
+    if DeepgramService.isMicAppSpeakerID(speaker) {
+        // Offset non-self mic-range speakers so the first extra room speakers don't
+        // reuse the palette indices the first remote speakers already claimed.
+        return remoteSpeakerColors[(speaker - DeepgramService.micSpeakerID + 3) % remoteSpeakerColors.count]
     }
     return remoteSpeakerColors[speaker % remoteSpeakerColors.count]
 }

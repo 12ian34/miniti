@@ -274,7 +274,7 @@ enum WebhookService {
             champion: meeting.meddpiccChampion, competition: meeting.meddpiccCompetition
         )
         let speakerNames = meeting.speakerNames
-        let selfIDs = meeting.selfSpeakerIDs
+        let selfIDs = meeting.speakerLabelSelfIDs
         let transcript = finalSegments.map { seg in
             MeetingPayload.TranscriptEntry(
                 speaker: resolvedSpeakerLabel(for: seg.speaker, names: speakerNames, selfIDs: selfIDs),

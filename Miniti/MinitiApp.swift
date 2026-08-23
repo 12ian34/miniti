@@ -26,6 +26,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         AppState.registerSmartMeetingNotificationCategory()
+
+        #if DEBUG
+        // Test hook: lets automated checks drive the floating panel's "open meeting"
+        // code path from outside the process (a strictly harder case than a real
+        // click, which at least counts as user interaction). Debug builds only.
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.miniti.debug.openMainWindow"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.openOrRestoreMainWindow()
+            }
+        }
+        #endif
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -109,18 +124,71 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     /// A non-activating floating panel cannot rely on ordinary SwiftUI ordering to bring
     /// the main scene above another app. Unhide and activate the application, then order
     /// the identified window to the front regardless of the caller's activation state.
+    ///
+    /// Three traps when another app is frontmost, each fatal on its own:
+    /// - macOS 14+ downgraded every in-process activation API to a cooperative
+    ///   *request* the system freely declines — and it does decline it for clicks
+    ///   arriving through a non-activating panel. The only reliably granted path is
+    ///   LaunchServices activating the app from outside the process, exactly like a
+    ///   Dock click: `NSWorkspace.openApplication` on our own bundle with
+    ///   `activates = true`.
+    /// - `.moveToActiveSpace` only applies while a window *orders in*. The main
+    ///   window is usually still ordered-in on its original Space, so setting the
+    ///   behavior and calling `orderFront` moves nothing — the window must be
+    ///   ordered out first, then back in.
+    /// - `orderFrontRegardless` raises the window only within its current Space, so
+    ///   without the two fixes above the button can "work" entirely out of sight.
     static func presentMainWindow(_ window: NSWindow) {
         if NSApp.isHidden {
             NSApp.unhide(nil)
         }
-        if window.isMiniaturized {
+        if shouldDeminiaturizeMainWindow(window.isMiniaturized) {
             window.deminiaturize(nil)
         }
-        NSRunningApplication.current.activate(options: [.activateAllWindows])
-        NSApp.activate(ignoringOtherApps: true)
+
+        let originalCollectionBehavior = window.collectionBehavior
+        if !window.isOnActiveSpace, window.isVisible {
+            // An ordered-in window ignores .moveToActiveSpace; cycle it out so the
+            // order-in below can bring it to the Space the user is looking at.
+            window.orderOut(nil)
+        }
+        window.collectionBehavior.insert(.moveToActiveSpace)
         window.orderFrontRegardless()
         window.makeMain()
         window.makeKeyAndOrderFront(nil)
+
+        activateAppLikeDockClick { [weak window] in
+            guard let window else { return }
+            window.makeKeyAndOrderFront(nil)
+            window.collectionBehavior = originalCollectionBehavior
+            lifecycleLogger.error("presentMainWindow done: active=\(NSApp.isActive, privacy: .public), visible=\(window.isVisible, privacy: .public), onActiveSpace=\(window.isOnActiveSpace, privacy: .public)")
+        }
+    }
+
+    /// Activate this app through LaunchServices — the same out-of-process mechanism as
+    /// a Dock click, which macOS grants unconditionally where in-process cooperative
+    /// requests from a non-activating panel are declined. `completion` runs on main
+    /// after the activation attempt (immediately when already active).
+    static func activateAppLikeDockClick(completion: @escaping @MainActor () -> Void) {
+        guard !NSApp.isActive else {
+            DispatchQueue.main.async { completion() }
+            return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.openApplication(
+            at: Bundle.main.bundleURL,
+            configuration: configuration
+        ) { _, error in
+            DispatchQueue.main.async {
+                if let error {
+                    lifecycleLogger.error("LaunchServices self-activation failed: \(error.localizedDescription, privacy: .public)")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                completion()
+            }
+        }
     }
 
     /// Restore a live main window or ask SwiftUI to create a new scene after the old
@@ -133,7 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         if NSApp.isHidden {
             NSApp.unhide(nil)
         }
-        NSApp.activate(ignoringOtherApps: true)
+        // Same LaunchServices activation as presentMainWindow — in-process requests
+        // from the non-activating floating panel are declined on macOS 14+.
+        Self.activateAppLikeDockClick {}
         openMainWindow?()
         restoreRecreatedMainWindow(attempt: 0)
     }
@@ -157,8 +227,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         _ window: NSWindow,
         applicationIsHidden: Bool
     ) -> Bool {
-        isMainAppWindow(window)
-            && (window.isVisible || window.isMiniaturized || applicationIsHidden)
+        isRestorableMainWindowState(
+            hasMainIdentifier: isMainAppWindow(window),
+            isVisible: window.isVisible,
+            isMiniaturized: window.isMiniaturized,
+            applicationIsHidden: applicationIsHidden
+        )
+    }
+
+    static func isRestorableMainWindowState(
+        hasMainIdentifier: Bool,
+        isVisible: Bool,
+        isMiniaturized: Bool,
+        applicationIsHidden: Bool
+    ) -> Bool {
+        hasMainIdentifier && (isVisible || isMiniaturized || applicationIsHidden)
+    }
+
+    static func shouldDeminiaturizeMainWindow(_ isMiniaturized: Bool) -> Bool {
+        isMiniaturized
     }
 
     private static func isMainAppWindow(_ window: NSWindow) -> Bool {
@@ -179,6 +266,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             self?.openOrRestoreMainWindow()
         }
         completionHandler()
+    }
+
+    /// Requests are only created for foreground delivery when their normal in-app surface
+    /// is unavailable (for example, the floating indicator is disabled), or when a
+    /// scheduled calendar reminder fires. Opt in explicitly so those intentional fallback
+    /// notifications are not silently suppressed merely because Miniti is frontmost.
+    nonisolated func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping @Sendable (UNNotificationPresentationOptions) -> Void
+    ) {
+        completionHandler([.banner, .list, .sound])
     }
 }
 

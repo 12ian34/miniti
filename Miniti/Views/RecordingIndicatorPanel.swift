@@ -74,18 +74,10 @@ extension AppState {
         return String(format: "%02d:%02d", minutes, seconds)
     }
 
-    /// Call-app lifecycle choices belong in the floating surface. Quiet and calendar
-    /// prompts remain in the main window/menu bar because they are not evidence that a
-    /// supported call has just appeared, ended, or changed.
-    var floatingCallLifecyclePrompt: SmartMeetingPrompt? {
-        guard let prompt = smartMeetingPrompt else { return nil }
-        switch prompt.kind {
-        case .callStart, .callEnd, .callTransition:
-            return prompt
-        case .quiet, .calendar:
-            return nil
-        }
-    }
+    /// Every meeting decision belongs in the floating surface. Strong call lifecycle
+    /// evidence, quiet fallback, and calendar handoffs differ in policy, but none should
+    /// remain visible only inside a covered main window.
+    var floatingMeetingPrompt: SmartMeetingPrompt? { smartMeetingPrompt }
 }
 
 private extension DeepgramService.ConnectionState {
@@ -113,11 +105,13 @@ private extension AppState.AudioRecoveryState {
 
 struct RecordingIndicatorAttentionState: Equatable {
     var promptID: String?
+    var nudgeID: String? = nil
     var isRecording: Bool
     var isEnding: Bool
 
     static let idle = RecordingIndicatorAttentionState(
         promptID: nil,
+        nudgeID: nil,
         isRecording: false,
         isEnding: false
     )
@@ -129,9 +123,36 @@ enum RecordingIndicatorAttentionPolicy {
         to current: RecordingIndicatorAttentionState
     ) -> Bool {
         let newPrompt = current.promptID != nil && current.promptID != previous.promptID
+        let newNudge = current.nudgeID != nil && current.nudgeID != previous.nudgeID
         let recordingStarted = current.isRecording && !previous.isRecording
         let endingStarted = current.isEnding && !previous.isEnding
-        return newPrompt || recordingStarted || endingStarted
+        return newPrompt || newNudge || recordingStarted || endingStarted
+    }
+}
+
+enum RecordingIndicatorWindowPolicy {
+    static func shouldOrderFront(isVisible: Bool, attentionRequested: Bool) -> Bool {
+        !isVisible || attentionRequested
+    }
+}
+
+enum MacNotificationRoutingPolicy {
+    /// System notifications are the fallback whenever attention is in another app or the
+    /// user has disabled the floating recording surface.
+    static func shouldMirrorToSystem(
+        isAppActive: Bool,
+        recordingIndicatorEnabled: Bool
+    ) -> Bool {
+        !isAppActive || !recordingIndicatorEnabled
+    }
+
+    /// Live coaching/question guidance uses the floating surface only while Miniti is the
+    /// frontmost app. Meeting decisions use the surface whenever it is enabled.
+    static func shouldUseFloatingNudge(
+        isAppActive: Bool,
+        recordingIndicatorEnabled: Bool
+    ) -> Bool {
+        isAppActive && recordingIndicatorEnabled
     }
 }
 
@@ -235,26 +256,29 @@ final class RecordingIndicatorCoordinator {
         guard appState.showRecordingIndicator else { return false }
         return appState.isRecording
             || appState.endingGrace != nil
-            || appState.floatingCallLifecyclePrompt != nil
+            || appState.floatingMeetingPrompt != nil
+            || appState.recordingNudge != nil
     }
 
     private func updateVisibility() {
         guard let appState else { return }
         let currentAttentionState = RecordingIndicatorAttentionState(
-            promptID: appState.floatingCallLifecyclePrompt?.id,
+            promptID: appState.floatingMeetingPrompt?.id,
+            nudgeID: appState.recordingNudge?.id,
             isRecording: appState.isRecording,
             isEnding: appState.endingGrace != nil
         )
-        if RecordingIndicatorAttentionPolicy.shouldAutoExpand(
+        let attentionRequested = RecordingIndicatorAttentionPolicy.shouldAutoExpand(
             from: previousAttentionState,
             to: currentAttentionState
-        ), !model.expanded {
+        )
+        if attentionRequested, !model.expanded {
             model.expanded = true
         }
         previousAttentionState = currentAttentionState
 
         if shouldShowPanel() {
-            showPanel()
+            showPanel(attentionRequested: attentionRequested)
         } else {
             if model.expanded {
                 model.expanded = false
@@ -263,17 +287,20 @@ final class RecordingIndicatorCoordinator {
         }
     }
 
-    private func showPanel() {
+    private func showPanel(attentionRequested: Bool) {
         guard let appState else { return }
         if panel == nil {
             panel = makePanel(appState: appState)
         }
         guard let panel else { return }
         resizePanelToFitContent()
-        if !panel.isVisible {
+        if RecordingIndicatorWindowPolicy.shouldOrderFront(
+            isVisible: panel.isVisible,
+            attentionRequested: attentionRequested
+        ) {
             panel.orderFrontRegardless()
-            clampPanelToVisibleScreen()
         }
+        clampPanelToVisibleScreen()
     }
 
     /// AppKit does not resize a borderless panel to its SwiftUI content on its own: track
@@ -421,15 +448,20 @@ private struct RecordingIndicatorView: View {
 
     var body: some View {
         let presence = appState.recordingPresence
-        let prompt = appState.floatingCallLifecyclePrompt
+        let prompt = appState.floatingMeetingPrompt
+        let nudge = appState.recordingNudge
         VStack(alignment: .leading, spacing: 0) {
-            collapsedRow(presence, prompt: prompt)
+            collapsedRow(presence, prompt: prompt, nudge: nudge)
             if model.expanded {
-                expandedContent(presence, prompt: prompt)
+                expandedContent(presence, prompt: prompt, nudge: nudge)
             }
         }
         .padding(10)
-        .frame(minWidth: model.expanded ? 268 : 0, alignment: .leading)
+        // The panel sizes to the SwiftUI ideal size, and a single-line Text's ideal
+        // width is its full unwrapped width — without a cap, a long nudge (e.g. an
+        // incisive question) stretches the panel across the screen. Cap the width so
+        // long content wraps instead.
+        .frame(minWidth: model.expanded ? 268 : 0, maxWidth: 360, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 10)
                 .fill(ColorPalette.Background.primary.opacity(0.96))
@@ -443,19 +475,29 @@ private struct RecordingIndicatorView: View {
 
     private func collapsedRow(
         _ presence: AppState.RecordingPresence,
-        prompt: AppState.SmartMeetingPrompt?
+        prompt: AppState.SmartMeetingPrompt?,
+        nudge: AppState.RecordingNudge?
     ) -> some View {
         Button {
             guard !headerDragSuppressesToggle else { return }
             model.expanded.toggle()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: collapsedIcon(presence, prompt: prompt))
+                Image(systemName: collapsedIcon(presence, prompt: prompt, nudge: nudge))
                     .font(.system(size: 11))
-                    .foregroundStyle(prompt == nil ? ColorPalette.Status.recording : ColorPalette.Status.warning)
+                    .foregroundStyle(
+                        prompt == nil && nudge == nil
+                            ? ColorPalette.Status.recording
+                            : ColorPalette.Status.warning
+                    )
                     .accessibilityHidden(true)
                 if let prompt {
                     Text(prompt.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .lineLimit(1)
+                } else if let nudge {
+                    Text(nudge.title)
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(ColorPalette.Text.primary)
                         .lineLimit(1)
@@ -518,25 +560,46 @@ private struct RecordingIndicatorView: View {
                     }
                 }
         )
-        .accessibilityLabel(collapsedAccessibilityLabel(presence, prompt: prompt))
+        .accessibilityLabel(collapsedAccessibilityLabel(presence, prompt: prompt, nudge: nudge))
         .accessibilityHint(model.expanded ? "Collapses meeting controls" : "Expands meeting controls")
         .help(model.expanded ? "Collapse meeting controls" : "Expand meeting controls")
     }
 
     private func collapsedIcon(
         _ presence: AppState.RecordingPresence,
-        prompt: AppState.SmartMeetingPrompt?
+        prompt: AppState.SmartMeetingPrompt?,
+        nudge: AppState.RecordingNudge?
     ) -> String {
-        if prompt != nil { return "phone.fill" }
+        if let prompt {
+            switch prompt.kind {
+            case .quiet: return "moon.zzz.fill"
+            case .calendar: return "calendar.badge.clock"
+            case .callStart: return "phone.fill"
+            case .callEnd: return "phone.down.fill"
+            case .callTransition: return "phone.fill"
+            }
+        }
+        if let nudge {
+            switch nudge.kind {
+            case .question: return "questionmark.bubble.fill"
+            case .monologue: return "person.fill"
+            case .fillerRate: return "waveform"
+            case .salesDetected: return "chart.bar.doc.horizontal"
+            }
+        }
         return presence.graceRemainingSeconds != nil ? "phone.down.fill" : "record.circle.fill"
     }
 
     private func collapsedAccessibilityLabel(
         _ presence: AppState.RecordingPresence,
-        prompt: AppState.SmartMeetingPrompt?
+        prompt: AppState.SmartMeetingPrompt?,
+        nudge: AppState.RecordingNudge?
     ) -> String {
         if let prompt {
             return "\(prompt.title). \(prompt.message) Activate for controls."
+        }
+        if let nudge {
+            return "\(nudge.title). \(nudge.message) Activate for details."
         }
         if let remaining = presence.graceRemainingSeconds {
             return "Call ended, finishing recording in \(remaining) seconds. Activate for controls."
@@ -547,7 +610,8 @@ private struct RecordingIndicatorView: View {
     @ViewBuilder
     private func expandedContent(
         _ presence: AppState.RecordingPresence,
-        prompt: AppState.SmartMeetingPrompt?
+        prompt: AppState.SmartMeetingPrompt?,
+        nudge: AppState.RecordingNudge?
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider().padding(.vertical, 6)
@@ -557,6 +621,37 @@ private struct RecordingIndicatorView: View {
 
                 Divider().padding(.vertical, 2)
                 promptActions(prompt)
+            } else if let nudge {
+                Text(nudge.message)
+                    .font(.system(size: 11))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Divider().padding(.vertical, 2)
+
+                HStack(spacing: 6) {
+                    if nudge.kind == .salesDetected {
+                        indicatorActionButton(
+                            "enable sales analysis",
+                            systemImage: "chart.bar.doc.horizontal",
+                            role: .primary,
+                            isEmphasized: true,
+                            action: appState.enableSalesAnalysisFromNudge
+                        )
+                    }
+                    indicatorActionButton(
+                        "dismiss",
+                        systemImage: "xmark",
+                        role: .secondary,
+                        action: appState.dismissRecordingNudge
+                    )
+                    indicatorActionButton(
+                        "don't remind me",
+                        systemImage: "bell.slash",
+                        role: .secondary,
+                        action: { appState.disableNudges(ofKind: nudge.kind) }
+                    )
+                }
             } else {
                 if !presence.meetingTitle.isEmpty {
                     Text(presence.meetingTitle)
@@ -628,7 +723,7 @@ private struct RecordingIndicatorView: View {
                     role: .secondary,
                     action: appState.dismissDetectedCallStartPrompt
                 )
-            case .callEnd:
+            case .quiet, .callEnd:
                 indicatorActionButton(
                     "end meeting",
                     systemImage: "stop.fill",
@@ -642,22 +737,39 @@ private struct RecordingIndicatorView: View {
                     role: .secondary,
                     action: appState.keepRecordingFromSmartMeetingPrompt
                 )
-            case .callTransition:
-                indicatorActionButton(
-                    "end & start next",
-                    systemImage: "arrow.right",
-                    role: .positive,
-                    isEmphasized: true,
-                    action: appState.endAndStartNewMeeting
-                )
+            case .calendar, .callTransition:
+                if let eventID = prompt.eventID {
+                    indicatorActionButton(
+                        "end & start next",
+                        systemImage: "arrow.right",
+                        role: .positive,
+                        isEmphasized: true
+                    ) {
+                        appState.endAndStartCalendarMeeting(eventID: eventID)
+                    }
+                } else if prompt.kind == .callTransition {
+                    indicatorActionButton(
+                        "end & start next",
+                        systemImage: "arrow.right",
+                        role: .positive,
+                        isEmphasized: true,
+                        action: appState.endAndStartNewMeeting
+                    )
+                } else {
+                    indicatorActionButton(
+                        "end meeting",
+                        systemImage: "stop.fill",
+                        role: .recording,
+                        isEmphasized: true,
+                        action: appState.endMeetingFromSmartPrompt
+                    )
+                }
                 indicatorActionButton(
                     "keep recording",
                     systemImage: "record.circle",
                     role: .secondary,
                     action: appState.keepRecordingFromSmartMeetingPrompt
                 )
-            case .quiet, .calendar:
-                EmptyView()
             }
         }
     }
@@ -680,7 +792,9 @@ private struct RecordingIndicatorView: View {
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Take notes with Miniti")
         } else {
-            Text(prompt.message)
+            Text(prompt.countdown.map {
+                "\(prompt.message) Starting the next recording in \($0)s."
+            } ?? prompt.message)
                 .font(.system(size: 11))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)

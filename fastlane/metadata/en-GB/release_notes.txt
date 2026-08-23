@@ -1,3 +1,8 @@
+NEW
+
+- Miniti can suggest enabling live Sales analysis when a conversation sounds like a sales call. Detection runs locally and can be turned off in Settings.
+
 IMPROVED
 
-- Smart meetings can now notice prolonged quiet in calendar-linked recordings, so it is easier to tell when a meeting has ended without changing your auto-stop setting.
+- Shared-microphone recordings keep cleaner speaker turns and neutral identity labels when several people are detected.
+- Reconnecting live transcription no longer discards inferred speaker names or your "mark as you" choices.
