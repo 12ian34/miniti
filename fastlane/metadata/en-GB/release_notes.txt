@@ -8,4 +8,4 @@ IMPROVED
 
 - Picking a specialist view mid-meeting fills it straight away.
 - A one-time card on Home reminds you to save your recovery key.
-- Requests to Miniti's servers are now signed by your device.
+- Requests to miniti's servers are now signed by your device.
