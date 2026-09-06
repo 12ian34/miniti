@@ -42,4 +42,4 @@ If you choose Pro, payment is charged to your Apple ID account at confirmation o
 TERMS OF USE (EULA) 
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
 
-v2.5.0
+v2.6.0

@@ -50,6 +50,16 @@
 		B90000010000000000000002 /* MinitiDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000010000000000000001 /* MinitiDesignSystem.swift */; };
 		B90000010000000000000003 /* MinitiDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = B90000010000000000000001 /* MinitiDesignSystem.swift */; };
 		AE0000010000000000000002 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
+		AE0000010000000000000012 /* ScreenshotMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000011 /* ScreenshotMode.swift */; };
+		AE0000010000000000000022 /* InsightTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000021 /* InsightTemplates.swift */; };
+		AE0000010000000000000032 /* ClientAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000031 /* ClientAuth.swift */; };
+		AE0000010000000000000052 /* ManagedAccountViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000051 /* ManagedAccountViews.swift */; };
+		AE0000010000000000000053 /* ManagedAccountViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000051 /* ManagedAccountViews.swift */; };
+		AE0000010000000000000033 /* ClientAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000031 /* ClientAuth.swift */; };
+		AE0000010000000000000042 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
+		AE0000010000000000000043 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
+		AE0000010000000000000023 /* InsightTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000021 /* InsightTemplates.swift */; };
+		AE0000010000000000000013 /* ScreenshotMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000011 /* ScreenshotMode.swift */; };
 		AE0000010000000000000003 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
 		AF0000010000000000000001 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
 		AF0000010000000000000002 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
@@ -174,6 +184,11 @@
 		CA0000010000000000000004 /* CallLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CallLifecycleTests.swift; sourceTree = "<group>"; };
 		B90000010000000000000001 /* MinitiDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiDesignSystem.swift; sourceTree = "<group>"; };
 		AE0000010000000000000001 /* ForceUpdateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ForceUpdateView.swift; sourceTree = "<group>"; };
+		AE0000010000000000000011 /* ScreenshotMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotMode.swift; sourceTree = "<group>"; };
+		AE0000010000000000000021 /* InsightTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightTemplates.swift; sourceTree = "<group>"; };
+		AE0000010000000000000031 /* ClientAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuth.swift; sourceTree = "<group>"; };
+		AE0000010000000000000051 /* ManagedAccountViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAccountViews.swift; sourceTree = "<group>"; };
+		AE0000010000000000000041 /* ClientAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuthTests.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTextPaneMac.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
@@ -261,6 +276,7 @@
 			children = (
 				A20000010000000000000001 /* MinitiApp.swift */,
 				A20000010000000000000017 /* Secrets.swift */,
+				AE0000010000000000000011 /* ScreenshotMode.swift */,
 				A50000010000000000000004 /* Views */,
 				A50000010000000000000005 /* Models */,
 				A50000010000000000000006 /* Services */,
@@ -300,6 +316,7 @@
 				A20000010000000000000022 /* LimitReachedView.swift */,
 				AC0000010000000000000001 /* TermsAcceptanceView.swift */,
 				AE0000010000000000000001 /* ForceUpdateView.swift */,
+				AE0000010000000000000051 /* ManagedAccountViews.swift */,
 				CA0000010000000000000003 /* RecordingIndicatorPanel.swift */,
 			);
 			path = Views;
@@ -319,6 +336,8 @@
 		A50000010000000000000006 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				AE0000010000000000000021 /* InsightTemplates.swift */,
+				AE0000010000000000000031 /* ClientAuth.swift */,
 				A20000010000000000000010 /* AudioCaptureService.swift */,
 				AB0000010000000000000001 /* DebugLogger.swift */,
 				A20000010000000000000011 /* DeepgramService.swift */,
@@ -390,6 +409,7 @@
 				T20000010000000000000002 /* TrainingMetricsTests.swift */,
 				T20000010000000000000003 /* MeetingModelTests.swift */,
 				T20000010000000000000004 /* WebhookPayloadTests.swift */,
+				AE0000010000000000000041 /* ClientAuthTests.swift */,
 				T20000010000000000000005 /* AppStateComputationTests.swift */,
 				T20000010000000000000006 /* DeepgramParsingTests.swift */,
 				T20000010000000000000007 /* InsightsParsingTests.swift */,
@@ -592,6 +612,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10000010000000000000001 /* MinitiApp.swift in Sources */,
+				AE0000010000000000000012 /* ScreenshotMode.swift in Sources */,
+				AE0000010000000000000022 /* InsightTemplates.swift in Sources */,
+				AE0000010000000000000032 /* ClientAuth.swift in Sources */,
+				AE0000010000000000000052 /* ManagedAccountViews.swift in Sources */,
 				A10000010000000000000002 /* MainWindow.swift in Sources */,
 				A10000010000000000000003 /* MeetingView.swift in Sources */,
 				A10000010000000000000004 /* TranscriptView.swift in Sources */,
@@ -632,6 +656,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				C10000010000000000000001 /* Meeting.swift in Sources */,
+				AE0000010000000000000013 /* ScreenshotMode.swift in Sources */,
+				AE0000010000000000000023 /* InsightTemplates.swift in Sources */,
+				AE0000010000000000000033 /* ClientAuth.swift in Sources */,
+				AE0000010000000000000053 /* ManagedAccountViews.swift in Sources */,
 				C10000010000000000000002 /* AppState.swift in Sources */,
 				C10000010000000000000003 /* ColorPalette.swift in Sources */,
 				C10000010000000000000004 /* DeepgramService.swift in Sources */,
@@ -682,6 +710,7 @@
 				T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
 				T10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
+				AE0000010000000000000042 /* ClientAuthTests.swift in Sources */,
 				T10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				T10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
@@ -699,6 +728,7 @@
 				U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
 				U10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
+				AE0000010000000000000043 /* ClientAuthTests.swift in Sources */,
 				U10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				U10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
@@ -862,7 +892,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -880,7 +910,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -898,7 +928,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -916,7 +946,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -932,7 +962,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -950,7 +980,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -971,7 +1001,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -989,7 +1019,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1008,7 +1038,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1019,7 +1049,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1035,7 +1065,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1046,7 +1076,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.5.0;
+				MARKETING_VERSION = 2.6.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1064,7 +1094,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1082,7 +1112,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1100,7 +1130,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
@@ -1121,7 +1151,7 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 116;
+				CURRENT_PROJECT_VERSION = 117;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;

@@ -43,9 +43,31 @@ struct InsightsModeSelector: View {
 struct InsightsModeTabs: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.openSettings) private var openSettings
+    /// The template this surface shows: the saved meeting's own, or the live one. Nil falls
+    /// back to the live/default template.
+    var template: InsightTemplate? = nil
+    /// Where a template pick goes. Nil selects for the live meeting and the default.
+    var onSelectTemplate: ((String) -> Void)? = nil
 
     private var selectedSpecialist: InsightsMode? {
         appState.insightsMode.isSpecialist ? appState.insightsMode : nil
+    }
+
+    private var activeTemplate: InsightTemplate {
+        template ?? appState.liveTemplate
+    }
+
+    private var specialistLabel: String {
+        guard let selectedSpecialist else { return "More" }
+        return selectedSpecialist == .template ? activeTemplate.shortName : selectedSpecialist.displayName
+    }
+
+    private func selectTemplate(_ id: String) {
+        if let onSelectTemplate {
+            onSelectTemplate(id)
+        } else {
+            appState.selectInsightTemplate(id)
+        }
     }
 
     var body: some View {
@@ -88,6 +110,11 @@ struct InsightsModeTabs: View {
             Section("Specialist views") {
                 specialistButton(.meddpicc)
 
+                InsightTemplateMenu(
+                    activeTemplateID: appState.insightsMode == .template ? activeTemplate.id : nil,
+                    onSelect: selectTemplate
+                )
+
                 if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
                     specialistButton(.docs)
                 } else {
@@ -100,7 +127,7 @@ struct InsightsModeTabs: View {
                 }
             }
 
-            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
+            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled || appState.templateInsightsEnabled {
                 Divider()
                 Section("Enabled specialist views") {
                     if appState.salesInsightsEnabled {
@@ -108,6 +135,14 @@ struct InsightsModeTabs: View {
                             appState.setInsightModeEnabled(.meddpicc, enabled: false)
                         } label: {
                             Label("Turn Off Sales Insights", systemImage: "eye.slash")
+                        }
+                    }
+
+                    if appState.templateInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.template, enabled: false)
+                        } label: {
+                            Label("Turn Off Template Notes", systemImage: "eye.slash")
                         }
                     }
 
@@ -122,14 +157,14 @@ struct InsightsModeTabs: View {
             }
         } label: {
             MinitiTabLabel(
-                title: selectedSpecialist?.displayName ?? "More",
+                title: specialistLabel,
                 isSelected: selectedSpecialist != nil
             )
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
         .help("Specialist insight views")
-        .accessibilityLabel(selectedSpecialist.map { "Specialist view: \($0.displayName), selected" } ?? "More insight views")
+        .accessibilityLabel(selectedSpecialist.map { "Specialist view: \($0 == .template ? activeTemplate.name : $0.displayName), selected" } ?? "More insight views")
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {
@@ -307,6 +342,14 @@ private struct LiveInsightsContent_iOSPlain: View {
                             Task { @MainActor in await appState.lookupDocTopic(id: topicID) }
                         }
                     )
+                } else if appState.insightsMode == .template {
+                    InsightTemplateCaption(template: appState.liveTemplate, fontSize: 11)
+                    if appState.isRecording, !appState.hasReceivedTemplateInsights, !appState.hasLiveTemplateContent {
+                        Text("no \(appState.liveTemplate.name.lowercased()) notes yet…")
+                            .font(.system(size: 12, weight: .medium, design: .default))
+                            .foregroundStyle(Color(hex: "8B949E"))
+                    }
+                    LiveTemplateContent_iOSPlain()
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isRecording, appState.appMode == .managed, !appState.hasReceivedMeddpiccInsights {
                         Text("no sales insights yet…")
@@ -394,6 +437,18 @@ private struct LiveMEDDPICCContent_iOSPlain: View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             InsightsPlainBlock_iOS(title: field.title, color: Color(hex: field.color)) {
                 MEDDPICCBulletText(field.value!, fontSize: 13)
+            }
+        }
+    }
+}
+
+private struct LiveTemplateContent_iOSPlain: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        InsightTemplateSectionList(template: appState.liveTemplate, sections: appState.liveTemplateSections) { title, color, value in
+            InsightsPlainBlock_iOS(title: title, color: color) {
+                MEDDPICCBulletText(value, fontSize: 13)
             }
         }
     }
@@ -1216,6 +1271,70 @@ struct MEDDPICCContent: View {
             TerminalSection(title: field.title, color: Color(hex: field.color)) {
                 MEDDPICCBulletText(field.value!, fontSize: interfaceScale.insightBodySize)
             }
+        }
+    }
+}
+
+// MARK: - Templates specialist view (shared)
+
+/// The "Templates" entry in the specialist menu: a submenu of the built-in templates, with
+/// the active one checked. Used on both platforms so the menus stay identical.
+struct InsightTemplateMenu: View {
+    let activeTemplateID: String?
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        Menu {
+            ForEach(InsightTemplate.builtIn) { template in
+                Button {
+                    onSelect(template.id)
+                } label: {
+                    Label {
+                        Text("\(template.name) — \(template.summary)")
+                    } icon: {
+                        Image(systemName: template.id == activeTemplateID ? "checkmark.circle.fill" : template.systemImage)
+                    }
+                }
+            }
+        } label: {
+            Label {
+                Text("Templates — \(InsightsMode.template.description)")
+            } icon: {
+                Image(systemName: activeTemplateID != nil ? "checkmark.circle.fill" : InsightsMode.template.systemImage)
+            }
+        }
+    }
+}
+
+/// One quiet line above the sections naming the template in use, so a filled view still
+/// says which framework it follows.
+struct InsightTemplateCaption: View {
+    let template: InsightTemplate
+    var fontSize: CGFloat = 10
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: template.systemImage)
+                .font(.system(size: fontSize, weight: .medium))
+            Text("\(template.name.lowercased()) · \(template.summary.lowercased())")
+                .font(.system(size: fontSize, weight: .medium, design: .default))
+        }
+        .foregroundStyle(ColorPalette.Text.meta)
+        .lineLimit(2)
+        .accessibilityLabel("Template: \(template.name). \(template.summary)")
+    }
+}
+
+/// The filled sections of a template in template order, each with its stable color.
+struct InsightTemplateSectionList<Section: View>: View {
+    let template: InsightTemplate
+    let sections: [String: String]
+    @ViewBuilder let section: (_ title: String, _ color: Color, _ value: String) -> Section
+
+    var body: some View {
+        let entries = template.orderedSections(from: sections)
+        ForEach(Array(entries.enumerated()), id: \.element.section.key) { index, entry in
+            section(entry.section.title, ColorPalette.Templates.color(forSectionAt: index), entry.value)
         }
     }
 }
@@ -2171,7 +2290,7 @@ struct TrainingMainView: View {
     var onSelectMeeting: ((UUID) -> Void)? = nil
     @State private var sortColumn: TrainingSortColumn = .date
     @State private var sortAscending = false
-    @State private var selectedTab: CoachingOverviewTab = .focus
+    @State private var selectedTab: CoachingOverviewTab = ScreenshotMode.current?.coachingOverviewTab ?? .focus
 
     var body: some View {
         ScrollView {

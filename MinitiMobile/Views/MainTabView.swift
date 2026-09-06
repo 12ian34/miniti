@@ -10,7 +10,13 @@ struct MainTabView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
-    @State private var selectedTab: MobileTab = .record
+    @State private var selectedTab: MobileTab = {
+        switch ScreenshotMode.current {
+        case .coaching?, .coachingStats?: return .training
+        case .history?, .meeting?, .meetingCoaching?: return .history
+        default: return .record
+        }
+    }()
     @State private var coachingPath: [UUID] = []
     @StateObject private var coachingOverviewStore = CoachingOverviewStore()
 

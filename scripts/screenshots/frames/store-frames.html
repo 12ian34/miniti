@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Miniti store frames</title>
+<!--
+  Framed marketing artwork built from REAL app captures.
+
+  Every element with data-screen-label and a fixed pixel width/height is a card.
+  render_frames.py drops the captures into the <img> slots (paths are relative to
+  the capture directory, exposed as captures/) and screenshots each card at its
+  declared size. Edit the copy here; it is plain text.
+
+  Card sizes:
+    iPhone  1320 x 2868   (App Store 6.9" portrait, native iPhone 17 Pro Max)
+    iPad    2064 x 2752   (App Store iPad 13" portrait)
+    Mac     2880 x 1800   (website / social hero, 16:10)
+
+  Open this file directly in a browser next to a populated out/ directory to
+  preview: <a href="../out/...">. The renderer serves captures/ from --captures.
+-->
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #000; color: #E6EDF3; padding: 40px; font-family: 'SF Mono', ui-monospace, Menlo, monospace; }
+  .preview-row { display: flex; gap: 40px; flex-wrap: wrap; align-items: flex-start; margin-bottom: 40px; }
+
+  .frame {
+    background: #0f1210;
+    position: relative;
+    overflow: hidden;
+    font-family: 'SF Mono', ui-monospace, 'Menlo', 'Consolas', monospace;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .topbar { display: flex; justify-content: flex-end; align-items: center; padding: 60px 90px 42px; }
+  .pill {
+    font-size: 42px; color: #fff;
+    border: 1px solid rgba(255,255,255,0.22); border-radius: 16px;
+    padding: 20px 40px; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .pill svg { width: 32px; height: 36px; display: block; }
+  .divider {
+    height: 1px;
+    background: linear-gradient(to right, transparent 0%, rgba(63,185,80,0.55) 18%, rgba(63,185,80,0.55) 82%, transparent 100%);
+  }
+  .content { flex: 1; display: flex; flex-direction: column; padding: 68px 90px 0; min-height: 0; }
+  .label { font-size: 44px; color: #3FB950; margin-bottom: 48px; letter-spacing: -0.005em; }
+  .headline { font-weight: 700; font-size: 128px; line-height: 1.12; letter-spacing: -0.045em; color: #fff; margin-bottom: 44px; }
+  .highlight { color: #3FB950; }
+  .subhead { font-size: 42px; line-height: 1.4; color: #8B949E; margin-bottom: 72px; letter-spacing: -0.005em; }
+
+  /* The real capture, clipped to a device-ish shape that bleeds off the bottom. */
+  .device {
+    flex: 1; min-height: 0;
+    display: flex; justify-content: center; align-items: flex-start;
+    overflow: hidden;
+  }
+  .device .screen {
+    width: 1140px;
+    border-radius: 110px 110px 0 0;
+    border: 3px solid #27272A; border-bottom: none;
+    overflow: hidden;
+    background: #000;
+    box-shadow: 0 -30px 120px rgba(63,185,80,0.10);
+  }
+  .device .screen img { display: block; width: 100%; height: auto; }
+  /* A screen whose story is at the bottom (Home's upcoming list): pin the capture's
+     bottom edge to the card's bottom instead of clipping it away. */
+  .device .screen.bottom { align-self: stretch; display: flex; align-items: flex-end; border-radius: 110px 110px 0 0; }
+  .ipad .device .screen.bottom { border-radius: 80px 80px 0 0; }
+
+  /* iPad: wider canvas, wider screen. */
+  .ipad .topbar { padding: 90px 140px 60px; }
+  .ipad .content { padding: 90px 140px 0; }
+  .ipad .label { font-size: 56px; }
+  .ipad .headline { font-size: 170px; }
+  .ipad .subhead { font-size: 54px; }
+  .ipad .device .screen { width: 1784px; border-radius: 80px 80px 0 0; }
+
+  /* Mac hero: headline left, window right, 16:10. */
+  .mac { flex-direction: row; align-items: stretch; }
+  .mac .copy { width: 960px; padding: 140px 0 140px 140px; display: flex; flex-direction: column; justify-content: center; }
+  .mac .label { font-size: 40px; margin-bottom: 36px; }
+  .mac .headline { font-size: 112px; margin-bottom: 36px; }
+  .mac .subhead { font-size: 36px; margin-bottom: 0; }
+  .mac .window {
+    flex: 1; display: flex; align-items: center; justify-content: flex-start;
+    padding: 140px 0 140px 100px; overflow: hidden;
+  }
+  .mac .window .screen {
+    width: 2200px; flex: 0 0 auto;
+    border-radius: 26px 0 0 26px;
+    border: 3px solid #27272A; border-right: none;
+    overflow: hidden; background: #000;
+    box-shadow: 0 0 160px rgba(63,185,80,0.10);
+  }
+  .mac .window .screen img { display: block; width: 100%; height: auto; }
+</style>
+</head>
+<body>
+
+<div class="preview-row">
+
+<!-- ================= iPhone ================= -->
+<div class="frame" data-screen-label="iPhone 1" style="width:1320px;height:2868px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># ai meeting assistant</div>
+    <div class="headline">live meeting<br><span class="highlight">insights</span></div>
+    <div class="subhead">live transcription, summaries,<br>and action items as you talk</div>
+    <div class="device"><div class="screen"><img src="captures/iphone/03-recording-insights.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame" data-screen-label="iPhone 2" style="width:1320px;height:2868px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># sales intelligence</div>
+    <div class="headline">qualify<br>every <span class="highlight">deal</span></div>
+    <div class="subhead">live MEDDPICC analysis<br>from the conversation itself</div>
+    <div class="device"><div class="screen"><img src="captures/iphone/04-recording-sales.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame" data-screen-label="iPhone 3" style="width:1320px;height:2868px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># calendar sync</div>
+    <div class="headline">never <span class="highlight">miss</span><br>a meeting</div>
+    <div class="subhead">google calendar sync with<br>auto-start and auto-stop recording</div>
+    <div class="device"><div class="screen bottom"><img src="captures/iphone/01-home.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame" data-screen-label="iPhone 4" style="width:1320px;height:2868px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># speech coaching</div>
+    <div class="headline">speak <span class="highlight">sharper</span></div>
+    <div class="subhead">track fillers, pace, talk ratio,<br>and clarity as you speak</div>
+    <div class="device"><div class="screen"><img src="captures/iphone/07-coaching.png" alt=""></div></div>
+  </div>
+</div>
+
+</div>
+<div class="preview-row">
+
+<!-- ================= iPad ================= -->
+<div class="frame ipad" data-screen-label="iPad 1" style="width:2064px;height:2752px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># ai meeting assistant</div>
+    <div class="headline">live meeting <span class="highlight">insights</span></div>
+    <div class="subhead">live transcription, summaries, and action items as you talk</div>
+    <div class="device"><div class="screen"><img src="captures/ipad/03-recording-insights.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame ipad" data-screen-label="iPad 2" style="width:2064px;height:2752px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># sales intelligence</div>
+    <div class="headline">qualify every <span class="highlight">deal</span></div>
+    <div class="subhead">live MEDDPICC analysis from the conversation itself</div>
+    <div class="device"><div class="screen"><img src="captures/ipad/04-recording-sales.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame ipad" data-screen-label="iPad 3" style="width:2064px;height:2752px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># calendar sync</div>
+    <div class="headline">never <span class="highlight">miss</span> a meeting</div>
+    <div class="subhead">google calendar sync with auto-start and auto-stop recording</div>
+    <div class="device"><div class="screen bottom"><img src="captures/ipad/01-home.png" alt=""></div></div>
+  </div>
+</div>
+
+<div class="frame ipad" data-screen-label="iPad 4" style="width:2064px;height:2752px">
+  <div class="topbar"><div class="pill"><svg viewBox="0 0 24 27"><path d="M12 0L24 6.75v13.5L12 27 0 20.25V6.75z" fill="#3FB950"/></svg>miniti</div></div>
+  <div class="divider"></div>
+  <div class="content">
+    <div class="label"># speech coaching</div>
+    <div class="headline">speak <span class="highlight">sharper</span></div>
+    <div class="subhead">track fillers, pace, talk ratio, and clarity as you speak</div>
+    <div class="device"><div class="screen"><img src="captures/ipad/07-coaching.png" alt=""></div></div>
+  </div>
+</div>
+
+</div>
+<div class="preview-row">
+
+<!-- ================= Mac ================= -->
+<div class="frame mac" data-screen-label="Mac 1" style="width:2880px;height:1800px">
+  <div class="copy">
+    <div class="label"># ai meeting assistant for mac</div>
+    <div class="headline">live meeting<br><span class="highlight">insights</span></div>
+    <div class="subhead">mic + system audio, live transcript, summaries and action items while you talk</div>
+  </div>
+  <div class="window"><div class="screen"><img src="captures/mac/02-recording.png" alt=""></div></div>
+</div>
+
+<div class="frame mac" data-screen-label="Mac 2" style="width:2880px;height:1800px">
+  <div class="copy">
+    <div class="label"># sales intelligence</div>
+    <div class="headline">qualify<br>every <span class="highlight">deal</span></div>
+    <div class="subhead">live MEDDPICC analysis from the conversation itself</div>
+  </div>
+  <div class="window"><div class="screen"><img src="captures/mac/03-recording-sales.png" alt=""></div></div>
+</div>
+
+<div class="frame mac" data-screen-label="Mac 3" style="width:2880px;height:1800px">
+  <div class="copy">
+    <div class="label"># speech coaching</div>
+    <div class="headline">speak <span class="highlight">sharper</span></div>
+    <div class="subhead">fillers, pace, talk ratio and clarity, tracked across every meeting</div>
+  </div>
+  <div class="window"><div class="screen"><img src="captures/mac/06-coaching.png" alt=""></div></div>
+</div>
+
+</div>
+</body>
+</html>

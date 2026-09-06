@@ -324,6 +324,9 @@ struct MainWindow: View {
             initializeIfNeeded()
             refreshMeetings()
             selectPendingSavedMeetingIfNeeded()
+            if ScreenshotMode.current?.showsCoachingOverview == true {
+                showTraining = true
+            }
             debouncedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         .onChange(of: appState.currentMeeting) { oldMeeting, newMeeting in
@@ -1730,7 +1733,7 @@ struct MeetingDetailView: View {
                                 meeting.insightsAsMarkdown()
                             })
                             
-                            HistoricalInsightsModeSelector()
+                            HistoricalInsightsModeSelector(meeting: meeting)
                             GradientDivider()
                             
                             ScrollView {
@@ -2051,6 +2054,10 @@ struct MeetingDetailView: View {
                                 Text("questions")
                                     .font(.system(size: 10, weight: .medium, design: .default))
                                     .foregroundStyle(Theme.textDim)
+                            } else if appState.insightsMode == .template && !meeting.hasTemplateInsights {
+                                Text((meeting.insightTemplate ?? appState.selectedInsightTemplate).shortName.lowercased())
+                                    .font(.system(size: 10, weight: .medium, design: .default))
+                                    .foregroundStyle(Theme.textDim)
                             }
                         }
                         .foregroundStyle(Theme.text)
@@ -2192,6 +2199,27 @@ struct MeetingDetailView: View {
                         Task { await appState.lookupDocTopic(id: topicID, for: meeting) }
                     }
                 )
+            } else if appState.insightsMode == .template {
+                let template = meeting.insightTemplate ?? appState.selectedInsightTemplate
+                InsightTemplateCaption(template: template)
+                if meeting.hasTemplateInsights {
+                    SavedTemplateBlocks(meeting: meeting)
+                } else {
+                    VStack(spacing: 10) {
+                        Spacer()
+                        Text("◇")
+                            .font(.system(size: 28, weight: .ultraLight, design: .default))
+                            .foregroundStyle(Theme.textDim)
+                        Text("no \(template.name.lowercased()) notes yet")
+                            .font(.system(size: 11, weight: .medium, design: .default))
+                            .foregroundStyle(Theme.textMuted)
+                        Text(meeting.segments.isEmpty ? "record a session to fill this template" : "use update above to generate")
+                            .font(.system(size: 10, weight: .regular, design: .default))
+                            .foregroundStyle(Theme.textDim)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity)
+                }
             } else if appState.insightsMode == .meddpicc {
                 if meeting.hasMEDDPICC {
                     SavedMEDDPICCBlocks(meeting: meeting)
@@ -2353,8 +2381,16 @@ struct DetailSectionHeader: View {
 }
 
 struct HistoricalInsightsModeSelector: View {
+    @EnvironmentObject private var appState: AppState
+    var meeting: Meeting? = nil
+
     var body: some View {
-        InsightsModeTabs()
+        InsightsModeTabs(
+            template: meeting?.insightTemplate,
+            onSelectTemplate: meeting.map { meeting in
+                { id in Task { @MainActor in await appState.selectInsightTemplate(id, for: meeting) } }
+            }
+        )
     }
 }
 
@@ -2425,6 +2461,22 @@ struct DetailInsightBlock<Content: View>: View {
             
             content()
                 .padding(.leading, 12)
+        }
+    }
+}
+
+// MARK: - Saved Template Blocks
+
+struct SavedTemplateBlocks: View {
+    let meeting: Meeting
+
+    var body: some View {
+        if let template = meeting.insightTemplate {
+            InsightTemplateSectionList(template: template, sections: meeting.templateSections) { title, color, value in
+                DetailInsightBlock(title: title, color: color) {
+                    MEDDPICCBulletText(value, fontSize: 12, color: Theme.text)
+                }
+            }
         }
     }
 }

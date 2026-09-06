@@ -17,27 +17,17 @@ final class MinitiAPIService: @unchecked Sendable {
         return "https://api.miniti.app/api"
     }()
     
-    /// Shared app secret — authenticates requests to the backend (not user-specific).
-    /// XOR-obfuscated so it doesn't appear as a plain string in source or binary.
-    private static let apiKey: String = {
-        let mask: [UInt8] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-        let obfuscated: [UInt8] = [
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ]
-        return zip(obfuscated, mask)
-            .map { String(format: "%02x", $0 ^ $1) }
-            .joined()
+    /// `X-Platform` value for this build.
+    static let platformHeader: String = {
+        #if os(iOS)
+        return "ios"
+        #else
+        return "macos"
+        #endif
     }()
-    
-    /// Build a URLRequest with required auth headers (X-API-Key + X-Device-ID).
+
+    /// Build a URLRequest with the identity headers. Authorization (device-bound bearer
+    /// token + request proof) is attached by `send(_:)`; nothing secret is embedded here.
     private func makeRequest(
         path: String,
         method: String = "GET",
@@ -50,20 +40,60 @@ final class MinitiAPIService: @unchecked Sendable {
             request.timeoutInterval = timeoutInterval
         }
         request.httpMethod = method
-        request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
-        #if os(iOS)
-        request.setValue("ios", forHTTPHeaderField: "X-Platform")
-        #else
-        request.setValue("macos", forHTTPHeaderField: "X-Platform")
-        #endif
+        request.setValue(Self.platformHeader, forHTTPHeaderField: "X-Platform")
+        request.setValue("managed", forHTTPHeaderField: "X-App-Mode")
         
         if let body {
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         return request
+    }
+
+    /// Send a request with device-bound authorization: bearer token plus a request proof on
+    /// writes, one silent retry after an expired token, and local sign-out when the server
+    /// says this installation was revoked. `requiresAuth: false` lets public metadata
+    /// (`/version`) go out without an account.
+    private func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
+        let auth = ClientAuthManager.shared
+        var request = original
+        if auth.isEnrolled {
+            do {
+                try await auth.authorize(&request)
+            } catch ClientAuthError.revoked {
+                throw ServiceError.authRevoked
+            } catch let error as ClientAuthError {
+                throw ServiceError.serverError(error.localizedDescription)
+            }
+        } else if requiresAuth {
+            throw ServiceError.notEnrolled
+        }
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
+            return (data, response)
+        }
+        let code = (try? Self.decoder.decode(APIError.self, from: data))?.error ?? ""
+        switch code {
+        case "token_expired", "invalid_token":
+            var retry = original
+            do {
+                _ = try await auth.forceRefresh()
+                try await auth.authorize(&retry)
+            } catch ClientAuthError.revoked {
+                throw ServiceError.authRevoked
+            } catch let error as ClientAuthError {
+                throw ServiceError.serverError(error.localizedDescription)
+            }
+            return try await URLSession.shared.data(for: retry)
+        case "installation_revoked", "device_auth_required":
+            auth.clearLocal()
+            throw ServiceError.authRevoked
+        default:
+            return (data, response)
+        }
     }
     
     // MARK: - Response Types
@@ -820,9 +850,17 @@ final class MinitiAPIService: @unchecked Sendable {
         case invalidResponse
         case serverError(String)
         case rateLimited
+        /// Managed mode has no device account yet (enrollment pending or failed).
+        case notEnrolled
+        /// The server revoked this installation; local credentials were cleared.
+        case authRevoked
         
         var errorDescription: String? {
             switch self {
+            case .notEnrolled:
+                return "Miniti is still setting up this device. Check your connection and try again."
+            case .authRevoked:
+                return "This device was signed out of its Miniti account. Restore it with your recovery key in Settings → Account & Plan."
             case .limitReached(let used, _):
                 return "Monthly limit reached (\(Int(used)) min used)."
             case .deviceDisabled:
@@ -937,18 +975,15 @@ final class MinitiAPIService: @unchecked Sendable {
     func checkVersion(deviceId: String? = nil, appMode: String? = nil) async throws -> VersionInfo {
         var request = URLRequest(url: URL(string: "\(Self.baseURL)/version")!)
         request.httpMethod = "GET"
-        request.setValue(Self.apiKey, forHTTPHeaderField: "X-API-Key")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown", forHTTPHeaderField: "X-App-Version")
-        #if os(iOS)
-        request.setValue("ios", forHTTPHeaderField: "X-Platform")
-        #else
-        request.setValue("macos", forHTTPHeaderField: "X-Platform")
-        #endif
+        request.setValue(Self.platformHeader, forHTTPHeaderField: "X-Platform")
         if let deviceId { request.setValue(deviceId, forHTTPHeaderField: "X-Device-ID") }
         if let appMode { request.setValue(appMode, forHTTPHeaderField: "X-App-Mode") }
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        // Public metadata: works before enrollment (and for BYOK); enrolled devices send
+        // their bearer so the dashboard sees them, exactly like the Linux client.
+        let (data, response) = try await send(request, requiresAuth: false)
         try validateResponse(response, data: data)
         
         return try decode(VersionInfo.self, from: data, endpoint: "/version")
@@ -960,7 +995,7 @@ final class MinitiAPIService: @unchecked Sendable {
     func checkUsage(deviceId: String) async throws -> UsageInfo {
         let request = makeRequest(path: "/usage", deviceId: deviceId)
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         
         return try decode(UsageInfo.self, from: data, endpoint: "/usage")
@@ -976,7 +1011,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["model": model]
         )
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         
         return try decode(SessionResponse.self, from: data, endpoint: "/session")
@@ -996,7 +1031,7 @@ final class MinitiAPIService: @unchecked Sendable {
             )
             DebugLogger.shared.log(.app, "API request: POST \(Self.baseURL)\(path)")
             
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await send(request)
             try validateResponse(response, data: data)
             return try decode(EndSessionResponse.self, from: data, endpoint: path)
         }
@@ -1024,7 +1059,9 @@ final class MinitiAPIService: @unchecked Sendable {
         incrementalPayload: IncrementalInsightsPayload? = nil,
         requestSeq: Int? = nil,
         language: String = "en",
-        attendees: [[String: String]]? = nil
+        attendees: [[String: String]]? = nil,
+        template: InsightTemplate? = nil,
+        previousTemplateSections: [String: String]? = nil
     ) async throws -> ManagedInsightsResponse {
         let startedAt = CFAbsoluteTimeGetCurrent()
         var body: [String: Any] = [
@@ -1041,6 +1078,14 @@ final class MinitiAPIService: @unchecked Sendable {
             body["incremental"] = true
             body["incremental_payload"] = incrementalPayload.dictionary
         }
+        if let template {
+            body["template"] = template.requestDictionary
+            if let previousTemplateSections, !previousTemplateSections.isEmpty {
+                // The backend treats a baseline as its lightweight incremental mode.
+                body["previous_sections"] = previousTemplateSections
+                body["incremental"] = true
+            }
+        }
         
         let request = makeRequest(
             path: "/insights",
@@ -1053,7 +1098,7 @@ final class MinitiAPIService: @unchecked Sendable {
             "API insights request: mode=\(mode), model=\(model), transcriptChars=\(transcript.count), hasSummary=\(existingSummary != nil), hasTitle=\(existingTitle != nil), incremental=\(incrementalPayload != nil)"
         )
         
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let decoded = try decode(ManagedInsightsResponse.self, from: data, endpoint: "/insights")
         let duration = CFAbsoluteTimeGetCurrent() - startedAt
@@ -1112,7 +1157,7 @@ final class MinitiAPIService: @unchecked Sendable {
             "API docs playbook request: transcriptChars=\(transcript.count), topic=\(topic ?? "-"), mcpURL=\(docsMcpURL)"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let decoded = try decode(ManagedDocsPlaybookResponse.self, from: data, endpoint: "/insights docs")
         let duration = CFAbsoluteTimeGetCurrent() - startedAt
@@ -1149,7 +1194,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: body
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(ManagedDocsTopicsResponse.self, from: data, endpoint: "/insights docs_topics")
     }
@@ -1187,7 +1232,7 @@ final class MinitiAPIService: @unchecked Sendable {
             "API catchup request: model=\(model), recentChars=\(recentTranscript.count), fullChars=\(fullTranscript?.count ?? 0), language=\(language)"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let decoded = try decode(CatchUpResult.self, from: data, endpoint: "/insights catchup")
         let duration = CFAbsoluteTimeGetCurrent() - startedAt
@@ -1236,7 +1281,7 @@ final class MinitiAPIService: @unchecked Sendable {
             "API investigation request: scope=\(scope.rawValue), meetingChars=\(meetingContext.count), codeChars=\(codebaseContext?.count ?? 0), files=\(referencedFiles.count)"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let decoded = try decode(InvestigationResult.self, from: data, endpoint: "/insights investigation")
         DebugLogger.shared.log(
@@ -1283,7 +1328,7 @@ final class MinitiAPIService: @unchecked Sendable {
             "API speaker-names request: model=\(model), transcriptChars=\(transcript.count), candidates=\(cleanedCandidates.count), language=\(language)"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let decoded = try decode(ManagedSpeakerNamesResponse.self, from: data, endpoint: "/insights speaker_names")
         let cleaned = SpeakerNamesResponse.sanitize(decoded.speakers)
@@ -1309,7 +1354,7 @@ final class MinitiAPIService: @unchecked Sendable {
         )
         request.httpBody = try Self.encoder.encode(ClientEventsRequest(events: events))
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
     }
 
@@ -1318,7 +1363,7 @@ final class MinitiAPIService: @unchecked Sendable {
     /// Get a Polar checkout URL for upgrading to Pro.
     func getSubscribeURL(deviceId: String) async throws -> URL {
         let request = makeRequest(path: "/subscribe", deviceId: deviceId)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let result = try decode(SubscribeResponse.self, from: data, endpoint: "/subscribe")
         guard let url = URL(string: result.checkoutUrl) else {
@@ -1330,7 +1375,7 @@ final class MinitiAPIService: @unchecked Sendable {
     /// Get a Polar customer portal URL for managing an existing subscription.
     func getPortalURL(deviceId: String) async throws -> URL {
         let request = makeRequest(path: "/portal", deviceId: deviceId)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         let result = try decode(PortalResponse.self, from: data, endpoint: "/portal")
         guard let url = URL(string: result.portalUrl) else {
@@ -1347,7 +1392,7 @@ final class MinitiAPIService: @unchecked Sendable {
             deviceId: deviceId,
             body: ["license_key": licenseKey]
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(RestoreResponse.self, from: data, endpoint: "/restore")
     }
@@ -1360,7 +1405,7 @@ final class MinitiAPIService: @unchecked Sendable {
             deviceId: deviceId,
             body: ["signed_transaction_jws": signedTransactionJWS]
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AppleVerifyResponse.self, from: data, endpoint: "/apple/verify")
     }
@@ -1374,14 +1419,14 @@ final class MinitiAPIService: @unchecked Sendable {
             deviceId: deviceId,
             body: ["callback_scheme": callbackScheme]
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(GoogleConnectStartResponse.self, from: data, endpoint: "/google/connect/start")
     }
 
     func googleStatus(deviceId: String) async throws -> GoogleStatusResponse {
         let request = makeRequest(path: "/google/status", deviceId: deviceId)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(GoogleStatusResponse.self, from: data, endpoint: "/google/status")
     }
@@ -1391,7 +1436,7 @@ final class MinitiAPIService: @unchecked Sendable {
         if let timeMin { path += "&time_min=\(timeMin)" }
         if let timeMax { path += "&time_max=\(timeMax)" }
         let request = makeRequest(path: path, deviceId: deviceId)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(GoogleEventsResponse.self, from: data, endpoint: "/google/events").events
     }
@@ -1402,7 +1447,7 @@ final class MinitiAPIService: @unchecked Sendable {
             method: "POST",
             deviceId: deviceId
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(GoogleDisconnectResponse.self, from: data, endpoint: "/google/disconnect")
     }
@@ -1417,14 +1462,14 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["callback_scheme": callbackScheme],
             timeoutInterval: 15
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioConnectStartResponse.self, from: data, endpoint: "/attio/connect/start")
     }
 
     func attioStatus(deviceId: String) async throws -> AttioStatusResponse {
         let request = makeRequest(path: "/attio/status", deviceId: deviceId, timeoutInterval: 10)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioStatusResponse.self, from: data, endpoint: "/attio/status")
     }
@@ -1437,7 +1482,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["query": query, "objects": objects],
             timeoutInterval: 15
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioSearchResponse.self, from: data, endpoint: "/attio/search").data
     }
@@ -1469,7 +1514,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: body,
             timeoutInterval: 30
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioSendResponse.self, from: data, endpoint: "/attio/send")
     }
@@ -1484,14 +1529,14 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["callback_scheme": callbackScheme],
             timeoutInterval: 15
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioConnectStartResponse.self, from: data, endpoint: "/twenty/connect/start")
     }
 
     func twentyStatus(deviceId: String) async throws -> AttioStatusResponse {
         let request = makeRequest(path: "/twenty/status", deviceId: deviceId, timeoutInterval: 10)
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioStatusResponse.self, from: data, endpoint: "/twenty/status")
     }
@@ -1504,7 +1549,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["query": query, "objects": objects],
             timeoutInterval: 15
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioSearchResponse.self, from: data, endpoint: "/twenty/search").data
     }
@@ -1534,7 +1579,7 @@ final class MinitiAPIService: @unchecked Sendable {
             body: body,
             timeoutInterval: 30
         )
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await send(request)
         try validateResponse(response, data: data)
         return try decode(AttioSendResponse.self, from: data, endpoint: "/twenty/send")
     }
@@ -1634,6 +1679,15 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.serverError("Access denied")
         case 429:
             throw ServiceError.rateLimited
+        case 401:
+            if let apiError = try? Self.decoder.decode(APIError.self, from: data),
+               ["installation_revoked", "device_auth_required"].contains(apiError.error) {
+                throw ServiceError.authRevoked
+            }
+            if let apiError = try? Self.decoder.decode(APIError.self, from: data) {
+                throw ServiceError.serverError(apiError.message ?? apiError.error)
+            }
+            throw ServiceError.serverError("HTTP 401")
         default:
             if let apiError = try? Self.decoder.decode(APIError.self, from: data) {
                 throw ServiceError.serverError(apiError.message ?? apiError.error)
@@ -1848,6 +1902,8 @@ struct ManagedInsightsResponse: Codable {
     let competition: String?
     let questions: [SuggestedQuestion]
     let docs: [DocPlaybookCard]
+    let templateID: String?
+    let templateSections: [String: String?]?
     let meta: ManagedInsightsMeta?
 
     enum CodingKeys: String, CodingKey {
@@ -1866,6 +1922,8 @@ struct ManagedInsightsResponse: Codable {
         case competition
         case questions
         case docs
+        case templateID = "template_id"
+        case templateSections = "template_sections"
         case meta
     }
 
@@ -1886,10 +1944,12 @@ struct ManagedInsightsResponse: Codable {
         competition = try container.decodeIfPresent(String.self, forKey: .competition)
         questions = try container.decodeIfPresent([SuggestedQuestion].self, forKey: .questions) ?? []
         docs = try container.decodeIfPresent([DocPlaybookCard].self, forKey: .docs) ?? []
+        templateID = try container.decodeIfPresent(String.self, forKey: .templateID)
+        templateSections = try container.decodeIfPresent([String: String?].self, forKey: .templateSections)
         meta = try container.decodeIfPresent(ManagedInsightsMeta.self, forKey: .meta)
     }
     
-    func toLiveInsights() -> InsightsService.LiveInsights {
+    func toLiveInsights(template: InsightTemplate? = nil) -> InsightsService.LiveInsights {
         InsightsService.LiveInsights(
             summary: summary,
             actionItems: actionItems,
@@ -1905,7 +1965,11 @@ struct ManagedInsightsResponse: Codable {
             champion: champion,
             competition: competition,
             questions: questions,
-            docs: docs
+            docs: docs,
+            templateID: templateID ?? template?.id,
+            templateSections: template.map {
+                InsightTemplateSections.normalize(templateSections ?? [:], for: $0)
+            } ?? [:]
         )
     }
 }

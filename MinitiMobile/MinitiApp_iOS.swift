@@ -78,6 +78,9 @@ struct MinitiMobileApp: App {
             Meeting.self,
             TranscriptSegment.self,
         ])
+        if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
+            return seeded
+        }
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         
         do {
