@@ -22,7 +22,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - improvement: (macOS and iOS) picking a specialist view mid-meeting fills it straight away instead of waiting for the next update
 - improvement: (macOS and iOS) a one-time card on Home reminds you to save your recovery key
 - improvement: App Store screenshots and the screens page on miniti.app are now captured from the real app every release
-- fix: (macOS and iOS) requests to Miniti's servers are now signed by your device instead of a key shared by every install
+- improvement: (macOS and iOS) every request to Miniti's servers is now signed by your device
 
 ### 2026-08-23 - v2.5.0
 
