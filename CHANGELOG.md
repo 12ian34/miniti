@@ -10,19 +10,20 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - While a release is still being prepared, its top entry may use `### Unreleased - vX.Y.Z`. Replace `Unreleased` with the ship date only when the release is actually going out.
 - Release headers contain only the date and version. Put platform availability in the relevant bullets, never in a parenthetical status suffix.
 - One flat bullet list per release, prefixed `new:`, `improvement:`, or `fix:`. No sub-headers such as "New features" or "Experience improvements"; the prefixes already say that.
+- Voice (Ian's, see `../gtm/enablement/ian-tone-of-voice.md`): short plain sentences that assume an intelligent reader. Lead each bullet with the thing itself, then one line on what it does for you. Specific numbers over "several" or "many". Simple verbs (is, has, does) over "enables", "enhances", "leverages". No em dashes, no "not X, it's Y" framing, no bold, no exclamation marks, no filler ("we're excited to"). Full stops between sentences inside a bullet; no full stop at the end of a bullet.
 
 ## Releases
 
 ### 2026-09-06 - v2.6.0
 
-- new: (Linux) Miniti for Linux, the full app on Linux: mic and system audio, live transcription with speakers, live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release
-- new: (macOS and iOS) Templates, a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Pick one from the More menu; it is saved with the meeting and included in exports and webhooks
-- new: (macOS and iOS) your account is now a recovery key that only you hold. No email, no password. Existing installs get one automatically; your plan, usage, and history are unchanged
-- new: (macOS and iOS) add another Mac, iPhone, or iPad with "Restore with recovery key" during setup or in Settings → Account & Plan, up to five devices. That section also lists your devices and lets you reveal or rotate the key, sign out, or delete the account
-- improvement: (macOS and iOS) picking a specialist view mid-meeting fills it straight away instead of waiting for the next update
-- improvement: (macOS and iOS) a one-time card on Home reminds you to save your recovery key
-- improvement: App Store screenshots and the screens page on miniti.app are now captured from the real app every release
-- improvement: (macOS and iOS) every request to Miniti's servers is now signed by your device
+- new: (Linux) Miniti for Linux. Mic and system audio through PipeWire, live transcription with speakers, the same live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release
+- new: (macOS and iOS) Templates. Pick BANT, SPIN, an interview scorecard, a customer check-in, a stand-up, or a 1:1 from the More menu and Miniti fills it in as the meeting goes. Saved with the meeting, included in exports and webhooks
+- new: (macOS and iOS) your account is a recovery key. No email, no password, nothing to sign up for. Existing installs get one on first launch and keep their plan, usage, and history
+- new: (macOS and iOS) up to 5 devices on one account. Restore with recovery key during setup or in Settings → Account & Plan. The same section lists your devices and lets you reveal or rotate the key, sign out, or delete the account
+- improvement: (macOS and iOS) pick a specialist view mid-meeting and it fills in straight away
+- improvement: (macOS and iOS) one card on Home asks you to save your recovery key. Confirm once and it goes away
+- improvement: App Store screenshots and the screens page on miniti.app are captured from the real app on every release
+- improvement: (macOS and iOS) every request to Miniti's servers is signed by your device
 
 ### 2026-08-23 - v2.5.0
 
