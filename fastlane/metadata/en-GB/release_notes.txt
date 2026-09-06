@@ -1,8 +1,11 @@
 NEW
 
-- Miniti can suggest enabling live Sales analysis when a conversation sounds like a sales call. Detection runs locally and can be turned off in Settings.
+- Templates: a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Saved with the meeting and included in exports.
+- Your account is now a recovery key that only you hold. No email, no password. Existing installs get one automatically; your plan and history are unchanged.
+- Add another iPhone, iPad, or Mac with "Restore with recovery key" in Settings → Account & Plan. Manage devices, reveal or rotate the key, sign out, or delete your account there.
 
 IMPROVED
 
-- Shared-microphone recordings keep cleaner speaker turns and neutral identity labels when several people are detected.
-- Reconnecting live transcription no longer discards inferred speaker names or your "mark as you" choices.
+- Picking a specialist view mid-meeting fills it straight away.
+- A one-time card on Home reminds you to save your recovery key.
+- Requests to Miniti's servers are now signed by your device.

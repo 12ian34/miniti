@@ -389,6 +389,7 @@ private struct SettingsDetailView_iOS: View {
                     }
                     .id("account.usage")
 
+                    ManagedAccountSettingsSection()
                 }
 
                 Section("Mode") {

@@ -313,6 +313,10 @@ enum SettingsSearchCatalog {
         .init("data.autoExport", "Auto-export Meetings as Markdown", section: "Markdown Export", destination: .dataExport, keywords: ["Obsidian", "AGENTS.md"], platforms: [.macOS]),
         .init("data.exportAll", "Export All Meetings", section: "Markdown Export", destination: .dataExport, keywords: ["backup", "markdown"], platforms: [.macOS]),
 
+        .init("account.recoveryKey", "Recovery Key", section: "Account", destination: .account, keywords: ["account", "restore", "backup", "another device", "sign in"]),
+        .init("account.devices", "Devices on This Account", section: "Account", destination: .account, keywords: ["remove device", "sign out", "linked"]),
+        .init("account.delete", "Delete Account", section: "Account", destination: .account, keywords: ["erase", "remove account", "privacy"]),
+
         .init("privacy.diagnostics", "Share Diagnostics", section: "Privacy", destination: .privacySupport, keywords: ["reliability", "errors", "telemetry"]),
         .init("privacy.version", "Version", section: "About", destination: .privacySupport, keywords: ["build", "update"]),
         .init("privacy.docs", "Miniti Docs", section: "Help", destination: .privacySupport, keywords: ["documentation", "learn"]),
@@ -533,6 +537,8 @@ final class AppState: ObservableObject {
         let meddpiccCompetition: String?
         let suggestedQuestions: [SuggestedQuestion]
         let docTopics: [DocTopic]
+        let insightTemplateID: String?
+        let templateSections: [String: String]
         let speakerNames: [String: String]
         let speakerOverrides: Set<String>
         let selfSpeakerIDs: Set<Int>
@@ -684,6 +690,10 @@ final class AppState: ObservableObject {
     @Published var liveCompetition: String? = nil
     // Questions
     @Published var liveQuestions: [SuggestedQuestion] = []
+    // Templates specialist view: the template in use for this meeting and its filled
+    // sections (section key -> text). `liveTemplateID` is nil until the view is enabled.
+    @Published var liveTemplateID: String? = nil
+    @Published var liveTemplateSections: [String: String] = [:]
     // Docs topics: an updating list of lookup-worthy subjects extracted from the
     // transcript. Each topic is looked up independently (auto for Pro/BYOK,
     // manual for managed-free), rather than one bulk fetch of the transcript.
@@ -732,6 +742,14 @@ final class AppState: ObservableObject {
     private let questionsInsightUpdateThreshold = 12
     private let questionsMinUpdateInterval: TimeInterval = 60
 
+    // MARK: - Template Tracking
+    private var lastTemplateSegmentCount = 0
+    private var lastTemplateRequestAt: Date? = nil
+    private let firstTemplateInsightThreshold = 6
+    private let templateInsightUpdateThreshold = 12
+    private let templateMinUpdateInterval: TimeInterval = 60
+    private var isGeneratingTemplateInsights = false
+
     // MARK: - Speaker Names Tracking
     private var lastSpeakerNamesSegmentCount = 0
     private var lastSpeakerNamesRequestAt: Date? = nil
@@ -761,9 +779,12 @@ final class AppState: ObservableObject {
     private var lastAppliedStandardSeq = -1
     private var lastAppliedMeddpiccSeq = -1
     private var lastAppliedQuestionsSeq = -1
+    private var templateRequestSeq = 0
+    private var lastAppliedTemplateSeq = -1
     private var standardSuccessCount = 0
     private var meddpiccSuccessCount = 0
     private var questionsSuccessCount = 0
+    private var templateSuccessCount = 0
     private var docsSuccessCount = 0
     private var docsRequestSeq = 0
     // Docs-topic extraction throttle (cadence-driven while docs tab is active).
@@ -780,13 +801,16 @@ final class AppState: ObservableObject {
     private var standardCadenceAnchor: Date?
     private var meddpiccCadenceAnchor: Date?
     private var questionsCadenceAnchor: Date?
+    private var templateCadenceAnchor: Date?
     private var standardLastAttemptAt: Date?
     private var meddpiccLastAttemptAt: Date?
     private var questionsLastAttemptAt: Date?
+    private var templateLastAttemptAt: Date?
     private var lastWarmupInsightsAttemptAt: Date?
     private var standardLastFiredSegmentCount = 0
     private var meddpiccLastFiredSegmentCount = 0
     private var questionsLastFiredSegmentCount = 0
+    private var templateLastFiredSegmentCount = 0
     private var insightsCadenceTask: Task<Void, Never>?
     private let standardCadencePolicy = LiveInsightCadencePolicy(
         minimumInterval: 60,
@@ -803,9 +827,15 @@ final class AppState: ObservableObject {
         minimumSegmentDelta: 6,
         maximumInterval: 120
     )
+    private let templateCadencePolicy = LiveInsightCadencePolicy(
+        minimumInterval: 90,
+        minimumSegmentDelta: 8,
+        maximumInterval: 180
+    )
     private let warmupInsightsRetryInterval: TimeInterval = 30
     private let meddpiccCadenceStagger: TimeInterval = 15
     private let questionsCadenceStagger: TimeInterval = 22
+    private let templateCadenceStagger: TimeInterval = 30
     
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
@@ -851,6 +881,17 @@ final class AppState: ObservableObject {
     
     // MARK: - Managed Mode State
     @Published var usageInfo: MinitiAPIService.UsageInfo?
+    // Device-bound authorization (managed mode). The account is an anonymous recovery key;
+    // see Miniti/Services/ClientAuth.swift. Screenshot mode fakes an enrolled state.
+    @Published var clientAuthStatus: ClientAuthStatus = ClientAuthManager.shared.status
+    @Published private(set) var isEnrollingManagedDevice = false
+    @Published private(set) var managedEnrollmentError: String?
+    /// Show the "save your recovery key" nudge: enrolled, key never acknowledged, not snoozed this launch.
+    @Published private(set) var showRecoveryKeyNotice = false
+    @Published private(set) var managedDevices: [ClientAuthDevice] = []
+    @Published private(set) var managedDevicesError: String?
+    private var recoveryKeyNoticeSnoozed = false
+    private var enrollmentTask: Task<Bool, Never>?
     @Published var isLoadingUsage = false
     @Published var managedSessionError: String?
     @Published var isDeviceDisabled = false
@@ -905,12 +946,40 @@ final class AppState: ObservableObject {
         #endif
     }
 
+    #if DEBUG
+    /// Screenshot mode: the seeded live meeting already "received" every kind of insight,
+    /// so the first-response warm-up placeholders must not render above the content.
+    func markAllInsightsReceivedForScreenshots() {
+        standardSuccessCount = 2
+        meddpiccSuccessCount = 2
+        questionsSuccessCount = 2
+        templateSuccessCount = 2
+    }
+    #endif
+
     /// True after first non-degraded standard insights response (for warmup placeholder).
     var hasReceivedStandardInsights: Bool { standardSuccessCount > 0 }
     /// True after first non-degraded MEDDPICC insights response (for warmup placeholder).
     var hasReceivedMeddpiccInsights: Bool { meddpiccSuccessCount > 0 }
     var hasReceivedQuestionsInsights: Bool { questionsSuccessCount > 0 }
     var hasReceivedDocsInsights: Bool { docsSuccessCount > 0 }
+    var hasReceivedTemplateInsights: Bool { templateSuccessCount > 0 }
+
+    /// The template the Templates view uses for new meetings (and the live one when set).
+    var selectedInsightTemplate: InsightTemplate {
+        InsightTemplate.builtIn(id: insightTemplateID)
+            ?? InsightTemplate.builtIn(id: InsightTemplate.defaultID)
+            ?? InsightTemplate.builtIn[0]
+    }
+
+    /// The template attached to the live meeting, falling back to the selected default.
+    var liveTemplate: InsightTemplate {
+        InsightTemplate.builtIn(id: liveTemplateID) ?? selectedInsightTemplate
+    }
+
+    var hasLiveTemplateContent: Bool {
+        !liveTemplate.orderedSections(from: liveTemplateSections).isEmpty
+    }
 
     /// Core views are always available. Specialist views become active only after a person
     /// explicitly chooses them; configuring a Docs MCP also opts Playbook in automatically.
@@ -926,6 +995,8 @@ final class AppState: ObservableObject {
             return salesInsightsEnabled
         case .docs:
             return playbookInsightsEnabled
+        case .template:
+            return templateInsightsEnabled
         }
     }
 
@@ -937,6 +1008,11 @@ final class AppState: ObservableObject {
             salesInsightsEnabled = enabled
         case .docs:
             playbookInsightsEnabled = enabled
+        case .template:
+            templateInsightsEnabled = enabled
+            if enabled, liveTemplateID == nil, currentMeeting != nil {
+                liveTemplateID = selectedInsightTemplate.id
+            }
         }
 
         if !enabled, insightsMode == mode {
@@ -1073,6 +1149,9 @@ final class AppState: ObservableObject {
     @AppStorage("webhookURL") var webhookURL: String = ""
     @AppStorage("salesInsightsEnabled") var salesInsightsEnabled: Bool = false
     @AppStorage("playbookInsightsEnabled") var playbookInsightsEnabled: Bool = false
+    @AppStorage("templateInsightsEnabled") var templateInsightsEnabled: Bool = false
+    /// Built-in template id used for new meetings once the Templates view is enabled.
+    @AppStorage("insightTemplateID") var insightTemplateID: String = InsightTemplate.defaultID
     @AppStorage("docsMCPURL") var docsMCPURL: String = "" {
         didSet {
             if validatedDocsMCPURL != nil {
@@ -1643,8 +1722,17 @@ final class AppState: ObservableObject {
         updateLogRedaction()
         pendingSessionEndReports = loadPendingSessionEndReports()
         pendingClientEvents = loadPendingClientEvents()
+
+        // Screenshot mode renders from seeded state and must stay offline: skip the
+        // launch-time network work and fill the published state the scene needs.
+        if ScreenshotMode.isActive {
+            ScreenshotMode.apply(to: self)
+            return
+        }
         
-        // Load usage info for managed mode
+        // Load usage info for managed mode. Enrollment (silent migration for existing
+        // installs, otherwise a fresh anonymous account) runs first because every managed
+        // request is device-bound.
         if appMode == .managed {
             isLoadingUsage = true
             Task {
@@ -2823,6 +2911,10 @@ final class AppState: ObservableObject {
     }
     
     private func updateAudioRecoveryState() {
+        if ScreenshotMode.isActive {
+            audioRecoveryState = .healthy
+            return
+        }
         guard isRecording else {
             pendingAudioRecoveryTransitionTask?.cancel()
             pendingAudioRecoveryTransitionTask = nil
@@ -3278,11 +3370,12 @@ final class AppState: ObservableObject {
         let standardWarmup = standardSuccessCount < 2 && finalCount >= 4
         let meddpiccWarmup = salesInsightsEnabled && meddpiccSuccessCount < 2 && finalCount >= 6
         let questionsWarmup = questionsSuccessCount < 2 && finalCount >= 6
+        let templateWarmup = templateInsightsEnabled && templateSuccessCount < 2 && finalCount >= 6
         let now = Date()
         let warmupRetryReady = lastWarmupInsightsAttemptAt.map {
             now.timeIntervalSince($0) >= warmupInsightsRetryInterval
         } ?? true
-        let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup)
+        let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup || templateWarmup)
             && finalCount > lastInsightSegmentCount
             && warmupRetryReady
         if shouldTrigger {
@@ -3400,6 +3493,30 @@ final class AppState: ObservableObject {
                         )
                     }
                 }
+                if templateInsightsEnabled, templateSuccessCount >= 2 {
+                    let anchor = templateCadenceAnchor
+                        ?? standardCadenceAnchor?.addingTimeInterval(templateCadenceStagger)
+                        ?? recordingStartDate
+                    if Self.shouldFireLiveInsightCadence(
+                        now: now,
+                        lastSuccessAt: anchor,
+                        lastAttemptAt: templateLastAttemptAt,
+                        lastSuccessfulSegmentCount: templateLastFiredSegmentCount,
+                        currentSegmentCount: finalCount,
+                        policy: templateCadencePolicy
+                    ) {
+                        templateLastAttemptAt = now
+                        let finalSegments = finalizedSegments()
+                        let transcript = transcriptText(from: finalSegments)
+                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
+                        await updateTemplateInBackground(
+                            transcript: transcript,
+                            finalSegments: finalSegments,
+                            segmentCount: finalCount,
+                            meetingID: meetingID
+                        )
+                    }
+                }
                 // Docs topics: only while the docs tab is active and an MCP URL is
                 // configured. Low cadence, own throttle. Extraction merges new
                 // topics and (for Pro/BYOK) auto-looks-them-up.
@@ -3440,6 +3557,7 @@ final class AppState: ObservableObject {
         standardCadenceAnchor = Date()
         meddpiccCadenceAnchor = Date()
         questionsCadenceAnchor = Date()
+        templateCadenceAnchor = Date()
     }
 
     private func updateLiveInsights(standardOnly: Bool = false) async {
@@ -3554,6 +3672,76 @@ final class AppState: ObservableObject {
             }
         }
 
+        let shouldRunTemplate: Bool = {
+            guard templateInsightsEnabled else { return false }
+            guard !isGeneratingTemplateInsights else { return false }
+            let meetsSegmentThreshold = segmentCount >= lastTemplateSegmentCount + (
+                lastTemplateSegmentCount == 0 ? firstTemplateInsightThreshold : templateInsightUpdateThreshold
+            )
+            let meetsTimeThreshold = lastTemplateRequestAt.map {
+                Date().timeIntervalSince($0) >= templateMinUpdateInterval
+            } ?? true
+            return meetsSegmentThreshold && meetsTimeThreshold
+        }()
+
+        if shouldRunTemplate {
+            Task {
+                await self.updateTemplateInBackground(
+                    transcript: transcript,
+                    finalSegments: finalSegments,
+                    segmentCount: segmentCount,
+                    meetingID: meetingIDAtRequest
+                )
+            }
+        }
+
+    }
+
+    /// Template sections run as their own background request, like Sales: they never block
+    /// standard insights, and a template chosen mid-meeting can fill straight away.
+    private func updateTemplateInBackground(
+        transcript: String,
+        finalSegments: [LiveSegment],
+        segmentCount: Int,
+        meetingID: UUID
+    ) async {
+        guard templateInsightsEnabled else { return }
+        guard !isGeneratingTemplateInsights else { return }
+        guard currentMeeting?.id == meetingID else { return }
+        templateLastAttemptAt = Date()
+        isGeneratingTemplateInsights = true
+        defer { isGeneratingTemplateInsights = false }
+
+        let template = liveTemplate
+        if liveTemplateID == nil { liveTemplateID = template.id }
+
+        if let templateResult = await fetchLiveInsights(
+            mode: .template,
+            transcript: transcript,
+            finalSegments: finalSegments,
+            existingSummary: nil,
+            existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix
+        ) {
+            guard currentMeeting?.id == meetingID, liveTemplateID == template.id else {
+                DebugLogger.shared.log(.app, "Dropping stale template insights response (meeting or template changed)")
+                return
+            }
+            let isDegraded = templateResult.meta?.degraded ?? false
+            if !isDegraded {
+                if let seq = templateResult.meta?.requestSeq {
+                    lastAppliedTemplateSeq = seq
+                }
+                templateCadenceAnchor = Date()
+                templateLastFiredSegmentCount = segmentCount
+                lastTemplateRequestAt = Date()
+                applyInsights(templateResult.insights, segmentCount: segmentCount, mode: .template)
+                lastTemplateSegmentCount = segmentCount
+                templateSuccessCount += 1
+                DebugLogger.shared.log(.app, "Live template applied: template=\(template.id), sections=\(liveTemplateSections.count), segmentCount=\(segmentCount)")
+            } else {
+                DebugLogger.shared.log(.app, "Template insights degraded — not advancing cursor")
+            }
+        }
     }
     
     private func updateMeddpiccInBackground(
@@ -4475,6 +4663,11 @@ final class AppState: ObservableObject {
         existingTitle: String?
     ) async -> LiveInsightsFetchResult? {
         let model = OpenAIModel.gpt5Mini
+        // Template requests carry their definition and, after the first fill, the current
+        // sections as a stability baseline (the backend's lightweight incremental mode).
+        let requestTemplate: InsightTemplate? = mode == .template ? liveTemplate : nil
+        let requestPreviousTemplateSections: [String: String]? =
+            mode == .template && templateSuccessCount > 0 && !liveTemplateSections.isEmpty ? liveTemplateSections : nil
         
         do {
             let insights: InsightsService.LiveInsights
@@ -4501,6 +4694,10 @@ final class AppState: ObservableObject {
                     questionsRequestSeq += 1
                     seq = questionsRequestSeq
                     lastApplied = lastAppliedQuestionsSeq
+                case .template:
+                    templateRequestSeq += 1
+                    seq = templateRequestSeq
+                    lastApplied = lastAppliedTemplateSeq
                 case .training, .docs:
                     seq = 0
                     lastApplied = -1
@@ -4536,14 +4733,16 @@ final class AppState: ObservableObject {
                         incrementalPayload: requestPlan.incrementalPayload,
                         requestSeq: seq,
                         language: meetingLanguage,
-                        attendees: attendeesPayload
+                        attendees: attendeesPayload,
+                        template: requestTemplate,
+                        previousTemplateSections: requestPreviousTemplateSections
                     )
                 }
                 if let responseSeq = response.meta?.requestSeq, responseSeq < lastApplied {
                     DebugLogger.shared.log(.app, "Dropping stale insights response: mode=\(mode.rawValue), responseSeq=\(responseSeq) < lastApplied=\(lastApplied)")
                     return nil
                 }
-                insights = response.toLiveInsights()
+                insights = response.toLiveInsights(template: requestTemplate)
                 return LiveInsightsFetchResult(
                     insights: insights,
                     usedIncrementalPayload: usedIncrementalPayload,
@@ -4559,7 +4758,9 @@ final class AppState: ObservableObject {
                     transcript: requestPlan.transcriptForRequest, existingSummary: existingSummary,
                     existingTitle: existingTitle, mode: mode,
                     model: model, apiKey: openaiApiKey, language: meetingLanguage,
-                    incrementalPayload: requestPlan.incrementalPayload
+                    incrementalPayload: requestPlan.incrementalPayload,
+                    template: requestTemplate,
+                    previousTemplateSections: requestPreviousTemplateSections
                 )
                 return LiveInsightsFetchResult(
                     insights: insights,
@@ -4599,7 +4800,7 @@ final class AppState: ObservableObject {
             case .standard: return standardSuccessCount
             case .meddpicc: return meddpiccSuccessCount
             case .questions: return questionsSuccessCount
-            case .training, .docs: return 0
+            case .training, .docs, .template: return 0
             }
         }()
         if successCount < 2 {
@@ -4615,7 +4816,7 @@ final class AppState: ObservableObject {
             case .standard: return min(managedStandardAckedSegmentCount, finalSegments.count)
             case .meddpicc: return min(managedMeddpiccAckedSegmentCount, finalSegments.count)
             case .questions: return min(managedQuestionsAckedSegmentCount, finalSegments.count)
-            case .training, .docs: return 0
+            case .training, .docs, .template: return 0
             }
         }()
         let deltaSegments = Array(finalSegments.dropFirst(ackedSegmentCount))
@@ -4642,7 +4843,7 @@ final class AppState: ObservableObject {
                 return !lastMeddpiccSummaryContext.isEmpty || hasMeddpiccFields
             case .questions:
                 return !liveQuestions.isEmpty
-            case .training, .docs:
+            case .training, .docs, .template:
                 return false
             }
         }()
@@ -4726,7 +4927,7 @@ final class AppState: ObservableObject {
                     )
                 }
             )
-        case .training, .docs:
+        case .training, .docs, .template:
             return ManagedInsightsRequestPlan(
                 transcriptForRequest: fullTranscript,
                 incrementalPayload: nil,
@@ -5000,7 +5201,7 @@ final class AppState: ObservableObject {
             managedMeddpiccAckedSegmentCount = max(managedMeddpiccAckedSegmentCount, segmentCount)
         case .questions:
             managedQuestionsAckedSegmentCount = max(managedQuestionsAckedSegmentCount, segmentCount)
-        case .training, .docs:
+        case .training, .docs, .template:
             return
         }
 
@@ -5023,17 +5224,23 @@ final class AppState: ObservableObject {
         standardSuccessCount = 0
         meddpiccSuccessCount = 0
         questionsSuccessCount = 0
+        templateSuccessCount = 0
         docsSuccessCount = 0
+        templateRequestSeq = 0
+        lastAppliedTemplateSeq = -1
         standardCadenceAnchor = nil
         meddpiccCadenceAnchor = nil
         questionsCadenceAnchor = nil
+        templateCadenceAnchor = nil
         standardLastAttemptAt = nil
         meddpiccLastAttemptAt = nil
         questionsLastAttemptAt = nil
+        templateLastAttemptAt = nil
         lastWarmupInsightsAttemptAt = nil
         standardLastFiredSegmentCount = 0
         meddpiccLastFiredSegmentCount = 0
         questionsLastFiredSegmentCount = 0
+        templateLastFiredSegmentCount = 0
     }
 
     private func restoreManagedIncrementalTracking(finalCount: Int) {
@@ -5061,6 +5268,14 @@ final class AppState: ObservableObject {
             if !insights.questions.isEmpty {
                 liveQuestions = insights.questions
                 notifyNewHighPriorityQuestions(insights.questions)
+            }
+        } else if mode == .template {
+            if let templateID = insights.templateID, templateID == liveTemplateID {
+                // A fresh fill replaces the previous sections: the model already received them
+                // as the baseline, so anything dropped was contradicted or resolved.
+                if !insights.templateSections.isEmpty {
+                    liveTemplateSections = insights.templateSections
+                }
             }
         } else {
             if !insights.summary.isEmpty { liveSummary = insights.summary }
@@ -5189,6 +5404,8 @@ final class AppState: ObservableObject {
         liveChampion = nil
         liveCompetition = nil
         liveQuestions = []
+        liveTemplateSections = [:]
+        liveTemplateID = templateInsightsEnabled ? selectedInsightTemplate.id : nil
         liveDocTopics = []
         liveSpeakerNames = [:]
         liveSpeakerOverrides = []
@@ -5203,6 +5420,8 @@ final class AppState: ObservableObject {
         lastMEDDPICCRequestAt = nil
         lastQuestionsSegmentCount = 0
         lastQuestionsRequestAt = nil
+        lastTemplateSegmentCount = 0
+        lastTemplateRequestAt = nil
         lastSpeakerNamesSegmentCount = 0
         lastSpeakerNamesRequestAt = nil
         resetManagedIncrementalTracking()
@@ -5346,6 +5565,8 @@ final class AppState: ObservableObject {
                 training: training,
                 questions: liveQuestions,
                 docs: liveDocTopics.compactMap { $0.card },
+                template: InsightTemplate.builtIn(id: liveTemplateID),
+                templateSections: liveTemplateSections,
                 calendarEventId: meeting.calendarEventId,
                 attendees: meeting.attendees
             )
@@ -5588,6 +5809,41 @@ final class AppState: ObservableObject {
             }
         }
 
+        if requestedMode == .template {
+            let template = InsightTemplate.builtIn(id: meeting.insightTemplateID) ?? selectedInsightTemplate
+            let baseline = meeting.insightTemplateID == template.id ? meeting.templateSections : [:]
+            do {
+                let templateInsights: InsightsService.LiveInsights
+                if appMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: nil, existingTitle: nil,
+                        mode: InsightsMode.template.rawValue, model: model.rawValue,
+                        language: language,
+                        template: template,
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                    )
+                    templateInsights = response.toLiveInsights(template: template)
+                } else {
+                    templateInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcript, existingSummary: nil,
+                        existingTitle: nil, mode: .template,
+                        model: model, apiKey: openaiApiKey, language: language,
+                        template: template,
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                    )
+                }
+                guard !isMeetingDeleted(meetingID) else { return }
+                meeting.insightTemplateID = template.id
+                meeting.templateSections = templateInsights.templateSections
+                markInsightsUpdated(.template, meeting: meeting)
+            } catch {
+                DebugLogger.shared.log(.app, "History insights FAILED (template): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("insights_history_template_failed", category: .insights, level: .warning)
+            }
+        }
+
         guard !isMeetingDeleted(meetingID) else { return }
         try? modelContext?.save()
 
@@ -5755,6 +6011,7 @@ final class AppState: ObservableObject {
     /// Restore an interrupted meeting (endTime == nil) from SwiftData on launch.
     /// Sets currentMeeting and rebuilds in-memory state so the UI shows the stopped-session view.
     func resumeInterruptedMeeting() {
+        guard !ScreenshotMode.isActive else { return }
         guard let modelContext else { return }
         guard currentMeeting == nil, !isRecording else { return }
         
@@ -5810,6 +6067,8 @@ final class AppState: ObservableObject {
         liveChampion = interrupted.meddpiccChampion
         liveCompetition = interrupted.meddpiccCompetition
         liveQuestions = interrupted.suggestedQuestions
+        liveTemplateID = interrupted.insightTemplateID ?? (templateInsightsEnabled ? selectedInsightTemplate.id : nil)
+        liveTemplateSections = interrupted.templateSections
         liveDocTopics = interrupted.docTopics
         liveSpeakerNames = interrupted.speakerNames
         liveSpeakerOverrides = interrupted.speakerOverrides
@@ -5817,6 +6076,8 @@ final class AppState: ObservableObject {
 
         if salesInsightsEnabled, interrupted.hasMEDDPICC {
             insightsMode = .meddpicc
+        } else if templateInsightsEnabled, interrupted.hasTemplateInsights {
+            insightsMode = .template
         }
         
         // Restore duration from last segment timestamp (actual recorded duration, not wall clock)
@@ -5925,6 +6186,9 @@ final class AppState: ObservableObject {
         if mode == .training {
             scheduleTrainingMetricsRecompute()
         }
+        if mode == .template {
+            requestTemplateFillIfNeeded()
+        }
         // Populate the docs-topic list on first visit to the tab so it's ready
         // without waiting for the next cadence tick. Auto-lookup (Pro/BYOK) then
         // follows from the merge inside refreshDocsTopics.
@@ -5933,6 +6197,67 @@ final class AppState: ObservableObject {
         }
     }
     
+    /// Choose the template for the live meeting (and as the default for new meetings), enable
+    /// the Templates view, and show it. Changing the template mid-meeting discards the previous
+    /// template's sections and fills the new one from the transcript so far.
+    func selectInsightTemplate(_ id: String) {
+        guard let template = InsightTemplate.builtIn(id: id) else { return }
+        insightTemplateID = template.id
+        let changed = liveTemplateID != template.id
+        if changed {
+            liveTemplateID = template.id
+            liveTemplateSections = [:]
+            lastTemplateSegmentCount = 0
+            lastTemplateRequestAt = nil
+            templateSuccessCount = 0
+            templateCadenceAnchor = nil
+            templateLastFiredSegmentCount = 0
+        }
+        switchInsightsMode(to: .template)
+    }
+
+    /// Choose the template for a saved meeting and fill it straight away. Picking a template is
+    /// an explicit request for its notes, so this does not wait for a second tap on "update".
+    func selectInsightTemplate(_ id: String, for meeting: Meeting) async {
+        guard let template = InsightTemplate.builtIn(id: id) else { return }
+        insightTemplateID = template.id
+        setInsightModeEnabled(.template, enabled: true)
+        insightsMode = .template
+        if meeting.insightTemplateID != template.id {
+            meeting.insightTemplateID = template.id
+            meeting.templateSections = [:]
+            try? modelContext?.save()
+        }
+        if currentMeeting?.id == meeting.id {
+            liveTemplateID = template.id
+            liveTemplateSections = meeting.templateSections
+        }
+        guard !meeting.hasTemplateInsights, !meeting.segments.isEmpty else { return }
+        await generateInsightsForMeeting(meeting)
+    }
+
+    /// Fill the live template as soon as it is chosen, rather than waiting for the next
+    /// cadence tick, when there is enough transcript to fill from.
+    private func requestTemplateFillIfNeeded() {
+        guard isRecording, templateInsightsEnabled, !isGeneratingTemplateInsights else { return }
+        guard !hasLiveTemplateContent else { return }
+        let finalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        guard finalSegments.count >= firstTemplateInsightThreshold else { return }
+        let transcript = transcriptText(from: finalSegments)
+        guard !transcript.isEmpty, let meetingID = currentMeeting?.id else { return }
+        if liveTemplateID == nil { liveTemplateID = selectedInsightTemplate.id }
+        Task { @MainActor in
+            await updateTemplateInBackground(
+                transcript: transcript,
+                finalSegments: finalSegments,
+                segmentCount: finalSegments.count,
+                meetingID: meetingID
+            )
+        }
+    }
+
     /// Recompute training metrics from current live segments
     func recomputeTrainingMetrics() {
         trainingMetricsTask?.cancel()
@@ -6048,6 +6373,8 @@ final class AppState: ObservableObject {
             hasher.combine(question.context)
             hasher.combine(question.priority)
         }
+        hasher.combine(liveTemplateID)
+        hasher.combine(liveTemplateSections)
         if let topicsData = try? JSONEncoder().encode(liveDocTopics) {
             hasher.combine(topicsData)
         }
@@ -6091,6 +6418,8 @@ final class AppState: ObservableObject {
             meddpiccCompetition: liveCompetition,
             suggestedQuestions: liveQuestions,
             docTopics: liveDocTopics,
+            insightTemplateID: liveTemplateID,
+            templateSections: liveTemplateSections,
             speakerNames: liveSpeakerNames,
             speakerOverrides: liveSpeakerOverrides,
             selfSpeakerIDs: liveSelfSpeakerIDs
@@ -6246,6 +6575,10 @@ final class AppState: ObservableObject {
         payload.meeting.meddpiccCompetition = payload.meddpiccCompetition
         payload.meeting.suggestedQuestions = payload.suggestedQuestions
         payload.meeting.docTopics = payload.docTopics
+        if let templateID = payload.insightTemplateID {
+            payload.meeting.insightTemplateID = templateID
+        }
+        payload.meeting.templateSections = payload.templateSections
         payload.meeting.speakerNames = payload.speakerNames
         payload.meeting.speakerOverrides = payload.speakerOverrides
         payload.meeting.selfSpeakerIDs = payload.selfSpeakerIDs
@@ -6364,6 +6697,7 @@ final class AppState: ObservableObject {
     // MARK: - Audio Monitoring (home screen pre-flight check)
     
     func startAudioMonitoring() {
+        guard !ScreenshotMode.isActive else { return }
         guard let audioCaptureService else { return }
         guard !isRecording else { return }
         
@@ -6559,6 +6893,13 @@ final class AppState: ObservableObject {
             isResumingRecording = false
             return
         }
+        guard await ensureManagedEnrollment(trigger: "start") else {
+            recordingErrorMessage = managedEnrollmentError
+                ?? "Miniti could not set up this device for managed mode. Check your connection and try again."
+            isStartingMeeting = false
+            isResumingRecording = false
+            return
+        }
 
         let obtained = await refreshManagedDeepgramCredential(trigger: "start")
         guard obtained else { return }
@@ -6620,6 +6961,8 @@ final class AppState: ObservableObject {
     /// Always requests a new managed session JWT from the backend.
     @discardableResult
     private func refreshManagedDeepgramCredential(trigger: String) async -> Bool {
+        // Screenshot scenes are seeded and offline; never surface a session error there.
+        guard !ScreenshotMode.isActive else { return true }
         guard appMode == .managed else { return true }
         guard let minitiAPIService else {
             managedSessionError = "Service not available"
@@ -6817,6 +7160,7 @@ final class AppState: ObservableObject {
                     let finalLanguage = meetingLanguage
                     let finalTitleContext = currentTitleSuffix
                     let shouldGenerateSales = salesInsightsEnabled
+                    let finalTemplate: InsightTemplate? = templateInsightsEnabled ? liveTemplate : nil
 
                     // From here on, insight generation is scoped to the saved Meeting rather than
                     // the live session. This lets the user return home and record another meeting
@@ -6829,7 +7173,8 @@ final class AppState: ObservableObject {
                         transcript: finalTranscript,
                         language: finalLanguage,
                         existingTitle: finalTitleContext,
-                        includeSales: shouldGenerateSales
+                        includeSales: shouldGenerateSales,
+                        template: finalTemplate
                     )
                     finalizingInsightMeetingIDs.remove(meetingIDAtStop)
                     if currentMeeting?.id == meetingIDAtStop, !isRecording {
@@ -7043,7 +7388,8 @@ final class AppState: ObservableObject {
         transcript: String,
         language: String,
         existingTitle: String,
-        includeSales: Bool
+        includeSales: Bool,
+        template: InsightTemplate? = nil
     ) async {
         let meetingIDAtRequest = meeting.id
         let transcriptRevisionAtRequest = meeting.transcriptRevision
@@ -7205,6 +7551,62 @@ final class AppState: ObservableObject {
             }
         }
         
+        // Template sections are specialist functionality too: only when the person enabled
+        // the Templates view for this meeting.
+        if let template {
+            do {
+                guard isFinalInsightsRequestStillCurrent() else {
+                    DebugLogger.shared.log(.app, "Skipping final template insights request (meeting changed/resumed/segments advanced)")
+                    return
+                }
+
+                DebugLogger.shared.log(.app, "Generating final template insights: \(template.id)")
+                let templateInsights: InsightsService.LiveInsights
+                let baseline = meeting.insightTemplateID == template.id ? meeting.templateSections : [:]
+
+                if requestAppMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId, transcript: transcript,
+                        existingSummary: nil, existingTitle: existingTitle,
+                        mode: InsightsMode.template.rawValue, model: model.rawValue,
+                        language: language,
+                        template: template,
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                    )
+                    templateInsights = response.toLiveInsights(template: template)
+                } else {
+                    templateInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcript, existingSummary: nil,
+                        existingTitle: existingTitle, mode: .template,
+                        model: model, apiKey: requestAPIKey, language: language,
+                        template: template,
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                    )
+                }
+
+                guard isFinalInsightsRequestStillCurrent() else {
+                    DebugLogger.shared.log(.app, "Dropping stale final template insights response")
+                    return
+                }
+
+                meeting.insightTemplateID = template.id
+                if !templateInsights.templateSections.isEmpty {
+                    meeting.templateSections = templateInsights.templateSections
+                }
+                markInsightsUpdated(.template, meeting: meeting)
+                if currentMeeting?.id == meetingIDAtRequest, liveTemplateID == template.id,
+                   !templateInsights.templateSections.isEmpty {
+                    liveTemplateSections = templateInsights.templateSections
+                }
+                try? modelContext?.save()
+                DebugLogger.shared.log(.app, "Final insights complete (template): sections=\(templateInsights.templateSections.count)")
+            } catch {
+                DebugLogger.shared.log(.app, "Final insights FAILED (template): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("insights_final_template_failed", category: .insights, level: .warning)
+            }
+        }
+
         // Questions complete as part of the meeting-scoped background work.
         do {
             let questionsInsights: InsightsService.LiveInsights
@@ -7293,6 +7695,13 @@ final class AppState: ObservableObject {
                 )
             } else if requestedMode == .questions {
                 await updateQuestionsInBackground(
+                    transcript: transcript,
+                    finalSegments: finalSegments,
+                    segmentCount: finalSegments.count,
+                    meetingID: meetingID
+                )
+            } else if requestedMode == .template, templateInsightsEnabled {
+                await updateTemplateInBackground(
                     transcript: transcript,
                     finalSegments: finalSegments,
                     segmentCount: finalSegments.count,
@@ -7413,6 +7822,46 @@ final class AppState: ObservableObject {
                 liveCompetition = meddpiccInsights.competition
                 lastMeddpiccSummaryContext = meddpiccInsights.summary
                 markInsightsUpdated(.meddpicc, meeting: meeting)
+            } else if requestedMode == .template {
+                let template = liveTemplate
+                if liveTemplateID == nil { liveTemplateID = template.id }
+                let baseline = liveTemplateSections.isEmpty ? nil : liveTemplateSections
+                let templateInsights: InsightsService.LiveInsights
+
+                if appMode == .managed, minitiAPIService != nil {
+                    let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                    let response = try await generateManagedInsightsWithRetry(
+                        deviceId: deviceId,
+                        transcript: transcriptForRequest,
+                        existingSummary: nil,
+                        existingTitle: nil,
+                        mode: InsightsMode.template.rawValue,
+                        model: model.rawValue,
+                        language: meetingLanguage,
+                        template: template,
+                        previousTemplateSections: baseline
+                    )
+                    templateInsights = response.toLiveInsights(template: template)
+                } else {
+                    templateInsights = try await insightsService!.generateLiveInsights(
+                        transcript: transcriptForRequest,
+                        existingSummary: nil,
+                        existingTitle: nil,
+                        mode: .template,
+                        model: model,
+                        apiKey: openaiApiKey,
+                        language: meetingLanguage,
+                        template: template,
+                        previousTemplateSections: baseline
+                    )
+                }
+
+                if !templateInsights.templateSections.isEmpty {
+                    liveTemplateSections = templateInsights.templateSections
+                }
+                meeting.insightTemplateID = template.id
+                meeting.templateSections = liveTemplateSections
+                markInsightsUpdated(.template, meeting: meeting)
             } else if appMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 let response = try await minitiAPIService.generateInsights(
@@ -7478,7 +7927,9 @@ final class AppState: ObservableObject {
         requestSeq: Int? = nil,
         maxAttempts: Int = 2,
         language: String = "en",
-        attendees: [[String: String]]? = nil
+        attendees: [[String: String]]? = nil,
+        template: InsightTemplate? = nil,
+        previousTemplateSections: [String: String]? = nil
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
             throw MinitiAPIService.ServiceError.invalidResponse
@@ -7501,7 +7952,9 @@ final class AppState: ObservableObject {
                     incrementalPayload: incrementalPayload,
                     requestSeq: requestSeq,
                     language: language,
-                    attendees: attendees
+                    attendees: attendees,
+                    template: template,
+                    previousTemplateSections: previousTemplateSections
                 )
             } catch {
                 let shouldRetry = attempt < maxAttempts && Self.isTransientInsightsError(error)
@@ -7801,6 +8254,7 @@ final class AppState: ObservableObject {
     /// Check if a newer version is available. Runs on launch for all modes.
     /// Also sends device ID and current mode so the backend can track BYOK devices.
     func checkForUpdates() async {
+        guard !ScreenshotMode.isActive else { return }
         guard let minitiAPIService else { return }
         
         do {
@@ -7884,6 +8338,7 @@ final class AppState: ObservableObject {
     }
     
     func refreshGoogleCalendarStatus() async {
+        guard !ScreenshotMode.isActive else { return }
         guard googleCalendarEnabled, let minitiAPIService else {
             applyGoogleCalendarDisconnectedState()
             return
@@ -7923,6 +8378,7 @@ final class AppState: ObservableObject {
     }
     
     func startCalendarRefreshTimer() {
+        guard !ScreenshotMode.isActive else { return }
         calendarRefreshTimer?.invalidate()
         guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
         calendarRefreshTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -7947,6 +8403,7 @@ final class AppState: ObservableObject {
     // MARK: - Auto-start from Calendar
     
     func startAutoStartMonitoring() {
+        guard !ScreenshotMode.isActive else { return }
         autoStartCheckTimer?.invalidate()
         guard (autoStartFromCalendar || smartMeetingsEnabled),
               googleCalendarEnabled,
@@ -8328,6 +8785,13 @@ final class AppState: ObservableObject {
     
     /// Fetch latest usage info from backend. Call on launch, mode switch, and after sessions.
     func refreshUsage() async {
+        guard !ScreenshotMode.isActive else { return }
+        if appMode == .managed {
+            guard await ensureManagedEnrollment(trigger: "usage") else {
+                isLoadingUsage = false
+                return
+            }
+        }
         guard appMode == .managed, let minitiAPIService else { return }
         
         isLoadingUsage = true
@@ -8436,6 +8900,187 @@ final class AppState: ObservableObject {
     #endif
     
     /// Restore a subscription using a Polar license key.
+    // MARK: - Device-bound authorization (managed account)
+
+    func refreshClientAuthStatus() {
+        let status = ClientAuthManager.shared.status
+        clientAuthStatus = status
+        showRecoveryKeyNotice = status.isEnrolled && !status.recoveryKeyAcknowledged && !recoveryKeyNoticeSnoozed
+    }
+
+    /// Screenshot mode: derive the nudge from the faked status rather than the Keychain.
+    func refreshClientAuthStatusForScreenshots() {
+        showRecoveryKeyNotice = clientAuthStatus.isEnrolled && !clientAuthStatus.recoveryKeyAcknowledged
+    }
+
+    /// Make sure this installation holds device-bound credentials before a managed request.
+    /// Existing installations migrate silently (their device record predates the backend
+    /// cutoff); anything else gets a fresh anonymous account. Failures are retried on the
+    /// next managed action rather than surfaced as a gate, since managed features need the
+    /// network anyway. Concurrent callers share one attempt.
+    /// Unit tests construct `AppState` inside the app host; they must never enroll a real
+    /// device or create accounts on the production backend.
+    nonisolated static let isRunningUnderXCTest: Bool =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
+        || NSClassFromString("XCTestCase") != nil
+
+    @discardableResult
+    func ensureManagedEnrollment(trigger: String) async -> Bool {
+        guard !ScreenshotMode.isActive else { return true }
+        guard !Self.isRunningUnderXCTest else { return false }
+        guard appMode == .managed else { return false }
+        if ClientAuthManager.shared.isEnrolled {
+            if !clientAuthStatus.isEnrolled { refreshClientAuthStatus() }
+            return true
+        }
+        if let enrollmentTask { return await enrollmentTask.value }
+        let task = Task<Bool, Never> { @MainActor [weak self] in
+            guard let self else { return false }
+            defer { self.enrollmentTask = nil }
+            return await self.performManagedEnrollment(trigger: trigger)
+        }
+        enrollmentTask = task
+        return await task.value
+    }
+
+    private func performManagedEnrollment(trigger: String) async -> Bool {
+        isEnrollingManagedDevice = true
+        defer { isEnrollingManagedDevice = false }
+        let manager = ClientAuthManager.shared
+        let label = Self.managedDeviceLabel
+        do {
+            try await manager.migrateLegacyDevice(label: label)
+            managedEnrollmentError = nil
+            DebugLogger.shared.log(.app, "Managed enrollment: migrated existing device (trigger=\(trigger))")
+            enqueueDiagnosticEvent("client_auth_migrated", category: .app, level: .info)
+        } catch ClientAuthError.notEligibleForMigration {
+            do {
+                try await manager.createAccount(label: label)
+                managedEnrollmentError = nil
+                DebugLogger.shared.log(.app, "Managed enrollment: created anonymous account (trigger=\(trigger))")
+                enqueueDiagnosticEvent("client_auth_created", category: .app, level: .info)
+            } catch {
+                managedEnrollmentError = error.localizedDescription
+                DebugLogger.shared.log(.app, "Managed enrollment FAILED (create, trigger=\(trigger)): \(error.localizedDescription)")
+                enqueueDiagnosticEvent("client_auth_enrollment_failed", category: .app, level: .warning, details: ["path": "create"])
+            }
+        } catch ClientAuthError.alreadyEnrolled {
+            managedEnrollmentError = nil
+        } catch {
+            managedEnrollmentError = error.localizedDescription
+            DebugLogger.shared.log(.app, "Managed enrollment FAILED (migrate, trigger=\(trigger)): \(error.localizedDescription)")
+            enqueueDiagnosticEvent("client_auth_enrollment_failed", category: .app, level: .warning, details: ["path": "migrate"])
+        }
+        refreshClientAuthStatus()
+        return manager.isEnrolled
+    }
+
+    /// Short, non-identifying label shown in the device list ("MacBook Pro", "iPhone").
+    nonisolated static var managedDeviceLabel: String {
+        #if os(iOS)
+        return "iPhone or iPad"
+        #else
+        return "Mac"
+        #endif
+    }
+
+    /// Attach this installation to an existing account with its recovery key.
+    func restoreManagedAccount(recoveryKey: String) async -> Bool {
+        guard !ScreenshotMode.isActive else { return true }
+        managedEnrollmentError = nil
+        isEnrollingManagedDevice = true
+        defer { isEnrollingManagedDevice = false }
+        let manager = ClientAuthManager.shared
+        do {
+            if manager.isEnrolled { try await manager.signOut() }
+            manager.discardDraft()
+            try await manager.restoreAccount(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
+            refreshClientAuthStatus()
+            if appMode == .managed { await refreshUsage() }
+            return true
+        } catch {
+            managedEnrollmentError = error.localizedDescription
+            refreshClientAuthStatus()
+            return false
+        }
+    }
+
+    func revealRecoveryKey() -> String? {
+        ClientAuthManager.shared.revealRecoveryKey()
+    }
+
+    /// The person confirmed the key is saved (or chose to stop being reminded).
+    func acknowledgeRecoveryKey() {
+        ClientAuthManager.shared.markRecoveryKeyAcknowledged()
+        refreshClientAuthStatus()
+    }
+
+    /// Hide the nudge until the next launch.
+    func snoozeRecoveryKeyNotice() {
+        recoveryKeyNoticeSnoozed = true
+        refreshClientAuthStatus()
+    }
+
+    func rotateManagedRecoveryKey() async -> String? {
+        do {
+            let key = try await ClientAuthManager.shared.rotateRecoveryKey()
+            refreshClientAuthStatus()
+            return key
+        } catch {
+            managedEnrollmentError = error.localizedDescription
+            refreshClientAuthStatus()
+            return nil
+        }
+    }
+
+    func loadManagedDevices() async {
+        guard clientAuthStatus.isEnrolled, !ScreenshotMode.isActive else { return }
+        do {
+            let list = try await ClientAuthManager.shared.listDevices()
+            managedDevices = list.devices
+            managedDevicesError = nil
+        } catch {
+            managedDevicesError = error.localizedDescription
+            refreshClientAuthStatus()
+        }
+    }
+
+    func removeManagedDevice(installationID: String) async -> Bool {
+        do {
+            try await ClientAuthManager.shared.removeDevice(installationID: installationID)
+            refreshClientAuthStatus()
+            if clientAuthStatus.isEnrolled { await loadManagedDevices() } else { managedDevices = [] }
+            return true
+        } catch {
+            managedDevicesError = error.localizedDescription
+            refreshClientAuthStatus()
+            return false
+        }
+    }
+
+    func signOutManagedDevice() async {
+        try? await ClientAuthManager.shared.signOut()
+        managedDevices = []
+        usageInfo = nil
+        refreshClientAuthStatus()
+    }
+
+    /// Delete the anonymous account. Revokes every device; subscriptions are untouched.
+    func deleteManagedAccount() async -> Bool {
+        do {
+            try await ClientAuthManager.shared.deleteAccount()
+            managedDevices = []
+            usageInfo = nil
+            refreshClientAuthStatus()
+            return true
+        } catch {
+            managedEnrollmentError = error.localizedDescription
+            refreshClientAuthStatus()
+            return false
+        }
+    }
+
     func restoreSubscription(licenseKey: String) async -> Bool {
         guard let minitiAPIService else { return false }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
@@ -8533,6 +9178,7 @@ final class AppState: ObservableObject {
     /// On launch, if we have no session but Live Activities exist, the app was killed while recording.
     /// End those orphaned activities and inform the user.
     func cleanupOrphanedLiveActivities() async {
+        guard !ScreenshotMode.isActive else { return }
         let activities = Activity<RecordingActivityAttributes>.activities
         guard !activities.isEmpty else { return }
         guard currentMeeting == nil, !isRecording else { return }
@@ -8710,6 +9356,11 @@ final class AppState: ObservableObject {
                     md += "**\(label):** \(value)\n\n"
                 }
             }
+        }
+
+        // Template sections if available (always included, like MEDDPICC)
+        if let template = InsightTemplate.builtIn(id: liveTemplateID) {
+            md += InsightTemplateSections.markdown(template: template, sections: liveTemplateSections)
         }
 
         return md.trimmingCharacters(in: .whitespacesAndNewlines)

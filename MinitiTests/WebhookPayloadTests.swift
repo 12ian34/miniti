@@ -536,4 +536,86 @@ final class WebhookPayloadTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(payload.meeting.docs?[0].topic, "SSO")
         XCTAssertEqual(payload.meeting.docs?[0].citations.first?.url, "https://docs.lightdash.com/sso")
     }
+
+    func testPayloadFromLiveStateWithTemplate() throws {
+        let template = try XCTUnwrap(InsightTemplate.builtIn(id: "standup"))
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Test",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 120,
+            summary: "Test",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil,
+            economicBuyer: nil,
+            decisionCriteria: nil,
+            decisionProcess: nil,
+            paperProcess: nil,
+            identifiedPain: nil,
+            champion: nil,
+            competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil,
+            template: template,
+            templateSections: ["blockers": "Design review", "done": "Importer shipped", "ghost": "dropped"]
+        )
+        let data = try XCTUnwrap(payload.meeting.template)
+        XCTAssertEqual(data.id, "standup")
+        XCTAssertEqual(data.name, "Stand-up")
+        XCTAssertEqual(data.sections.map(\.key), ["done", "blockers"], "template order, unknown keys dropped")
+        XCTAssertEqual(data.sections.first?.value, "Importer shipped")
+
+        let encoded = try JSONEncoder().encode(payload)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+        XCTAssertTrue(json.contains("\"template\""))
+        XCTAssertTrue(json.contains("\"key\":\"done\""))
+    }
+
+    func testPayloadOmitsTemplateWhenNothingFilled() {
+        let payload = WebhookService.payloadFromLiveState(
+            meetingID: UUID(),
+            title: "Test",
+            startTime: Date(),
+            endTime: nil,
+            durationSeconds: 120,
+            summary: "Test",
+            actionItems: [],
+            keyDecisions: [],
+            topics: [],
+            discussionFlow: [],
+            notes: "",
+            metrics: nil,
+            economicBuyer: nil,
+            decisionCriteria: nil,
+            decisionProcess: nil,
+            paperProcess: nil,
+            identifiedPain: nil,
+            champion: nil,
+            competition: nil,
+            speakerCount: 1,
+            transcript: [],
+            training: nil,
+            template: InsightTemplate.builtIn(id: "bant"),
+            templateSections: [:]
+        )
+        XCTAssertNil(payload.meeting.template)
+    }
+
+    @MainActor
+    func testPayloadFromMeetingWithTemplate() throws {
+        let meeting = Meeting(title: "Weekly stand-up", endTime: Date())
+        meeting.insightTemplateID = "standup"
+        meeting.templateSections = ["next": "Ship the fix"]
+        context.insert(meeting)
+
+        let payload = WebhookService.payloadFromMeeting(meeting)
+        XCTAssertEqual(payload.meeting.template?.id, "standup")
+        XCTAssertEqual(payload.meeting.template?.sections.map(\.value), ["Ship the fix"])
+    }
 }

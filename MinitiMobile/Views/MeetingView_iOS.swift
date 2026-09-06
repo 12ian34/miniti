@@ -5,7 +5,7 @@ import UIKit
 struct MeetingView_iOS: View {
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
-    @State private var activeSection: MeetingSection = .transcript
+    @State private var activeSection: MeetingSection = ScreenshotMode.current?.wantsInsightsSection == true ? .insights : .transcript
     @State private var showDiscardConfirmation = false
     @State private var isResumingRecording = false
     @State private var showSavedOverlay = false
@@ -65,6 +65,9 @@ struct MeetingView_iOS: View {
                 for (label, value) in meddpiccFields {
                     if let value, !value.isEmpty { md += "**\(label):** \(value)\n\n" }
                 }
+            }
+            if let template = InsightTemplate.builtIn(id: appState.liveTemplateID) {
+                md += InsightTemplateSections.markdown(template: template, sections: appState.liveTemplateSections, headingLevel: 2)
             }
             if !appState.liveNotes.isEmpty { md += "## Notes\n\n\(appState.liveNotes)\n" }
             return md.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -523,7 +526,8 @@ struct MeetingView_iOS: View {
                 InsightsModeTabs_iOS(
                     selection: appState.insightsMode,
                     updatedAt: appState.lastInsightsUpdatedAt[appState.insightsMode],
-                    onSelect: appState.switchInsightsMode
+                    onSelect: appState.switchInsightsMode,
+                    template: appState.liveTemplate
                 )
                 .padding(.horizontal)
                 
@@ -764,6 +768,11 @@ struct ReadyStateView_iOS: View {
                     BYOKStatusPills()
                 }
 
+                // Recovery key nudge (managed account created or migrated, key not yet saved)
+                if appState.appMode == .managed && appState.showRecoveryKeyNotice {
+                    RecoveryKeyNudgeCard()
+                }
+
                 // Calendar integration nudge
                 if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
                     CalendarNudgeCard_iOS()
@@ -969,6 +978,27 @@ struct InsightsModeTabs_iOS: View {
     let selection: InsightsMode
     let updatedAt: Date?
     let onSelect: (InsightsMode) -> Void
+    /// The template this surface shows (the saved meeting's own, or the live one).
+    var template: InsightTemplate? = nil
+    /// Where a template pick goes. Nil selects for the live meeting and the default.
+    var onSelectTemplate: ((String) -> Void)? = nil
+
+    private var activeTemplate: InsightTemplate {
+        template ?? appState.liveTemplate
+    }
+
+    private var specialistLabel: String {
+        guard selection.isSpecialist else { return "More" }
+        return selection == .template ? activeTemplate.shortName : selection.displayName
+    }
+
+    private func selectTemplate(_ id: String) {
+        if let onSelectTemplate {
+            onSelectTemplate(id)
+        } else {
+            appState.selectInsightTemplate(id)
+        }
+    }
 
     var body: some View {
         VStack(alignment: .trailing, spacing: MinitiDesignSystem.Spacing.small) {
@@ -1014,6 +1044,11 @@ struct InsightsModeTabs_iOS: View {
             Section("Specialist views") {
                 specialistButton(.meddpicc)
 
+                InsightTemplateMenu(
+                    activeTemplateID: selection == .template ? activeTemplate.id : nil,
+                    onSelect: selectTemplate
+                )
+
                 if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
                     specialistButton(.docs)
                 } else {
@@ -1025,13 +1060,21 @@ struct InsightsModeTabs_iOS: View {
                 }
             }
 
-            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled {
+            if appState.salesInsightsEnabled || appState.playbookInsightsEnabled || appState.templateInsightsEnabled {
                 Section("Enabled specialist views") {
                     if appState.salesInsightsEnabled {
                         Button {
                             appState.setInsightModeEnabled(.meddpicc, enabled: false)
                         } label: {
                             Label("Turn Off Sales Insights", systemImage: "eye.slash")
+                        }
+                    }
+
+                    if appState.templateInsightsEnabled {
+                        Button {
+                            appState.setInsightModeEnabled(.template, enabled: false)
+                        } label: {
+                            Label("Turn Off Template Notes", systemImage: "eye.slash")
                         }
                     }
 
@@ -1046,7 +1089,7 @@ struct InsightsModeTabs_iOS: View {
             }
         } label: {
             MinitiTabLabel(
-                title: selection.isSpecialist ? selection.displayName : "More",
+                title: specialistLabel,
                 isSelected: selection.isSpecialist,
                 height: 44,
                 fillsAvailableWidth: true
@@ -1054,8 +1097,8 @@ struct InsightsModeTabs_iOS: View {
         }
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
-        .accessibilityLabel(selection.isSpecialist ? "Specialist view: \(selection.displayName), selected" : "More insight views")
-        .accessibilityHint("Choose Sales or Playbook")
+        .accessibilityLabel(selection.isSpecialist ? "Specialist view: \(selection == .template ? activeTemplate.name : selection.displayName), selected" : "More insight views")
+        .accessibilityHint("Choose Sales, a template, or Playbook")
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {

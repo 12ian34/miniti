@@ -139,7 +139,14 @@ fastlane ios submit version:X.Y.Z build:N
 
 The first command uploads the binary and metadata. Wait for Apple to process the build, then the second command attaches that exact build, submits it for review, and enables automatic release after approval.
 
-Before submission, confirm the release already has current review info and screenshots in App Store Connect. Screenshots remain managed manually in ASC, not via Fastlane.
+Before submission, confirm the release already has current review info and screenshots in App Store Connect. When the UI changed, regenerate the screenshots from the real app rather than editing them by hand:
+
+```sh
+scripts/screenshots/all.sh          # build, capture iPhone + iPad + Mac, render fastlane/screenshots/en-US
+fastlane ios screenshots            # upload after eyeballing every PNG
+```
+
+See [scripts/screenshots/README.md](scripts/screenshots/README.md). The macOS cards under `scripts/screenshots/out/framed/` are for the website and social posts.
 
 ### 9. Publish customer-facing sources, commit + tag + push
 

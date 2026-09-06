@@ -530,6 +530,11 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
 
+            // Recovery key nudge (managed account created or migrated, key not yet saved)
+            if appState.appMode == .managed && appState.showRecoveryKeyNotice {
+                RecoveryKeyNudgeCard()
+            }
+
             // Calendar integration nudge
             if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
                 CalendarNudgeCard()
@@ -1851,6 +1856,26 @@ struct LiveInsightsPanel: View {
                         }
                     )
                     .padding(.horizontal, 16)
+                } else if appState.insightsMode == .template {
+                    InsightTemplateCaption(template: appState.liveTemplate)
+                        .padding(.horizontal, 16)
+
+                    if appState.isGeneratingInsights {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("filling \(appState.liveTemplate.name.lowercased())…")
+                                .font(.system(size: 11, weight: .medium, design: .default))
+                                .foregroundStyle(Color(hex: "58A6FF"))
+                        }
+                        .padding(.horizontal, 16)
+                    }
+
+                    LiveTemplateSections()
+
+                    if !appState.hasLiveTemplateContent && !appState.isGeneratingInsights {
+                        LiveInsightsEmptyState()
+                    }
                 } else if appState.insightsMode == .meddpicc {
                     if appState.isGeneratingInsights {
                         HStack(spacing: 8) {
@@ -1985,6 +2010,20 @@ struct LiveMEDDPICCSections: View {
     }
 }
 
+struct LiveTemplateSections: View {
+    @EnvironmentObject var appState: AppState
+    @Environment(\.interfaceScale) private var interfaceScale
+
+    var body: some View {
+        InsightTemplateSectionList(template: appState.liveTemplate, sections: appState.liveTemplateSections) { title, color, value in
+            LiveInsightSection(title: title, color: color) {
+                MEDDPICCBulletText(value, fontSize: interfaceScale.insightBodySize)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
 private struct LiveInsightsEmptyState: View {
     @EnvironmentObject var appState: AppState
 
@@ -2025,6 +2064,7 @@ private struct LiveInsightsEmptyState: View {
         case .training: return "◇"
         case .questions: return "?"
         case .docs: return "◇"
+        case .template: return "◇"
         }
     }
 
@@ -2035,6 +2075,7 @@ private struct LiveInsightsEmptyState: View {
         case .training: return "waiting for speech..."
         case .questions: return "listening..."
         case .docs: return "finding topics..."
+        case .template: return "listening..."
         }
     }
 
@@ -2045,6 +2086,7 @@ private struct LiveInsightsEmptyState: View {
         case .training: return "speech metrics update\nas you speak"
         case .questions: return "questions appear once there's\nenough to find gaps"
         case .docs: return "topics appear as you talk,\ngrounded in your docs"
+        case .template: return "\(appState.liveTemplate.name.lowercased()) notes appear\nonce there's enough context"
         }
     }
 }

@@ -348,6 +348,27 @@ struct ColorPalette {
         }
     }
     
+    // MARK: - Template Section Colors
+    /// Colors for the Templates specialist view. Sections take colors in order, so
+    /// a template's first section is always blue, its second lavender, and so on —
+    /// stable across live, saved, macOS, and iOS.
+    struct Templates {
+        static let sectionColors: [Color] = [
+            Accent.blue,
+            Color(hex: "A78BFA"),
+            Accent.pink,
+            Accent.amber,
+            Accent.green,
+            Color(hex: "818CF8"),
+            Color(hex: "F97316"),
+            Accent.cyan,
+        ]
+
+        static func color(forSectionAt index: Int) -> Color {
+            sectionColors[((index % sectionColors.count) + sectionColors.count) % sectionColors.count]
+        }
+    }
+
     // MARK: - Insight Section Colors
     struct Insights {
         static let summary = Accent.blueGitHub          // Summary section

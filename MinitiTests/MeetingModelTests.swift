@@ -1,5 +1,6 @@
 import XCTest
 import SwiftData
+import SwiftUI
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -10,6 +11,17 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
 
     private var container: ModelContainer!
     private var context: ModelContext!
+
+    /// Regression: the sidebar highlighter used to index the original string with ranges
+    /// taken from its lowercased copy, which crashed when lowercasing changed the length.
+    @MainActor
+    func testHighlightedTextSurvivesLengthChangingCase() {
+        for text in ["İstanbul sync", "STRASSE ẞ review", "plain meeting", "İİİ"] {
+            for query in ["i", "meeting", "İ", "ss", "zzz"] {
+                _ = highlightedText(text, query: query, baseColor: .primary, highlightColor: .green, font: .body)
+            }
+        }
+    }
 
     override func setUp() {
         super.setUp()
@@ -115,6 +127,45 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
         let meeting = Meeting(title: "test", meddpiccMetrics: "  ")
         context.insert(meeting)
         XCTAssertFalse(meeting.hasMEDDPICC)
+    }
+
+    // MARK: - Meeting.templateSections
+
+    @MainActor
+    func testTemplateSectionsPersistAndClearOnTranscriptEdit() {
+        let meeting = Meeting(title: "test", summaryText: "A call")
+        context.insert(meeting)
+        XCTAssertFalse(meeting.hasTemplateInsights)
+        XCTAssertNil(meeting.insightTemplate)
+
+        meeting.insightTemplateID = "bant"
+        meeting.templateSections = ["budget": "$40k approved", "unknown": "ignored at render time"]
+        XCTAssertEqual(meeting.insightTemplate?.id, "bant")
+        XCTAssertTrue(meeting.hasTemplateInsights)
+        XCTAssertEqual(meeting.templateSections["budget"], "$40k approved")
+        XCTAssertTrue(meeting.hasGeneratedInsights)
+
+        let md = meeting.insightsAsMarkdown()
+        XCTAssertTrue(md.contains("### BANT qualification"))
+        XCTAssertTrue(md.contains("**Budget:** $40k approved"))
+        XCTAssertFalse(md.contains("ignored at render time"))
+
+        meeting.markTranscriptEdited()
+        XCTAssertFalse(meeting.hasTemplateInsights)
+        XCTAssertNil(meeting.templateSectionsJSON)
+        XCTAssertEqual(meeting.insightTemplateID, "bant", "the chosen template survives a trim; only its notes are cleared")
+        XCTAssertTrue(meeting.needsInsightsAfterTranscriptEdit)
+    }
+
+    @MainActor
+    func testTemplateSectionsWithUnknownTemplateAreNotInsights() {
+        let meeting = Meeting(title: "test")
+        context.insert(meeting)
+        meeting.insightTemplateID = "retired-template"
+        meeting.templateSections = ["anything": "value"]
+        XCTAssertFalse(meeting.hasTemplateInsights)
+        XCTAssertFalse(meeting.hasGeneratedInsights)
+        XCTAssertFalse(meeting.insightsAsMarkdown().contains("anything"))
     }
 
     // MARK: - Meeting.duration & formattedDuration

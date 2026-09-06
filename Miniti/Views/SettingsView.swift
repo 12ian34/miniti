@@ -345,6 +345,8 @@ struct AccountSettingsView: View {
                     }
                 }
                 .id("account.usage")
+
+                ManagedAccountSettingsSection()
             }
 
             if appState.appMode == .byok {

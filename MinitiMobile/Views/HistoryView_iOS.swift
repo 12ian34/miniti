@@ -6,6 +6,9 @@ struct HistoryView_iOS: View {
     @EnvironmentObject private var appState: AppState
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var searchText = ""
+    /// Programmatic detail route. Rows still push their own detail views; screenshot
+    /// mode uses this to land on a seeded meeting without a tap.
+    @State private var detailPath: [UUID] = ScreenshotMode.current?.opensSavedMeeting == true ? [ScreenshotMode.savedMeetingID] : []
     
     private var searchResults: [MeetingSearchResult] {
         MeetingSearchResult.search(query: searchText, in: Array(meetings))
@@ -70,7 +73,7 @@ struct HistoryView_iOS: View {
     }
     
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $detailPath) {
             Group {
                 if filteredMeetings.isEmpty {
                     emptyState
@@ -83,6 +86,13 @@ struct HistoryView_iOS: View {
             .navigationTitle("History")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search meetings...")
+            .navigationDestination(for: UUID.self) { meetingID in
+                if let meeting = meetings.first(where: { $0.id == meetingID }) {
+                    MeetingDetail_iOS(meeting: meeting)
+                } else {
+                    ContentUnavailableView("Meeting unavailable", systemImage: "clock.badge.questionmark")
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
@@ -271,7 +281,7 @@ struct MeetingDetail_iOS: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.interfaceScale) private var interfaceScale
     @EnvironmentObject var appState: AppState
-    @State private var activeSection: DetailSection = .transcript
+    @State private var activeSection: DetailSection = ScreenshotMode.current?.opensSavedMeeting == true ? .insights : .transcript
     @State private var renamingSpeaker: Int? = nil
 
     enum DetailSection: String, CaseIterable {
@@ -341,6 +351,9 @@ struct MeetingDetail_iOS: View {
             for (label, value) in meddpiccFields {
                 if let value, !value.isEmpty { md += "**\(label):** \(value)\n\n" }
             }
+        }
+        if let template = meeting.insightTemplate {
+            md += InsightTemplateSections.markdown(template: template, sections: meeting.templateSections, headingLevel: 2)
         }
         if !meeting.notes.isEmpty { md += "## Notes\n\n\(meeting.notes)\n" }
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -560,7 +573,11 @@ struct MeetingDetail_iOS: View {
                 InsightsModeTabs_iOS(
                     selection: appState.insightsMode,
                     updatedAt: meeting.insightsUpdatedAt,
-                    onSelect: appState.switchInsightsMode
+                    onSelect: appState.switchInsightsMode,
+                    template: meeting.insightTemplate ?? appState.selectedInsightTemplate,
+                    onSelectTemplate: { id in
+                        Task { @MainActor in await appState.selectInsightTemplate(id, for: meeting) }
+                    }
                 )
                 
                 if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
@@ -578,6 +595,8 @@ struct MeetingDetail_iOS: View {
                     historicalQuestionsContent
                 case .docs:
                     historicalDocsContent
+                case .template:
+                    historicalTemplateContent
                 }
             }
             .padding()
@@ -669,6 +688,26 @@ struct MeetingDetail_iOS: View {
         }
     }
     
+    private var historicalTemplateContent: some View {
+        let template = meeting.insightTemplate ?? appState.selectedInsightTemplate
+        return Group {
+            InsightTemplateCaption(template: template, fontSize: 11)
+            if meeting.hasTemplateInsights {
+                SavedTemplateContent(meeting: meeting)
+            } else if !meeting.segments.isEmpty {
+                historicalEmptyState(
+                    title: "no \(template.name.lowercased()) notes yet",
+                    subtitle: "use update above"
+                )
+            } else {
+                historicalEmptyState(
+                    title: "no transcript",
+                    subtitle: "record a session to fill this template"
+                )
+            }
+        }
+    }
+
     private var historicalQuestionsContent: some View {
         Group {
             if meeting.hasQuestions {
@@ -728,6 +767,10 @@ struct MeetingDetail_iOS: View {
                             .foregroundStyle(ColorPalette.Text.muted)
                     } else if appState.insightsMode == .questions && !meeting.hasQuestions {
                         Text("questions")
+                            .font(.system(size: 10, weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    } else if appState.insightsMode == .template && !meeting.hasTemplateInsights {
+                        Text((meeting.insightTemplate ?? appState.selectedInsightTemplate).shortName.lowercased())
                             .font(.system(size: 10, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
@@ -816,6 +859,22 @@ struct MeetingDetail_iOS: View {
 
 // MARK: - Collapsed Segment
 
+
+// MARK: - Saved Template Content (reads from Meeting model)
+
+struct SavedTemplateContent: View {
+    let meeting: Meeting
+
+    var body: some View {
+        if let template = meeting.insightTemplate {
+            InsightTemplateSectionList(template: template, sections: meeting.templateSections) { title, color, value in
+                HistoricalDetailBlock_iOS(title: title, color: color) {
+                    MEDDPICCBulletText(value, fontSize: 13)
+                }
+            }
+        }
+    }
+}
 
 // MARK: - Saved MEDDPICC Content (reads from Meeting model)
 

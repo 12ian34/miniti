@@ -15,6 +15,8 @@ enum InsightsMode: String, CaseIterable, Codable, Hashable {
     case training = "training"
     case questions = "questions"
     case docs = "docs"
+    /// Structured notes filled from a chosen `InsightTemplate` (BANT, interview, stand-up, ...).
+    case template = "template"
     
     var displayName: String {
         switch self {
@@ -23,6 +25,7 @@ enum InsightsMode: String, CaseIterable, Codable, Hashable {
         case .training: return "Coaching"
         case .questions: return "Questions"
         case .docs: return "Playbook"
+        case .template: return "Template"
         }
     }
     
@@ -33,11 +36,12 @@ enum InsightsMode: String, CaseIterable, Codable, Hashable {
         case .training: return "Talk ratio, pace, and speech patterns"
         case .questions: return "Suggested questions to ask"
         case .docs: return "Answers from connected docs"
+        case .template: return "Structured notes from a template"
         }
     }
 
     static let coreModes: [InsightsMode] = [.standard, .questions, .training]
-    static let specialistModes: [InsightsMode] = [.meddpicc, .docs]
+    static let specialistModes: [InsightsMode] = [.meddpicc, .template, .docs]
 
     var isSpecialist: Bool {
         Self.specialistModes.contains(self)
@@ -50,6 +54,7 @@ enum InsightsMode: String, CaseIterable, Codable, Hashable {
         case .training: return "waveform.path.ecg"
         case .questions: return "questionmark.bubble"
         case .docs: return "book.closed"
+        case .template: return "list.bullet.rectangle"
         }
     }
 }
@@ -1250,6 +1255,9 @@ final class InsightsService: Sendable {
         let questions: [SuggestedQuestion]
         // Docs playbook (optional, only populated in docs mode)
         let docs: [DocPlaybookCard]
+        // Template sections (optional, only populated in template mode): section key -> text
+        let templateID: String?
+        let templateSections: [String: String]
 
         init(
             summary: String,
@@ -1266,7 +1274,9 @@ final class InsightsService: Sendable {
             champion: String?,
             competition: String?,
             questions: [SuggestedQuestion],
-            docs: [DocPlaybookCard] = []
+            docs: [DocPlaybookCard] = [],
+            templateID: String? = nil,
+            templateSections: [String: String] = [:]
         ) {
             self.summary = summary
             self.actionItems = actionItems
@@ -1283,6 +1293,8 @@ final class InsightsService: Sendable {
             self.competition = competition
             self.questions = questions
             self.docs = docs
+            self.templateID = templateID
+            self.templateSections = templateSections
         }
     }
     
@@ -1295,7 +1307,9 @@ final class InsightsService: Sendable {
         model: OpenAIModel = .gpt5Mini,
         apiKey: String,
         language: String = "en",
-        incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil
+        incrementalPayload: MinitiAPIService.IncrementalInsightsPayload? = nil,
+        template: InsightTemplate? = nil,
+        previousTemplateSections: [String: String]? = nil
     ) async throws -> LiveInsights {
         guard !transcript.isEmpty else {
             throw InsightsError.emptyTranscript
@@ -1585,6 +1599,19 @@ final class InsightsService: Sendable {
         case .docs:
             // Docs mode uses generateDocsPlaybook(chunks:) — not this path.
             throw InsightsError.invalidResponse
+
+        case .template:
+            guard let template else {
+                throw InsightsError.invalidResponse
+            }
+            systemPrompt = InsightTemplatePrompt.systemPrompt
+            maxCompletionTokens = 10000
+            prompt = InsightTemplatePrompt.userPrompt(
+                template: template,
+                previousSections: previousTemplateSections,
+                languageInstruction: languageInstruction,
+                transcript: transcript
+            )
         }
         
         let requestBody = OpenAIRequest(
@@ -1658,7 +1685,11 @@ final class InsightsService: Sendable {
             champion: insightsResponse.champion,
             competition: insightsResponse.competition,
             questions: insightsResponse.questions,
-            docs: insightsResponse.docs
+            docs: insightsResponse.docs,
+            templateID: template?.id,
+            templateSections: template.map {
+                InsightTemplateSections.normalize(insightsResponse.templateSections ?? [:], for: $0)
+            } ?? [:]
         )
     }
 
@@ -2383,6 +2414,8 @@ struct LiveInsightsResponse: Codable {
     let questions: [SuggestedQuestion]
     // Docs playbook
     let docs: [DocPlaybookCard]
+    // Template sections (`sections` from the model; value may be JSON null)
+    let templateSections: [String: String?]?
     
     enum CodingKeys: String, CodingKey {
         case summary
@@ -2400,10 +2433,12 @@ struct LiveInsightsResponse: Codable {
         case competition
         case questions
         case docs
+        case templateSections = "sections"
     }
     
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        templateSections = try container.decodeIfPresent([String: String?].self, forKey: .templateSections)
         summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
         actionItems = try container.decodeIfPresent([String].self, forKey: .actionItems) ?? []
         topics = try container.decodeIfPresent([String].self, forKey: .topics) ?? []

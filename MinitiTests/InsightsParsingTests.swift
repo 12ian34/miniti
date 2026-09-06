@@ -261,6 +261,7 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.training.displayName, "Coaching")
         XCTAssertEqual(InsightsMode.questions.displayName, "Questions")
         XCTAssertEqual(InsightsMode.docs.displayName, "Playbook")
+        XCTAssertEqual(InsightsMode.template.displayName, "Template")
     }
 
     func testInsightsModeDescriptions() {
@@ -269,14 +270,16 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.training.description, "Talk ratio, pace, and speech patterns")
         XCTAssertEqual(InsightsMode.questions.description, "Suggested questions to ask")
         XCTAssertEqual(InsightsMode.docs.description, "Answers from connected docs")
+        XCTAssertEqual(InsightsMode.template.description, "Structured notes from a template")
     }
 
     func testInsightsModeProgressiveDisclosureGroups() {
         XCTAssertEqual(InsightsMode.coreModes, [.standard, .questions, .training])
-        XCTAssertEqual(InsightsMode.specialistModes, [.meddpicc, .docs])
+        XCTAssertEqual(InsightsMode.specialistModes, [.meddpicc, .template, .docs])
         XCTAssertFalse(InsightsMode.standard.isSpecialist)
         XCTAssertTrue(InsightsMode.meddpicc.isSpecialist)
         XCTAssertTrue(InsightsMode.docs.isSpecialist)
+        XCTAssertTrue(InsightsMode.template.isSpecialist)
     }
 
     func testInsightsModeRawValues() {
@@ -285,10 +288,115 @@ final class InsightsParsingTests: XCTestCase {
         XCTAssertEqual(InsightsMode.training.rawValue, "training")
         XCTAssertEqual(InsightsMode.questions.rawValue, "questions")
         XCTAssertEqual(InsightsMode.docs.rawValue, "docs")
+        XCTAssertEqual(InsightsMode.template.rawValue, "template")
     }
 
     func testInsightsModeAllCases() {
-        XCTAssertEqual(InsightsMode.allCases.count, 5)
+        XCTAssertEqual(InsightsMode.allCases.count, 6)
+    }
+
+    // MARK: - Insight templates
+
+    func testBuiltInTemplatesRespectBackendLimits() {
+        XCTAssertFalse(InsightTemplate.builtIn.isEmpty)
+        XCTAssertNotNil(InsightTemplate.builtIn(id: InsightTemplate.defaultID))
+        XCTAssertEqual(Set(InsightTemplate.builtIn.map(\.id)).count, InsightTemplate.builtIn.count, "template ids must be unique")
+        let keyPattern = try! NSRegularExpression(pattern: "^[a-z][a-z0-9_]{0,31}$")
+        for template in InsightTemplate.builtIn {
+            XCTAssertLessThanOrEqual(template.sections.count, InsightTemplate.maxSections, template.id)
+            XCTAssertFalse(template.sections.isEmpty, template.id)
+            XCTAssertLessThanOrEqual(template.name.count, InsightTemplate.maxNameLength, template.id)
+            XCTAssertEqual(Set(template.sections.map(\.key)).count, template.sections.count, "\(template.id) keys must be unique")
+            for section in template.sections {
+                let range = NSRange(section.key.startIndex..., in: section.key)
+                XCTAssertNotNil(keyPattern.firstMatch(in: section.key, range: range), "\(template.id).\(section.key) key shape")
+                XCTAssertLessThanOrEqual(section.title.count, InsightTemplate.maxTitleLength, "\(template.id).\(section.key) title")
+                XCTAssertLessThanOrEqual(section.guidance.count, InsightTemplate.maxGuidanceLength, "\(template.id).\(section.key) guidance")
+            }
+        }
+    }
+
+    func testTemplateSectionsNormalizeDropsUnknownKeysAndPlaceholders() throws {
+        let template = try XCTUnwrap(InsightTemplate.builtIn(id: "bant"))
+        let raw: [String: String?] = [
+            "budget": "- $40k approved\n• CFO sign-off above $20k",
+            "authority": "null",
+            "need": "   ",
+            "timeline": nil,
+            "unknown_key": "should be dropped",
+        ]
+        let normalized = InsightTemplateSections.normalize(raw, for: template)
+        XCTAssertEqual(normalized, ["budget": "$40k approved\nCFO sign-off above $20k"])
+        XCTAssertEqual(template.orderedSections(from: normalized).map(\.section.key), ["budget"])
+    }
+
+    func testTemplateSectionsRoundTripAndMarkdown() throws {
+        let template = try XCTUnwrap(InsightTemplate.builtIn(id: "standup"))
+        let sections = ["done": "Shipped the importer", "blockers": "Waiting on design review"]
+        let encoded = try XCTUnwrap(InsightTemplateSections.encode(sections))
+        XCTAssertEqual(InsightTemplateSections.decode(encoded), sections)
+        XCTAssertNil(InsightTemplateSections.encode([:]))
+        XCTAssertEqual(InsightTemplateSections.decode(nil), [:])
+
+        let md = InsightTemplateSections.markdown(template: template, sections: sections)
+        XCTAssertTrue(md.hasPrefix("### Stand-up"))
+        XCTAssertTrue(md.contains("**Done:** Shipped the importer"))
+        XCTAssertTrue(md.contains("**Blockers:** Waiting on design review"))
+        // Template order, not dictionary order.
+        XCTAssertLessThan(try XCTUnwrap(md.range(of: "**Done:**")).lowerBound, try XCTUnwrap(md.range(of: "**Blockers:**")).lowerBound)
+        XCTAssertEqual(InsightTemplateSections.markdown(template: template, sections: [:]), "")
+    }
+
+    func testTemplatePromptListsEverySectionAndBaseline() throws {
+        let template = try XCTUnwrap(InsightTemplate.builtIn(id: "interview"))
+        let prompt = InsightTemplatePrompt.userPrompt(
+            template: template,
+            previousSections: ["strengths": "Clear communicator"],
+            languageInstruction: "",
+            transcript: "[You] Tell me about a project you led."
+        )
+        for section in template.sections {
+            XCTAssertTrue(prompt.contains("- \(section.key) — \(section.title)"), section.key)
+            XCTAssertTrue(prompt.contains("\"\(section.key)\": \"Point one"), section.key)
+        }
+        XCTAssertTrue(prompt.contains("Previous sections"))
+        XCTAssertTrue(prompt.contains("Clear communicator"))
+        XCTAssertTrue(prompt.contains("Interview scorecard"))
+        XCTAssertTrue(prompt.contains("Latest transcript:"))
+
+        let fresh = InsightTemplatePrompt.userPrompt(template: template, previousSections: nil, languageInstruction: "", transcript: "x")
+        XCTAssertTrue(fresh.contains("This is the start of the meeting"))
+        XCTAssertFalse(fresh.contains("Previous sections"))
+    }
+
+    func testLiveInsightsResponseDecodesTemplateSections() throws {
+        let json = """
+        {"sections": {"budget": "Point one\\nPoint two", "authority": null, "extra": "ignored"}}
+        """
+        let response = try JSONDecoder().decode(LiveInsightsResponse.self, from: Data(json.utf8))
+        let sections = try XCTUnwrap(response.templateSections)
+        XCTAssertEqual(sections["budget"] ?? nil, "Point one\nPoint two")
+        XCTAssertEqual(sections.keys.contains("authority"), true)
+        XCTAssertNil(sections["authority"] ?? nil)
+        XCTAssertEqual(response.summary, "")
+        XCTAssertTrue(response.questions.isEmpty)
+    }
+
+    func testManagedInsightsResponseMapsTemplateSections() throws {
+        let template = try XCTUnwrap(InsightTemplate.builtIn(id: "bant"))
+        let json = """
+        {"summary": "", "action_items": [], "topics": [], "discussion_flow": [], "questions": [],
+         "template_id": "bant", "template_sections": {"need": "- Notes arrive a day late", "timeline": null},
+         "meta": {"degraded": false, "fallback_reason": null, "request_seq": 3}}
+        """
+        let decoded = try JSONDecoder().decode(ManagedInsightsResponse.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.templateID, "bant")
+        let live = decoded.toLiveInsights(template: template)
+        XCTAssertEqual(live.templateID, "bant")
+        XCTAssertEqual(live.templateSections, ["need": "Notes arrive a day late"])
+        XCTAssertEqual(decoded.meta?.requestSeq, 3)
+        // Without a template the sections are not surfaced (nothing to order them by).
+        XCTAssertTrue(decoded.toLiveInsights().templateSections.isEmpty)
     }
 
     func testDocsPlaybookCardDecoding() throws {

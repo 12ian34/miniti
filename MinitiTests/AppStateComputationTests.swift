@@ -208,6 +208,49 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     @MainActor
+    func testTemplateViewIsOptInAndSelectingATemplateEnablesIt() {
+        let defaults = UserDefaults.standard
+        let previousEnabled = defaults.object(forKey: "templateInsightsEnabled")
+        let previousTemplateID = defaults.object(forKey: "insightTemplateID")
+        defer {
+            if let previousEnabled {
+                defaults.set(previousEnabled, forKey: "templateInsightsEnabled")
+            } else {
+                defaults.removeObject(forKey: "templateInsightsEnabled")
+            }
+            if let previousTemplateID {
+                defaults.set(previousTemplateID, forKey: "insightTemplateID")
+            } else {
+                defaults.removeObject(forKey: "insightTemplateID")
+            }
+        }
+
+        defaults.removeObject(forKey: "templateInsightsEnabled")
+        defaults.removeObject(forKey: "insightTemplateID")
+        let state = AppState()
+
+        XCTAssertFalse(state.isInsightModeEnabled(.template))
+        XCTAssertFalse(state.enabledInsightModes.contains(.template))
+        XCTAssertEqual(state.selectedInsightTemplate.id, InsightTemplate.defaultID)
+
+        state.selectInsightTemplate("interview")
+        XCTAssertTrue(state.templateInsightsEnabled)
+        XCTAssertEqual(state.insightsMode, .template)
+        XCTAssertEqual(state.insightTemplateID, "interview")
+        XCTAssertEqual(state.liveTemplateID, "interview")
+        XCTAssertEqual(state.liveTemplate.id, "interview")
+        XCTAssertTrue(state.enabledInsightModes.contains(.template))
+
+        // Unknown ids are ignored rather than breaking the view.
+        state.selectInsightTemplate("not-a-template")
+        XCTAssertEqual(state.insightTemplateID, "interview")
+
+        state.setInsightModeEnabled(.template, enabled: false)
+        XCTAssertFalse(state.isInsightModeEnabled(.template))
+        XCTAssertEqual(state.insightsMode, .standard)
+    }
+
+    @MainActor
     func testValidDocsConfigurationEnablesPlaybookAndClearingItDisablesTheView() {
         let defaults = UserDefaults.standard
         let previousDocsURL = defaults.object(forKey: "docsMCPURL")

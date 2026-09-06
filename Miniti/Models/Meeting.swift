@@ -44,6 +44,12 @@ final class Meeting {
     // Suggested questions (JSON-encoded [SuggestedQuestion])
     var suggestedQuestionsJSON: String?
 
+    // Templates specialist view: which built-in template this meeting uses, and its filled
+    // sections (JSON-encoded [String: String], section key -> text). Optional columns keep
+    // existing stores lightweight-migratable.
+    var insightTemplateID: String?
+    var templateSectionsJSON: String?
+
     // Docs topics + their resolved lookup cards (JSON-encoded [DocTopic])
     var docTopicsJSON: String?
 
@@ -147,6 +153,31 @@ final class Meeting {
     
     var hasQuestions: Bool {
         !suggestedQuestions.isEmpty
+    }
+
+    /// Filled template sections, keyed by section key.
+    var templateSections: [String: String] {
+        get { InsightTemplateSections.decode(templateSectionsJSON) }
+        set {
+            if newValue.isEmpty {
+                templateSectionsJSON = nil
+                return
+            }
+            // On encode failure, preserve the existing JSON rather than clobbering it to nil.
+            if let encoded = InsightTemplateSections.encode(newValue) {
+                templateSectionsJSON = encoded
+            }
+        }
+    }
+
+    /// The template these sections belong to, when it is one we know.
+    var insightTemplate: InsightTemplate? {
+        InsightTemplate.builtIn(id: insightTemplateID)
+    }
+
+    var hasTemplateInsights: Bool {
+        guard let template = insightTemplate else { return false }
+        return !template.orderedSections(from: templateSections).isEmpty
     }
 
     var docTopics: [DocTopic] {
@@ -428,7 +459,8 @@ final class Meeting {
             !discussionFlow.isEmpty ||
             hasMEDDPICCContent ||
             hasQuestions ||
-            hasDocs
+            hasDocs ||
+            hasTemplateInsights
     }
 
     var needsInsightsAfterTranscriptEdit: Bool {
@@ -461,6 +493,7 @@ final class Meeting {
         meddpiccCompetition = nil
         suggestedQuestions = []
         docTopics = []
+        templateSections = [:]
     }
     
     // MARK: - Markdown Export
@@ -567,6 +600,11 @@ final class Meeting {
                     md += "**\(label):** \(value!)\n\n"
                 }
             }
+        }
+
+        // Template sections if available
+        if let template = insightTemplate {
+            md += InsightTemplateSections.markdown(template: template, sections: templateSections)
         }
         
         return md.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -865,6 +903,16 @@ struct MeetingSearchResult {
                 }
             }
 
+            // Template sections
+            for value in meeting.templateSections.values {
+                let n = countOccurrences(of: q, in: value)
+                if n > 0 {
+                    if score < 20 { score += 20 }
+                    totalMatches += n
+                    if bestSnippet == nil { bestSnippet = extractSnippet(from: value, matching: q) }
+                }
+            }
+
             // Transcript (only for queries 3+ chars to avoid expensive scans)
             if q.count >= 3 {
                 let transcriptText = meeting.segments.filter(\.isFinal).map(\.text).joined(separator: " ")
@@ -924,14 +972,15 @@ func highlightedText(_ text: String, query: String, baseColor: Color, highlightC
     guard !query.isEmpty else {
         return Text(text).foregroundStyle(baseColor).font(font)
     }
-    let lower = text.lowercased()
-    let queryLower = query.lowercased()
-
+    // Search the original string case-insensitively. Indexing `text` with ranges taken
+    // from `text.lowercased()` crashes when lowercasing changes the length (e.g. "İ").
     var result = Text("")
-    var searchStart = lower.startIndex
+    var searchStart = text.startIndex
     var hasMatch = false
 
-    while let range = lower.range(of: queryLower, range: searchStart..<lower.endIndex) {
+    while searchStart < text.endIndex,
+          let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive], range: searchStart..<text.endIndex),
+          !range.isEmpty {
         hasMatch = true
         // Text before match
         if searchStart < range.lowerBound {
@@ -945,7 +994,7 @@ func highlightedText(_ text: String, query: String, baseColor: Color, highlightC
     }
 
     // Remaining text after last match
-    if searchStart < lower.endIndex {
+    if searchStart < text.endIndex {
         let remaining = String(text[searchStart...])
         result = result + Text(remaining).foregroundStyle(baseColor).font(font)
     }

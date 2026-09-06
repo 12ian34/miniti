@@ -9,51 +9,47 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - The entry at the top of this file is the source of truth; `fastlane/metadata/en-US/release_notes.txt` and `en-GB/release_notes.txt` are mirrored from it at release time.
 - While a release is still being prepared, its top entry may use `### Unreleased - vX.Y.Z`. Replace `Unreleased` with the ship date only when the release is actually going out.
 - Release headers contain only the date and version. Put platform availability in the relevant bullets, never in a parenthetical status suffix.
+- One flat bullet list per release, prefixed `new:`, `improvement:`, or `fix:`. No sub-headers such as "New features" or "Experience improvements"; the prefixes already say that.
 
 ## Releases
+
+### 2026-09-06 - v2.6.0
+
+- new: (Linux) Miniti for Linux — the full app on Linux: mic and system audio, live transcription with speakers, live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release
+- new: (macOS and iOS) Templates — a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Pick one from the More menu; it is saved with the meeting and included in exports and webhooks
+- new: (macOS and iOS) your account is now a recovery key that only you hold — no email, no password. Existing installs get one automatically; your plan, usage, and history are unchanged
+- new: (macOS and iOS) add another Mac, iPhone, or iPad with "Restore with recovery key" during setup or in Settings → Account & Plan, up to five devices. That section also lists your devices and lets you reveal or rotate the key, sign out, or delete the account
+- improvement: (macOS and iOS) picking a specialist view mid-meeting fills it straight away instead of waiting for the next update
+- improvement: (macOS and iOS) a one-time card on Home reminds you to save your recovery key
+- improvement: App Store screenshots and the screens page on miniti.app are now captured from the real app every release
+- fix: (macOS and iOS) requests to Miniti's servers are now signed by your device instead of a key shared by every install
 
 ### 2026-08-23 - v2.5.0
 
 Available now on Mac. The iPhone and iPad update has been submitted to Apple and will release automatically after approval.
 
-#### New features
-
 - new: (macOS) Several people sharing one microphone are now transcribed as distinct speakers — in-person and hybrid meetings keep per-person attribution on the Mac's mic alongside the existing remote-speaker separation, with automatic speaker naming, renaming, and "mark as you" working for everyone in the room
 - new: When more than one person is detected on the microphone, Miniti stops assuming any of them is you — speakers get neutral labels until names are inferred or you mark yourself, so coaching and talk-ratio stats are never silently attributed to the wrong person
 - new: Miniti offers to enable Sales (MEDDPICC) analysis when a live meeting sounds like a sales conversation — detected locally from commercial vocabulary, suggested at most once per meeting, and switchable off in Settings → Notifications
-
-#### Experience improvements
-
 - improvement: Reconnections mid-meeting no longer discard inferred speaker names or your "mark as you" choices
 - improvement: Shared-microphone meetings get cleaner turn boundaries — once a second voice is confirmed on the mic, borderline words no longer preferentially stick to the first speaker
 - improvement: (macOS) The floating recording surface now wraps long nudges and questions instead of stretching across the screen, and every nudge has dismiss and "don't remind me" buttons — the latter flips the matching toggle in Settings → Notifications, where it can be re-enabled any time
 - improvement: (macOS) Every meeting-ending decision now raises and expands the floating recording surface, including prolonged-quiet and calendar handoff prompts, so the choice cannot remain hidden behind the main window
 - improvement: (macOS) Optional question, monologue, and filler-word nudges now appear in the floating recording surface while you are using Miniti, with system notifications used when your attention is in another app or the recording indicator is turned off
-
-#### Fixes
-
 - fix: (macOS) "Open meeting" on the floating recording surface now reliably brings the main window to you when another app is in focus — including pulling the window over to your current Space instead of raising it somewhere out of sight
 
 ### 2026-08-21 - v2.4.1
 
 This Mac hotfix includes everything from 2.4.0 and fixes the two remaining floating-window interactions.
 
-#### New
-
 - new: (macOS) When a supported call app like Zoom, Teams, Slack, FaceTime, Webex or Discord starts using your microphone, Miniti opens a small floating prompt offering to take notes — nothing records until you say so
 - new: (macOS) When the call ends, Miniti finishes the recording automatically after a short on-screen countdown you can cancel with one click, and continues the same meeting if the call comes back
 - new: (macOS) A floating recording indicator opens for important start and ending decisions, then shows the timer, call status and controls even when the main window is closed or covered; drag it anywhere, collapse it, or turn it off under Settings → General → Appearance
 - new: (macOS) The menu bar shows a red REC badge with the elapsed time while recording, and the ending countdown when a call finishes
-
-#### Experience improvements
-
 - improvement: (macOS and iOS) Smart meetings can notice prolonged quiet in calendar-linked recordings instead of relying only on the separate calendar handoff path
 - improvement: (macOS) Silence-based auto-stop is described as an advanced fallback for in-person meetings and unsupported call apps; supported calls end from the call itself
 - improvement: (macOS) Browser calls use more conservative ending checks, since Miniti cannot tell which site or tab is using the microphone
 - improvement: (macOS) A meeting whose title improved after finishing no longer leaves two exported markdown files behind
-
-#### Fixes
-
 - fix: (macOS) Dragging the floating recording window no longer expands or collapses it when you release the mouse
 - fix: (macOS) Open meeting now reliably activates and brings the Miniti window to the front, including after it was minimized, hidden or closed
 
@@ -63,15 +59,10 @@ This release makes meeting boundaries automatic on Mac: Miniti notices when a su
 
 Available now on Mac. The iPhone and iPad update is with Apple for review and will release automatically after approval.
 
-#### New
-
 - new: (macOS) When a supported call app like Zoom, Teams, Slack, FaceTime, Webex or Discord starts using your microphone, Miniti opens a small floating prompt offering to take notes — nothing records until you say so
 - new: (macOS) When the call ends, Miniti finishes the recording automatically after a short on-screen countdown you can cancel with one click, and continues the same meeting if the call comes back
 - new: (macOS) A floating recording indicator opens for important start and ending decisions, then shows the timer, call status and controls even when the main window is closed or covered; drag it anywhere, collapse it, or turn it off under Settings → General → Appearance
 - new: (macOS) The menu bar now shows a red REC badge with the elapsed time while recording, and the ending countdown when a call finishes
-
-#### Experience improvements
-
 - improvement: (macOS and iOS) Smart meetings can now notice prolonged quiet in calendar-linked recordings instead of relying only on the separate calendar handoff path
 - improvement: (macOS) Silence-based auto-stop is now described as an advanced fallback for in-person meetings and unsupported call apps; supported calls end from the call itself
 - improvement: (macOS) Browser calls use more conservative ending checks, since Miniti cannot tell which site or tab is using the microphone
@@ -83,13 +74,8 @@ This release helps you prepare for upcoming meetings and investigate important m
 
 Available now on Mac. The iPhone and iPad update is with Apple for review and will release automatically after approval.
 
-#### New
-
 - new: (macOS and iOS) Add locally stored prep notes to upcoming calendar meetings, then carry them into the live meeting notes automatically when recording starts
 - new: (macOS and iOS) Miniti can spot conversation moments worth investigating and run focused OpenAI research inside the app only when you choose to act, with cited web sources and optional Mac codebase context
-
-#### Experience improvements
-
 - improvement: (macOS and iOS) Home now shows your next five connected-calendar meetings across the coming days, with a dedicated preparation view before you start
 - improvement: (macOS) Saved meeting notes now use the same draggable, space-aware panel as live notes
 
@@ -97,51 +83,30 @@ Available now on Mac. The iPhone and iPad update is with Apple for review and wi
 
 This release makes Coaching trends and CRM exports easier to review, and fixes navigation while searching meeting history.
 
-#### Experience improvements
-
 - improvement: (macOS and iOS) Coaching focus sections now use clearer hierarchy, stronger next-step recommendations, and compact source examples with meeting details kept out of the quote
 - improvement: (macOS and iOS) Coaching history keeps every metric in its own chart with labelled value and meeting axes that remain readable from a few meetings to hundreds
 - improvement: (macOS) CRM exports now preview every task with its deadline and assignment details, and let you exclude irrelevant tasks before sending
-
-#### Fixes
-
 - fix: (macOS) Back and forward trackpad gestures now work while meeting search is focused, then dismiss search focus automatically when navigation completes
 
 ### 2026-08-11 - v2.2.1
 
 This release brings Smart meetings and the redesigned Settings experience to Mac, iPhone, and iPad. It also brings the latest Coaching improvements to iOS.
 
-#### New
-
 - new: (macOS and iOS) Smart meetings notices when a recording may have ended or another calendar meeting is approaching, then helps you save and start the right meeting; it is on by default and independent of existing auto-start and auto-stop settings
 - new: (iOS) The Coaching overview highlights strengths, tracks trends across recent meetings, and suggests one practical focus for the next meeting with examples from your transcripts
-
-#### Experience improvements
-
 - improvement: (macOS and iOS) Settings is reorganized into clear, searchable sections for recording, language, AI, calendar, integrations, data, and support; individual results open the exact control
 - improvement: (macOS) Settings uses a stable, non-collapsible sidebar without the unnecessary collapse control
 - improvement: (macOS) The navigation sidebar no longer repeats your plan and remaining minutes, which remain available on Home
 - improvement: (macOS and iOS) Coaching opens immediately with its previous results and refreshes only changed meetings in the background
-
-#### Fixes
-
 - fix: (macOS) Closing or minimizing the main window no longer leaves Miniti running without a reliable way to reopen it from the Dock or menu bar
 
 ### 2026-08-09 - v2.2.0
 
 This release is for macOS. The currently pending iOS release and its App Store submission are unchanged.
 
-#### New
-
 - new: (macOS) Send saved meetings to Twenty CRM people, companies, or opportunities, with optional tasks created from action items
 - new: (macOS) Automatically sync calendar-linked meetings to a matching Twenty company using attendee domains
-
-#### Experience improvements
-
 - improvement: (macOS) Attio and Twenty share one clear CRM send workflow, and Send to Attio now uses the official Attio logo
-
-#### Fixes
-
 - fix: (macOS) Transcript turns stay in chronological order when microphone and system-audio results finalize out of order or after a reconnect
 - fix: (macOS) Selecting live transcript text remains stable when an earlier transcript result arrives and is inserted above it
 
@@ -149,14 +114,9 @@ This release is for macOS. The currently pending iOS release and its App Store s
 
 This hotfix is available for macOS. The currently pending iOS release and its App Store submission are unchanged.
 
-#### Experience improvements
-
 - improvement: (macOS) Live transcript text remains selectable across speaker turns without turning the transcript into an editable document
 - improvement: (macOS) Narrow windows now use a compact navigation rail with an accessible overlay sidebar instead of clipping the full sidebar
 - improvement: (macOS) Meeting history gives titles more room, keeps date and duration together, and shows background insight work on a separate status line
-
-#### Fixes
-
 - fix: (macOS) Resizing the window during long live meetings no longer destabilizes transcript layout or trigger the associated crash
 - fix: (macOS) Resume auto-scroll now follows new transcript text without the scrollbar bouncing between positions
 - fix: (macOS) Zoned Out requests no longer compete with automatic insight updates for the same request allowance
@@ -165,28 +125,18 @@ This hotfix is available for macOS. The currently pending iOS release and its Ap
 
 This release is available on macOS now. The currently pending iOS release is unchanged; these iPhone and iPad updates will follow in a later App Store release.
 
-#### New
-
 - new: (macOS now; iOS later) A new Coaching overview highlights your strengths, tracks trends across recent meetings, and suggests one practical focus for your next meeting, backed by examples from your transcripts
 - new: (macOS) Swipe with two fingers to move backward and forward between Home, Coaching, and meetings you have visited
-
-#### Design improvements
-
 - improvement: (macOS now; iOS later) Refreshed styling makes Coaching, insights, actions, and recording controls clearer and more consistent across the app
 
 ### 2026-08-07 - v2.0.4
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.3.
 
-#### New
-
 - new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
 - new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
 - new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
 - new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
-
-#### Experience and workflow improvements
-
 - improvement: (macOS and iOS) Training is now called Coaching throughout the app, using clearer system typography; select any meeting in the Coaching overview to open it and return easily
 - improvement: (macOS) recording controls, Zoned Out, Shortcuts, Settings, post-meeting navigation, and every insight mode now share the same compact accent-tinted button style; Summary, Questions, and Coaching have slightly more breathing room, enabled Sales and Playbook become matching peer buttons when space allows, and More shows one dropdown arrow
 - improvement: (macOS and iOS) insight text now matches transcript text size, and Discussion, Actions, Questions, Coaching, Sales, and Playbook content matches Summary instead of appearing smaller
@@ -209,9 +159,6 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
 - improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
 - improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
-
-#### Performance improvements
-
 - improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, coaching analysis, transcript rendering, and audio meters do less work on the interface thread
 - improvement: (macOS and iOS) live transcripts now render speaker turns independently for smoother long-meeting scrolling and resizing; each turn remains selectable, and Copy still includes the complete meeting
 - improvement: (macOS and iOS) live transcript fragments and follow-to-bottom scrolling now update at a steadier, power-efficient pace without overriding manual scrolling
@@ -220,9 +167,6 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
 - improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
 - improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
-
-#### Fixes
-
 - fix: (macOS) clicking Miniti in the Dock now restores the main window after it has been minimized
 - fix: (macOS and iOS) finalized transcript and insight changes are more reliably saved when the app backgrounds, a meeting stops, or the Mac app quits
 - fix: (macOS) system-audio-only recordings now detect and recover when the system capture callback stalls
@@ -238,15 +182,10 @@ This release keeps the complete 2.0 update together, including everything from v
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 through v2.0.2.
 
-#### New
-
 - new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
 - new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
 - new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
 - new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
-
-#### Experience and workflow improvements
-
 - improvement: (macOS) Send to Attio keeps its primary action visible, uses a clearer compact search control, and collapses the detailed payload checklist until you need it
 - improvement: (macOS and iOS) when several people are grouped as “Others” in Coaching, you can expand the filler section to see each person’s totals and filler-word detail
 - improvement: (macOS and iOS) speaker names remain readable when a meeting has many detected speakers
@@ -265,9 +204,6 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
 - improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
 - improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
-
-#### Performance improvements
-
 - improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, training analysis, transcript rendering, and audio meters do less work on the interface thread
 - improvement: (macOS and iOS) live transcripts now render speaker turns independently for smoother long-meeting scrolling and resizing; each turn remains selectable, and Copy still includes the complete meeting
 - improvement: (macOS and iOS) live transcript fragments and follow-to-bottom scrolling now update at a steadier, power-efficient pace without overriding manual scrolling
@@ -276,9 +212,6 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
 - improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
 - improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
-
-#### Fixes
-
 - fix: (macOS and iOS) finalized transcript and insight changes are more reliably saved when the app backgrounds, a meeting stops, or the Mac app quits
 - fix: (macOS) system-audio-only recordings now detect and recover when the system capture callback stalls
 - fix: (macOS) live transcripts no longer develop the recurring large blank gap before the newest line during long meetings or pane resizing; saved transcripts also keep their content aligned while resizing
@@ -293,15 +226,10 @@ This release keeps the complete 2.0 update together, including everything from v
 
 This release keeps the complete 2.0 update together, including everything from v2.0.0 and v2.0.1.
 
-#### New
-
 - new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
 - new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
 - new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
 - new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
-
-#### Experience and workflow improvements
-
 - improvement: (macOS) Send to Attio keeps its primary action visible, uses a clearer compact search control, and collapses the detailed payload checklist until you need it
 - improvement: (macOS and iOS) when several people are grouped as “Others” in Coaching, you can expand the filler section to see each person’s totals and filler-word detail
 - improvement: (macOS and iOS) clearer system typography and roomier transcript lines make meetings easier to read while preserving Miniti's compact navigation and original wordmark
@@ -319,17 +247,11 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
 - improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
 - improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
-
-#### Performance improvements
-
 - improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, training analysis, transcript rendering, and audio meters do less work on the interface thread
 - improvement: (macOS and iOS) saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details
 - improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
 - improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
 - improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
-
-#### Fixes
-
 - fix: (macOS) long live and saved transcripts no longer develop a large blank gap between the transcript and the latest line
 - fix: (macOS) future in-app updates no longer fail on the first attempt with a macOS security warning on affected Macs; installing v2.0.2 from an older version may still need one final retry because that update starts with the older updater
 - fix: (macOS) opening Send to Attio immediately after saving a long meeting no longer risks freezing the app, including when Attio is not connected
@@ -339,26 +261,16 @@ This release keeps the complete 2.0 update together, including everything from v
 
 ### 2026-08-07 - v2.0.1
 
-#### Experience and workflow improvements
-
 - improvement: (macOS and iOS) when several people are grouped as “Others” in Coaching, you can expand the filler section to see each person’s totals and filler-word detail
-
-#### Fixes
-
 - fix: (macOS) long live and saved transcripts no longer develop a large blank gap between the transcript and the latest line
 - fix: (macOS) future in-app updates no longer fail on the first attempt with a macOS security warning on affected Macs; installing v2.0.1 from an older version may still need one final retry because that update starts with the older updater
 
 ### 2026-08-07 - v2.0.0
 
-#### New
-
 - new: (macOS and iOS) pin important meetings and browse history in clear Today, Yesterday, This Week, and Older groups
 - new: (macOS and iOS) import your Granola meeting history from its CSV export, with duplicate protection and clear source labels throughout Miniti
 - new: (macOS and iOS) Settings now offers Compact, Standard, and Large interface scales, with platform-tuned sizing for transcripts, insights, and controls
 - new: (iOS) choose whether live transcript text appears on the Lock Screen and Dynamic Island; it remains on by default, and tapping the activity returns to the active meeting
-
-#### Experience and workflow improvements
-
 - improvement: (macOS and iOS) clearer system typography and roomier transcript lines make meetings easier to read while preserving Miniti's compact navigation and original wordmark
 - improvement: (iPad) regular-width layouts now use adaptive sidebar navigation while iPhone keeps its compact tab bar
 - improvement: (iOS) navigation and small utility surfaces use current system styling without changing Miniti's compact dark interface
@@ -374,17 +286,11 @@ This release keeps the complete 2.0 update together, including everything from v
 - improvement: (macOS and iOS) transcript trims and speaker edits now participate in the system Undo command, while save, copy, and export confirmations stay inline
 - improvement: (macOS and iOS) consecutive transcript chunks from the same speaker now appear as one clean turn with a single speaker label and timestamp
 - improvement: (macOS and iOS) meeting finalization is now shown as non-interactive progress, with completion guidance appearing only when its action is available
-
-#### Performance improvements
-
 - improvement: (macOS and iOS) longer meetings stay more responsive as live transcription, training analysis, transcript rendering, and audio meters do less work on the interface thread
 - improvement: (macOS and iOS) saving and reopening long meetings avoids repeated full-transcript work, including while opening sheets or editing speaker details
 - improvement: (macOS and iOS) recovery autosaves now run once per minute and skip unchanged meetings, while stopping, saving, and backgrounding still persist immediately
 - improvement: (macOS and iOS) managed Questions updates reuse prior context instead of repeatedly sending the full meeting as it grows
 - improvement: (macOS) audio capture now reuses bounded working buffers during long recordings to reduce memory and processing churn
-
-#### Fixes
-
 - fix: (macOS) opening Send to Attio immediately after saving a long meeting no longer risks freezing the app, including when Attio is not connected
 - fix: (macOS) system audio leaking through speakers into the microphone no longer creates duplicated green “You” lines, while actual mic speech is preserved even when it overlaps playback
 - fix: (macOS and iOS) resumed interrupted meetings no longer restore unfinished or blank transcript fragments

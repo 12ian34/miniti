@@ -4,6 +4,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject private var appState: AppState
     @State private var step = 0
+    @State private var showRestoreSheet = false
 
     var body: some View {
         ScrollView {
@@ -67,9 +68,24 @@ struct OnboardingView: View {
                 withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
             }
 
+            Button("Already use Miniti on another device? Restore with your recovery key") {
+                showRestoreSheet = true
+            }
+            .buttonStyle(.plain)
+            .font(.footnote)
+            .foregroundStyle(ColorPalette.Accent.green)
+
             Text("You can switch modes later in Settings.")
                 .font(.footnote)
                 .foregroundStyle(ColorPalette.Text.muted)
+        }
+        .sheet(isPresented: $showRestoreSheet) {
+            RestoreRecoveryKeySheet(onRestored: {
+                appState.appModeRaw = AppMode.managed.rawValue
+                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
+            })
+            .environmentObject(appState)
+            .preferredColorScheme(.dark)
         }
     }
 

@@ -28,6 +28,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         AppState.registerSmartMeetingNotificationCategory()
 
         #if DEBUG
+        // Marketing capture: renders one scene, writes the window image, and exits.
+        ScreenshotMode.beginMacCapture(mainWindowIdentifier: Self.mainWindowIdentifier)
+
         // Test hook: lets automated checks drive the floating panel's "open meeting"
         // code path from outside the process (a strictly harder case than a real
         // click, which at least counts as user interaction). Debug builds only.
@@ -177,6 +180,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.activate(ignoringOtherApps: true)
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
+        // The LaunchServices reply arrives on an arbitrary queue; the completion only ever
+        // runs on main (hopped below), so carrying it through the @Sendable reply is safe.
+        nonisolated(unsafe) let completion = completion
         NSWorkspace.shared.openApplication(
             at: Bundle.main.bundleURL,
             configuration: configuration
@@ -295,6 +301,7 @@ private struct MainWindowIdentifierInstaller: NSViewRepresentable {
 
 private struct MainWindowSceneBridge: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
     let appDelegate: AppDelegate
 
     var body: some View {
@@ -303,6 +310,12 @@ private struct MainWindowSceneBridge: View {
             .onAppear {
                 appDelegate.openMainWindow = {
                     openWindow(id: "main")
+                }
+                if ScreenshotMode.current == .settings || ScreenshotMode.current == .settingsAccount {
+                    // The capture waits for this window; see ScreenshotMode.beginMacCapture.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                        openSettings()
+                    }
                 }
             }
     }
@@ -327,6 +340,9 @@ struct MinitiApp: App {
             Meeting.self,
             TranscriptSegment.self,
         ])
+        if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
+            return seeded
+        }
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         
         do {

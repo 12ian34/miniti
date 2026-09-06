@@ -68,7 +68,7 @@ What it does:
 - uploads the binary to App Store Connect
 - uploads metadata from `fastlane/metadata` (including "What's New")
 - includes App Review notes from `fastlane/metadata/app_review_notes.txt` when present
-- screenshots are skipped (manage manually in App Store Connect)
+- screenshots are skipped (regenerate with `scripts/screenshots/all.sh`, then upload with `fastlane ios screenshots`)
 
 What it does not do:
 - no App Review submission; run `fastlane ios submit version:X.Y.Z build:N` after Apple finishes processing the upload
@@ -237,6 +237,8 @@ fastlane ios screenshots
 ```
 
 Layout: `fastlane/screenshots/<locale>/<Device>.png`, e.g. `fastlane/screenshots/en-US/iPhone 6.7 Display-01.png`. Fastlane matches device by filename prefix; use the Apple display class names (`iPhone 6.9 Display`, `iPhone 6.7 Display`, `iPad Pro (6th Gen) 12.9 Display`, etc.).
+
+The PNGs in `fastlane/screenshots/en-US` are generated, not hand-made: `scripts/screenshots/all.sh` captures the real app on the iPhone 17 Pro Max and iPad Pro 13-inch simulators in screenshot mode and renders the framed store artwork (1320×2868 and 2064×2752) from `scripts/screenshots/frames/store-frames.html`. See `scripts/screenshots/README.md`.
 
 ## Recommended flows
 

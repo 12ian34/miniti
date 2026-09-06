@@ -23,6 +23,7 @@ enum WebhookService {
             let training: TrainingData?
             let questions: [QuestionEntry]?
             let docs: [DocEntry]?
+            let template: TemplateData?
             let speakerCount: Int
             let speakerNames: [String: String]?
             let transcript: [TranscriptEntry]
@@ -33,7 +34,7 @@ enum WebhookService {
             let attendees: [AttendeeEntry]?
 
             enum CodingKeys: String, CodingKey {
-                case id, title, date, summary, notes, topics, meddpicc, training, questions, docs, transcript, language, attendees
+                case id, title, date, summary, notes, topics, meddpicc, training, questions, docs, template, transcript, language, attendees
                 case endTime = "end_time"
                 case durationSeconds = "duration_seconds"
                 case actionItems = "action_items"
@@ -81,6 +82,31 @@ enum WebhookService {
             let answer: String
             let citations: [DocCitationEntry]
             let priority: String?
+        }
+
+        struct TemplateSectionEntry: Encodable {
+            let key: String
+            let title: String
+            let value: String
+        }
+
+        /// The Templates specialist view: which template and its filled sections, in
+        /// template order. Omitted when no section was filled.
+        struct TemplateData: Encodable {
+            let id: String
+            let name: String
+            let sections: [TemplateSectionEntry]
+
+            init?(template: InsightTemplate?, sections: [String: String]) {
+                guard let template else { return nil }
+                let entries = template.orderedSections(from: sections).map {
+                    TemplateSectionEntry(key: $0.section.key, title: $0.section.title, value: $0.value)
+                }
+                guard !entries.isEmpty else { return nil }
+                self.id = template.id
+                self.name = template.name
+                self.sections = entries
+            }
         }
 
         struct MEDDPICCData: Encodable {
@@ -203,6 +229,8 @@ enum WebhookService {
         training: MeetingPayload.TrainingData?,
         questions: [SuggestedQuestion] = [],
         docs: [DocPlaybookCard] = [],
+        template: InsightTemplate? = nil,
+        templateSections: [String: String] = [:],
         calendarEventId: String? = nil,
         attendees: [MeetingAttendee] = []
     ) -> MeetingPayload {
@@ -246,6 +274,7 @@ enum WebhookService {
                         priority: $0.priority
                     )
                 },
+                template: MeetingPayload.TemplateData(template: template, sections: templateSections),
                 speakerCount: speakerCount,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
@@ -321,6 +350,7 @@ enum WebhookService {
                         priority: $0.priority
                     )
                 },
+                template: MeetingPayload.TemplateData(template: meeting.insightTemplate, sections: meeting.templateSections),
                 speakerCount: speakers.count,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 transcript: transcript,
