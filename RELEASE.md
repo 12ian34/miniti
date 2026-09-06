@@ -92,6 +92,7 @@ Tell the backend agent (or edit `miniti-api` directly):
     IOS_LATEST_VERSION   → X.Y.Z only once the App Store build is live
     legacy force-update notes → keep concise and platform-appropriate
   Do not touch MACOS_MIN_VERSION / IOS_MIN_VERSION unless you're intentionally force-updating.
+  Leave LINUX_LATEST_VERSION / LINUX_MIN_VERSION alone: the Linux app (../miniti-linux) has its own release line and checklist.
 
 Deploy.
 ```
