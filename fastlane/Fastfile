@@ -211,11 +211,13 @@ platform :ios do
   end
 
   desc "Upload screenshots only (no metadata, no binary). Reads from fastlane/screenshots."
-  lane :screenshots do
+  lane :screenshots do |options|
     api_key = load_app_store_connect_api_key
+    target_version = options[:version] || options[:app_version]
 
     upload_to_app_store(
       api_key: api_key,
+      app_version: target_version.to_s.empty? ? nil : target_version,
       skip_binary_upload: true,
       skip_metadata: true,
       skip_screenshots: false,
@@ -226,6 +228,30 @@ platform :ios do
       submit_for_review: false,
       force: true
     )
+  end
+
+  desc "List the App Store screenshot sets on the editable version; pass prune:true to delete sets for display types the repo no longer ships"
+  lane :screenshot_sets do |options|
+    api_key = load_app_store_connect_api_key
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(**api_key.slice(:key_id, :issuer_id, :key, :duration, :in_house))
+    app = Spaceship::ConnectAPI::App.find(CredentialsManager::AppfileConfig.try_fetch_value(:app_identifier))
+    version = app.get_edit_app_store_version || app.get_live_app_store_version
+    UI.user_error!("No App Store version found") if version.nil?
+    require "deliver"
+    keep = Dir.glob(File.join(REPO_ROOT, "fastlane", "screenshots", "*", "*.png")).map do |path|
+      Deliver::AppScreenshot.new(path, "en-US").display_type
+    end.compact.uniq
+    UI.message("Version #{version.version_string}; local display types: #{keep.inspect}")
+    version.get_app_store_version_localizations.each do |loc|
+      loc.get_app_screenshot_sets.each do |set|
+        count = set.app_screenshots.to_a.count
+        stale = !keep.include?(set.screenshot_display_type)
+        UI.message("#{loc.locale} #{set.screenshot_display_type}: #{count} screenshot(s)#{stale ? ' (not in repo)' : ''}")
+        next unless stale && options[:prune]
+        set.delete!
+        UI.important("deleted #{loc.locale} #{set.screenshot_display_type}")
+      end
+    end
   end
 
   desc "Bump build/version if needed, build, and upload to App Store Connect with metadata/screenshots without auto-submitting"

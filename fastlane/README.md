@@ -55,6 +55,14 @@ Upload metadata only (no screenshots, no binary).
 
 Upload screenshots only (no metadata, no binary). Reads from fastlane/screenshots.
 
+### ios screenshot_sets
+
+```sh
+[bundle exec] fastlane ios screenshot_sets
+```
+
+List the App Store screenshot sets on the editable version; pass prune:true to delete sets for display types the repo no longer ships
+
 ### ios release
 
 ```sh

@@ -92,3 +92,7 @@ replaces the existing set for each device class. Run it after eyeballing the PNG
 The seeded meetings, transcript, insights, and calendar events are in
 `Miniti/ScreenshotMode.swift`. They are deliberately plausible B2B content with no real
 names of customers. Change them there when the product story changes.
+
+## Locales
+
+App Store Connect has en-US and en-GB listings. `all.sh` mirrors the rendered en-US frames into `fastlane/screenshots/en-GB` because deliver only replaces the locales it finds files for; a missing locale keeps its old screenshots. `fastlane ios screenshot_sets` lists what is on App Store Connect for the editable version, and `prune:true` deletes sets for display types the repo no longer ships (for example the old 6.5-inch iPhone set).

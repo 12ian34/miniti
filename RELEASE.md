@@ -143,9 +143,12 @@ The first command uploads the binary and metadata. Wait for Apple to process the
 Before submission, confirm the release already has current review info and screenshots in App Store Connect. When the UI changed, regenerate the screenshots from the real app rather than editing them by hand:
 
 ```sh
-scripts/screenshots/all.sh          # build, capture iPhone + iPad + Mac, render fastlane/screenshots/en-US
-fastlane ios screenshots            # upload after eyeballing every PNG
+scripts/screenshots/all.sh          # build, capture iPhone + iPad + Mac, render fastlane/screenshots/en-US and mirror to en-GB
+fastlane ios screenshots version:X.Y.Z   # upload after eyeballing every PNG
+fastlane ios screenshot_sets        # confirm every locale on App Store Connect shows only the new sets; prune:true removes stale display types
 ```
+
+App Store Connect has en-US and en-GB listings. Deliver only replaces locales it has files for, so a missing locale silently keeps its old screenshots; that is why `all.sh` mirrors en-US into en-GB.
 
 See [scripts/screenshots/README.md](scripts/screenshots/README.md). The macOS cards under `scripts/screenshots/out/framed/` are for the website and social posts.
 
