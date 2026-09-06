@@ -15,9 +15,9 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### 2026-09-06 - v2.6.0
 
-- new: (Linux) Miniti for Linux — the full app on Linux: mic and system audio, live transcription with speakers, live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release
-- new: (macOS and iOS) Templates — a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Pick one from the More menu; it is saved with the meeting and included in exports and webhooks
-- new: (macOS and iOS) your account is now a recovery key that only you hold — no email, no password. Existing installs get one automatically; your plan, usage, and history are unchanged
+- new: (Linux) Miniti for Linux, the full app on Linux: mic and system audio, live transcription with speakers, live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release
+- new: (macOS and iOS) Templates, a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Pick one from the More menu; it is saved with the meeting and included in exports and webhooks
+- new: (macOS and iOS) your account is now a recovery key that only you hold. No email, no password. Existing installs get one automatically; your plan, usage, and history are unchanged
 - new: (macOS and iOS) add another Mac, iPhone, or iPad with "Restore with recovery key" during setup or in Settings → Account & Plan, up to five devices. That section also lists your devices and lets you reveal or rotate the key, sign out, or delete the account
 - improvement: (macOS and iOS) picking a specialist view mid-meeting fills it straight away instead of waiting for the next update
 - improvement: (macOS and iOS) a one-time card on Home reminds you to save your recovery key
