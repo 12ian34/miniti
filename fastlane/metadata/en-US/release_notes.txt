@@ -1,11 +1,13 @@
 NEW
 
-- Templates: a live insights view that fills a structured template as the meeting goes: BANT, SPIN, interview scorecard, customer check-in, stand-up, or 1:1. Saved with the meeting and included in exports.
-- Your account is now a recovery key that only you hold. No email, no password. Existing installs get one automatically; your plan and history are unchanged.
-- Add another iPhone, iPad, or Mac with "Restore with recovery key" in Settings → Account & Plan. Manage devices, reveal or rotate the key, sign out, or delete your account there.
+- Join button on meeting reminders and upcoming meetings. One tap opens the Meet or Zoom link and starts miniti.
+- Long-press a transcript line to correct a misheard word. miniti fixes earlier mentions and remembers it next time.
+- Settings, Personal Dictionary lists your corrections so you can remove them.
 
 IMPROVED
 
-- Picking a specialist view mid-meeting fills it straight away.
-- A one-time card on Home reminds you to save your recovery key.
-- Requests to miniti's servers are now signed by your device.
+- Speaker names appear more often, with a final check when the meeting ends and names from the invite on 1:1 calls.
+
+FIXED
+
+- Meeting links and attendee names from Google Calendar were being dropped. Join buttons and attendee names now show.

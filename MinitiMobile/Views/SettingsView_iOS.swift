@@ -1075,11 +1075,16 @@ struct FillerSettingsDetail_iOS: View {
 }
 
 struct PersonalDictionaryDetail_iOS: View {
+    @EnvironmentObject private var appState: AppState
     @State private var dictionaryTerms: [String] = []
     @State private var newDictionaryTerm = ""
     @State private var editingIndex: Int?
     @State private var editingText = ""
     @State private var validationMessage: String?
+    @State private var corrections: [PersonalDictionaryPreferences.CorrectionPair] = []
+    @State private var newHeard = ""
+    @State private var newCorrect = ""
+    @State private var correctionValidationMessage: String?
 
     var body: some View {
         Form {
@@ -1136,11 +1141,59 @@ struct PersonalDictionaryDetail_iOS: View {
                 }
             }
 
+            Section("Corrections") {
+                Text("Heard → corrected. Applied live for the rest of the meeting, and on the next Deepgram connect.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                ForEach(Array(corrections.enumerated()), id: \.element.id) { index, pair in
+                    HStack {
+                        Text("\(pair.heard) → \(pair.correct)")
+                            .lineLimit(2)
+                        Spacer()
+                        Button(role: .destructive) {
+                            removeCorrection(at: index)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Delete correction \(pair.heard)")
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("heard", text: $newHeard)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                    TextField("correct to", text: $newCorrect)
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
+                        .onSubmit { addCorrection() }
+                    Button("Add correction") { addCorrection() }
+                        .disabled(
+                            newHeard.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || newCorrect.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        )
+                }
+
+                if let correctionValidationMessage {
+                    Text(correctionValidationMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Summary") {
                 HStack {
                     Text("Personal terms")
                     Spacer()
                     Text("\(dictionaryTerms.count)")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Corrections")
+                    Spacer()
+                    Text("\(corrections.count)")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -1149,6 +1202,7 @@ struct PersonalDictionaryDetail_iOS: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             dictionaryTerms = PersonalDictionaryPreferences.currentTerms()
+            corrections = PersonalDictionaryPreferences.currentCorrections()
         }
         .alert("Edit dictionary term", isPresented: Binding(
             get: { editingIndex != nil },
@@ -1203,6 +1257,41 @@ struct PersonalDictionaryDetail_iOS: View {
     private func persistDictionaryTerms() {
         dictionaryTerms = PersonalDictionaryPreferences.normalizedTerms(dictionaryTerms)
         PersonalDictionaryPreferences.save(dictionaryTerms)
+    }
+
+    private func addCorrection() {
+        let heard = newHeard.trimmingCharacters(in: .whitespacesAndNewlines)
+        let correct = newCorrect.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !heard.isEmpty, !correct.isEmpty else { return }
+        guard heard.lowercased() != correct.lowercased() else {
+            correctionValidationMessage = "Heard and corrected text must differ."
+            return
+        }
+        switch PersonalDictionaryPreferences.upsertCorrection(heard: heard, correct: correct) {
+        case .saved:
+            newHeard = ""
+            newCorrect = ""
+            persistCorrections()
+            correctionValidationMessage = nil
+        case .full:
+            correctionValidationMessage = "The dictionary holds up to \(PersonalDictionaryPreferences.maxCorrections) corrections. Remove one first."
+        case .invalid:
+            correctionValidationMessage = "Heard and corrected text must differ."
+        }
+    }
+
+    private func removeCorrection(at index: Int) {
+        guard corrections.indices.contains(index) else { return }
+        corrections.remove(at: index)
+        persistCorrections()
+        correctionValidationMessage = nil
+    }
+
+    private func persistCorrections() {
+        PersonalDictionaryPreferences.saveCorrections(corrections)
+        corrections = PersonalDictionaryPreferences.currentCorrections()
+        dictionaryTerms = PersonalDictionaryPreferences.currentTerms()
+        appState.reloadTranscriptCorrector()
     }
 }
 

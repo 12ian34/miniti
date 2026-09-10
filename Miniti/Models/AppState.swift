@@ -288,7 +288,7 @@ enum SettingsSearchCatalog {
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
         .init("language.default", "Default Language", section: "Language", destination: .language, keywords: ["transcription language"]),
-        .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms"]),
+        .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms", "correction", "replace"]),
         .init("language.fillers", "Filler Detection", section: "Language", destination: .language, keywords: ["um", "uh", "coaching"]),
         .init("ai.models", "AI Models", section: "Models", destination: .ai, keywords: ["Nova-3", "GPT", "Deepgram", "OpenAI", "BYOK", "managed"]),
         .init("ai.investigations", "OpenAI Investigations", section: "Meeting Investigations", destination: .ai, keywords: ["research", "web", "codebase", "folder", "investigate"]),
@@ -572,7 +572,7 @@ final class AppState: ObservableObject {
         case none
         case returnHome
         case startUnscheduled
-        case startCalendar(MinitiAPIService.CalendarEvent)
+        case startCalendar(MinitiAPIService.CalendarEvent, openJoinLink: Bool)
     }
 
     private var pendingMeetingCompletion: PendingMeetingCompletion = .none
@@ -1211,6 +1211,11 @@ final class AppState: ObservableObject {
     private var notifiedQuestionIDs: Set<String> = []
     private var lastQuestionNotificationAt: Date?
     private static let questionNotificationMinInterval: TimeInterval = 120 // 2 minutes
+    /// Cached local dictionary corrector. Rebuilt when corrections are saved.
+    /// Nil when the store is empty so existing users pay nothing.
+    private var transcriptCorrector: TranscriptCorrector? = TranscriptCorrector(
+        corrections: PersonalDictionaryPreferences.currentCorrections()
+    )
     #if os(macOS)
     /// Transient live guidance shown by the floating recording surface while Miniti is
     /// frontmost. When the app is behind another app (or the surface is disabled), the
@@ -1304,6 +1309,15 @@ final class AppState: ObservableObject {
     private var autoStartCheckTimer: Timer?
     private var autoStartCountdownTimer: Timer?
     private var dismissedAutoStartEventIDs: Set<String> = []
+    /// One browser/tab open per calendar event for a given meeting start. Cleared with
+    /// other per-meeting state so a later explicit rejoin (live header) can reopen.
+    private var openedJoinLinkEventIDs: Set<String> = []
+    /// Reminder tapped before the first calendar refresh of this launch; consumed once.
+    private var pendingReminderJoinEventID: String?
+    /// Test seam: when set, `openMeetingLink` uses this instead of the system browser.
+    var testOpenURLHandler: ((URL) -> Bool)?
+    /// Test seam for reminder "not now" routing.
+    var testingDismissedAutoStartEventIDs: Set<String> { dismissedAutoStartEventIDs }
     private var smartMeetingCountdownTimer: Timer?
     private var smartMeetingSnoozedUntilByEventID: [String: Date] = [:]
     private var smartMeetingSuppressedUntil: Date?
@@ -1903,8 +1917,9 @@ final class AppState: ObservableObject {
             
             let presentedCurrentSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
             let presentedInterimSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
+            let interim = transcriptCorrector?.apply(to: update.text) ?? update.text
             transcriptRuntime.update(
-                interimText: update.text,
+                interimText: interim,
                 currentSpeaker: presentedCurrentSpeaker,
                 interimSpeaker: presentedInterimSpeaker
             )
@@ -3285,8 +3300,9 @@ final class AppState: ObservableObject {
         
         for segment in finalSegments {
             // Skip empty segments
-            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty else { continue }
+            let rawText = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawText.isEmpty else { continue }
+            let text = transcriptCorrector?.apply(to: rawText) ?? rawText
             receivedTranscriptContent = true
 
             // Track this speaker
@@ -3459,14 +3475,15 @@ final class AppState: ObservableObject {
                         meddpiccLastAttemptAt = now
                         let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
-                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
-                        await updateMeddpiccInBackground(
-                            transcript: transcript,
-                            finalSegments: finalSegments,
-                            segmentCount: finalCount,
-                            existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
-                            meetingID: meetingID
-                        )
+                        if let meetingID = currentMeeting?.id, !transcript.isEmpty {
+                            await updateMeddpiccInBackground(
+                                transcript: transcript,
+                                finalSegments: finalSegments,
+                                segmentCount: finalCount,
+                                existingTitle: currentTitleSuffix.isEmpty ? nil : currentTitleSuffix,
+                                meetingID: meetingID
+                            )
+                        }
                     }
                 }
                 if questionsSuccessCount >= 2 {
@@ -3484,13 +3501,14 @@ final class AppState: ObservableObject {
                         questionsLastAttemptAt = now
                         let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
-                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
-                        await updateQuestionsInBackground(
-                            transcript: transcript,
-                            finalSegments: finalSegments,
-                            segmentCount: finalCount,
-                            meetingID: meetingID
-                        )
+                        if let meetingID = currentMeeting?.id, !transcript.isEmpty {
+                            await updateQuestionsInBackground(
+                                transcript: transcript,
+                                finalSegments: finalSegments,
+                                segmentCount: finalCount,
+                                meetingID: meetingID
+                            )
+                        }
                     }
                 }
                 if templateInsightsEnabled, templateSuccessCount >= 2 {
@@ -3508,13 +3526,14 @@ final class AppState: ObservableObject {
                         templateLastAttemptAt = now
                         let finalSegments = finalizedSegments()
                         let transcript = transcriptText(from: finalSegments)
-                        guard let meetingID = currentMeeting?.id, !transcript.isEmpty else { continue }
-                        await updateTemplateInBackground(
-                            transcript: transcript,
-                            finalSegments: finalSegments,
-                            segmentCount: finalCount,
-                            meetingID: meetingID
-                        )
+                        if let meetingID = currentMeeting?.id, !transcript.isEmpty {
+                            await updateTemplateInBackground(
+                                transcript: transcript,
+                                finalSegments: finalSegments,
+                                segmentCount: finalCount,
+                                meetingID: meetingID
+                            )
+                        }
                     }
                 }
                 // Docs topics: only while the docs tab is active and an MCP URL is
@@ -4227,6 +4246,69 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// When the calendar has exactly one non-self named attendee and the
+    /// transcript has exactly one confirmed system-channel speaker with enough
+    /// speech, name that speaker after the attendee without an API request.
+    /// Returns true when a name was applied.
+    @discardableResult
+    private func applyOneToOneCalendarSpeakerName(finalSegments: [LiveSegment]) -> Bool {
+        let candidates = speakerNameCandidates()
+        guard candidates.count == 1, let attendeeName = candidates.first else { return false }
+
+        var systemSpeakerCounts: [Int: Int] = [:]
+        for segment in finalSegments where segment.isFinal {
+            guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let source = segment.source
+            let isSystem: Bool
+            if let source {
+                isSystem = source == .system
+            } else {
+                // Legacy rows without source are not treated as system.
+                isSystem = false
+            }
+            guard isSystem, !DeepgramService.isMicAppSpeakerID(segment.speaker) else { continue }
+            systemSpeakerCounts[segment.speaker, default: 0] += 1
+        }
+        guard systemSpeakerCounts.count == 1,
+              let (speakerID, count) = systemSpeakerCounts.first,
+              count >= 5 else {
+            return false
+        }
+
+        let key = String(speakerID)
+        guard !liveSpeakerOverrides.contains(key) else { return false }
+        if liveSpeakerNames[key] == attendeeName { return false }
+
+        var merged = liveSpeakerNames
+        merged[key] = attendeeName
+        liveSpeakerNames = merged
+        if let meeting = currentMeeting {
+            meeting.speakerNames = merged
+            saveCurrentMeetingIfNeeded()
+        }
+        DebugLogger.shared.log(
+            .app,
+            "Speaker-names 1:1 shortcut: id=\(speakerID) -> \(attendeeName)"
+        )
+        return true
+    }
+
+    /// True when some non-self speaker with at least three words of speech has no
+    /// inferred or user-given name yet. Shared by the cadence, 1:1 shortcut, and
+    /// end-of-meeting paths so they agree on "nothing left to name".
+    private func hasUnnamedNonSelfSpeaker(in finalSegments: [LiveSegment]) -> Bool {
+        let selfIDs = effectiveLiveSelfSpeakerIDs
+        var meaningfulSpeakers: Set<Int> = []
+        for segment in finalSegments where !selfIDs.contains(segment.speaker) {
+            if segment.text.split(separator: " ").count >= 3 {
+                meaningfulSpeakers.insert(segment.speaker)
+            }
+        }
+        return meaningfulSpeakers.contains { id in
+            (liveSpeakerNames[String(id)] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
     /// Kick off a background speaker-name inference. No-op if disabled, already running,
     /// or the transcript is too short. Results are merged into `liveSpeakerNames`.
     private func updateSpeakerNamesInBackground(
@@ -4243,6 +4325,17 @@ final class AppState: ObservableObject {
 
         isGeneratingSpeakerNames = true
         defer { isGeneratingSpeakerNames = false }
+
+        // Local free 1:1 shortcut: one non-self calendar attendee + one system
+        // speaker with enough speech. Never applies to mic IDs. User overrides win.
+        if applyOneToOneCalendarSpeakerName(finalSegments: finalSegments) {
+            lastSpeakerNamesRequestAt = Date()
+            lastSpeakerNamesSegmentCount = segmentCount
+            if !hasUnnamedNonSelfSpeaker(in: finalSegments) {
+                DebugLogger.shared.log(.app, "Speaker-names: 1:1 calendar shortcut named every speaker, skipping request")
+                return
+            }
+        }
 
         let candidates = speakerNameCandidates()
         let model = OpenAIModel.gpt5Mini
@@ -4288,7 +4381,11 @@ final class AppState: ObservableObject {
                 return
             }
 
-            let supported = Self.transcriptSupportedSpeakerNames(inferred, finalSegments: finalSegments)
+            let supported = Self.transcriptSupportedSpeakerNames(
+                inferred,
+                finalSegments: finalSegments,
+                calendarAttendeeNames: candidates
+            )
             let sanitized = SpeakerNamesResponse.sanitize(inferred)
             let rejected = inferred.count - supported.count
             let rejectedIDs = Set(sanitized.keys).subtracting(supported.keys).sorted()
@@ -4375,17 +4472,30 @@ final class AppState: ObservableObject {
         DebugLogger.shared.log(.app, "Self speaker toggle: id=\(id), isSelf=\(isSelf), total=\(liveSelfSpeakerIDs.count)")
     }
 
-    /// Whether the implicit "the sole mic speaker is You" default applies to this live
-    /// session. Only dual-source (mic+system) capture carries that assumption — a
-    /// mic-only recording (iOS, macOS mic-only) can be someone else's lecture or an
-    /// interview and never labeled anyone "You" before mic diarization either.
+    /// Mark every confirmed mic speaker as self in one action. Display grouping
+    /// already collapses self IDs, so no segment rewrite is needed.
+    func markAllLiveMicSpeakersAsSelf() {
+        let micIDs = liveMicSpeakerIDs
+        guard micIDs.count > 1 else { return }
+        for id in micIDs.sorted() {
+            setLiveSelfSpeaker(id: id, isSelf: true)
+        }
+    }
+
+    /// Whether the implicit "the primary mic speaker is You" default applies.
+    /// Dual-source only. Withdrawn when several mic speakers exist unless the
+    /// meeting is remote-likely (diarizer clones on a solo headset call).
     private var liveImplicitSelfAllowed: Bool {
-        guard liveMicSpeakerIDs.count <= 1 else { return false }
         #if os(macOS)
-        return captureMicrophone && captureSystemAudio
+        let dualSource = captureMicrophone && captureSystemAudio
         #else
-        return false
+        let dualSource = false
         #endif
+        return ImplicitSelfPolicy.allowed(
+            micSpeakerCount: liveMicSpeakerIDs.count,
+            hasDualSourceOrLegacy: dualSource,
+            environment: inferredMeetingEnvironment
+        )
     }
 
     /// The effective self-speaker set during the live session, for membership checks —
@@ -4416,6 +4526,36 @@ final class AppState: ObservableObject {
         let wordCount = segment.text.split(separator: " ").count
         guard wordCount >= MeetingEnvironmentInferenceEngine.meaningfulFinalMinimumWordCount else { return }
 
+        refreshEnvironmentContextEvidence()
+
+        switch segment.source {
+        case .microphone:
+            environmentEvidence.hasMeaningfulMicFinal = true
+            let seconds = max(0, segment.endTime - segment.startTime)
+            environmentEvidence.meaningfulMicSpeechSeconds += seconds
+            if segment.speaker != DeepgramService.micSpeakerID {
+                environmentEvidence.additionalMicSpeakerSpeechSeconds += seconds
+            }
+            environmentEvidence.confirmedMicSpeakerCount = liveMicSpeakerIDs.count
+        case .system:
+            environmentEvidence.hasMeaningfulSystemFinal = true
+            if environmentEvidence.hasAssociatedCallApp
+                || environmentEvidence.recognizedCallAppActive
+                || environmentEvidence.calendarEventHasConferenceURL == true {
+                environmentEvidence.systemFinalWithCallContext = true
+            }
+        case .unknown:
+            break
+        }
+        evaluateEnvironmentInference()
+    }
+
+    /// Call-app and calendar context are known before any transcript arrives.
+    /// Refreshing them at meeting start lets a calendar-linked call with an
+    /// active call app be classified remote-likely (and the mic promotion policy
+    /// set to strict) before the first response, instead of after the first
+    /// system final.
+    private func refreshEnvironmentContextEvidence() {
         #if os(macOS)
         // Monitor unreliability is "no information", never in-room evidence.
         let snapshot = latestCallSnapshot
@@ -4425,23 +4565,34 @@ final class AppState: ObservableObject {
             monitorReliable && !(snapshot?.activeCalls.isEmpty ?? true)
         #endif
         if let event = selectedCalendarEvent {
-            let hasConference = [event.conferenceUrl, event.meetLink]
-                .contains { !($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            environmentEvidence.calendarEventHasConferenceURL = hasConference
+            environmentEvidence.calendarEventHasConferenceURL = event.joinURL != nil
         }
+    }
 
-        switch segment.source {
-        case .microphone:
+    /// Reconstruct the minimal evidence consistent with a persisted conclusion so a
+    /// resumed meeting keeps its environment (and promotion policy, and implicit
+    /// "You") instead of dropping to `unknown` until the next final.
+    private func restoreEnvironmentInference(from meeting: Meeting) {
+        resetEnvironmentInference()
+        guard let raw = meeting.inferredEnvironmentRaw,
+              let restored = InferredMeetingEnvironment(rawValue: raw),
+              restored != .unknown else { return }
+        refreshEnvironmentContextEvidence()
+        environmentEvidence.confirmedMicSpeakerCount = liveMicSpeakerIDs.count
+        switch restored {
+        case .remoteLikely:
+            environmentEvidence.systemFinalWithCallContext = true
+        case .inRoomLikely:
             environmentEvidence.hasMeaningfulMicFinal = true
-            environmentEvidence.meaningfulMicSpeechSeconds += max(0, segment.endTime - segment.startTime)
-            environmentEvidence.confirmedMicSpeakerCount = liveMicSpeakerIDs.count
-        case .system:
-            environmentEvidence.hasMeaningfulSystemFinal = true
-            if environmentEvidence.hasAssociatedCallApp
-                || environmentEvidence.recognizedCallAppActive
-                || environmentEvidence.calendarEventHasConferenceURL == true {
-                environmentEvidence.systemFinalWithCallContext = true
-            }
+            environmentEvidence.meaningfulMicSpeechSeconds =
+                MeetingEnvironmentInferenceEngine.inRoomObservationWindowSeconds
+        case .hybridLikely:
+            environmentEvidence.systemFinalWithCallContext = true
+            environmentEvidence.hasMeaningfulMicFinal = true
+            environmentEvidence.meaningfulMicSpeechSeconds =
+                MeetingEnvironmentInferenceEngine.inRoomObservationWindowSeconds
+            environmentEvidence.additionalMicSpeakerSpeechSeconds =
+                MeetingEnvironmentInferenceEngine.hybridSecondaryMicSpeechSeconds
         case .unknown:
             break
         }
@@ -4467,11 +4618,24 @@ final class AppState: ObservableObject {
         // Optional metadata for recovery/diagnostics. Old meetings stay nil and
         // decode as unknown; no migration required.
         currentMeeting?.inferredEnvironmentRaw = next == .unknown ? nil : next.rawValue
+
+        // B2: tighten additional-mic promotion only while remote-likely so a
+        // solo headset call does not mint clones. Shared-mic rooms stay standard.
+        let nextPolicy: DeepgramService.MicSpeakerPromotionPolicy =
+            next == .remoteLikely ? .strict : .standard
+        if deepgramService?.micSpeakerPromotionPolicy != nextPolicy {
+            deepgramService?.micSpeakerPromotionPolicy = nextPolicy
+            DebugLogger.shared.log(
+                .deepgram,
+                "Mic speaker promotion policy: \(nextPolicy.rawValue) (environment=\(next.rawValue))"
+            )
+        }
     }
 
     private func resetEnvironmentInference() {
         environmentEvidence = MeetingEnvironmentEvidence()
         inferredMeetingEnvironment = .unknown
+        deepgramService?.micSpeakerPromotionPolicy = .standard
     }
 
     /// App speaker IDs allocated to earlier sockets stay valid after a reconnect —
@@ -5057,15 +5221,28 @@ final class AppState: ObservableObject {
 
     nonisolated static func transcriptSupportedSpeakerNames(
         _ inferred: [String: String],
-        finalSegments: [LiveSegment]
+        finalSegments: [LiveSegment],
+        calendarAttendeeNames: [String] = []
     ) -> [String: String] {
         let sanitized = SpeakerNamesResponse.sanitize(inferred)
         guard !sanitized.isEmpty else { return [:] }
+        let calendarNameKeys = Set(
+            calendarAttendeeNames
+                .map { speakerNameTokens($0).joined(separator: " ") }
+                .filter { !$0.isEmpty }
+        )
 
         var supported: [String: String] = [:]
         for (key, name) in sanitized {
-            guard let speaker = Int(key),
-                  speakerNameHasTranscriptEvidence(name: name, speaker: speaker, segments: finalSegments) else {
+            guard let speaker = Int(key) else { continue }
+            let nameKey = speakerNameTokens(name).joined(separator: " ")
+            let isCalendarAttendee = !nameKey.isEmpty && calendarNameKeys.contains(nameKey)
+            guard speakerNameHasTranscriptEvidence(
+                name: name,
+                speaker: speaker,
+                segments: finalSegments,
+                adjacentWindow: isCalendarAttendee ? 3 : 1
+            ) else {
                 continue
             }
             supported[key] = name
@@ -5087,7 +5264,8 @@ final class AppState: ObservableObject {
     private nonisolated static func speakerNameHasTranscriptEvidence(
         name: String,
         speaker: Int,
-        segments: [LiveSegment]
+        segments: [LiveSegment],
+        adjacentWindow: Int = 1
     ) -> Bool {
         let nameTokens = speakerNameTokens(name)
         guard let firstName = nameTokens.first else { return false }
@@ -5098,13 +5276,17 @@ final class AppState: ObservableObject {
             }
         }
 
+        let window = max(1, adjacentWindow)
         for index in segments.indices where segments[index].speaker != speaker {
             guard textContainsNameToken(segments[index].text, firstName) else { continue }
-            let previousMatches = index > segments.startIndex && segments[segments.index(before: index)].speaker == speaker
-            let nextIndex = segments.index(after: index)
-            let nextMatches = nextIndex < segments.endIndex && segments[nextIndex].speaker == speaker
-            if previousMatches || nextMatches {
-                return true
+            let start = segments.index(index, offsetBy: -window, limitedBy: segments.startIndex) ?? segments.startIndex
+            let endExclusive = segments.index(index, offsetBy: window + 1, limitedBy: segments.endIndex) ?? segments.endIndex
+            var neighbor = start
+            while neighbor < endExclusive {
+                if neighbor != index, segments[neighbor].speaker == speaker {
+                    return true
+                }
+                neighbor = segments.index(after: neighbor)
             }
         }
 
@@ -5380,6 +5562,8 @@ final class AppState: ObservableObject {
         salesDetectionSignalsSeen = []
         salesDetectionNudgeFired = false
         resetEnvironmentInference()
+        refreshEnvironmentContextEvidence()
+        evaluateEnvironmentInference()
         recordingDuration = 0
         recordingStartDate = nil
         accumulatedRecordedDuration = 0
@@ -5452,7 +5636,65 @@ final class AppState: ObservableObject {
             recordingErrorMessage = "That calendar event is no longer available. Refresh your calendar and try again."
             return
         }
-        finishCurrentMeeting(then: .startCalendar(event))
+        finishCurrentMeeting(then: .startCalendar(event, openJoinLink: false))
+    }
+
+    /// End the current meeting and start the next calendar event, opening its join link
+    /// after notes start. Explicit user action only — never used by timer paths.
+    func joinAndEndAndStartCalendarMeeting(eventID: String) {
+        guard let event = upcomingEvents.first(where: { $0.id == eventID }) else {
+            recordingErrorMessage = "That calendar event is no longer available. Refresh your calendar and try again."
+            return
+        }
+        finishCurrentMeeting(then: .startCalendar(event, openJoinLink: true))
+    }
+
+    /// Start taking notes for a calendar event, then open its Meet/Zoom/Teams link once.
+    /// Starting is synchronous state setup; the browser takes focus afterward.
+    func joinAndStartMeeting(from event: MinitiAPIService.CalendarEvent) {
+        guard startMeetingFromEvent(event) else {
+            // Terms, key, limit, or finalization refused the start. Opening the call
+            // anyway would leave the user in a meeting miniti is not recording, and
+            // would burn the one-shot guard for a start that never happened.
+            DebugLogger.shared.log(.app, "Join skipped: meeting start was refused for \(event.title)")
+            return
+        }
+        _ = openMeetingLink(for: event)
+    }
+
+    /// Open the event's conference URL. Returns false when there is no https link, the
+    /// one-shot guard blocks a duplicate open for this meeting start, or the system
+    /// opener fails. Never throws — join failures must not fail meeting start.
+    /// - Parameter allowingRepeat: live-header rejoin after a drop; skips the one-shot set.
+    @discardableResult
+    func openMeetingLink(for event: MinitiAPIService.CalendarEvent, allowingRepeat: Bool = false) -> Bool {
+        guard let url = event.joinURL else { return false }
+        if !allowingRepeat, openedJoinLinkEventIDs.contains(event.id) {
+            DebugLogger.shared.log(.app, "Join link already opened for event \(event.id); skipping duplicate")
+            return false
+        }
+        let opened: Bool
+        if let handler = testOpenURLHandler {
+            opened = handler(url)
+        } else {
+            #if os(macOS)
+            opened = NSWorkspace.shared.open(url)
+            #elseif os(iOS)
+            UIApplication.shared.open(url)
+            opened = true
+            #else
+            opened = false
+            #endif
+        }
+        if opened {
+            // Record only successful opens, so a failed launch can be retried from
+            // any join surface without waiting for the next meeting.
+            openedJoinLinkEventIDs.insert(event.id)
+            DebugLogger.shared.log(.app, "Opened join link for \(event.title)")
+        } else {
+            DebugLogger.shared.log(.app, "Join link open failed for \(event.title)")
+        }
+        return opened
     }
 
     private func finishCurrentMeeting(then completion: PendingMeetingCompletion) {
@@ -5862,6 +6104,97 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Rebuild the cached corrector from UserDefaults. Call after Settings or
+    /// live-transcript saves change the correction store.
+    func reloadTranscriptCorrector() {
+        transcriptCorrector = TranscriptCorrector(
+            corrections: PersonalDictionaryPreferences.currentCorrections()
+        )
+    }
+
+    /// Save a correction pair and optionally rewrite earlier mentions in the
+    /// current live meeting. Never combined with a finals append in the same turn.
+    @discardableResult
+    func saveDictionaryCorrection(
+        heard: String,
+        correct: String,
+        fixEarlierMentions: Bool = true
+    ) -> PersonalDictionaryPreferences.UpsertResult {
+        let result = PersonalDictionaryPreferences.upsertCorrection(heard: heard, correct: correct)
+        guard result == .saved else {
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (\(result))")
+            return result
+        }
+        reloadTranscriptCorrector()
+        if fixEarlierMentions {
+            applyRetroactiveCorrectionsToLiveTranscript()
+        }
+        DebugLogger.shared.log(.app, "Dictionary correction saved: '\(heard)' -> '\(correct)'")
+        return result
+    }
+
+    /// One pass over liveSegments changing only matching text. Skips the assignment
+    /// when nothing matched. Must not run inside handleSpeakerSegments.
+    @discardableResult
+    func applyRetroactiveCorrectionsToLiveTranscript() -> Bool {
+        guard let corrector = transcriptCorrector else { return false }
+        var changed = false
+        let updated: [LiveSegment] = liveSegments.map { segment in
+            let corrected = corrector.apply(to: segment.text)
+            guard corrected != segment.text else { return segment }
+            changed = true
+            var copy = segment
+            copy.text = corrected
+            return copy
+        }
+        guard changed else { return false }
+        liveSegments = updated
+        return true
+    }
+
+    /// Apply corrections to a saved meeting's transcript without clearing insights.
+    @discardableResult
+    func applyDictionaryCorrection(
+        heard: String,
+        correct: String,
+        to meeting: Meeting,
+        fixEarlierMentions: Bool = true
+    ) -> Bool {
+        let result = PersonalDictionaryPreferences.upsertCorrection(heard: heard, correct: correct)
+        guard result == .saved else {
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (\(result))")
+            return false
+        }
+        reloadTranscriptCorrector()
+
+        guard fixEarlierMentions, let corrector = transcriptCorrector else { return true }
+        var changed = false
+        for segment in meeting.segments {
+            let corrected = corrector.apply(to: segment.text)
+            guard corrected != segment.text else { continue }
+            segment.text = corrected
+            changed = true
+        }
+        guard changed else { return true }
+        meeting.markTranscriptCorrected()
+        do {
+            try modelContext?.save()
+        } catch {
+            DebugLogger.shared.log(.app, "Dictionary correction save failed: \(error.localizedDescription)")
+        }
+        #if os(macOS)
+        if autoExportMarkdown {
+            let markdown = meeting.fullMeetingAsMarkdown()
+            exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+        }
+        #endif
+        if !webhookURL.isEmpty {
+            let payload = WebhookService.payloadFromMeeting(meeting)
+            WebhookService.send(payload: payload, to: webhookURL)
+        }
+        return true
+    }
+
     @discardableResult
     func applyTranscriptTrim(_ operation: TranscriptTrimOperation, to meeting: Meeting) -> Bool {
         guard !operation.isEmpty else { return false }
@@ -6090,6 +6423,7 @@ final class AppState: ObservableObject {
         // the reserved mic ID range for the mic-speaker set.
         detectedSpeakers = Set(liveSegments.map(\.speaker))
         liveMicSpeakerIDs = Set(liveSegments.filter(\.isLocalMic).map(\.speaker))
+        restoreEnvironmentInference(from: interrupted)
         
         // Restore title tracking (handles both old timestamp-prefixed and new clean titles)
         if let (_, suffix) = Self.parseMeetingTitle(interrupted.title) {
@@ -7162,6 +7496,23 @@ final class AppState: ObservableObject {
                     let shouldGenerateSales = salesInsightsEnabled
                     let finalTemplate: InsightTemplate? = templateInsightsEnabled ? liveTemplate : nil
 
+                    // End-of-meeting naming pass: one request with the full transcript
+                    // when automatic naming is on and any non-self speaker still lacks a name.
+                    // The pass is fenced by meeting ID inside updateSpeakerNamesInBackground and
+                    // runs concurrently with final insights: naming must never delay the
+                    // summary or the "finishing" state (plan B5 contract).
+                    if autoInferSpeakerNames, hasUnnamedNonSelfSpeaker(in: finalSegments) {
+                        let passSegments = finalSegments
+                        Task { @MainActor [weak self] in
+                            await self?.updateSpeakerNamesInBackground(
+                                finalSegments: passSegments,
+                                segmentCount: passSegments.count,
+                                meetingID: meetingIDAtStop
+                            )
+                            self?.saveCurrentMeetingIfNeeded()
+                        }
+                    }
+
                     // From here on, insight generation is scoped to the saved Meeting rather than
                     // the live session. This lets the user return home and record another meeting
                     // without an older response writing into the new meeting's state.
@@ -7345,6 +7696,7 @@ final class AppState: ObservableObject {
         clearManagedDeepgramCredential()
         managedSessionStartRecordedDuration = nil
         managedSessionError = nil
+        openedJoinLinkEventIDs.removeAll()
     }
 
     private func completeMeetingFinalization() {
@@ -7372,10 +7724,14 @@ final class AppState: ObservableObject {
             goHome()
             _ = startNewMeeting()
             return
-        case .startCalendar(let event):
+        case .startCalendar(let event, let openJoinLink):
             shouldOpenMeetingAfterFinalization = false
             goHome()
-            _ = startNewMeeting(calendarEvent: event)
+            if openJoinLink {
+                joinAndStartMeeting(from: event)
+            } else {
+                _ = startNewMeeting(calendarEvent: event)
+            }
             return
         }
         guard shouldOpenMeetingAfterFinalization else { return }
@@ -8366,9 +8722,24 @@ final class AppState: ObservableObject {
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
             let events = try await minitiAPIService.googleEvents(deviceId: deviceId)
-            DebugLogger.shared.log(.app, "Google Calendar fetched \(events.count) events")
+            let withLink = events.reduce(into: 0) { $0 += $1.joinURL != nil ? 1 : 0 }
+            let withRawLinkFields = events.reduce(into: 0) {
+                $0 += ($1.meetLink != nil || $1.conferenceUrl != nil) ? 1 : 0
+            }
+            DebugLogger.shared.log(
+                .app,
+                "Google Calendar fetched \(events.count) events, \(withLink) with a join link (\(withRawLinkFields) carried raw link fields)"
+            )
             upcomingEvents = events
             rescheduleMeetingReminders()
+            if let pendingID = pendingReminderJoinEventID {
+                pendingReminderJoinEventID = nil
+                if let event = events.first(where: { $0.id == pendingID }) {
+                    joinAndStartMeeting(from: event)
+                } else {
+                    DebugLogger.shared.log(.app, "Deferred meeting reminder \(pendingID) no longer matches an upcoming event")
+                }
+            }
         } catch {
             DebugLogger.shared.log(.app, "Google Calendar events fetch failed: \(error)")
             if case MinitiAPIService.ServiceError.serverError(let msg) = error, msg.contains("google_not_connected") {
@@ -8394,10 +8765,11 @@ final class AppState: ObservableObject {
         calendarRefreshTimer = nil
     }
     
-    func startMeetingFromEvent(_ event: MinitiAPIService.CalendarEvent) {
+    @discardableResult
+    func startMeetingFromEvent(_ event: MinitiAPIService.CalendarEvent) -> Bool {
         cancelAutoStartCountdown()
         clearSmartMeetingPrompt()
-        _ = startNewMeeting(calendarEvent: event)
+        return startNewMeeting(calendarEvent: event)
     }
     
     // MARK: - Auto-start from Calendar
@@ -9599,6 +9971,12 @@ final class AppState: ObservableObject {
     static let smartMeetingNotNowAction = "miniti.smart.not-now"
     static let smartMeetingEndNowAction = "miniti.smart.end-now"
 
+    static let meetingReminderNotificationCategory = "miniti.meeting-reminder"
+    static let meetingReminderWithLinkCategory = "miniti.meeting-reminder.with-link"
+    static let meetingReminderNotesOnlyCategory = "miniti.meeting-reminder.notes-only"
+    static let meetingReminderPrimaryAction = "miniti.meeting-reminder.primary"
+    static let meetingReminderNotNowAction = "miniti.meeting-reminder.not-now"
+
     static func registerSmartMeetingNotificationCategory() {
         let endAndStart = UNNotificationAction(
             identifier: smartMeetingEndAndStartAction,
@@ -9649,9 +10027,37 @@ final class AppState: ObservableObject {
             actions: [keep, endNow],
             intentIdentifiers: []
         )
+        // `.foreground`: these actions start a recording and (with a link) open a
+        // URL. On iOS a background-delivered action cannot reliably open a URL or
+        // begin capture; on macOS it brings the app forward like the body tap does.
+        let reminderJoin = UNNotificationAction(
+            identifier: meetingReminderPrimaryAction,
+            title: "Join and take notes",
+            options: [.foreground]
+        )
+        let reminderTakeNotes = UNNotificationAction(
+            identifier: meetingReminderPrimaryAction,
+            title: "Take notes",
+            options: [.foreground]
+        )
+        let reminderNotNow = UNNotificationAction(
+            identifier: meetingReminderNotNowAction,
+            title: "Not now"
+        )
+        let reminderWithLinkCategory = UNNotificationCategory(
+            identifier: meetingReminderWithLinkCategory,
+            actions: [reminderJoin, reminderNotNow],
+            intentIdentifiers: []
+        )
+        let reminderNotesOnlyCategory = UNNotificationCategory(
+            identifier: meetingReminderNotesOnlyCategory,
+            actions: [reminderTakeNotes, reminderNotNow],
+            intentIdentifiers: []
+        )
         // One installation call: categories not in this set are clobbered.
         UNUserNotificationCenter.current().setNotificationCategories([
-            calendarCategory, quietCategory, callStartCategory, callTransitionCategory, callGraceCategory
+            calendarCategory, quietCategory, callStartCategory, callTransitionCategory, callGraceCategory,
+            reminderWithLinkCategory, reminderNotesOnlyCategory
         ])
     }
 
@@ -9747,6 +10153,64 @@ final class AppState: ObservableObject {
         case Self.smartMeetingEndNowAction:
             endEndingGraceNow()
         #endif
+        default:
+            break
+        }
+    }
+
+    /// Routes notification taps/actions. Reminder body taps act like the primary action;
+    /// smart-meeting body taps still only raise the window (handled by the delegate).
+    func handleNotificationResponse(
+        actionIdentifier: String,
+        categoryIdentifier: String,
+        eventID: String?
+    ) {
+        if categoryIdentifier == Self.meetingReminderWithLinkCategory
+            || categoryIdentifier == Self.meetingReminderNotesOnlyCategory
+            || categoryIdentifier.hasPrefix(Self.meetingReminderNotificationCategory) {
+            let effective = actionIdentifier == UNNotificationDefaultActionIdentifier
+                ? Self.meetingReminderPrimaryAction
+                : actionIdentifier
+            handleMeetingReminderNotificationAction(effective, eventID: eventID)
+            return
+        }
+        if actionIdentifier == UNNotificationDefaultActionIdentifier {
+            return
+        }
+        handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
+    }
+
+    func handleMeetingReminderNotificationAction(
+        _ actionIdentifier: String,
+        eventID: String?
+    ) {
+        switch actionIdentifier {
+        case Self.meetingReminderPrimaryAction:
+            guard let eventID else {
+                DebugLogger.shared.log(.app, "Meeting reminder primary action missing eventID")
+                return
+            }
+            guard let event = upcomingEvents.first(where: { $0.id == eventID }) else {
+                // A reminder tapped on a cold launch arrives before the first calendar
+                // refresh has filled `upcomingEvents`. Hold the intent for that one
+                // refresh instead of dropping it.
+                if upcomingEvents.isEmpty, googleCalendarEnabled, isGoogleCalendarConnected {
+                    DebugLogger.shared.log(.app, "Meeting reminder for \(eventID) deferred until the calendar refreshes")
+                    pendingReminderJoinEventID = eventID
+                    Task { await fetchUpcomingEvents() }
+                } else {
+                    DebugLogger.shared.log(.app, "Meeting reminder event \(eventID) is no longer available")
+                }
+                return
+            }
+            joinAndStartMeeting(from: event)
+        case Self.meetingReminderNotNowAction:
+            guard let eventID else { return }
+            dismissedAutoStartEventIDs.insert(eventID)
+            if pendingAutoStartEvent?.id == eventID {
+                cancelAutoStartCountdown()
+            }
+            DebugLogger.shared.log(.app, "Meeting reminder dismissed: \(eventID)")
         default:
             break
         }
@@ -9940,6 +10404,10 @@ final class AppState: ObservableObject {
             content.title = "meeting in 1 minute"
             content.body = event.title
             content.sound = .default
+            content.userInfo = ["eventID": event.id]
+            content.categoryIdentifier = event.joinURL != nil
+                ? Self.meetingReminderWithLinkCategory
+                : Self.meetingReminderNotesOnlyCategory
 
             let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
             let request = UNNotificationRequest(

@@ -821,6 +821,9 @@ struct TranscriptTrimView: View {
     @State private var cachedRenderMutation: SelectableTextMutation?
     @State private var renderRevision: UInt64 = 0
     @State private var renderCacheTask: Task<Void, Never>?
+    @State private var correctingHeardText: String?
+    @State private var correctionDraft = ""
+    @State private var fixEarlierMentions = true
 
     private var selectedTextSelections: [TranscriptTextSelection] {
         cachedRenderModel.textSelections(overlapping: selectedRange)
@@ -828,6 +831,15 @@ struct TranscriptTrimView: View {
 
     private var hasSelectedTranscriptText: Bool {
         !selectedTextSelections.isEmpty
+    }
+
+    private var selectedHeardText: String? {
+        guard let selectedRange else { return nil }
+        return TranscriptCorrectionSelection.snappedHeardText(
+            in: cachedRenderModel.attributed,
+            selectedRange: selectedRange,
+            finalizedLength: cachedRenderModel.attributed.length
+        )
     }
 
     private var currentSnapshots: [TranscriptSegmentSnapshot] {
@@ -878,6 +890,42 @@ struct TranscriptTrimView: View {
         } message: {
             Text("this will clear summary, sales, questions, and playbook insights. regenerate insights after trimming. undo restores transcript text only — it does not restore the old insights.")
         }
+        #if os(macOS)
+        .popover(
+            isPresented: Binding(
+                get: { correctingHeardText != nil },
+                set: { if !$0 { correctingHeardText = nil } }
+            )
+        ) {
+            if let heard = correctingHeardText {
+                TranscriptCorrectionEditor(
+                    heard: heard,
+                    correct: $correctionDraft,
+                    fixEarlierMentions: $fixEarlierMentions,
+                    onSave: { saveCorrection(heard: heard) },
+                    onCancel: { correctingHeardText = nil }
+                )
+                .frame(minWidth: 280)
+            }
+        }
+        #else
+        .sheet(isPresented: Binding(
+            get: { correctingHeardText != nil },
+            set: { if !$0 { correctingHeardText = nil } }
+        )) {
+            if let heard = correctingHeardText {
+                TranscriptCorrectionEditor(
+                    heard: heard,
+                    correct: $correctionDraft,
+                    fixEarlierMentions: $fixEarlierMentions,
+                    onSave: { saveCorrection(heard: heard) },
+                    onCancel: { correctingHeardText = nil }
+                )
+                .presentationDetents([.height(280)])
+                .presentationBackground(ColorPalette.Background.primary)
+            }
+        }
+        #endif
         .onAppear {
             rebuildRenderCache()
         }
@@ -958,6 +1006,17 @@ struct TranscriptTrimView: View {
             .disabled(!hasSelectedTranscriptText)
             .foregroundStyle(hasSelectedTranscriptText ? ColorPalette.Status.error : ColorPalette.Text.disabled)
 
+            Button {
+                beginCorrection()
+            } label: {
+                Label("correct selection", systemImage: "character.cursor.ibeam")
+                    .font(.system(size: 10, weight: .semibold, design: .default))
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedHeardText == nil)
+            .foregroundStyle(selectedHeardText == nil ? ColorPalette.Text.disabled : ColorPalette.Text.muted)
+            .help("save a dictionary correction from the selected word")
+
             if let undoSnapshots {
                 Button {
                     if appState.restoreTranscriptSnapshots(undoSnapshots, to: meeting) {
@@ -1011,6 +1070,29 @@ struct TranscriptTrimView: View {
         let selections = selectedTextSelections
         guard !selections.isEmpty else { return }
         requestTrim(TranscriptTrimOperation(textSelections: selections))
+    }
+
+    private func beginCorrection() {
+        guard let heard = selectedHeardText else { return }
+        correctingHeardText = heard
+        correctionDraft = ""
+        fixEarlierMentions = true
+    }
+
+    private func saveCorrection(heard: String) {
+        let snapshots = currentSnapshots
+        let applied = appState.applyDictionaryCorrection(
+            heard: heard,
+            correct: correctionDraft,
+            to: meeting,
+            fixEarlierMentions: fixEarlierMentions
+        )
+        correctingHeardText = nil
+        selectedRange = nil
+        guard applied, fixEarlierMentions else { return }
+        // Same undo contract as trim: restores transcript text only.
+        undoSnapshots = snapshots
+        registerSystemUndo(for: snapshots)
     }
 
     private func requestDeleteSelectedText() {

@@ -1010,7 +1010,8 @@ final class MeetingEnvironmentInferenceTests: XCTestCase {
         micFinal: Bool = false,
         systemFinal: Bool = false,
         systemFinalWithContext: Bool = false,
-        micSeconds: Double = 0
+        micSeconds: Double = 0,
+        secondaryMicSeconds: Double = 0
     ) -> MeetingEnvironmentEvidence {
         var e = MeetingEnvironmentEvidence()
         e.hasAssociatedCallApp = associatedCallApp
@@ -1021,6 +1022,7 @@ final class MeetingEnvironmentInferenceTests: XCTestCase {
         e.hasMeaningfulSystemFinal = systemFinal
         e.systemFinalWithCallContext = systemFinalWithContext
         e.meaningfulMicSpeechSeconds = micSeconds
+        e.additionalMicSpeakerSpeechSeconds = secondaryMicSeconds
         return e
     }
 
@@ -1075,7 +1077,7 @@ final class MeetingEnvironmentInferenceTests: XCTestCase {
     }
 
     func testLateSystemSpeechUpgradesInRoomToHybrid() {
-        var e = evidence(micSpeakers: 2, micFinal: true, micSeconds: 40)
+        var e = evidence(micSpeakers: 2, micFinal: true, micSeconds: 40, secondaryMicSeconds: 25)
         XCTAssertEqual(infer(e), .inRoomLikely)
         // A remote participant finally speaks on an associated call.
         e.hasAssociatedCallApp = true
@@ -1086,7 +1088,7 @@ final class MeetingEnvironmentInferenceTests: XCTestCase {
 
     func testHybridNeedsBothRoomAndRemoteEvidence() {
         XCTAssertEqual(
-            infer(evidence(associatedCallApp: true, micSpeakers: 2, micFinal: true, systemFinal: true, micSeconds: 40)),
+            infer(evidence(associatedCallApp: true, micSpeakers: 2, micFinal: true, systemFinal: true, micSeconds: 40, secondaryMicSeconds: 25)),
             .hybridLikely
         )
         // Associated call with several mic speakers but no system speech yet: remote.
@@ -1094,6 +1096,22 @@ final class MeetingEnvironmentInferenceTests: XCTestCase {
             infer(evidence(associatedCallApp: true, micSpeakers: 2, micFinal: true, micSeconds: 40)),
             .remoteLikely
         )
+    }
+
+    func testPromotedCloneWithLittleSpeechDoesNotFlipRemoteToHybrid() {
+        // A solo headset call: one diarizer clone got promoted before the first
+        // system final arrived. It must not turn the meeting hybrid, which would
+        // relax the promotion policy and withdraw "You" from the real speaker.
+        let clone = evidence(
+            associatedCallApp: true, micSpeakers: 2, micFinal: true,
+            systemFinal: true, systemFinalWithContext: true, micSeconds: 40, secondaryMicSeconds: 4
+        )
+        XCTAssertEqual(infer(clone), .remoteLikely)
+
+        // Once the second mic speaker has real speech time, hybrid is correct.
+        var real = clone
+        real.additionalMicSpeakerSpeechSeconds = MeetingEnvironmentInferenceEngine.hybridSecondaryMicSpeechSeconds
+        XCTAssertEqual(infer(real), .hybridLikely)
     }
 
     func testMediaPlaybackDuringInRoomMeetingStaysUnknown() {
@@ -1134,7 +1152,7 @@ final class TranscriptSourceModelTests: XCTestCase {
 
     func testEffectiveSelfIDsWithdrawImplicitYouForMultipleMicSpeakers() {
         // Dual-source meeting: the implicit "You" applies while there is one mic
-        // speaker, and withdraws when a second is confirmed.
+        // speaker, and withdraws when a second is confirmed — unless remote-likely.
         let meeting = Meeting(title: "m")
         meeting.segments = [
             TranscriptSegment(text: "remote", speaker: 0, timestamp: 0, isFinal: true, sourceRaw: "system"),
@@ -1148,6 +1166,10 @@ final class TranscriptSourceModelTests: XCTestCase {
         )
         XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [])
         XCTAssertEqual(meeting.speakerLabelSelfIDs, [])
+
+        meeting.inferredEnvironmentRaw = InferredMeetingEnvironment.remoteLikely.rawValue
+        XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1000])
+        XCTAssertNil(meeting.speakerLabelSelfIDs)
 
         meeting.selfSpeakerIDs = [1001]
         XCTAssertEqual(meeting.effectiveSelfSpeakerIDs, [1001])

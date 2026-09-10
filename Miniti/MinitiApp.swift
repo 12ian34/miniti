@@ -8,6 +8,7 @@ extension Notification.Name {
     static let minitiAttioOAuthCallback = Notification.Name("minitiAttioOAuthCallback")
     static let minitiTwentyOAuthCallback = Notification.Name("minitiTwentyOAuthCallback")
     static let minitiGoogleOAuthCallback = Notification.Name("minitiGoogleOAuthCallback")
+    static let minitiCorrectSelectedTranscriptWord = Notification.Name("minitiCorrectSelectedTranscriptWord")
     /// Posted after meetings are inserted outside the main window's own flows
     /// (e.g. Granola CSV import in Settings) so the history sidebar refreshes.
     static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
@@ -264,11 +265,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
         let actionIdentifier = response.actionIdentifier
+        let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let eventID = response.notification.request.content.userInfo["eventID"] as? String
         Task { @MainActor [weak self] in
-            if actionIdentifier != UNNotificationDefaultActionIdentifier {
-                self?.appState?.handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
-            }
+            self?.appState?.handleNotificationResponse(
+                actionIdentifier: actionIdentifier,
+                categoryIdentifier: categoryIdentifier,
+                eventID: eventID
+            )
             self?.openOrRestoreMainWindow()
         }
         completionHandler()
@@ -505,6 +509,10 @@ struct MinitiApp: App {
             Task { @MainActor in
                 await appState.generateInsights()
             }
+        }
+
+        keyboardService.onCorrectSelectedWord = {
+            NotificationCenter.default.post(name: .minitiCorrectSelectedTranscriptWord, object: nil)
         }
         
         let existingOnNewSession = keyboardService.onNewSession

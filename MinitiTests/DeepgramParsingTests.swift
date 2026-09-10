@@ -291,6 +291,150 @@ final class DeepgramParsingTests: XCTestCase {
         XCTAssertEqual(terms, ["Bob"])
     }
 
+    func testPersonalDictionaryCorrectionsNormalizeAndRejectIdentity() {
+        let pairs = PersonalDictionaryPreferences.normalizedCorrections([
+            .init(heard: "  Meet  Up ", correct: "Meetup"),
+            .init(heard: "MEET UP", correct: "Other"), // duplicate heard
+            .init(heard: "same", correct: "SAME"), // identity
+            .init(heard: "", correct: "x"),
+            .init(heard: "ok", correct: ""),
+        ])
+        XCTAssertEqual(pairs, [.init(heard: "meet up", correct: "Meetup")])
+    }
+
+    func testPersonalDictionaryCorrectionsSaveAddsTerm() {
+        let defaults = UserDefaults(suiteName: "test_personal_corrections_\(UUID().uuidString)")!
+        PersonalDictionaryPreferences.saveCorrections(
+            [.init(heard: "minitti", correct: "miniti")],
+            defaults: defaults
+        )
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.currentCorrections(defaults: defaults),
+            [.init(heard: "minitti", correct: "miniti")]
+        )
+        XCTAssertTrue(PersonalDictionaryPreferences.currentTerms(defaults: defaults).contains("miniti"))
+    }
+
+    func testTranscriptCorrectorWordBoundaryAndLongestFirst() {
+        let corrector = TranscriptCorrector(corrections: [
+            .init(heard: "meet", correct: "meat"),
+            .init(heard: "meet up", correct: "Meetup"),
+        ])
+        XCTAssertEqual(corrector?.apply(to: "Let's meet up tomorrow"), "Let's Meetup tomorrow")
+        XCTAssertEqual(corrector?.apply(to: "The meeting starts"), "The meeting starts")
+        XCTAssertEqual(corrector?.apply(to: "Please Meet here"), "Please meat here")
+        XCTAssertNil(TranscriptCorrector(corrections: []))
+    }
+
+    func testTranscriptCorrectorTreatsReplacementAsLiteralText() {
+        // "$1" and backslashes in user text must not be read as regex templates.
+        let corrector = TranscriptCorrector(corrections: [
+            .init(heard: "budget", correct: "$100 \\ ok"),
+        ])
+        XCTAssertEqual(corrector?.apply(to: "the budget is set"), "the $100 \\ ok is set")
+    }
+
+    func testTranscriptCorrectorPunctuationAndUnicode() {
+        let corrector = TranscriptCorrector(corrections: [
+            .init(heard: "zoe", correct: "Zoë"),
+            .init(heard: "many tea", correct: "miniti"),
+        ])
+        XCTAssertEqual(corrector?.apply(to: "Ask zoe, then many tea."), "Ask Zoë, then miniti.")
+        XCTAssertEqual(corrector?.apply(to: "(zoe) 'many tea'"), "(Zoë) 'miniti'")
+        XCTAssertEqual(corrector?.apply(to: "nothing here"), "nothing here")
+    }
+
+    func testPersonalDictionaryUpsertReplacesExistingHeardAndHonoursCap() {
+        let defaults = UserDefaults(suiteName: "test_personal_upsert_\(UUID().uuidString)")!
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.upsertCorrection(heard: "Many Tea", correct: "minity", defaults: defaults),
+            .saved
+        )
+        // Re-correcting the same heard phrase must win, not be silently dropped.
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.upsertCorrection(heard: "many tea", correct: "miniti", defaults: defaults),
+            .saved
+        )
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.currentCorrections(defaults: defaults),
+            [.init(heard: "many tea", correct: "miniti")]
+        )
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.upsertCorrection(heard: "same", correct: "Same", defaults: defaults),
+            .invalid
+        )
+
+        for index in 1..<PersonalDictionaryPreferences.maxCorrections {
+            _ = PersonalDictionaryPreferences.upsertCorrection(heard: "h\(index)", correct: "c\(index)", defaults: defaults)
+        }
+        XCTAssertEqual(PersonalDictionaryPreferences.currentCorrections(defaults: defaults).count, PersonalDictionaryPreferences.maxCorrections)
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.upsertCorrection(heard: "overflow", correct: "x", defaults: defaults),
+            .full
+        )
+        // Replacing an existing pair is still allowed when full.
+        XCTAssertEqual(
+            PersonalDictionaryPreferences.upsertCorrection(heard: "h1", correct: "c1b", defaults: defaults),
+            .saved
+        )
+
+        PersonalDictionaryPreferences.saveCorrections([], defaults: defaults)
+        XCTAssertNil(defaults.data(forKey: PersonalDictionaryPreferences.correctionsStorageKey))
+    }
+
+    func testPersonalDictionaryCorrectionsStripColonsForDeepgramReplace() {
+        let items = PersonalDictionaryPreferences.deepgramReplaceItems(corrections: [
+            .init(heard: "light:dash", correct: "Light:dash Cloud"),
+        ])
+        XCTAssertEqual(items.map(\.value), ["lightdash:Lightdash Cloud"])
+    }
+
+    func testTranscriptCorrectionSelectionSnapsToWordsAndRejectsCrossTurn() {
+        let doc = NSAttributedString(string: "You · 0:01\nwe use many tea daily\nAlice · 0:05\nokay")
+        let text = doc.string as NSString
+        let finalized = text.length
+
+        // Partial selection inside "many" snaps to the whole word.
+        let partial = text.range(of: "an")
+        XCTAssertEqual(
+            TranscriptCorrectionSelection.snappedHeardText(in: doc, selectedRange: partial, finalizedLength: finalized),
+            "many"
+        )
+        // Two words.
+        let phrase = text.range(of: "many tea")
+        XCTAssertEqual(
+            TranscriptCorrectionSelection.snappedHeardText(in: doc, selectedRange: phrase, finalizedLength: finalized),
+            "many tea"
+        )
+        // Crossing into the next turn (includes the newline and the header) is rejected.
+        let crossing = text.range(of: "daily\nAlice")
+        XCTAssertNil(
+            TranscriptCorrectionSelection.snappedHeardText(in: doc, selectedRange: crossing, finalizedLength: finalized)
+        )
+        // Selection reaching into interim text (past finalizedLength) is rejected.
+        XCTAssertNil(
+            TranscriptCorrectionSelection.snappedHeardText(in: doc, selectedRange: phrase, finalizedLength: phrase.location + 2)
+        )
+        // Over the length cap is rejected.
+        XCTAssertNil(
+            TranscriptCorrectionSelection.snappedHeardText(in: doc, selectedRange: phrase, finalizedLength: finalized, maxCharacters: 3)
+        )
+    }
+
+    func testTranscriptCorrectionSelectionWordsDedupesInOrder() {
+        let words = TranscriptCorrectionSelection.words(in: "Hello hello, Miniti — and hello again.")
+        XCTAssertEqual(words, ["Hello", "Miniti", "and", "again"])
+    }
+
+    func testDeepgramReplaceItemsFollowKeytermsShape() {
+        let items = PersonalDictionaryPreferences.deepgramReplaceItems(corrections: [
+            .init(heard: "minitti", correct: "miniti"),
+            .init(heard: "light dash", correct: "Lightdash"),
+        ])
+        XCTAssertEqual(items.map(\.name), ["replace", "replace"])
+        XCTAssertEqual(items.map(\.value), ["minitti:miniti", "light dash:Lightdash"])
+    }
+
     // MARK: - segmentBySpeaker (static, extracted)
 
     private typealias Word = DeepgramService.TranscriptUpdate.Word
@@ -782,5 +926,115 @@ final class MicPrimaryGatingTests: XCTestCase {
             words: confidentWords, isFinal: true, confidence: 0.9, source: .microphone, state: &confidentState
         )
         XCTAssertEqual(confidentSegments.map(\.speaker), [1001, 1000])
+    }
+}
+
+final class FirstWordSpeakerGatingTests: XCTestCase {
+    private typealias Word = DeepgramService.TranscriptUpdate.Word
+
+    private func word(
+        _ text: String,
+        speaker: Int,
+        start: Double,
+        end: Double? = nil,
+        confidence: Double = 0.9
+    ) -> Word {
+        Word(
+            text: text,
+            start: start,
+            end: end ?? (start + 0.3),
+            confidence: confidence,
+            speaker: speaker,
+            speakerConfidence: confidence
+        )
+    }
+
+    func testFirstWordUnconfirmedSpeakerFoldsIntoLastCommitted() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [1000]
+        state.lastCommittedSpeakerBySource[.microphone] = 1000
+
+        // A new response that opens on unconfirmed 1001 with too little evidence.
+        let words = (0..<3).map { word("x\($0)", speaker: 1001, start: Double($0) * 0.3) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words,
+            isFinal: true,
+            confidence: 0.9,
+            source: .microphone,
+            state: &state
+        )
+        XCTAssertEqual(segments.count, 1)
+        XCTAssertEqual(segments[0].speaker, 1000)
+        XCTAssertFalse(state.confirmedSpeakerIDs.contains(1001))
+        XCTAssertEqual(state.lastCommittedSpeakerBySource[.microphone], 1000)
+    }
+
+    func testFirstWordUnconfirmedSpeakerPromotesAfterEvidenceAcrossResponses() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [1000]
+        state.lastCommittedSpeakerBySource[.microphone] = 1000
+
+        // First response: 5 words from 1001 (~1.5s) — under standard promotion bar.
+        let first = (0..<5).map { word("a\($0)", speaker: 1001, start: Double($0) * 0.35) }
+        _ = DeepgramService.segmentBySpeaker(
+            words: first, isFinal: true, confidence: 0.9, source: .microphone, state: &state
+        )
+        XCTAssertFalse(state.confirmedSpeakerIDs.contains(1001))
+
+        // Second response continues accruing pending evidence until promotion.
+        let second = (0..<5).map { word("b\($0)", speaker: 1001, start: 2.0 + Double($0) * 0.35) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: second, isFinal: true, confidence: 0.9, source: .microphone, state: &state
+        )
+        XCTAssertTrue(state.confirmedSpeakerIDs.contains(1001))
+        XCTAssertEqual(segments.last?.speaker, 1001)
+    }
+
+    func testStrictPolicyRequiresMoreEvidenceForAdditionalMicSpeaker() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [1000]
+        state.lastCommittedSpeakerBySource[.microphone] = 1000
+        state.micSpeakerPromotionPolicy = .strict
+
+        // 8 words / ~2.4s / high confidence — enough for standard, not for strict.
+        let words = (0..<8).map { word("c\($0)", speaker: 1001, start: Double($0) * 0.3) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words, isFinal: true, confidence: 0.9, source: .microphone, state: &state
+        )
+        XCTAssertEqual(segments.map(\.speaker), [1000])
+        XCTAssertFalse(state.confirmedSpeakerIDs.contains(1001))
+    }
+
+    func testStrictPolicyLeavesSystemSpeakersOnStandardThresholds() {
+        var state = DeepgramService.SegmentationState()
+        state.confirmedSpeakerIDs = [0]
+        state.lastCommittedSpeakerBySource[.system] = 0
+        state.micSpeakerPromotionPolicy = .strict
+
+        // 8 words / ~2.4s from a new remote speaker: enough for standard promotion.
+        let words = (0..<8).map { word("r\($0)", speaker: 1, start: Double($0) * 0.3) }
+        let segments = DeepgramService.segmentBySpeaker(
+            words: words, isFinal: true, confidence: 0.9, source: .system, state: &state
+        )
+        XCTAssertEqual(segments.map(\.speaker), [1])
+        XCTAssertTrue(state.confirmedSpeakerIDs.contains(1))
+    }
+
+    func testImplicitSelfPolicyTable() {
+        XCTAssertTrue(
+            ImplicitSelfPolicy.allowed(micSpeakerCount: 1, hasDualSourceOrLegacy: true, environment: .unknown)
+        )
+        XCTAssertFalse(
+            ImplicitSelfPolicy.allowed(micSpeakerCount: 2, hasDualSourceOrLegacy: true, environment: .unknown)
+        )
+        XCTAssertTrue(
+            ImplicitSelfPolicy.allowed(micSpeakerCount: 2, hasDualSourceOrLegacy: true, environment: .remoteLikely)
+        )
+        XCTAssertFalse(
+            ImplicitSelfPolicy.allowed(micSpeakerCount: 2, hasDualSourceOrLegacy: true, environment: .inRoomLikely)
+        )
+        XCTAssertFalse(
+            ImplicitSelfPolicy.allowed(micSpeakerCount: 1, hasDualSourceOrLegacy: false, environment: .remoteLikely)
+        )
     }
 }

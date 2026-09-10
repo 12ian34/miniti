@@ -313,6 +313,15 @@ final class Meeting {
         }
     }
 
+    /// Mark every mic speaker on this meeting as self in one action.
+    func markAllMicSpeakersAsSelf() {
+        let micIDs = micSpeakerIDs
+        guard micIDs.count > 1 else { return }
+        for id in micIDs.sorted() {
+            setSelfSpeaker(id: id, isSelf: true)
+        }
+    }
+
     /// One pass over segments summarizing speaker sources. Explicit source wins;
     /// legacy segments without one fall back to the reserved mic ID range.
     private struct SpeakerSourceSummary {
@@ -351,8 +360,14 @@ final class Meeting {
     /// not start now: a solo recording can be someone else's lecture or an interview.
     /// Legacy meetings (no source metadata) predate mic diarization and keep it.
     private func implicitSelfAllowed(_ summary: SpeakerSourceSummary) -> Bool {
-        guard summary.micIDs.count <= 1 else { return false }
-        return summary.hasSystemSource || summary.hasLegacySegments || segments.isEmpty
+        let hasDualSourceOrLegacy =
+            summary.hasSystemSource || summary.hasLegacySegments || segments.isEmpty
+        let environment = InferredMeetingEnvironment(rawValue: inferredEnvironmentRaw ?? "") ?? .unknown
+        return ImplicitSelfPolicy.allowed(
+            micSpeakerCount: summary.micIDs.count,
+            hasDualSourceOrLegacy: hasDualSourceOrLegacy,
+            environment: environment
+        )
     }
 
     /// Effective "self" set used for membership checks (rename UI, nudges). Explicit
@@ -475,6 +490,13 @@ final class Meeting {
         transcriptRevision += 1
         transcriptEditedAt = date
         clearGeneratedInsightsAfterTranscriptEdit()
+    }
+
+    /// Bump transcript revision after a dictionary correction without clearing
+    /// generated insights (unlike trim).
+    func markTranscriptCorrected(at date: Date = Date()) {
+        transcriptRevision += 1
+        transcriptEditedAt = date
     }
 
     func clearGeneratedInsightsAfterTranscriptEdit() {

@@ -52,6 +52,48 @@ enum LiveTranscriptSelectionPolicy {
         let clampedLength = min(max(0, adjusted.length), resultingLength - clampedLocation)
         return NSRange(location: clampedLocation, length: clampedLength)
     }
+
+    /// Snap a finalized selection outward to word boundaries for dictionary corrections.
+    static func snappedHeardText(
+        in storage: NSAttributedString,
+        selectedRange: NSRange,
+        finalizedLength: Int,
+        maxCharacters: Int = 80
+    ) -> String? {
+        TranscriptCorrectionSelection.snappedHeardText(
+            in: storage,
+            selectedRange: selectedRange,
+            finalizedLength: finalizedLength,
+            maxCharacters: maxCharacters
+        )
+    }
+}
+
+/// Selection bridge between the native live pane and SwiftUI. Publishes only the
+/// snapped "heard" text (never a geometry rect: screen-to-SwiftUI conversion of an
+/// unflipped AppKit rect was the cause of the invisible correction popover). The
+/// correction editor anchors on the SwiftUI pill instead.
+@MainActor
+final class LiveTranscriptSelectionState: ObservableObject {
+    @Published private(set) var heardText: String?
+    /// Bumped when SwiftUI wants the native selection collapsed (after a saved
+    /// correction). The coordinator consumes it on its next `apply`.
+    @Published private(set) var deselectRevision: UInt64 = 0
+
+    func update(heardText: String?) {
+        if self.heardText != heardText {
+            self.heardText = heardText
+        }
+    }
+
+    func clear() {
+        heardText = nil
+    }
+
+    func requestDeselect() {
+        heardText = nil
+        deselectRevision &+= 1
+    }
 }
 
 /// A single native scrolling text document for the macOS live transcript.
@@ -66,6 +108,8 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
     let isAutoScrollEnabled: Bool
     let reduceMotion: Bool
     let onScrolledAwayFromBottom: () -> Void
+    var selectionState: LiveTranscriptSelectionState?
+    var onCorrectSelection: ((String) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -149,7 +193,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject {
+    final class Coordinator: NSObject, NSTextViewDelegate {
         private var parent: LiveTranscriptTextPaneMac
         private weak var scrollView: NSScrollView?
         private weak var textView: NSTextView?
@@ -178,6 +222,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             detach()
             self.scrollView = scrollView
             self.textView = textView
+            textView.delegate = self
 
             NotificationCenter.default.addObserver(
                 self,
@@ -204,6 +249,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
         }
 
         func detach() {
+            textView?.delegate = nil
             NotificationCenter.default.removeObserver(self)
             cursorTimer?.invalidate()
             cursorTimer = nil
@@ -213,9 +259,65 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             textView = nil
         }
 
+        func textView(
+            _ view: NSTextView,
+            menu: NSMenu,
+            for event: NSEvent,
+            at charIndex: Int
+        ) -> NSMenu? {
+            let result = menu
+            guard let storage = view.textStorage else { return result }
+            let selection = view.selectedRange()
+            guard let heard = LiveTranscriptSelectionPolicy.snappedHeardText(
+                in: storage,
+                selectedRange: selection,
+                finalizedLength: finalizedLength
+            ) else {
+                return result
+            }
+            result.addItem(NSMenuItem.separator())
+            let item = NSMenuItem(
+                title: "correct “\(heard)”…",
+                action: #selector(correctSelection(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = heard
+            result.addItem(item)
+            return result
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView,
+                  let storage = textView.textStorage else { return }
+            let heard = LiveTranscriptSelectionPolicy.snappedHeardText(
+                in: storage,
+                selectedRange: textView.selectedRange(),
+                finalizedLength: finalizedLength
+            )
+            parent.selectionState?.update(heardText: heard)
+        }
+
+        private var lastDeselectRevision: UInt64 = 0
+
+        private func consumeDeselectRequestIfNeeded(textView: NSTextView) {
+            guard let state = parent.selectionState,
+                  state.deselectRevision != lastDeselectRevision else { return }
+            lastDeselectRevision = state.deselectRevision
+            let selection = textView.selectedRange()
+            guard selection.length > 0 else { return }
+            textView.setSelectedRange(NSRange(location: selection.location, length: 0))
+        }
+
+        @objc private func correctSelection(_ sender: NSMenuItem) {
+            guard let heard = sender.representedObject as? String else { return }
+            parent.onCorrectSelection?(heard)
+        }
+
         func apply(parent: LiveTranscriptTextPaneMac) {
             self.parent = parent
             guard let textView, let storage = textView.textStorage else { return }
+            consumeDeselectRequestIfNeeded(textView: textView)
 
             if lastFinalizedRevision != parent.finalizedRevision {
                 removeInterimIfNeeded(storage: storage, textView: textView)

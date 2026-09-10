@@ -15,6 +15,16 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v2.7.0
+
+- new: (macOS and iOS) join button on meeting reminders and upcoming meetings. One click opens the Meet or Zoom link and starts miniti
+- new: (macOS) select a word in the live transcript to correct it. miniti fixes earlier mentions, keeps fixing it for the rest of the meeting, and remembers it next time
+- new: (iOS) long-press a transcript line to correct a misheard word
+- new: (macOS and iOS) Settings, Personal Dictionary lists your corrections so you can remove them
+- improvement: (macOS and iOS) speaker names appear more often, with a final check when the meeting ends and names from the invite on 1:1 calls
+- fix: (macOS) one person on the Mac mic no longer splits into several speakers during a call, and you stay labelled You
+- fix: (macOS and iOS) meeting links and attendee names from Google Calendar were being dropped. Join buttons and attendee names now show
+
 ### 2026-09-06 - v2.6.0
 
 - new: (Linux) miniti for Linux. Mic and system audio through PipeWire, live transcription with speakers, the same live insights, calendar, CRMs, webhooks, and Pro. Download the tarball from the GitHub release

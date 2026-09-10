@@ -271,6 +271,15 @@ private struct SmartMeetingBanner: View {
         switch prompt.kind {
         case .calendar:
             if let eventID = prompt.eventID {
+                let nextEvent = appState.upcomingEvents.first(where: { $0.id == eventID })
+                if nextEvent?.joinURL != nil {
+                    Button("Join next") {
+                        appState.joinAndEndAndStartCalendarMeeting(eventID: eventID)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ColorPalette.Accent.green)
+                }
+
                 Button("End & start next") {
                     appState.endAndStartCalendarMeeting(eventID: eventID)
                 }
@@ -677,6 +686,9 @@ struct ReadyStateView: View {
                 EventConfirmSheet(event: event, onStart: {
                     appState.startMeetingFromEvent(event)
                     withAnimation(.easeOut(duration: 0.12)) { confirmEvent = nil }
+                }, onJoin: {
+                    appState.joinAndStartMeeting(from: event)
+                    withAnimation(.easeOut(duration: 0.12)) { confirmEvent = nil }
                 }, onCancel: {
                     withAnimation(.easeOut(duration: 0.12)) { confirmEvent = nil }
                 })
@@ -713,17 +725,35 @@ private struct AutoStartBanner: View {
                 .foregroundStyle(ColorPalette.Accent.green)
             
             HStack(spacing: 12) {
+                if event.joinURL != nil {
+                    Button {
+                        appState.joinAndStartMeeting(from: event)
+                    } label: {
+                        Text("join")
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                            .foregroundStyle(ColorPalette.Background.primary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(ColorPalette.Accent.green)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+
                 Button {
                     appState.startMeetingFromEvent(event)
                 } label: {
                     Text("start now")
                         .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(Color(hex: "09090B"))
+                        .foregroundStyle(event.joinURL != nil ? ColorPalette.Text.primary : ColorPalette.Background.primary)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(ColorPalette.Accent.green)
+                                .fill(event.joinURL != nil ? ColorPalette.Background.tertiary : ColorPalette.Accent.green)
                         )
                 }
                 .buttonStyle(.plain)
@@ -787,6 +817,7 @@ private struct EventConfirmSheet: View {
     @EnvironmentObject private var appState: AppState
     let event: MinitiAPIService.CalendarEvent
     let onStart: () -> Void
+    let onJoin: () -> Void
     let onCancel: () -> Void
 
     private var timeRange: String? {
@@ -934,6 +965,28 @@ private struct EventConfirmSheet: View {
                     .buttonStyle(.plain)
                     .focusable(false)
 
+                    if event.joinURL != nil {
+                        Button {
+                            onJoin()
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "arrow.up.right.square")
+                                    .font(.system(size: 10, weight: .bold))
+                                Text("join and take notes")
+                                    .font(.system(size: 11, weight: .semibold, design: .default))
+                            }
+                            .foregroundStyle(ColorPalette.Background.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(ColorPalette.Accent.green)
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                    }
+
                     Button {
                         onStart()
                     } label: {
@@ -944,14 +997,17 @@ private struct EventConfirmSheet: View {
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                             Text("⌘↩")
                                 .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                                .foregroundStyle(
+                                    (event.joinURL != nil ? ColorPalette.Text.primary : ColorPalette.Background.primary)
+                                        .opacity(0.5)
+                                )
                         }
-                        .foregroundStyle(Color(hex: "09090B"))
+                        .foregroundStyle(event.joinURL != nil ? ColorPalette.Text.primary : ColorPalette.Background.primary)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(hex: "3FB950"))
+                                .fill(event.joinURL != nil ? ColorPalette.Background.tertiary : ColorPalette.Accent.green)
                         )
                     }
                     .buttonStyle(.plain)
@@ -2704,6 +2760,26 @@ struct TerminalHeader: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Edit meeting title")
+                    }
+
+                    if let event = appState.selectedCalendarEvent, let joinURL = event.joinURL {
+                        Button {
+                            _ = appState.openMeetingLink(for: event, allowingRepeat: true)
+                        } label: {
+                            MinitiControlLabel(role: .secondary) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "video")
+                                        .font(.system(size: 10, weight: .semibold))
+                                        .frame(width: 11)
+                                    Text("join call")
+                                        .font(.system(size: 11, weight: .medium, design: .default))
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .help("Open \(joinURL.host ?? "the meeting link") in your browser")
+                        .accessibilityLabel("Join call")
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
