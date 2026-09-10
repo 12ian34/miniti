@@ -1790,6 +1790,7 @@ struct MeetingDetailView: View {
                 defaultName: defaultName,
                 isSelf: isSelf,
                 hasOtherSelves: hasOtherSelves,
+                showMarkAllMicAsSelf: meeting.micSpeakerIDs.count > 1,
                 onSave: { newName in
                     meeting.setSpeakerName(id: key, name: newName)
                     renamingSpeaker = nil
@@ -1805,6 +1806,11 @@ struct MeetingDetailView: View {
                 },
                 onUnmarkAsSelf: {
                     meeting.setSelfSpeaker(id: target.id, isSelf: false)
+                    try? modelContext.save()
+                    renamingSpeaker = nil
+                },
+                onMarkAllMicAsSelf: {
+                    meeting.markAllMicSpeakersAsSelf()
                     try? modelContext.save()
                     renamingSpeaker = nil
                 },

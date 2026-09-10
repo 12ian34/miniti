@@ -11,6 +11,7 @@ final class KeyboardShortcutsService: ObservableObject {
     // Callbacks for various actions
     var onToggleRecording: (() -> Void)?
     var onGenerateInsights: (() -> Void)?
+    var onCorrectSelectedWord: (() -> Void)?
     var onNewSession: (() -> Void)?
     var onGoHome: (() -> Void)?
     var onZonedOut: (() -> Void)?
@@ -76,6 +77,12 @@ final class KeyboardShortcutsService: ObservableObject {
         // ⌘⇧I - Generate insights
         if modifiers == [.command, .shift] && event.keyCode == kVK_ANSI_I {
             onGenerateInsights?()
+            return nil
+        }
+
+        // ⌘⇧D - Correct selected live transcript word
+        if modifiers == [.command, .shift] && event.keyCode == kVK_ANSI_D {
+            onCorrectSelectedWord?()
             return nil
         }
         
@@ -261,6 +268,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     // Insights
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out — catch me up", category: "Insights"),
+    KeyboardShortcut(keys: "⌘⇧D", description: "Correct selected transcript word", category: "Recording"),
     
     // App
     KeyboardShortcut(keys: "⌘/", description: "Show shortcuts", category: "App"),

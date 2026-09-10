@@ -1,6 +1,7 @@
 import XCTest
 import SwiftData
 import Combine
+import UserNotifications
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -798,6 +799,45 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(supported, ["0": "Tom"])
     }
 
+    func testTranscriptSupportedSpeakerNamesCalendarAttendeeUsesWiderWindow() {
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "We should sync with engineering.", speaker: 0, timestamp: 0, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Agreed.", speaker: 1, timestamp: 3, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Sasha owns that queue.", speaker: 1, timestamp: 6, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "That queue is busy.", speaker: 1, timestamp: 9, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "I'll take it.", speaker: 0, timestamp: 12, isFinal: true),
+        ]
+        // Free-form names stay adjacent-only: the name is two segments away from Sasha's speech.
+        XCTAssertTrue(
+            AppState.transcriptSupportedSpeakerNames(["0": "Sasha"], finalSegments: segments).isEmpty
+        )
+        // Calendar attendees accept a three-segment window.
+        XCTAssertEqual(
+            AppState.transcriptSupportedSpeakerNames(
+                ["0": "Sasha"],
+                finalSegments: segments,
+                calendarAttendeeNames: ["Sasha"]
+            ),
+            ["0": "Sasha"]
+        )
+    }
+
+    func testTranscriptSupportedSpeakerNamesRejectsThirdPartyMentionEvenForCalendar() {
+        // "Did Sasha send the doc?" spoken by someone else without a nearby
+        // segment from the candidate ID must not name that ID.
+        let segments = [
+            AppState.LiveSegment(id: UUID(), text: "Did Sasha send the doc?", speaker: 1, timestamp: 0, isFinal: true),
+            AppState.LiveSegment(id: UUID(), text: "Not yet.", speaker: 2, timestamp: 3, isFinal: true),
+        ]
+        XCTAssertTrue(
+            AppState.transcriptSupportedSpeakerNames(
+                ["0": "Sasha"],
+                finalSegments: segments,
+                calendarAttendeeNames: ["Sasha"]
+            ).isEmpty
+        )
+    }
+
     // MARK: - Interrupted meeting resume
 
     @MainActor
@@ -1192,6 +1232,62 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(meeting.transcriptRevision, 1)
         XCTAssertFalse(meeting.hasGeneratedInsights)
         XCTAssertTrue(meeting.needsInsightsAfterTranscriptEdit)
+    }
+
+    func testMarkTranscriptCorrectedBumpsRevisionAndKeepsInsights() {
+        let meeting = Meeting(
+            title: "corrected",
+            summaryText: "summary",
+            actionItems: ["follow up"],
+            keyDecisions: ["decide"],
+            topics: ["topic"],
+            discussionFlow: ["flow"],
+            meddpiccMetrics: "metric",
+            meddpiccEconomicBuyer: "buyer"
+        )
+        meeting.suggestedQuestions = [SuggestedQuestion(question: "What next?", type: "follow_up", context: "context")]
+
+        meeting.markTranscriptCorrected()
+
+        XCTAssertNotNil(meeting.transcriptEditedAt)
+        XCTAssertEqual(meeting.transcriptRevision, 1)
+        XCTAssertTrue(meeting.hasGeneratedInsights)
+        XCTAssertEqual(meeting.summaryText, "summary")
+        XCTAssertEqual(meeting.suggestedQuestions.count, 1)
+    }
+
+    @MainActor
+    func testRetroactiveCorrectionRewritesOnlyMatchingTextInOnePublish() {
+        let defaults = UserDefaults.standard
+        let previous = defaults.data(forKey: PersonalDictionaryPreferences.correctionsStorageKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: PersonalDictionaryPreferences.correctionsStorageKey)
+            } else {
+                defaults.removeObject(forKey: PersonalDictionaryPreferences.correctionsStorageKey)
+            }
+        }
+        PersonalDictionaryPreferences.saveCorrections([.init(heard: "many tea", correct: "miniti")], defaults: defaults)
+
+        let state = AppState()
+        state.reloadTranscriptCorrector()
+        let first = AppState.LiveSegment(id: UUID(), text: "we use many tea daily", speaker: 1000, timestamp: 0, isFinal: true)
+        let second = AppState.LiveSegment(id: UUID(), text: "sounds good", speaker: 0, timestamp: 3, isFinal: true)
+        state.liveSegments = [first, second]
+
+        var publishes = 0
+        let cancellable = state.$liveSegments.dropFirst().sink { _ in publishes += 1 }
+        defer { cancellable.cancel() }
+
+        XCTAssertTrue(state.applyRetroactiveCorrectionsToLiveTranscript())
+        XCTAssertEqual(publishes, 1, "one atomic assignment")
+        XCTAssertEqual(state.liveSegments.map(\.text), ["we use miniti daily", "sounds good"])
+        XCTAssertEqual(state.liveSegments.map(\.id), [first.id, second.id], "identity preserved")
+        XCTAssertEqual(state.liveSegments.map(\.timestamp), [0, 3])
+
+        // Nothing left to change: no publish at all.
+        XCTAssertFalse(state.applyRetroactiveCorrectionsToLiveTranscript())
+        XCTAssertEqual(publishes, 1)
     }
 
     func testMergeFinalSegmentReplacesCumulativeTranscript() {
@@ -1615,6 +1711,178 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertTrue(state.upcomingEvents.isEmpty)
         XCTAssertNil(state.pendingAutoStartEvent)
         XCTAssertEqual(state.autoStartCountdown, 0)
+    }
+
+    // MARK: - Calendar join links
+
+    func testCalendarEventJoinURLPrefersConferenceURLThenMeetLink() {
+        let preferred = Self.makeCalendarEvent(
+            id: "a",
+            title: "Pref",
+            meetLink: "https://meet.google.com/aaa",
+            conferenceUrl: "https://zoom.us/j/123"
+        )
+        XCTAssertEqual(preferred.joinURL?.absoluteString, "https://zoom.us/j/123")
+
+        let fallback = Self.makeCalendarEvent(
+            id: "b",
+            title: "Fall",
+            meetLink: " https://meet.google.com/bbb "
+        )
+        XCTAssertEqual(fallback.joinURL?.absoluteString, "https://meet.google.com/bbb")
+
+        let trimmedEmpty = Self.makeCalendarEvent(
+            id: "c",
+            title: "Empty",
+            meetLink: "   ",
+            conferenceUrl: ""
+        )
+        XCTAssertNil(trimmedEmpty.joinURL)
+
+        let rejectsHTTP = Self.makeCalendarEvent(
+            id: "d",
+            title: "HTTP",
+            meetLink: "http://meet.google.com/ddd"
+        )
+        XCTAssertNil(rejectsHTTP.joinURL)
+
+        let rejectsJunk = Self.makeCalendarEvent(
+            id: "e",
+            title: "Junk",
+            conferenceUrl: "not a url"
+        )
+        XCTAssertNil(rejectsJunk.joinURL)
+    }
+
+    @MainActor
+    func testOpenMeetingLinkOneShotGuard() {
+        let state = AppState()
+        let event = Self.makeCalendarEvent(
+            id: "join-1",
+            title: "Standup",
+            conferenceUrl: "https://meet.google.com/xyz-abcd-efg"
+        )
+        var opened: [URL] = []
+        state.testOpenURLHandler = { url in
+            opened.append(url)
+            return true
+        }
+
+        XCTAssertTrue(state.openMeetingLink(for: event))
+        XCTAssertFalse(state.openMeetingLink(for: event))
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertEqual(opened.first?.absoluteString, "https://meet.google.com/xyz-abcd-efg")
+
+        // Explicit rejoin after a drop may open again.
+        XCTAssertTrue(state.openMeetingLink(for: event, allowingRepeat: true))
+        XCTAssertEqual(opened.count, 2)
+    }
+
+    @MainActor
+    func testOpenMeetingLinkFailedOpenDoesNotBurnOneShotGuard() {
+        let state = AppState()
+        let event = Self.makeCalendarEvent(
+            id: "join-fail",
+            title: "Standup",
+            conferenceUrl: "https://zoom.us/j/123"
+        )
+        var attempts = 0
+        state.testOpenURLHandler = { _ in
+            attempts += 1
+            return attempts > 1
+        }
+
+        XCTAssertFalse(state.openMeetingLink(for: event), "first open fails")
+        XCTAssertTrue(state.openMeetingLink(for: event), "retry from any surface must still work")
+        XCTAssertFalse(state.openMeetingLink(for: event), "now one-shot blocked")
+        XCTAssertEqual(attempts, 2)
+    }
+
+    @MainActor
+    func testMeetingReminderNotNowCancelsMatchingCountdown() {
+        let state = AppState()
+        let event = Self.makeCalendarEvent(id: "rem-2", title: "Sync")
+        state.upcomingEvents = [event]
+        state.pendingAutoStartEvent = event
+
+        state.handleNotificationResponse(
+            actionIdentifier: AppState.meetingReminderNotNowAction,
+            categoryIdentifier: AppState.meetingReminderNotesOnlyCategory,
+            eventID: event.id
+        )
+        XCTAssertNil(state.pendingAutoStartEvent)
+        XCTAssertTrue(state.testingDismissedAutoStartEventIDs.contains(event.id))
+    }
+
+    @MainActor
+    func testMeetingReminderNotificationRouting() {
+        let state = AppState()
+        let event = Self.makeCalendarEvent(
+            id: "rem-1",
+            title: "Kickoff",
+            conferenceUrl: "https://meet.google.com/kick-off"
+        )
+        state.upcomingEvents = [event]
+        var opened: [URL] = []
+        state.testOpenURLHandler = { url in
+            opened.append(url)
+            return true
+        }
+
+        // Force a refused start (terms not accepted). The default body tap and the
+        // primary action must then NOT open the call: the user would be in a meeting
+        // miniti is not recording. The one-shot guard must also stay clear so a later
+        // accepted start can still open the link.
+        let defaults = UserDefaults.standard
+        let previousTerms = defaults.object(forKey: "acceptedTermsVersion")
+        defer {
+            if let previousTerms {
+                defaults.set(previousTerms, forKey: "acceptedTermsVersion")
+            } else {
+                defaults.removeObject(forKey: "acceptedTermsVersion")
+            }
+        }
+        defaults.set(0, forKey: "acceptedTermsVersion")
+        XCTAssertFalse(state.hasAcceptedTerms)
+
+        state.handleNotificationResponse(
+            actionIdentifier: UNNotificationDefaultActionIdentifier,
+            categoryIdentifier: AppState.meetingReminderWithLinkCategory,
+            eventID: event.id
+        )
+        XCTAssertEqual(opened.count, 0)
+        state.handleNotificationResponse(
+            actionIdentifier: AppState.meetingReminderPrimaryAction,
+            categoryIdentifier: AppState.meetingReminderWithLinkCategory,
+            eventID: event.id
+        )
+        XCTAssertEqual(opened.count, 0)
+        XCTAssertTrue(state.openMeetingLink(for: event), "guard must not be burned by a refused start")
+        XCTAssertEqual(opened.count, 1)
+        XCTAssertFalse(state.openMeetingLink(for: event), "now one-shot blocked for this start")
+
+        state.handleNotificationResponse(
+            actionIdentifier: AppState.meetingReminderNotNowAction,
+            categoryIdentifier: AppState.meetingReminderNotesOnlyCategory,
+            eventID: "dismiss-me"
+        )
+        XCTAssertTrue(state.testingDismissedAutoStartEventIDs.contains("dismiss-me"))
+    }
+
+    @MainActor
+    func testMeetingReminderCategoriesAreRegisteredWithSmartMeetingCategories() async {
+        AppState.registerSmartMeetingNotificationCategory()
+        let categories = await withCheckedContinuation { (continuation: CheckedContinuation<Set<UNNotificationCategory>, Never>) in
+            UNUserNotificationCenter.current().getNotificationCategories { cats in
+                continuation.resume(returning: cats)
+            }
+        }
+        let ids = Set(categories.map(\.identifier))
+        XCTAssertTrue(ids.contains(AppState.meetingReminderWithLinkCategory))
+        XCTAssertTrue(ids.contains(AppState.meetingReminderNotesOnlyCategory))
+        XCTAssertTrue(ids.contains(AppState.smartMeetingNotificationCategory + ".calendar"))
+        XCTAssertTrue(ids.contains(AppState.smartMeetingNotificationCategory + ".quiet"))
+        XCTAssertTrue(ids.contains(AppState.smartMeetingNotificationCategory + ".call-start"))
     }
 
     // MARK: - evaluateAutoStop
@@ -2393,20 +2661,53 @@ final class AppStateComputationTests: XCTestCase {
         id: String,
         title: String,
         start: Date = Date().addingTimeInterval(300),
-        end: Date = Date().addingTimeInterval(3600)
+        end: Date = Date().addingTimeInterval(3600),
+        meetLink: String? = nil,
+        conferenceUrl: String? = nil
     ) -> MinitiAPIService.CalendarEvent {
         let formatter = ISO8601DateFormatter()
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "id": id,
             "title": title,
             "start": formatter.string(from: start),
             "end": formatter.string(from: end),
-            "is_all_day": false,
+            "isAllDay": false,
             "status": "confirmed",
             "attendees": [],
         ]
+        // Real wire format from miniti-api is camelCase.
+        if let meetLink { json["meetLink"] = meetLink }
+        if let conferenceUrl { json["conferenceUrl"] = conferenceUrl }
         let data = try! JSONSerialization.data(withJSONObject: json)
         return try! JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: data)
+    }
+
+    func testCalendarEventDecodesBackendCamelCaseAndFixtureSnakeCase() throws {
+        // camelCase is what `miniti-api` `lib/google.ts` serializes (and what the
+        // Linux client reads). Decoding snake_case only silently dropped links,
+        // display names, and response statuses for every Apple user.
+        let camel = """
+        {"id":"e1","title":"Sync","start":"2026-09-10T09:34:00Z","end":"2026-09-10T10:34:00Z",
+         "isAllDay":false,"status":"confirmed","meetLink":"https://meet.google.com/php-eomc-zqw","conferenceUrl":null,
+         "attendees":[{"email":"a@x.com","displayName":"Alice","responseStatus":"accepted","organizer":true,"self":false,"domain":"x.com"}],
+         "organizer":{"email":"a@x.com","displayName":"Alice","self":false}}
+        """
+        let event = try JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: Data(camel.utf8))
+        XCTAssertEqual(event.joinURL?.absoluteString, "https://meet.google.com/php-eomc-zqw")
+        XCTAssertEqual(event.attendees.first?.displayName, "Alice")
+        XCTAssertEqual(event.attendees.first?.responseStatus, "accepted")
+        XCTAssertEqual(event.organizer?.displayName, "Alice")
+
+        let snake = """
+        {"id":"e2","title":"Fixture","start":"2026-09-10T09:34:00Z","end":"2026-09-10T10:34:00Z",
+         "is_all_day":false,"status":"confirmed","meet_link":"https://meet.google.com/abc-defg-hij",
+         "attendees":[{"email":"b@x.com","display_name":"Bob","response_status":"declined","self":true}]}
+        """
+        let fixture = try JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: Data(snake.utf8))
+        XCTAssertEqual(fixture.joinURL?.absoluteString, "https://meet.google.com/abc-defg-hij")
+        XCTAssertEqual(fixture.attendees.first?.displayName, "Bob")
+        XCTAssertEqual(fixture.attendees.first?.responseStatus, "declined")
+        XCTAssertTrue(fixture.attendees.first?.isSelf ?? false)
     }
 
     @MainActor

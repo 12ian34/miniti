@@ -97,6 +97,14 @@ struct TranscriptView: View {
     @State private var runtimeSnapshot = TranscriptRuntimeState.Snapshot.zero
     @State private var pendingAutoScrollTask: Task<Void, Never>?
     @State private var renamingSpeaker: Int? = nil
+    @State private var correctingHeardText: String?
+    @State private var correctionDraft = ""
+    @State private var fixEarlierMentions = true
+    #if os(macOS)
+    @StateObject private var liveSelectionState = LiveTranscriptSelectionState()
+    #else
+    @State private var correctingTurnWords: [String] = []
+    #endif
 
     private var interimText: String { runtimeSnapshot.interimText }
     private var currentSpeaker: Int { runtimeSnapshot.currentSpeaker }
@@ -393,6 +401,7 @@ struct TranscriptView: View {
             defaultName: defaultName,
             isSelf: isSelf,
             hasOtherSelves: hasOtherSelves,
+            showMarkAllMicAsSelf: appState.liveMicSpeakerIDs.count > 1,
             onSave: { newName in
                 appState.setLiveSpeakerName(id: speakerID, name: newName)
                 renamingSpeaker = nil
@@ -407,6 +416,10 @@ struct TranscriptView: View {
             },
             onUnmarkAsSelf: {
                 appState.setLiveSelfSpeaker(id: speakerID, isSelf: false)
+                renamingSpeaker = nil
+            },
+            onMarkAllMicAsSelf: {
+                appState.markAllLiveMicSpeakersAsSelf()
                 renamingSpeaker = nil
             },
             onCancel: {
@@ -460,8 +473,85 @@ struct TranscriptView: View {
                             reduceMotion: accessibilityReduceMotion,
                             onScrolledAwayFromBottom: {
                                 isAutoScrollEnabled = false
+                            },
+                            selectionState: liveSelectionState,
+                            onCorrectSelection: { heard in
+                                beginLiveCorrection(heard: heard)
                             }
                         )
+
+                        // The pill stays mounted while the editor is open: the popover is
+                        // anchored on it, so tearing it down would dismiss the editor.
+                        // `correctingHeardText` wins so a selection change mid-edit cannot
+                        // relabel the pill or swap the word being corrected.
+                        if let heard = correctingHeardText ?? liveSelectionState.heardText {
+                            Button {
+                                beginLiveCorrection(heard: heard)
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "character.cursor.ibeam")
+                                        .font(.system(size: 10, weight: .semibold))
+                                    Text("correct “\(heard)”")
+                                        .font(.system(size: 10, weight: .semibold, design: .default))
+                                        .lineLimit(1)
+                                    Text("⌘⇧D")
+                                        .font(.system(size: 9, weight: .medium, design: .default))
+                                        .foregroundStyle(ColorPalette.Text.primary.opacity(0.7))
+                                }
+                                .foregroundStyle(ColorPalette.Text.primary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(ColorPalette.Background.card)
+                                .overlay(
+                                    Capsule()
+                                        .stroke(
+                                            correctingHeardText != nil
+                                                ? ColorPalette.Accent.green
+                                                : ColorPalette.Border.primary,
+                                            lineWidth: 1
+                                        )
+                                )
+                                .clipShape(Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .focusable(false)
+                            .help("Save a dictionary correction for the selected word")
+                            .padding(.trailing, 32)
+                            .padding(.bottom, isAutoScrollEnabled ? 16 : 48)
+                            .zIndex(2)
+                            .transition(.opacity)
+                            .popover(
+                                isPresented: Binding(
+                                    get: { correctingHeardText != nil },
+                                    set: { if !$0 { correctingHeardText = nil } }
+                                ),
+                                arrowEdge: .bottom
+                            ) {
+                                if let editing = correctingHeardText {
+                                    TranscriptCorrectionEditor(
+                                        heard: editing,
+                                        correct: $correctionDraft,
+                                        fixEarlierMentions: $fixEarlierMentions,
+                                        onSave: {
+                                            appState.saveDictionaryCorrection(
+                                                heard: editing,
+                                                correct: correctionDraft,
+                                                fixEarlierMentions: fixEarlierMentions
+                                            )
+                                            correctingHeardText = nil
+                                            // Collapse the native selection so the pill does
+                                            // not immediately reappear offering to "correct"
+                                            // the word that was just corrected.
+                                            liveSelectionState.requestDeselect()
+                                        },
+                                        onCancel: {
+                                            correctingHeardText = nil
+                                        }
+                                    )
+                                    .frame(minWidth: 280)
+                                }
+                            }
+                        }
 
                         if !isAutoScrollEnabled {
                             Button {
@@ -487,6 +577,10 @@ struct TranscriptView: View {
                             isAutoScrollEnabled = true
                         }
                     }
+                    .onReceive(NotificationCenter.default.publisher(for: .minitiCorrectSelectedTranscriptWord)) { _ in
+                        guard let heard = liveSelectionState.heardText else { return }
+                        beginLiveCorrection(heard: heard)
+                    }
                     #else
                     ScrollViewReader { proxy in
                         GeometryReader { scrollGeometry in
@@ -498,7 +592,10 @@ struct TranscriptView: View {
                                                 turn: cachedDisplayTurns[index],
                                                 isFirst: index == cachedDisplayTurns.startIndex,
                                                 speakerNames: appState.liveSpeakerNames,
-                                                selfIDs: appState.liveSpeakerLabelSelfIDs
+                                                selfIDs: appState.liveSpeakerLabelSelfIDs,
+                                                onRequestCorrectWord: {
+                                                    beginIOSCorrection(for: cachedDisplayTurns[index].text)
+                                                }
                                             )
                                             .id("turn-\(index)")
                                         }
@@ -651,8 +748,68 @@ struct TranscriptView: View {
         .onDisappear {
             cancelPendingAutoScroll()
         }
+        #if os(iOS)
+        .sheet(isPresented: Binding(
+            get: { !correctingTurnWords.isEmpty },
+            set: { showing in
+                if !showing {
+                    correctingTurnWords = []
+                    correctingHeardText = nil
+                    correctionDraft = ""
+                }
+            }
+        )) {
+            IOSLiveTranscriptCorrectionSheet(
+                words: correctingTurnWords,
+                heard: Binding(
+                    get: { correctingHeardText ?? "" },
+                    set: { correctingHeardText = $0.isEmpty ? nil : $0 }
+                ),
+                correct: $correctionDraft,
+                fixEarlierMentions: $fixEarlierMentions,
+                onSave: {
+                    guard let heard = correctingHeardText else { return }
+                    appState.saveDictionaryCorrection(
+                        heard: heard,
+                        correct: correctionDraft,
+                        fixEarlierMentions: fixEarlierMentions
+                    )
+                    correctingTurnWords = []
+                    correctingHeardText = nil
+                    correctionDraft = ""
+                },
+                onCancel: {
+                    correctingTurnWords = []
+                    correctingHeardText = nil
+                    correctionDraft = ""
+                }
+            )
+            .presentationDetents([.medium])
+            .presentationBackground(ColorPalette.Background.primary)
+        }
+        #endif
         .background(Color(hex: "09090B")) // GitHub dark background
     }
+
+    #if os(macOS)
+    private func beginLiveCorrection(heard: String) {
+        guard correctingHeardText == nil else { return }
+        correctingHeardText = heard
+        correctionDraft = ""
+        fixEarlierMentions = true
+    }
+    #endif
+
+    #if os(iOS)
+    private func beginIOSCorrection(for turnText: String) {
+        let words = TranscriptCorrectionSelection.words(in: turnText)
+        guard !words.isEmpty else { return }
+        correctingTurnWords = words
+        correctingHeardText = nil
+        correctionDraft = ""
+        fixEarlierMentions = true
+    }
+    #endif
 }
 
 // MARK: - Speaker Legend
@@ -802,6 +959,7 @@ struct TerminalTranscriptTurnRow: View {
     var isFirst: Bool = false
     var speakerNames: [String: String]? = nil
     var selfIDs: Set<Int>? = nil
+    var onRequestCorrectWord: (() -> Void)? = nil
 
     private var color: Color { speakerColor(for: turn.speaker, selfIDs: selfIDs) }
 
@@ -818,6 +976,15 @@ struct TerminalTranscriptTurnRow: View {
         }
         .padding(.top, isFirst ? 0 : 10)
         .textSelection(.enabled)
+        #if os(iOS)
+        .contextMenu {
+            if onRequestCorrectWord != nil {
+                Button("correct a word...") {
+                    onRequestCorrectWord?()
+                }
+            }
+        }
+        #endif
     }
     
     private func formatTimestamp(_ timestamp: TimeInterval) -> String {
@@ -952,6 +1119,171 @@ struct SpeakerRenameTarget: Identifiable, Equatable {
 /// Small editor that renames a single speaker. Shared by macOS popover and iOS sheet.
 /// On save, calls `onSave` with a trimmed non-empty name. On clear, calls `onClear`
 /// (which should remove the user override so automatic inference can refill).
+/// Shared dictionary-correction editor for live transcript and saved-meeting trim.
+struct TranscriptCorrectionEditor: View {
+    let heard: String
+    @Binding var correct: String
+    @Binding var fixEarlierMentions: Bool
+    var fixEarlierLabel: String = "fix earlier mentions in this meeting"
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("correct word")
+                .font(.system(size: 11, weight: .semibold, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("heard")
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                Text(heard)
+                    .font(.system(size: 13, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ColorPalette.Background.tertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                Text("correct to")
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                TextField("replacement", text: $correct)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13, weight: .regular, design: .default))
+                    .padding(8)
+                    .background(ColorPalette.Background.tertiary)
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .focused($focused)
+                    .onSubmit(onSave)
+            }
+
+            Toggle(fixEarlierLabel, isOn: $fixEarlierMentions)
+                .font(.system(size: 11, weight: .regular, design: .default))
+                #if os(macOS)
+                .toggleStyle(.checkbox)
+                #endif
+
+            HStack {
+                Button("cancel", action: onCancel)
+                    #if os(macOS)
+                    .keyboardShortcut(.cancelAction)
+                    #endif
+                Spacer()
+                Button("save", action: onSave)
+                    #if os(macOS)
+                    .keyboardShortcut(.defaultAction)
+                    #endif
+                    .disabled(correct.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+        .background(ColorPalette.Background.primary)
+        .onAppear { focused = true }
+    }
+}
+
+#if os(iOS)
+/// Long-press chip picker for correcting a word from a live transcript turn.
+struct IOSLiveTranscriptCorrectionSheet: View {
+    let words: [String]
+    @Binding var heard: String
+    @Binding var correct: String
+    @Binding var fixEarlierMentions: Bool
+    let onSave: () -> Void
+    let onCancel: () -> Void
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("tap the word miniti misheard")
+                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(words, id: \.self) { word in
+                            Button {
+                                heard = word
+                            } label: {
+                                Text(word)
+                                    .font(.system(size: 13, weight: .medium, design: .default))
+                                    .foregroundStyle(
+                                        heard.lowercased() == word.lowercased()
+                                            ? ColorPalette.Text.primary
+                                            : ColorPalette.Text.muted
+                                    )
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 6)
+                                            .fill(
+                                                heard.lowercased() == word.lowercased()
+                                                    ? ColorPalette.Accent.blue.opacity(0.35)
+                                                    : ColorPalette.Background.tertiary
+                                            )
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("correct to")
+                            .font(.system(size: 10, weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.dim)
+                        TextField("replacement", text: $correct)
+                            .textFieldStyle(.plain)
+                            .font(.system(size: 15, weight: .regular, design: .default))
+                            .padding(10)
+                            .background(ColorPalette.Background.tertiary)
+                            .clipShape(RoundedRectangle(cornerRadius: 6))
+                            .focused($focused)
+                            .onSubmit(saveIfReady)
+                    }
+
+                    Toggle("fix earlier mentions in this meeting", isOn: $fixEarlierMentions)
+                        .font(.system(size: 13, weight: .regular, design: .default))
+                }
+                .padding(16)
+            }
+            .background(ColorPalette.Background.primary)
+            .navigationTitle("correct a word")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("cancel", action: onCancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("save", action: saveIfReady)
+                        .disabled(!canSave)
+                }
+            }
+            .onAppear {
+                if heard.isEmpty, let first = words.first {
+                    heard = first
+                }
+                focused = true
+            }
+        }
+    }
+
+    private var canSave: Bool {
+        !heard.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !correct.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && heard.lowercased() != correct.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func saveIfReady() {
+        guard canSave else { return }
+        onSave()
+    }
+}
+#endif
+
 struct RenameSpeakerView: View {
     @Environment(\.undoManager) private var undoManager
     let speakerID: Int
@@ -959,10 +1291,13 @@ struct RenameSpeakerView: View {
     let defaultName: String
     let isSelf: Bool
     var hasOtherSelves: Bool = false
+    /// When more than one mic ID exists, offer one-tap consolidation.
+    var showMarkAllMicAsSelf: Bool = false
     let onSave: (String) -> Void
     let onClear: () -> Void
     let onMarkAsSelf: () -> Void
     let onUnmarkAsSelf: () -> Void
+    var onMarkAllMicAsSelf: (() -> Void)? = nil
     let onCancel: () -> Void
 
     @State private var draft: String = ""
@@ -1028,6 +1363,40 @@ struct RenameSpeakerView: View {
                     .foregroundStyle(isSelf ? ColorPalette.Accent.greenGitHub : ColorPalette.Text.muted)
                 }
                 .buttonStyle(.plain)
+
+                if showMarkAllMicAsSelf, let onMarkAllMicAsSelf {
+                    Button {
+                        registerUndo(actionName: "Mark All Mic Speakers as Me") {
+                            // Best-effort undo restores only this speaker's prior mark.
+                            if isSelf {
+                                onMarkAsSelf()
+                            } else {
+                                onUnmarkAsSelf()
+                            }
+                        }
+                        onMarkAllMicAsSelf()
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "person.3.fill")
+                                .font(.system(size: 11))
+                            Text("mark all mic speakers as me")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color(hex: "13151A"))
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 4)
+                                .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
+                        )
+                        .foregroundStyle(ColorPalette.Text.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
 
                 if !isSelf && hasOtherSelves {
                     Text("diarization sometimes splits one person across IDs — mark each one.")

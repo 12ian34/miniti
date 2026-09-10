@@ -411,6 +411,7 @@ struct MeetingDetail_iOS: View {
                 defaultName: defaultName,
                 isSelf: isSelf,
                 hasOtherSelves: hasOtherSelves,
+                showMarkAllMicAsSelf: meeting.micSpeakerIDs.count > 1,
                 onSave: { newName in
                     meeting.setSpeakerName(id: key, name: newName)
                     renamingSpeaker = nil
@@ -429,11 +430,16 @@ struct MeetingDetail_iOS: View {
                     try? modelContext.save()
                     renamingSpeaker = nil
                 },
+                onMarkAllMicAsSelf: {
+                    meeting.markAllMicSpeakersAsSelf()
+                    try? modelContext.save()
+                    renamingSpeaker = nil
+                },
                 onCancel: {
                     renamingSpeaker = nil
                 }
             )
-            .presentationDetents([.height(320)])
+            .presentationDetents([.height(360)])
             .presentationBackground(ColorPalette.Background.primary)
         }
         .toolbar {

@@ -23,11 +23,14 @@ private final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNo
         withCompletionHandler completionHandler: @escaping @Sendable () -> Void
     ) {
         let actionIdentifier = response.actionIdentifier
+        let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let eventID = response.notification.request.content.userInfo["eventID"] as? String
         Task { @MainActor [weak self] in
-            if actionIdentifier != UNNotificationDefaultActionIdentifier {
-                self?.appState?.handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
-            }
+            self?.appState?.handleNotificationResponse(
+                actionIdentifier: actionIdentifier,
+                categoryIdentifier: categoryIdentifier,
+                eventID: eventID
+            )
         }
         completionHandler()
     }

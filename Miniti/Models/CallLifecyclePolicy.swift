@@ -371,6 +371,22 @@ enum InferredMeetingEnvironment: String, Codable, Sendable, Equatable {
     case hybridLikely
 }
 
+/// Shared rule for the implicit "You" default on the primary mic speaker (1000).
+/// Dual-source capture keeps "You" while there is at most one mic speaker, or
+/// when the meeting is remote-likely (headset clones must not withdraw You).
+/// In-room / hybrid / unknown with multiple mic IDs stay neutral.
+enum ImplicitSelfPolicy {
+    static func allowed(
+        micSpeakerCount: Int,
+        hasDualSourceOrLegacy: Bool,
+        environment: InferredMeetingEnvironment
+    ) -> Bool {
+        guard hasDualSourceOrLegacy else { return false }
+        if micSpeakerCount <= 1 { return true }
+        return environment == .remoteLikely
+    }
+}
+
 /// Snapshot of the independent signals the inference combines. Absence of a
 /// signal is "no information", never evidence by itself (a missing system
 /// transcript is consistent with a muted call; call-monitor unreliability is
@@ -396,6 +412,10 @@ struct MeetingEnvironmentEvidence: Sendable, Equatable {
     var systemFinalWithCallContext = false
     /// Accumulated seconds of meaningful finalized microphone speech.
     var meaningfulMicSpeechSeconds: Double = 0
+    /// Accumulated seconds of meaningful finalized speech from microphone
+    /// speakers other than the primary (1000). A diarizer clone of the sole
+    /// local talker rarely accrues much; a real second person in the room does.
+    var additionalMicSpeakerSpeechSeconds: Double = 0
 }
 
 /// Pure, deterministic policy mapping evidence to an inferred environment.
@@ -413,12 +433,22 @@ enum MeetingEnvironmentInferenceEngine {
     /// Words below this count are not "meaningful" transcript evidence.
     static let meaningfulFinalMinimumWordCount = 3
 
+    /// Speech from additional mic speakers required before a remote meeting is
+    /// promoted to hybrid. Without this floor, one promoted diarizer clone on a
+    /// solo headset call flipped the meeting to hybrid, which switched the
+    /// promotion policy back to standard and withdrew "You" from the primary
+    /// speaker: the exact case the strict policy exists to protect.
+    static let hybridSecondaryMicSpeechSeconds: Double = 20
+
     static func infer(_ evidence: MeetingEnvironmentEvidence) -> InferredMeetingEnvironment {
         let multipleMicSpeakers = evidence.confirmedMicSpeakerCount >= 2
         let strongRemote = evidence.hasAssociatedCallApp || evidence.systemFinalWithCallContext
+        let secondaryMicSpeakerIsReal =
+            evidence.additionalMicSpeakerSpeechSeconds >= hybridSecondaryMicSpeechSeconds
 
-        // Hybrid: several people in the room and confirmed remote participation.
-        if multipleMicSpeakers {
+        // Hybrid: several people in the room, one of them with real speech time,
+        // and confirmed remote participation.
+        if multipleMicSpeakers, secondaryMicSpeakerIsReal {
             if evidence.systemFinalWithCallContext {
                 return .hybridLikely
             }

@@ -222,10 +222,22 @@ struct MeetingView_iOS: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                ShareLink(item: shareContent) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(ColorPalette.Text.muted)
+                HStack(spacing: 12) {
+                    if let event = appState.selectedCalendarEvent, event.joinURL != nil {
+                        Button {
+                            _ = appState.openMeetingLink(for: event, allowingRepeat: true)
+                        } label: {
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundStyle(ColorPalette.Text.muted)
+                        }
+                        .accessibilityLabel("Rejoin call")
+                    }
+                    ShareLink(item: shareContent) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
                 }
             }
         }
@@ -669,6 +681,16 @@ private struct SmartMeetingBanner_iOS: View {
             }
 
             if prompt.kind == .calendar, let eventID = prompt.eventID {
+                let nextEvent = appState.upcomingEvents.first(where: { $0.id == eventID })
+                if nextEvent?.joinURL != nil {
+                    Button("Join next") {
+                        appState.joinAndEndAndStartCalendarMeeting(eventID: eventID)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(ColorPalette.Accent.green)
+                    .frame(maxWidth: .infinity)
+                }
+
                 Button("End & start next") {
                     appState.endAndStartCalendarMeeting(eventID: eventID)
                 }
@@ -1708,17 +1730,34 @@ private struct AutoStartBanner_iOS: View {
                 .foregroundStyle(ColorPalette.Accent.green)
 
             HStack(spacing: 12) {
+                if event.joinURL != nil {
+                    Button {
+                        appState.joinAndStartMeeting(from: event)
+                    } label: {
+                        Text("join")
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                            .foregroundStyle(ColorPalette.Background.primary)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(ColorPalette.Accent.green)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     appState.startMeetingFromEvent(event)
                 } label: {
                     Text("start now")
                         .font(.system(size: 11, weight: .semibold, design: .default))
-                        .foregroundStyle(Color.black)
+                        .foregroundStyle(event.joinURL != nil ? ColorPalette.Text.primary : Color.black)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(ColorPalette.Accent.green)
+                                .fill(event.joinURL != nil ? ColorPalette.Background.tertiary : ColorPalette.Accent.green)
                         )
                 }
                 .buttonStyle(.plain)
@@ -1818,11 +1857,29 @@ private struct EventPrepSheet_iOS: View {
                     )
                     .accessibilityLabel("Prep notes for \(event.title)")
 
+                if event.joinURL != nil {
+                    Button {
+                        dismiss()
+                        appState.joinAndStartMeeting(from: event)
+                    } label: {
+                        MinitiControlLabel(role: .positive, isEmphasized: true, height: 44) {
+                            Label("join and take notes", systemImage: "arrow.up.right.square")
+                                .font(.system(size: 13, weight: .semibold, design: .default))
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 Button {
                     dismiss()
                     appState.startMeetingFromEvent(event)
                 } label: {
-                    MinitiControlLabel(role: .positive, isEmphasized: true, height: 44) {
+                    MinitiControlLabel(
+                        role: event.joinURL != nil ? .secondary : .positive,
+                        isEmphasized: event.joinURL == nil,
+                        height: 44
+                    ) {
                         Label("start meeting", systemImage: "record.circle")
                             .font(.system(size: 13, weight: .semibold, design: .default))
                             .frame(maxWidth: .infinity)

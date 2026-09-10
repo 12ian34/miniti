@@ -537,11 +537,19 @@ final class MinitiAPIService: @unchecked Sendable {
         let attendees: [CalendarAttendee]
         let organizer: CalendarOrganizer?
 
+        // The wire format from `miniti-api` (`lib/google.ts`) is camelCase, the same
+        // shape the Linux client reads. The snake_case keys are a fallback for the
+        // screenshot fixture and older test data only. Decoding the wrong case
+        // silently produced nil links, nil display names, and "needsAction" for
+        // every attendee for months, because every field has a default.
         enum CodingKeys: String, CodingKey {
             case id, title, start, end, status, attendees, organizer
-            case isAllDay = "is_all_day"
-            case meetLink = "meet_link"
-            case conferenceUrl = "conference_url"
+            case isAllDay
+            case isAllDaySnake = "is_all_day"
+            case meetLink
+            case meetLinkSnake = "meet_link"
+            case conferenceUrl
+            case conferenceUrlSnake = "conference_url"
         }
 
         init(from decoder: Decoder) throws {
@@ -550,10 +558,14 @@ final class MinitiAPIService: @unchecked Sendable {
             title = try c.decodeIfPresent(String.self, forKey: .title) ?? "Untitled"
             start = try c.decode(String.self, forKey: .start)
             end = try c.decode(String.self, forKey: .end)
-            isAllDay = try c.decodeIfPresent(Bool.self, forKey: .isAllDay) ?? false
+            isAllDay = try c.decodeIfPresent(Bool.self, forKey: .isAllDay)
+                ?? c.decodeIfPresent(Bool.self, forKey: .isAllDaySnake)
+                ?? false
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "confirmed"
             meetLink = try c.decodeIfPresent(String.self, forKey: .meetLink)
+                ?? c.decodeIfPresent(String.self, forKey: .meetLinkSnake)
             conferenceUrl = try c.decodeIfPresent(String.self, forKey: .conferenceUrl)
+                ?? c.decodeIfPresent(String.self, forKey: .conferenceUrlSnake)
             attendees = (try? c.decodeIfPresent([CalendarAttendee].self, forKey: .attendees)) ?? []
             organizer = try c.decodeIfPresent(CalendarOrganizer.self, forKey: .organizer)
         }
@@ -585,6 +597,21 @@ final class MinitiAPIService: @unchecked Sendable {
         var attendeeDomains: Set<String> {
             Set(externalAttendees.map(\.domain).filter { !$0.isEmpty })
         }
+
+        /// Prefer `conference_url`, then `meet_link`. Third-party calendar data is
+        /// allowlisted to `https` only before any surface hands it to the system opener.
+        var joinURL: URL? {
+            for raw in [conferenceUrl, meetLink] {
+                let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty,
+                      let url = URL(string: trimmed),
+                      url.scheme?.lowercased() == "https" else {
+                    continue
+                }
+                return url
+            }
+            return nil
+        }
     }
 
     struct CalendarAttendee: Decodable, Identifiable, Sendable {
@@ -598,8 +625,10 @@ final class MinitiAPIService: @unchecked Sendable {
 
         enum CodingKeys: String, CodingKey {
             case email, organizer, domain
-            case displayName = "display_name"
-            case responseStatus = "response_status"
+            case displayName
+            case displayNameSnake = "display_name"
+            case responseStatus
+            case responseStatusSnake = "response_status"
             case isSelf = "self"
         }
 
@@ -607,7 +636,10 @@ final class MinitiAPIService: @unchecked Sendable {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             email = try c.decode(String.self, forKey: .email)
             displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
-            responseStatus = try c.decodeIfPresent(String.self, forKey: .responseStatus) ?? "needsAction"
+                ?? c.decodeIfPresent(String.self, forKey: .displayNameSnake)
+            responseStatus = try c.decodeIfPresent(String.self, forKey: .responseStatus)
+                ?? c.decodeIfPresent(String.self, forKey: .responseStatusSnake)
+                ?? "needsAction"
             organizer = try c.decodeIfPresent(Bool.self, forKey: .organizer) ?? false
             isSelf = try c.decodeIfPresent(Bool.self, forKey: .isSelf) ?? false
             let rawDomain = try c.decodeIfPresent(String.self, forKey: .domain)
@@ -638,7 +670,8 @@ final class MinitiAPIService: @unchecked Sendable {
 
         enum CodingKeys: String, CodingKey {
             case email
-            case displayName = "display_name"
+            case displayName
+            case displayNameSnake = "display_name"
             case isSelf = "self"
         }
 
@@ -646,6 +679,7 @@ final class MinitiAPIService: @unchecked Sendable {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             email = try c.decode(String.self, forKey: .email)
             displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+                ?? c.decodeIfPresent(String.self, forKey: .displayNameSnake)
             isSelf = try c.decodeIfPresent(Bool.self, forKey: .isSelf) ?? false
         }
     }

@@ -97,7 +97,18 @@ enum TranscriptionLanguage: String, CaseIterable, Codable {
 
 enum PersonalDictionaryPreferences {
     static let storageKey = "personalDictionaryTerms.v1"
+    static let correctionsStorageKey = "personalDictionaryCorrections.v1"
     static let systemKeyterms = ["Miniti", "Lightdash", "Ahuja"]
+    static let maxCorrections = 100
+
+    struct CorrectionPair: Codable, Equatable, Hashable, Identifiable, Sendable {
+        /// Normalized find text (trimmed, whitespace-collapsed, lowercased).
+        var heard: String
+        /// Replacement text as the user typed it (trimmed, whitespace-collapsed).
+        var correct: String
+
+        var id: String { heard }
+    }
 
     static func currentTerms(defaults: UserDefaults = .standard) -> [String] {
         guard let data = defaults.data(forKey: storageKey),
@@ -117,6 +128,98 @@ enum PersonalDictionaryPreferences {
 
         guard let data = try? JSONEncoder().encode(normalized) else { return }
         defaults.set(data, forKey: storageKey)
+    }
+
+    static func currentCorrections(defaults: UserDefaults = .standard) -> [CorrectionPair] {
+        guard let data = defaults.data(forKey: correctionsStorageKey),
+              let decoded = try? JSONDecoder().decode([CorrectionPair].self, from: data) else {
+            return []
+        }
+        return normalizedCorrections(decoded)
+    }
+
+    /// Persist correction pairs. Also adds each `correct` value to the term list
+    /// when missing so the next Deepgram connect learns the preferred spelling.
+    static func saveCorrections(_ pairs: [CorrectionPair], defaults: UserDefaults = .standard) {
+        let normalized = normalizedCorrections(pairs)
+        guard !normalized.isEmpty else {
+            defaults.removeObject(forKey: correctionsStorageKey)
+            return
+        }
+        guard let data = try? JSONEncoder().encode(normalized) else { return }
+        defaults.set(data, forKey: correctionsStorageKey)
+
+        var terms = currentTerms(defaults: defaults)
+        var termKeys = Set(terms.map { $0.lowercased() })
+        var termsChanged = false
+        for pair in normalized {
+            let key = pair.correct.lowercased()
+            guard !termKeys.contains(key) else { continue }
+            terms.append(pair.correct)
+            termKeys.insert(key)
+            termsChanged = true
+        }
+        if termsChanged {
+            save(terms, defaults: defaults)
+        }
+    }
+
+    /// Outcome of adding one correction from any surface (live pill, trim view,
+    /// Settings). Callers must not report success on `.invalid` or `.full`.
+    enum UpsertResult: Equatable {
+        case saved
+        /// The pair normalized to nothing (empty side, or heard == correct).
+        case invalid
+        /// The store already holds `maxCorrections` other pairs.
+        case full
+    }
+
+    /// Add or replace the correction for `heard`. An existing pair with the same
+    /// normalized `heard` is replaced (last write wins) rather than silently
+    /// dropped by the first-wins dedupe in `normalizedCorrections`.
+    @discardableResult
+    static func upsertCorrection(
+        heard: String,
+        correct: String,
+        defaults: UserDefaults = .standard
+    ) -> UpsertResult {
+        guard let incoming = normalizedCorrections([CorrectionPair(heard: heard, correct: correct)]).first else {
+            return .invalid
+        }
+        var pairs = currentCorrections(defaults: defaults)
+        if let existing = pairs.firstIndex(where: { $0.heard == incoming.heard }) {
+            pairs[existing] = incoming
+        } else {
+            guard pairs.count < maxCorrections else { return .full }
+            pairs.append(incoming)
+        }
+        saveCorrections(pairs, defaults: defaults)
+        return .saved
+    }
+
+    static func normalizedCorrections(_ pairs: [CorrectionPair]) -> [CorrectionPair] {
+        var seen = Set<String>()
+        var normalized: [CorrectionPair] = []
+        for pair in pairs {
+            // Colons are stripped: Deepgram's `replace=find:replacement` splits on
+            // the colon, so a colon inside either side would corrupt the pair.
+            let heard = pair.heard
+                .replacingOccurrences(of: ":", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .lowercased()
+            let correct = pair.correct
+                .replacingOccurrences(of: ":", with: "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+            guard !heard.isEmpty, !correct.isEmpty else { continue }
+            guard heard != correct.lowercased() else { continue }
+            guard !seen.contains(heard) else { continue }
+            seen.insert(heard)
+            normalized.append(CorrectionPair(heard: heard, correct: correct))
+            if normalized.count >= maxCorrections { break }
+        }
+        return normalized
     }
 
     static func normalizedTerms(_ terms: [String]) -> [String] {
@@ -153,6 +256,13 @@ enum PersonalDictionaryPreferences {
         }
 
         return keyterms
+    }
+
+    /// Deepgram `replace=heard:correct` query items. Cap matches the correction store.
+    static func deepgramReplaceItems(corrections: [CorrectionPair]) -> [URLQueryItem] {
+        normalizedCorrections(corrections).prefix(maxCorrections).map { pair in
+            URLQueryItem(name: "replace", value: "\(pair.heard):\(pair.correct)")
+        }
     }
 
     /// Build ephemeral Deepgram keyterms from meeting/calendar context.
@@ -192,6 +302,124 @@ enum PersonalDictionaryPreferences {
     }
 }
 
+/// Selection helpers for dictionary corrections (live + saved transcript).
+enum TranscriptCorrectionSelection {
+    /// Snap a selection outward to word boundaries for dictionary corrections.
+    static func snappedHeardText(
+        in storage: NSAttributedString,
+        selectedRange: NSRange,
+        finalizedLength: Int,
+        maxCharacters: Int = 80
+    ) -> String? {
+        guard selectedRange.length > 0,
+              selectedRange.location >= 0,
+              NSMaxRange(selectedRange) <= finalizedLength,
+              NSMaxRange(selectedRange) <= storage.length else {
+            return nil
+        }
+        let nsString = storage.string as NSString
+        var wordStart = selectedRange.location
+        var wordEnd = NSMaxRange(selectedRange)
+        // Scan only a bounded window around the selection. This runs on every
+        // selection change while dragging, and the live document grows without
+        // bound; a full-document word enumeration here is a hot-path violation.
+        // The window is wider than `maxCharacters`, so anything it cannot reach
+        // would be rejected by the length cap anyway.
+        let windowStart = max(0, selectedRange.location - maxCharacters)
+        let windowEnd = min(nsString.length, NSMaxRange(selectedRange) + maxCharacters)
+        nsString.enumerateSubstrings(
+            in: NSRange(location: windowStart, length: windowEnd - windowStart),
+            options: [.byWords, .substringNotRequired]
+        ) { _, substringRange, _, stop in
+            if selectedRange.location < NSMaxRange(substringRange)
+                && NSMaxRange(selectedRange) > substringRange.location {
+                wordStart = min(wordStart, substringRange.location)
+                wordEnd = max(wordEnd, NSMaxRange(substringRange))
+            }
+            if substringRange.location > NSMaxRange(selectedRange) {
+                stop.pointee = true
+            }
+        }
+        let snapped = NSRange(location: wordStart, length: max(0, wordEnd - wordStart))
+        guard snapped.length > 0, NSMaxRange(snapped) <= finalizedLength else { return nil }
+        let raw = nsString.substring(with: snapped)
+        // A selection that crosses a paragraph would swallow the next turn's
+        // speaker header into the "heard" phrase. Corrections are single-turn.
+        guard raw.rangeOfCharacter(from: .newlines) == nil else { return nil }
+        let collapsed = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        guard !collapsed.isEmpty, collapsed.count <= maxCharacters else { return nil }
+        return collapsed
+    }
+
+    /// Distinct words from a transcript turn, in order, for the iOS chip picker.
+    static func words(in text: String, maxCount: Int = 40) -> [String] {
+        let nsString = text as NSString
+        var seen = Set<String>()
+        var words: [String] = []
+        nsString.enumerateSubstrings(
+            in: NSRange(location: 0, length: nsString.length),
+            options: .byWords
+        ) { substring, _, _, stop in
+            guard let substring else { return }
+            let trimmed = substring.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            words.append(trimmed)
+            if words.count >= maxCount {
+                stop.pointee = true
+            }
+        }
+        return words
+    }
+}
+
+/// Local find/replace for dictionary corrections. Nil / empty store means callers
+/// pay zero work. Longest `heard` phrases win so multi-word entries beat sub-words.
+struct TranscriptCorrector: Sendable {
+    private let replacements: [(regex: NSRegularExpression, template: String)]
+
+    init?(corrections: [PersonalDictionaryPreferences.CorrectionPair]) {
+        let normalized = PersonalDictionaryPreferences.normalizedCorrections(corrections)
+        guard !normalized.isEmpty else { return nil }
+
+        let sorted = normalized.sorted { $0.heard.count > $1.heard.count }
+        var built: [(NSRegularExpression, String)] = []
+        built.reserveCapacity(sorted.count)
+        for pair in sorted {
+            let pattern = "\\b\(NSRegularExpression.escapedPattern(for: pair.heard))\\b"
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            // The replacement is user text: "$1" or "\\" must land literally.
+            built.append((regex, NSRegularExpression.escapedTemplate(for: pair.correct)))
+        }
+        guard !built.isEmpty else { return nil }
+        replacements = built
+    }
+
+    func apply(to text: String) -> String {
+        guard !text.isEmpty else { return text }
+        var result = text
+        for entry in replacements {
+            let range = NSRange(result.startIndex..<result.endIndex, in: result)
+            // Skip the allocating replace when nothing matches; on the per-final
+            // path most pairs match nothing.
+            guard entry.regex.firstMatch(in: result, options: [], range: range) != nil else { continue }
+            result = entry.regex.stringByReplacingMatches(
+                in: result,
+                options: [],
+                range: range,
+                withTemplate: entry.template
+            )
+        }
+        return result
+    }
+}
+
 enum DeepgramAuthorizationScheme: String, Equatable {
     case bearer = "Bearer"
     case token = "Token"
@@ -204,7 +432,7 @@ enum DeepgramAuthorizationScheme: String, Equatable {
 /// Which capture source a transcript word/segment came from. Explicit — never
 /// inferred from a speaker ID. `unknown` covers malformed multichannel
 /// responses (missing or out-of-range `channel_index`).
-enum TranscriptSource: String, Codable, Sendable, Equatable {
+enum TranscriptSource: String, Codable, Sendable, Equatable, Hashable {
     case microphone
     case system
     case unknown
@@ -435,9 +663,42 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             return speakerConfidenceSum / Double(speakerConfidenceCount)
         }
     }
+
+    /// How hard an additional mic speaker (1001+) must work to earn promotion.
+    /// `strict` is used in remote-likely meetings so headset bleed / diarizer
+    /// churn cannot mint clones of the sole local talker.
+    enum MicSpeakerPromotionPolicy: String, Sendable, Equatable {
+        case standard
+        case strict
+
+        var minWordsForNewMicSpeaker: Int {
+            switch self {
+            case .standard: return 6
+            case .strict: return 12
+            }
+        }
+
+        var minDurationForNewMicSpeaker: Double {
+            switch self {
+            case .standard: return 1.50
+            case .strict: return 4.0
+            }
+        }
+
+        var minAverageSpeakerConfidenceForNewMicSpeaker: Double {
+            switch self {
+            case .standard: return 0.65
+            case .strict: return 0.85
+            }
+        }
+    }
     
     private var confirmedSpeakerIDs: Set<Int> = []
     private var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
+    private var lastCommittedSpeakerBySource: [TranscriptSource: Int] = [:]
+    /// Pushed from AppState when environment inference transitions; default
+    /// `standard` preserves shared-mic room behaviour.
+    var micSpeakerPromotionPolicy: MicSpeakerPromotionPolicy = .standard
     
     /// - Parameters:
     ///   - credential: Managed JWT or BYOK Deepgram API key.
@@ -510,15 +771,19 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             personalTerms: personalDictionaryTerms,
             sessionTerms: sessionKeyterms
         )
+        let replaceItems = PersonalDictionaryPreferences.deepgramReplaceItems(
+            corrections: PersonalDictionaryPreferences.currentCorrections()
+        )
         let channelCount = multichannel ? 2 : 1
         DebugLogger.shared.log(
             .deepgram,
-            "Connecting with language=\(language), keyterms=\(keyterms.count), channels=\(channelCount), multichannel=\(multichannel)"
+            "Connecting with language=\(language), keyterms=\(keyterms.count), replaces=\(replaceItems.count), channels=\(channelCount), multichannel=\(multichannel)"
         )
         connectionState = .connecting
         speakerHistory = [:]
         confirmedSpeakerIDs = []
         pendingSpeakerEvidence = [:]
+        lastCommittedSpeakerBySource = [:]
         isMultichannel = multichannel
         self.monoSource = monoSource
         speakerIdentityState.beginConnection(preservingIdentities: preserveSpeakerIdentities)
@@ -548,7 +813,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         if multichannel {
             queryItems.append(URLQueryItem(name: "multichannel", value: "true"))
         }
-        components.queryItems = queryItems + keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
+        components.queryItems = queryItems
+            + keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
+            + replaceItems
         
         guard let url = components.url else {
             error = DeepgramError.invalidUrl
@@ -705,7 +972,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     if let json = Self.jsonString(from: message) {
                         let state = SegmentationState(
                             confirmedSpeakerIDs: self.confirmedSpeakerIDs,
-                            pendingSpeakerEvidence: self.pendingSpeakerEvidence
+                            pendingSpeakerEvidence: self.pendingSpeakerEvidence,
+                            lastCommittedSpeakerBySource: self.lastCommittedSpeakerBySource,
+                            micSpeakerPromotionPolicy: self.micSpeakerPromotionPolicy
                         )
                         let multichannel = self.isMultichannel
                         let mono = self.monoSource
@@ -887,8 +1156,16 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     speakerHistory[word.speaker] = info
                 }
             }
-            confirmedSpeakerIDs = parsed.segmentationState.confirmedSpeakerIDs
-            pendingSpeakerEvidence = parsed.segmentationState.pendingSpeakerEvidence
+            // Promotion evidence persists from finals only. Cumulative interims
+            // replay the same words on every message, so accruing from them would
+            // let a 4-word run clear the 12-word strict bar after four interims
+            // without anyone saying anything new. Interims still segment against
+            // a copy of the current state so their display stays consistent.
+            if parsed.update.isFinal {
+                confirmedSpeakerIDs = parsed.segmentationState.confirmedSpeakerIDs
+                pendingSpeakerEvidence = parsed.segmentationState.pendingSpeakerEvidence
+                lastCommittedSpeakerBySource = parsed.segmentationState.lastCommittedSpeakerBySource
+            }
             speakerIdentityState = parsed.identityState
             speakerSegments = parsed.segments
             transcriptUpdate = parsed.update
@@ -919,6 +1196,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     struct SegmentationState: Sendable {
         var confirmedSpeakerIDs: Set<Int> = []
         var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
+        var lastCommittedSpeakerBySource: [TranscriptSource: Int] = [:]
+        var micSpeakerPromotionPolicy: MicSpeakerPromotionPolicy = .standard
     }
 
     nonisolated static func segmentBySpeaker(
@@ -935,12 +1214,29 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let minDurationForSpeakerChange = 0.85
         let minAverageSpeakerConfidenceForSwitch = 0.58
         
-        let minWordsForNewSpeakerPromotion = 6
-        let minDurationForNewSpeakerPromotion = 1.50
-        let minAverageSpeakerConfidenceForNewSpeaker = 0.65
-        
+        // B1: do not accept an unconfirmed first-word speaker on a source that
+        // already has a committed speaker. Treat it as a candidate switch away
+        // from the last committed ID and require the same evidence mid-response
+        // switches need. The very first response on a source stays ungated.
+        let firstSpeaker = words[0].speaker
+        let otherMicAtStart = state.confirmedSpeakerIDs.contains {
+            DeepgramService.isMicAppSpeakerID($0) && $0 != DeepgramService.micSpeakerID
+        }
+        let firstIsMicPrimaryPrivileged =
+            firstSpeaker == DeepgramService.micSpeakerID && !otherMicAtStart
+        let firstIsKnown =
+            state.confirmedSpeakerIDs.contains(firstSpeaker) || firstIsMicPrimaryPrivileged
+        let currentSpeakerSeed: Int
+        if let lastCommitted = state.lastCommittedSpeakerBySource[source],
+           firstSpeaker != lastCommitted,
+           !firstIsKnown {
+            currentSpeakerSeed = lastCommitted
+        } else {
+            currentSpeakerSeed = firstSpeaker
+        }
+
         var segments: [SpeakerSegment] = []
-        var currentSpeaker = words[0].speaker
+        var currentSpeaker = currentSpeakerSeed
         var currentWords: [TranscriptUpdate.Word] = []
         var startTime = words[0].start
         
@@ -995,10 +1291,23 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     var evidence = state.pendingSpeakerEvidence[newSpeaker] ?? PendingSpeakerEvidence()
                     evidence.add(words: candidateWords)
                     state.pendingSpeakerEvidence[newSpeaker] = evidence
+
+                    // B2: remote-likely meetings raise the bar only for additional
+                    // mic speakers (1001+). System speakers and the primary mic
+                    // keep standard thresholds.
+                    let isAdditionalMicSpeaker =
+                        DeepgramService.isMicAppSpeakerID(newSpeaker)
+                        && newSpeaker != DeepgramService.micSpeakerID
+                    let promotionPolicy = isAdditionalMicSpeaker
+                        ? state.micSpeakerPromotionPolicy
+                        : .standard
+                    let minWords = promotionPolicy.minWordsForNewMicSpeaker
+                    let minDuration = promotionPolicy.minDurationForNewMicSpeaker
+                    let minConfidence = promotionPolicy.minAverageSpeakerConfidenceForNewMicSpeaker
                     
-                    let promotedByWords = evidence.wordCount >= minWordsForNewSpeakerPromotion
-                    let promotedByDuration = evidence.duration >= minDurationForNewSpeakerPromotion
-                    let promotedByConfidence = (evidence.averageSpeakerConfidence ?? 1.0) >= minAverageSpeakerConfidenceForNewSpeaker
+                    let promotedByWords = evidence.wordCount >= minWords
+                    let promotedByDuration = evidence.duration >= minDuration
+                    let promotedByConfidence = (evidence.averageSpeakerConfidence ?? 1.0) >= minConfidence
                     let isPromoted = promotedByWords && promotedByDuration && promotedByConfidence
                     if isPromoted {
                         state.confirmedSpeakerIDs.insert(newSpeaker)
@@ -1054,6 +1363,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 source: source
             )
             segments.append(segment)
+        }
+
+        if let lastSpeaker = segments.last?.speaker {
+            state.lastCommittedSpeakerBySource[source] = lastSpeaker
         }
 
         return segments

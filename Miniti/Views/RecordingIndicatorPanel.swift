@@ -700,6 +700,18 @@ private struct RecordingIndicatorView: View {
                             action: appState.stopRecording
                         )
                     }
+                    // Rejoin the linked call from the floating surface (the main window
+                    // is usually behind the meeting app). Repeat opens are allowed here:
+                    // a dropped call is exactly when this is needed.
+                    if let event = appState.selectedCalendarEvent, event.joinURL != nil {
+                        indicatorActionButton(
+                            "join call",
+                            systemImage: "video",
+                            role: .secondary
+                        ) {
+                            _ = appState.openMeetingLink(for: event, allowingRepeat: true)
+                        }
+                    }
                 }
             }
         }
@@ -739,11 +751,23 @@ private struct RecordingIndicatorView: View {
                 )
             case .calendar, .callTransition:
                 if let eventID = prompt.eventID {
+                    let nextHasLink = appState.upcomingEvents
+                        .first(where: { $0.id == eventID })?.joinURL != nil
+                    if nextHasLink {
+                        indicatorActionButton(
+                            "join next",
+                            systemImage: "video",
+                            role: .positive,
+                            isEmphasized: true
+                        ) {
+                            appState.joinAndEndAndStartCalendarMeeting(eventID: eventID)
+                        }
+                    }
                     indicatorActionButton(
                         "end & start next",
                         systemImage: "arrow.right",
                         role: .positive,
-                        isEmphasized: true
+                        isEmphasized: !nextHasLink
                     ) {
                         appState.endAndStartCalendarMeeting(eventID: eventID)
                     }
