@@ -160,6 +160,8 @@ Validate the documentation and website before pushing:
 
 ```sh
 cd ../miniti-docs
+# mint refuses Node 25+; use the Homebrew LTS on this machine
+export PATH=/opt/homebrew/Cellar/node@22/22.23.2_1/bin:$PATH
 mint validate
 mint broken-links
 
