@@ -15,7 +15,9 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### Unreleased - v2.7.0
+### 2026-09-10 - v2.7.0
+
+This release is available on macOS now. iOS 2.7.0 is submitted to Apple and follows after App Review.
 
 - new: (macOS and iOS) join button on meeting reminders and upcoming meetings. One click opens the Meet or Zoom link and starts miniti
 - new: (macOS) select a word in the live transcript to correct it. miniti fixes earlier mentions, keeps fixing it for the rest of the meeting, and remembers it next time
