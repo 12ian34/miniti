@@ -85,6 +85,51 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertEqual(result, 0)
     }
 
+    // MARK: - countFillerOccurrences (longest match, no double counting)
+
+    func testFillerCountsDoNotDoubleCountOverlappingPhrases() {
+        let phrases = [["uh"], ["uh", "huh"], ["um"]]
+        let tokens = TrainingMetrics.tokenize("uh huh, yes. uh, I think so. um, uh huh.")
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: phrases, in: tokens), [1, 2, 1])
+        // The old per-phrase counter counts each "uh huh" as an "uh" too.
+        XCTAssertEqual(TrainingMetrics.countPhraseOccurrences(of: ["uh"], in: tokens), 3)
+    }
+
+    func testFillerCountsLongestMatchWinsRegardlessOfPhraseOrder() {
+        let tokens = TrainingMetrics.tokenize("you know what I mean, you know")
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [["know"], ["you", "know"], ["i", "mean"]], in: tokens), [0, 2, 1])
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [["you", "know"], ["know"]], in: tokens), [2, 0])
+    }
+
+    func testFillerCountsRepeatedAndAdjacentFillers() {
+        let tokens = TrainingMetrics.tokenize("um um um, like like")
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [["um"], ["like"]], in: tokens), [3, 2])
+    }
+
+    func testFillerCountsHyphenatedPunctuatedAndSpanishPhrases() {
+        // Configured phrases go through the same tokenizer as transcript text, so a
+        // hyphenated filler becomes a two-token phrase and still matches once.
+        let tokens = TrainingMetrics.tokenize("Mm-hmm. O sea, bueno... o sea, ¿no?")
+        let phrases = ["mm-hmm", "o sea", "bueno"].map { TrainingMetrics.tokenize($0) }
+        XCTAssertEqual(phrases[0], ["mm", "hmm"])
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: phrases, in: tokens), [1, 2, 1])
+    }
+
+    func testFillerCountsEmptyInputs() {
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [], in: ["um"]), [])
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [["um"], []], in: []), [0, 0])
+        XCTAssertEqual(TrainingMetrics.countFillerOccurrences(of: [[], ["um"]], in: ["um"]), [0, 1])
+    }
+
+    func testFillerCountsAgreeWithPerPhraseCounterWhenPhrasesCannotOverlap() {
+        let tokens = TrainingMetrics.tokenize("Mhmm, that makes sense. Um, so, uh, Mhmm.")
+        let phrases = TranscriptionLanguage.english.defaultFillers.map { TrainingMetrics.tokenize($0) }
+        let combined = TrainingMetrics.countFillerOccurrences(of: phrases, in: tokens)
+        for (phrase, count) in zip(phrases, combined) where count > 0 {
+            XCTAssertEqual(count, TrainingMetrics.countPhraseOccurrences(of: phrase, in: tokens), "\(phrase)")
+        }
+    }
+
     // MARK: - normalizedFillers
 
     func testNormalizedFillersTrimsAndLowercases() {

@@ -451,6 +451,7 @@ enum ClientAuthError: LocalizedError, Equatable {
     case recoveryKeyUnknown
     case deviceAlreadyEnrolled
     case deviceCapReached(Int)
+    case subscriptionConflict
     case notEligibleForMigration
     case revoked
     case unavailable
@@ -466,6 +467,7 @@ enum ClientAuthError: LocalizedError, Equatable {
         case .invalidRecoveryKey: return "That doesn't look like a recovery key. It starts with M1 and has eight groups of four characters."
         case .recoveryKeyUnknown: return "Recovery key not recognized."
         case .deviceAlreadyEnrolled: return "This device is already enrolled in another account. Sign it out first."
+        case .subscriptionConflict: return "This device has its own Pro subscription and that account already has one on the same platform. Cancel one of them first."
         case .deviceCapReached(let cap): return "This account already has \(cap) devices. Remove one in Settings → Account & Plan on another device."
         case .notEligibleForMigration: return "This device is not eligible for automatic migration."
         case .revoked: return "This device was signed out of its account. Restore with your recovery key to continue."
@@ -635,6 +637,7 @@ final class ClientAuthManager: @unchecked Sendable {
         let code = body?.error ?? ""
         switch (status, code) {
         case (409, "device_cap_reached"): return .deviceCapReached(body?.deviceCap ?? 5)
+        case (409, "subscription_conflict"): return .subscriptionConflict
         case (409, "device_already_enrolled"): return .deviceAlreadyEnrolled
         case (409, "recovery_key_in_use"): return .recoveryKeyUnknown
         case (404, "recovery_key_unknown"): return .recoveryKeyUnknown
@@ -944,6 +947,44 @@ final class ClientAuthManager: @unchecked Sendable {
         let _: Empty = try await authorizedJSON("POST", "/auth/account/recovery-key/rotate", body: ["new_recovery_key": newKey])
         update { $0.recoveryKey = newKey; $0.recoveryKeyAcknowledged = false }
         return ClientAuthCrypto.formatRecoveryKey(newKey)
+    }
+
+    /// Move this enrolled installation to the account that owns `recoveryKeyInput`
+    /// (`POST /api/auth/account/attach`). The device keeps its id, usage, integrations,
+    /// and local meetings; only the account membership changes, and the server issues
+    /// fresh tokens because access tokens are bound to the account. Returns `true` when
+    /// the device actually moved, `false` when it was already on that account.
+    func attachToAccount(recoveryKeyInput: String) async throws -> Bool {
+        guard isEnrolled else { throw ClientAuthError.notEnrolled }
+        guard let recoveryKey = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else {
+            throw ClientAuthError.invalidRecoveryKey
+        }
+        let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["recovery_key": recoveryKey])
+        update { credentials in
+            credentials.recoveryKey = recoveryKey
+            credentials.accessToken = response.accessToken
+            credentials.accessExpiresAt = now() + (response.expiresIn ?? 3600)
+            if let refresh = response.refreshToken { credentials.refreshToken = refresh }
+            if let cap = response.deviceCap { credentials.deviceCap = cap }
+            if let account = response.accountId { credentials.accountID = account }
+            // The person typed this key from their other device; no save-your-key nudge.
+            credentials.recoveryKeyAcknowledged = true
+        }
+        DebugLogger.shared.log(.app, "Device auth: installation \(response.moved == true ? "moved to another account" : "already on that account")")
+        return response.moved ?? true
+    }
+
+    private struct AttachResponse: Decodable {
+        let accessToken: String
+        let expiresIn: Int64?
+        let refreshToken: String?
+        let accountId: String?
+        let deviceCap: Int?
+        let moved: Bool?
+        enum CodingKeys: String, CodingKey {
+            case accessToken = "access_token", expiresIn = "expires_in", refreshToken = "refresh_token"
+            case accountId = "account_id", deviceCap = "device_cap", moved
+        }
     }
 
     /// Sign this installation out server-side, then forget it locally.

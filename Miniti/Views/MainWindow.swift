@@ -3486,7 +3486,10 @@ struct CRMSendSheet: View {
                 .foregroundStyle(ColorPalette.Text.meta)
                 .fixedSize(horizontal: false, vertical: true)
 
-            VStack(spacing: 8) {
+            // Every card fills the column and pins left. Without the explicit frame each
+            // card hugs its own text width and the stack centres it, so a short task sat
+            // with a wide gap on the left while a long one reached the edge (Ian, 2026-09-11).
+            VStack(alignment: .leading, spacing: 8) {
                 ForEach(taskPreviews, id: \.content) { task in
                     Toggle(isOn: taskSelectionBinding(for: task.content)) {
                         VStack(alignment: .leading, spacing: 5) {
@@ -3507,8 +3510,10 @@ struct CRMSendSheet: View {
                                 taskMetadataLabel(icon: "link", text: linkedRecordPreview)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .toggleStyle(.checkbox)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
                     .background(
                         RoundedRectangle(cornerRadius: 6)

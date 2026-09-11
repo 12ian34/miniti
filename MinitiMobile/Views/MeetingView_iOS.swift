@@ -698,6 +698,12 @@ private struct SmartMeetingBanner_iOS: View {
                 .tint(ColorPalette.Accent.green)
                 .frame(maxWidth: .infinity)
 
+                Button("End meeting") {
+                    appState.endMeetingFromSmartPrompt()
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+
                 HStack(spacing: 8) {
                     Button("Remind in 2 min") {
                         appState.remindSmartMeetingPromptInTwoMinutes()

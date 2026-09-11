@@ -178,7 +178,7 @@ private struct SettingsDetailView_iOS: View {
     var initialSearchTarget: String? = nil
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
-    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = false
+    @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = true
     @AppStorage(PersonalDictionaryPreferences.storageKey) private var personalDictionaryTermsData: Data = Data()
     @AppStorage(LiveActivityPreferences.showTranscriptKey) private var showTranscriptInLiveActivity = true
     @State private var versionTapCount = 0
@@ -264,8 +264,15 @@ private struct SettingsDetailView_iOS: View {
                                     .foregroundStyle(.secondary)
                             }
                         } else if appState.isPro {
-                            Button("Manage Subscription") {
-                                Task { await appState.openManageSubscriptionPage() }
+                            if appState.isProViaAccount {
+                                Text("Pro comes from another device on your account. Manage the subscription from that device.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .id("subscription.viaAccount")
+                            } else {
+                                Button("Manage Subscription") {
+                                    Task { await appState.openManageSubscriptionPage() }
+                                }
                             }
                         } else {
                             Button {
@@ -721,6 +728,10 @@ private struct SettingsDetailView_iOS: View {
 
                 }
 
+                if category == .calendar, appState.googleCalendarEnabled {
+                    CalendarMeetingFiltersSection()
+                }
+
                 if category == .webhooks {
                 Section("Webhooks") {
                     TextField("Webhook URL", text: $appState.webhookURL)
@@ -729,20 +740,18 @@ private struct SettingsDetailView_iOS: View {
                         .autocorrectionDisabled()
                         .id("integrations.webhook")
                     if !appState.webhookURL.isEmpty {
-                        if let url = URL(string: appState.webhookURL),
-                           let scheme = url.scheme?.lowercased(),
-                           (scheme == "http" || scheme == "https"),
-                           url.host != nil {
+                        if let message = WebhookService.validationMessage(for: appState.webhookURL) {
+                            Label(message, systemImage: "exclamationmark.triangle.fill")
+                                .font(.caption)
+                                .foregroundStyle(ColorPalette.Status.error)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } else {
                             Label("valid URL", systemImage: "checkmark.circle.fill")
                                 .font(.caption)
                                 .foregroundStyle(ColorPalette.Accent.green)
-                        } else {
-                            Label("invalid URL — must start with https://", systemImage: "exclamationmark.triangle.fill")
-                                .font(.caption)
-                                .foregroundStyle(ColorPalette.Status.error)
                         }
                     }
-                    Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint.")
+                    Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint. The payload includes the full transcript and attendee names, so it is only ever sent over https.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -757,7 +766,7 @@ private struct SettingsDetailView_iOS: View {
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                         .id("privacy.diagnostics")
-                    Text("Sends structured reliability events (errors, reconnects, health states) with no transcript or audio content.")
+                    Text("On by default in managed mode. Sends structured reliability events (errors, reconnects, health states) so problems can be fixed. Never includes transcript or audio content. Nothing is sent in bring-your-own-keys mode.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

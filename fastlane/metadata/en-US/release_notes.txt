@@ -1,13 +1,19 @@
 NEW
 
-- Join button on meeting reminders and upcoming meetings. One tap opens the Meet or Zoom link and starts miniti.
-- Long-press a transcript line to correct a misheard word. miniti fixes earlier mentions and remembers it next time.
-- Settings, Personal Dictionary lists your corrections so you can remove them.
+- Pro follows your account. Buy Pro on one device and every device on the same account gets it.
+- Move a device to another account from Settings, Account & Plan with that account's recovery key. It keeps its meetings, usage, and connections.
+- The next-meeting prompt has an End meeting button, so you can end the current meeting without starting the next one.
+- Out of office, focus time, all-day, and declined events no longer count as meetings. Settings, Calendar, Meeting filters lets you change the rules, add your own title words, and preview which of next week's events would be skipped.
 
 IMPROVED
 
-- Speaker names appear more often, with a final check when the meeting ends and names from the invite on 1:1 calls.
+- Live summary and question updates arrive about 3 times faster.
+- Share Diagnostics is on by default in managed mode. It sends error and health events only, never transcript or audio. Turn it off in Settings, Privacy.
+- Webhooks only send over https, and webhook addresses never appear in diagnostics logs.
+- The correct-word editor tells you when a correction was not saved or matched nothing, instead of closing quietly.
 
 FIXED
 
-- Meeting links and attendee names from Google Calendar were being dropped. Join buttons and attendee names now show.
+- Correcting only the capitals of a word, such as lightdash to Lightdash, now works.
+- A correction made after the meeting has stopped is saved to the meeting straight away.
+- Filler counts no longer double count. An "uh huh" counts once, and Coaching calls them detected fillers.

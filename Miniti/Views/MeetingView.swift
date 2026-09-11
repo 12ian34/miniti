@@ -286,6 +286,11 @@ private struct SmartMeetingBanner: View {
                 .buttonStyle(.borderedProminent)
                 .tint(ColorPalette.Accent.green)
 
+                Button("End meeting") {
+                    appState.endMeetingFromSmartPrompt()
+                }
+                .buttonStyle(.bordered)
+
                 Button("Remind in 2 min") {
                     appState.remindSmartMeetingPromptInTwoMinutes()
                 }

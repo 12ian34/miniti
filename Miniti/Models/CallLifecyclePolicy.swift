@@ -156,6 +156,9 @@ enum CallLifecycleEvent: Equatable {
     /// A different recognized call app became active during the recording. Never an
     /// automatic split — at most a visible handoff decision.
     case offerTransition(to: ActiveCallApplication)
+    /// A recording that expected its call (join link / calendar conference link) has
+    /// adopted the call that appeared. Informational: no prompt, no state change in AppState.
+    case adoptExpectedCall(ActiveCallApplication)
 }
 
 /// Inputs the engine needs from AppState each tick. Gaps use the existing
@@ -215,11 +218,29 @@ struct CallLifecycleEngine {
     private(set) var endCandidateSince: Date?
     private var transitionCandidates: [String: Date] = [:]
     private var offeredTransitionBundleIDs: Set<String> = []
+    /// While set, a recording that has no associated call adopts the first recognized
+    /// call that appears (after the start debounce) instead of offering a transition.
+    /// Armed only for starts that explicitly expect a call: a calendar meeting with a
+    /// conference link, or a join link opened by the user.
+    private(set) var expectedCallUntil: Date?
 
-    /// Association forms only at recording start — from the start prompt's app, or from
+    /// How long after a join-style start the recording waits for its own call to appear.
+    /// Covers a Meet lobby and a slow browser launch; bounded so an unrelated call much
+    /// later stays a transition candidate.
+    static let expectedCallWindow: TimeInterval = 300
+
+    /// Association forms at recording start — from the start prompt's app, or from
     /// exactly one recognized call being active. Apps appearing mid-recording never
     /// associate retroactively, so an unrelated call ending cannot end this recording.
-    mutating func noteRecordingStarted(activeCalls: [ActiveCallApplication], startedFrom promptApp: ActiveCallApplication?) {
+    /// The one exception is a start that expects a call (`expectsCall`): the user just
+    /// pressed Join or started notes for a meeting with a conference link, so the call
+    /// that appears in the next `expectedCallWindow` is this recording's own call.
+    mutating func noteRecordingStarted(
+        activeCalls: [ActiveCallApplication],
+        startedFrom promptApp: ActiveCallApplication?,
+        expectsCall: Bool = false,
+        at now: Date = Date()
+    ) {
         endCandidateSince = nil
         hasObservedAssociatedActive = false
         transitionCandidates = [:]
@@ -231,10 +252,24 @@ struct CallLifecycleEngine {
         } else {
             associatedApp = nil
         }
+        if associatedApp == nil, expectsCall {
+            expectedCallUntil = now.addingTimeInterval(Self.expectedCallWindow)
+        } else if associatedApp != nil {
+            expectedCallUntil = nil
+        }
+        // An expectation armed by a join link opened before the recording registered
+        // (managed starts are asynchronous) survives this call.
         startCandidate = nil
         promptedStartBundleID = nil
         suppressedStartBundleID = nil
         startPromptVisible = false
+    }
+
+    /// The user opened (or re-opened) the meeting's conference link. If the recording
+    /// has no associated call yet, expect its call to appear shortly.
+    mutating func noteJoinLinkOpened(at now: Date = Date()) {
+        guard associatedApp == nil else { return }
+        expectedCallUntil = now.addingTimeInterval(Self.expectedCallWindow)
     }
 
     mutating func noteRecordingEnded() {
@@ -243,6 +278,7 @@ struct CallLifecycleEngine {
         endCandidateSince = nil
         transitionCandidates = [:]
         offeredTransitionBundleIDs = []
+        expectedCallUntil = nil
     }
 
     /// The user dismissed the start prompt: suppress further prompts for this uninterrupted call.
@@ -308,12 +344,23 @@ struct CallLifecycleEngine {
         }
 
         // Other recognized calls are transition candidates after the same start debounce.
+        // A recording still waiting for its own call (join link, calendar meeting with a
+        // conference link) adopts the first matured candidate instead of prompting.
+        if let until = expectedCallUntil, now > until {
+            expectedCallUntil = nil
+        }
         let activeIDs = Set(snapshot.activeCalls.map(\.bundleID))
         transitionCandidates = transitionCandidates.filter { activeIDs.contains($0.key) }
         for app in snapshot.activeCalls where app.bundleID != associatedApp?.bundleID {
             if let since = transitionCandidates[app.bundleID] {
-                if now.timeIntervalSince(since) >= Self.startDebounce,
-                   !offeredTransitionBundleIDs.contains(app.bundleID) {
+                guard now.timeIntervalSince(since) >= Self.startDebounce else { continue }
+                if associatedApp == nil, expectedCallUntil != nil {
+                    associatedApp = app
+                    hasObservedAssociatedActive = true
+                    expectedCallUntil = nil
+                    transitionCandidates[app.bundleID] = nil
+                    events.append(.adoptExpectedCall(app))
+                } else if !offeredTransitionBundleIDs.contains(app.bundleID) {
                     offeredTransitionBundleIDs.insert(app.bundleID)
                     events.append(.offerTransition(to: app))
                 }

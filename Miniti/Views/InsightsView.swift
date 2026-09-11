@@ -1996,7 +1996,7 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
 extension TerminalSectionInfo {
     static let fillers = TerminalSectionInfo(
         title: "Fillers",
-        summary: "Lower is usually better. This counts words like um, uh, like, and similar verbal placeholders.",
+        summary: "Lower is usually better. This counts detected fillers like um, uh, like, and similar verbal placeholders. Speech recognition misses some hesitations, so treat the number as a floor, not an exact count.",
         guidance: [
             "Rough coaching range: under 1-3 fillers/min is usually solid.",
             "3-6/min is common in casual conversation or when thinking live.",

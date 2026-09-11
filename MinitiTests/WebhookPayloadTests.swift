@@ -26,6 +26,45 @@ final class WebhookPayloadTests: XCTestCase, @unchecked Sendable {
         super.tearDown()
     }
 
+    // MARK: - Transport policy (P0.9)
+
+    func testWebhookURLRequiresHTTPSWithHost() {
+        XCTAssertEqual(WebhookService.validate(""), .empty)
+        XCTAssertEqual(WebhookService.validate("   "), .empty)
+        XCTAssertEqual(WebhookService.validate("hooks.zapier.com/hooks/catch/1/abc"), .malformed)
+        XCTAssertEqual(WebhookService.validate("https://"), .malformed)
+        XCTAssertEqual(WebhookService.validate("ftp://example.com/hook"), .unsupportedScheme)
+        XCTAssertEqual(WebhookService.validate("http://hooks.zapier.com/hooks/catch/1/abc"), .plaintextTransport)
+        XCTAssertEqual(WebhookService.validate("HTTP://example.com/x"), .plaintextTransport)
+        XCTAssertTrue(WebhookService.validate("https://hooks.zapier.com/hooks/catch/1/abc").isValid)
+        XCTAssertTrue(WebhookService.validate(" https://example.com/hook?token=1 ").isValid)
+    }
+
+    func testPlaintextIsAllowedOnlyToLoopback() {
+        XCTAssertTrue(WebhookService.validate("http://localhost:5678/webhook/x").isValid)
+        XCTAssertTrue(WebhookService.validate("http://127.0.0.1/hook").isValid)
+        XCTAssertTrue(WebhookService.validate("http://LOCALHOST/hook").isValid)
+        XCTAssertEqual(WebhookService.validate("http://192.168.1.20:5678/webhook/x"), .plaintextTransport)
+        XCTAssertEqual(WebhookService.validate("http://localhost.example.com/hook"), .plaintextTransport)
+    }
+
+    func testValidationMessagesOnlyForRejectedURLs() {
+        XCTAssertNil(WebhookService.validationMessage(for: ""))
+        XCTAssertNil(WebhookService.validationMessage(for: "https://example.com/hook"))
+        XCTAssertNotNil(WebhookService.validationMessage(for: "http://example.com/hook"))
+        XCTAssertNotNil(WebhookService.validationMessage(for: "not a url"))
+    }
+
+    func testRedactedEndpointKeepsOnlySchemeAndHost() {
+        XCTAssertEqual(
+            WebhookService.redactedEndpoint("https://hooks.zapier.com/hooks/catch/123456/abcdef/?key=secret"),
+            "https://hooks.zapier.com"
+        )
+        XCTAssertEqual(WebhookService.redactedEndpoint("https://user:pass@example.com:8443/path/token"), "https://example.com:8443")
+        XCTAssertEqual(WebhookService.redactedEndpoint("http://localhost:5678/webhook/abc"), "http://localhost:5678")
+        XCTAssertEqual(WebhookService.redactedEndpoint("garbage"), "<invalid url>")
+    }
+
     // MARK: - MEDDPICCData.isEmpty
 
     func testMEDDPICCDataIsEmptyAllNil() {

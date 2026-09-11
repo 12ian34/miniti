@@ -109,8 +109,12 @@ final class MinitiAPIService: @unchecked Sendable {
         let docsLookupsUsed: Int?
         /// Monthly docs-lookup allowance. Nil = backend hasn't reported a cap yet.
         let docsLookupsLimit: Int?
+        /// True when this device is Pro because another device on its account holds
+        /// the subscription (2.8.0 backend). Absent from older backends = false.
+        let entitlementViaAccount: Bool
 
         enum CodingKeys: String, CodingKey {
+            case entitlementViaAccount = "entitlement_via_account"
             case minutesUsed = "minutes_used"
             case minutesLimit = "minutes_limit"
             case resetsAt = "resets_at"
@@ -159,9 +163,12 @@ final class MinitiAPIService: @unchecked Sendable {
             }
             docsLookupsUsed = MinitiAPIService.decodeOptionalInt(container, .docsLookupsUsed, .docsLookupsUsedCamel)
             docsLookupsLimit = MinitiAPIService.decodeOptionalInt(container, .docsLookupsLimit, .docsLookupsLimitCamel)
+            entitlementViaAccount = (try? container.decodeIfPresent(Bool.self, forKey: .entitlementViaAccount)) ?? false
         }
 
         var isPro: Bool { tier == "pro" }
+        /// Pro that comes from another device on the same account: nothing to manage here.
+        var isProViaAccount: Bool { isPro && entitlementViaAccount }
 
         /// Remaining docs lookups this period, or nil if the backend hasn't
         /// reported a cap (in which case the client shouldn't gate on it).
@@ -532,10 +539,45 @@ final class MinitiAPIService: @unchecked Sendable {
         let end: String
         let isAllDay: Bool
         let status: String
+        /// Google `eventType` (default, outOfOffice, focusTime, workingLocation,
+        /// birthday). Nil from backends that predate the field.
+        let eventType: String?
+        /// Only present when fetched with `include_filtered=true`: why the backend's
+        /// default filter would drop this event. Informational; the client applies
+        /// its own `CalendarMeetingFilterPreferences`.
+        let skipReason: String?
         let meetLink: String?
         let conferenceUrl: String?
         let attendees: [CalendarAttendee]
         let organizer: CalendarOrganizer?
+
+        /// The person's own attendee entry declined this invitation.
+        var isDeclinedBySelf: Bool {
+            attendees.contains { $0.isSelf && $0.responseStatus == "declined" }
+        }
+
+        /// Why this event is not a meeting under `preferences`, or nil when it is one.
+        /// Out-of-office, focus-time, working-location, and birthday events and titles
+        /// that read as time blocks never drive reminders, auto-start, or the
+        /// next-meeting handoff. The backend applies the same defaults for older
+        /// clients; this runs on `include_filtered=true` responses so people can
+        /// adjust the rules and preview them (Settings → Calendar → Meeting filters).
+        func skipReason(under preferences: CalendarMeetingFilterPreferences) -> CalendarMeetingSkipReason? {
+            if isAllDay { return preferences.skipAllDay ? .allDay : nil }
+            if preferences.skipDeclined, isDeclinedBySelf { return .declined }
+            if let eventType, let reason = CalendarMeetingSkipReason(eventType: eventType),
+               preferences.skips(eventType: eventType) {
+                return reason
+            }
+            if let prefix = preferences.matchingTitlePrefix(for: title) { return .title(prefix) }
+            return nil
+        }
+
+        /// True under the default filters. Kept for the auto-start and handoff
+        /// guards, which only ever see events that already passed the active filters.
+        var isRecordableMeeting: Bool {
+            skipReason(under: .defaults) == nil
+        }
 
         // The wire format from `miniti-api` (`lib/google.ts`) is camelCase, the same
         // shape the Linux client reads. The snake_case keys are a fallback for the
@@ -544,6 +586,10 @@ final class MinitiAPIService: @unchecked Sendable {
         // every attendee for months, because every field has a default.
         enum CodingKeys: String, CodingKey {
             case id, title, start, end, status, attendees, organizer
+            case eventType
+            case eventTypeSnake = "event_type"
+            case skipReason
+            case skipReasonSnake = "skip_reason"
             case isAllDay
             case isAllDaySnake = "is_all_day"
             case meetLink
@@ -562,6 +608,10 @@ final class MinitiAPIService: @unchecked Sendable {
                 ?? c.decodeIfPresent(Bool.self, forKey: .isAllDaySnake)
                 ?? false
             status = try c.decodeIfPresent(String.self, forKey: .status) ?? "confirmed"
+            eventType = try c.decodeIfPresent(String.self, forKey: .eventType)
+                ?? c.decodeIfPresent(String.self, forKey: .eventTypeSnake)
+            skipReason = try c.decodeIfPresent(String.self, forKey: .skipReason)
+                ?? c.decodeIfPresent(String.self, forKey: .skipReasonSnake)
             meetLink = try c.decodeIfPresent(String.self, forKey: .meetLink)
                 ?? c.decodeIfPresent(String.self, forKey: .meetLinkSnake)
             conferenceUrl = try c.decodeIfPresent(String.self, forKey: .conferenceUrl)
@@ -686,6 +736,131 @@ final class MinitiAPIService: @unchecked Sendable {
 
     struct GoogleEventsResponse: Decodable {
         let events: [CalendarEvent]
+    }
+
+    /// Why a calendar event is skipped as "not a meeting". `title` carries the
+    /// prefix that matched so the preview can say which rule fired.
+    enum CalendarMeetingSkipReason: Equatable, Sendable {
+        case allDay
+        case declined
+        case outOfOffice
+        case focusTime
+        case workingLocation
+        case birthday
+        case title(String)
+
+        init?(eventType: String) {
+            switch eventType {
+            case "outOfOffice": self = .outOfOffice
+            case "focusTime": self = .focusTime
+            case "workingLocation": self = .workingLocation
+            case "birthday": self = .birthday
+            default: return nil
+            }
+        }
+
+        /// Short lowercase label for the preview list.
+        var label: String {
+            switch self {
+            case .allDay: return "all-day event"
+            case .declined: return "you declined"
+            case .outOfOffice: return "out of office"
+            case .focusTime: return "focus time"
+            case .workingLocation: return "working location"
+            case .birthday: return "birthday"
+            case .title(let prefix): return "title starts with “\(prefix)”"
+            }
+        }
+    }
+
+    /// Which calendar events count as meetings. Stored in UserDefaults; the backend
+    /// applies the same defaults for clients that cannot adjust them. Every rule is
+    /// a toggle plus an editable list of title prefixes (case-insensitive, matched at
+    /// the start of the title so "Prep for holiday campaign" is still a meeting).
+    struct CalendarMeetingFilterPreferences: Codable, Equatable, Sendable {
+        static let storageKey = "calendarMeetingFilters.v1"
+        static let maxTitlePrefixes = 50
+        static let defaultTitlePrefixes = [
+            "ooo", "out of office", "out-of-office", "pto", "annual leave", "holiday",
+            "vacation", "sick", "focus time", "focus block", "no meetings", "do not book", "dnb",
+        ]
+
+        var skipOutOfOffice = true
+        var skipFocusTime = true
+        var skipWorkingLocation = true
+        var skipBirthdays = true
+        var skipAllDay = true
+        var skipDeclined = true
+        var titlePrefixes: [String] = defaultTitlePrefixes
+
+        static let defaults = CalendarMeetingFilterPreferences()
+
+        static func load(defaults: UserDefaults = .standard) -> CalendarMeetingFilterPreferences {
+            guard let data = defaults.data(forKey: storageKey),
+                  let decoded = try? JSONDecoder().decode(CalendarMeetingFilterPreferences.self, from: data) else {
+                return .defaults
+            }
+            return decoded.normalized()
+        }
+
+        func save(defaults: UserDefaults = .standard) {
+            let value = normalized()
+            if value == .defaults {
+                defaults.removeObject(forKey: Self.storageKey)
+                return
+            }
+            guard let data = try? JSONEncoder().encode(value) else { return }
+            defaults.set(data, forKey: Self.storageKey)
+        }
+
+        /// Trimmed, whitespace-collapsed, lowercased, deduplicated, capped prefixes.
+        static func normalizedPrefixes(_ prefixes: [String]) -> [String] {
+            var seen = Set<String>()
+            var out: [String] = []
+            for raw in prefixes {
+                let cleaned = raw
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                    .lowercased()
+                guard !cleaned.isEmpty, !seen.contains(cleaned) else { continue }
+                seen.insert(cleaned)
+                out.append(cleaned)
+                if out.count >= maxTitlePrefixes { break }
+            }
+            return out
+        }
+
+        func normalized() -> CalendarMeetingFilterPreferences {
+            var copy = self
+            copy.titlePrefixes = Self.normalizedPrefixes(titlePrefixes)
+            return copy
+        }
+
+        func skips(eventType: String) -> Bool {
+            switch eventType {
+            case "outOfOffice": return skipOutOfOffice
+            case "focusTime": return skipFocusTime
+            case "workingLocation": return skipWorkingLocation
+            case "birthday": return skipBirthdays
+            default: return false
+            }
+        }
+
+        /// The configured prefix that starts `title` at a word boundary, if any.
+        func matchingTitlePrefix(for title: String) -> String? {
+            let normalizedTitle = title
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+                .lowercased()
+            guard !normalizedTitle.isEmpty else { return nil }
+            for prefix in titlePrefixes where normalizedTitle.hasPrefix(prefix) {
+                let end = normalizedTitle.index(normalizedTitle.startIndex, offsetBy: prefix.count)
+                if end == normalizedTitle.endIndex { return prefix }
+                let next = normalizedTitle[end]
+                if !(next.isLetter || next.isNumber) { return prefix }
+            }
+            return nil
+        }
     }
 
     // MARK: - Attio
@@ -1465,10 +1640,17 @@ final class MinitiAPIService: @unchecked Sendable {
         return try decode(GoogleStatusResponse.self, from: data, endpoint: "/google/status")
     }
 
-    func googleEvents(deviceId: String, timeMin: String? = nil, timeMax: String? = nil, maxResults: Int = 20) async throws -> [CalendarEvent] {
+    func googleEvents(
+        deviceId: String,
+        timeMin: String? = nil,
+        timeMax: String? = nil,
+        maxResults: Int = 20,
+        includeFiltered: Bool = false
+    ) async throws -> [CalendarEvent] {
         var path = "/google/events?max_results=\(maxResults)"
         if let timeMin { path += "&time_min=\(timeMin)" }
         if let timeMax { path += "&time_max=\(timeMax)" }
+        if includeFiltered { path += "&include_filtered=true" }
         let request = makeRequest(path: path, deviceId: deviceId)
         let (data, response) = try await send(request)
         try validateResponse(response, data: data)
