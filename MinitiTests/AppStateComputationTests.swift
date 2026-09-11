@@ -2657,13 +2657,86 @@ final class AppStateComputationTests: XCTestCase {
         return try! decoder.decode(MinitiAPIService.UsageInfo.self, from: data)
     }
 
+    func testMeetingFilterPreferencesNormalizeAndRoundTrip() {
+        typealias Prefs = MinitiAPIService.CalendarMeetingFilterPreferences
+        XCTAssertEqual(Prefs.normalizedPrefixes(["  Out  Of Office ", "ooo", "OOO", "", "gym"]), ["out of office", "ooo", "gym"])
+        let defaults = UserDefaults(suiteName: "test_calendar_filters_\(UUID().uuidString)")!
+        XCTAssertEqual(Prefs.load(defaults: defaults), .defaults)
+        var custom = Prefs.defaults
+        custom.skipAllDay = false
+        custom.titlePrefixes.append("Gym ")
+        custom.save(defaults: defaults)
+        let loaded = Prefs.load(defaults: defaults)
+        XCTAssertFalse(loaded.skipAllDay)
+        XCTAssertTrue(loaded.titlePrefixes.contains("gym"))
+        // Saving the defaults clears the key so a future default change applies.
+        Prefs.defaults.save(defaults: defaults)
+        XCTAssertNil(defaults.data(forKey: Prefs.storageKey))
+    }
+
+    func testMeetingFiltersRespectEveryToggleAndCustomPrefixes() {
+        typealias Prefs = MinitiAPIService.CalendarMeetingFilterPreferences
+        let all = Prefs.defaults
+        XCTAssertEqual(Self.makeCalendarEvent(id: "1", title: "Team day", isAllDay: true).skipReason(under: all), .allDay)
+        XCTAssertEqual(Self.makeCalendarEvent(id: "2", title: "Sync", selfDeclined: true).skipReason(under: all), .declined)
+        XCTAssertEqual(Self.makeCalendarEvent(id: "3", title: "Ian", eventType: "outOfOffice").skipReason(under: all), .outOfOffice)
+        XCTAssertEqual(Self.makeCalendarEvent(id: "4", title: "Gym", eventType: "focusTime").skipReason(under: all), .focusTime)
+        XCTAssertEqual(Self.makeCalendarEvent(id: "5", title: "PTO - Lisbon").skipReason(under: all), .title("pto"))
+
+        var relaxed = Prefs.defaults
+        relaxed.skipAllDay = false
+        relaxed.skipDeclined = false
+        relaxed.skipOutOfOffice = false
+        relaxed.skipFocusTime = false
+        relaxed.titlePrefixes = ["gym"]
+        XCTAssertNil(Self.makeCalendarEvent(id: "1", title: "Team day", isAllDay: true).skipReason(under: relaxed))
+        XCTAssertNil(Self.makeCalendarEvent(id: "2", title: "Sync", selfDeclined: true).skipReason(under: relaxed))
+        XCTAssertNil(Self.makeCalendarEvent(id: "3", title: "Ian", eventType: "outOfOffice").skipReason(under: relaxed))
+        XCTAssertNil(Self.makeCalendarEvent(id: "5", title: "PTO - Lisbon").skipReason(under: relaxed))
+        XCTAssertEqual(Self.makeCalendarEvent(id: "6", title: "Gym with Sam").skipReason(under: relaxed), .title("gym"))
+        // Prefix matching is a word boundary at the start: "gymnastics review" is a meeting.
+        XCTAssertNil(Self.makeCalendarEvent(id: "7", title: "Gymnastics review").skipReason(under: relaxed))
+
+        // The backend's own skipReason is informational; the local rules decide.
+        let serverSkipped = Self.makeCalendarEvent(id: "8", title: "Deep work", eventType: "focusTime", skipReason: "event_type")
+        XCTAssertEqual(serverSkipped.skipReason, "event_type")
+        XCTAssertNil(serverSkipped.skipReason(under: relaxed))
+        XCTAssertEqual(
+            AppState.filterCalendarMeetings([serverSkipped, Self.makeCalendarEvent(id: "9", title: "Weekly sync")], preferences: all).map(\.id),
+            ["9"]
+        )
+    }
+
+    /// Ian, 2026-09-11: "end and start next" fired for an out-of-office block.
+    /// Time blocks are not meetings: they never reach `upcomingEvents`.
+    func testOutOfOfficeAndFocusBlocksAreNotRecordableMeetings() {
+        XCTAssertFalse(Self.makeCalendarEvent(id: "1", title: "Ian", eventType: "outOfOffice").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "2", title: "Deep work", eventType: "focusTime").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "3", title: "Office", eventType: "workingLocation").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "4", title: "Sam", eventType: "birthday").isRecordableMeeting)
+        // Older backends send no type: the title heuristic catches the common labels.
+        XCTAssertFalse(Self.makeCalendarEvent(id: "5", title: "OOO").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "6", title: "Out of office - Portugal").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "7", title: "  pto").isRecordableMeeting)
+        XCTAssertFalse(Self.makeCalendarEvent(id: "8", title: "Focus time").isRecordableMeeting)
+        // Real meetings, including ones that merely mention those words, survive.
+        XCTAssertTrue(Self.makeCalendarEvent(id: "9", title: "Design review", eventType: "default").isRecordableMeeting)
+        XCTAssertTrue(Self.makeCalendarEvent(id: "10", title: "Prep for holiday campaign").isRecordableMeeting)
+        XCTAssertTrue(Self.makeCalendarEvent(id: "11", title: "Lunch with Acme", meetLink: "https://meet.google.com/abc-defg-hij").isRecordableMeeting)
+        XCTAssertTrue(Self.makeCalendarEvent(id: "12", title: "Weekly sync").isRecordableMeeting)
+    }
+
     private static func makeCalendarEvent(
         id: String,
         title: String,
         start: Date = Date().addingTimeInterval(300),
         end: Date = Date().addingTimeInterval(3600),
         meetLink: String? = nil,
-        conferenceUrl: String? = nil
+        conferenceUrl: String? = nil,
+        eventType: String? = nil,
+        isAllDay: Bool = false,
+        selfDeclined: Bool = false,
+        skipReason: String? = nil
     ) -> MinitiAPIService.CalendarEvent {
         let formatter = ISO8601DateFormatter()
         var json: [String: Any] = [
@@ -2671,11 +2744,15 @@ final class AppStateComputationTests: XCTestCase {
             "title": title,
             "start": formatter.string(from: start),
             "end": formatter.string(from: end),
-            "isAllDay": false,
+            "isAllDay": isAllDay,
             "status": "confirmed",
-            "attendees": [],
+            "attendees": selfDeclined
+                ? [["email": "me@x.com", "responseStatus": "declined", "organizer": false, "self": true, "domain": "x.com"]]
+                : [],
         ]
         // Real wire format from miniti-api is camelCase.
+        if let eventType { json["eventType"] = eventType }
+        if let skipReason { json["skipReason"] = skipReason }
         if let meetLink { json["meetLink"] = meetLink }
         if let conferenceUrl { json["conferenceUrl"] = conferenceUrl }
         let data = try! JSONSerialization.data(withJSONObject: json)

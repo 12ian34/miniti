@@ -100,6 +100,8 @@ struct TranscriptView: View {
     @State private var correctingHeardText: String?
     @State private var correctionDraft = ""
     @State private var fixEarlierMentions = true
+    /// Shown inside the editor when a save was rejected or matched nothing.
+    @State private var correctionMessage: String?
     #if os(macOS)
     @StateObject private var liveSelectionState = LiveTranscriptSelectionState()
     #else
@@ -532,12 +534,24 @@ struct TranscriptView: View {
                                         heard: editing,
                                         correct: $correctionDraft,
                                         fixEarlierMentions: $fixEarlierMentions,
+                                        message: correctionMessage,
                                         onSave: {
-                                            appState.saveDictionaryCorrection(
+                                            let outcome = appState.saveDictionaryCorrection(
                                                 heard: editing,
                                                 correct: correctionDraft,
                                                 fixEarlierMentions: fixEarlierMentions
                                             )
+                                            // Rejected: stay open and say why. Saved but nothing
+                                            // matched: stay open with the note; the next save or
+                                            // cancel closes it. Rewrote text: close as before.
+                                            if let message = outcome.message(
+                                                heard: editing,
+                                                fixEarlierMentions: fixEarlierMentions
+                                            ) {
+                                                correctionMessage = message
+                                                return
+                                            }
+                                            correctionMessage = nil
                                             correctingHeardText = nil
                                             // Collapse the native selection so the pill does
                                             // not immediately reappear offering to "correct"
@@ -545,6 +559,7 @@ struct TranscriptView: View {
                                             liveSelectionState.requestDeselect()
                                         },
                                         onCancel: {
+                                            correctionMessage = nil
                                             correctingHeardText = nil
                                         }
                                     )
@@ -767,18 +782,25 @@ struct TranscriptView: View {
                 ),
                 correct: $correctionDraft,
                 fixEarlierMentions: $fixEarlierMentions,
+                message: correctionMessage,
                 onSave: {
                     guard let heard = correctingHeardText else { return }
-                    appState.saveDictionaryCorrection(
+                    let outcome = appState.saveDictionaryCorrection(
                         heard: heard,
                         correct: correctionDraft,
                         fixEarlierMentions: fixEarlierMentions
                     )
+                    if let message = outcome.message(heard: heard, fixEarlierMentions: fixEarlierMentions) {
+                        correctionMessage = message
+                        return
+                    }
+                    correctionMessage = nil
                     correctingTurnWords = []
                     correctingHeardText = nil
                     correctionDraft = ""
                 },
                 onCancel: {
+                    correctionMessage = nil
                     correctingTurnWords = []
                     correctingHeardText = nil
                     correctionDraft = ""
@@ -1125,6 +1147,8 @@ struct TranscriptCorrectionEditor: View {
     @Binding var correct: String
     @Binding var fixEarlierMentions: Bool
     var fixEarlierLabel: String = "fix earlier mentions in this meeting"
+    /// Outcome of the last save attempt (rejected, full, or matched nothing).
+    var message: String? = nil
     let onSave: () -> Void
     let onCancel: () -> Void
     @FocusState private var focused: Bool
@@ -1166,6 +1190,14 @@ struct TranscriptCorrectionEditor: View {
                 .toggleStyle(.checkbox)
                 #endif
 
+            if let message {
+                Text(message)
+                    .font(.system(size: 11, weight: .regular, design: .default))
+                    .foregroundStyle(ColorPalette.Status.warning)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("correction status: \(message)")
+            }
+
             HStack {
                 Button("cancel", action: onCancel)
                     #if os(macOS)
@@ -1192,6 +1224,7 @@ struct IOSLiveTranscriptCorrectionSheet: View {
     @Binding var heard: String
     @Binding var correct: String
     @Binding var fixEarlierMentions: Bool
+    var message: String? = nil
     let onSave: () -> Void
     let onCancel: () -> Void
     @FocusState private var focused: Bool
@@ -1247,6 +1280,13 @@ struct IOSLiveTranscriptCorrectionSheet: View {
 
                     Toggle("fix earlier mentions in this meeting", isOn: $fixEarlierMentions)
                         .font(.system(size: 13, weight: .regular, design: .default))
+
+                    if let message {
+                        Text(message)
+                            .font(.system(size: 12, weight: .regular, design: .default))
+                            .foregroundStyle(ColorPalette.Status.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 .padding(16)
             }

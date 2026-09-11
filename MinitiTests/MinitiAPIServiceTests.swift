@@ -36,6 +36,31 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertFalse(info.isPro)
     }
 
+    func testUsageInfoProViaAccountFlagDefaultsToFalse() throws {
+        let sponsored = """
+        {"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "subscription_status": "active", "entitlement_via_account": true}
+        """.data(using: .utf8)!
+        let info = try decoder.decode(MinitiAPIService.UsageInfo.self, from: sponsored)
+        XCTAssertTrue(info.isPro)
+        XCTAssertTrue(info.entitlementViaAccount)
+        XCTAssertTrue(info.isProViaAccount)
+
+        // Older backends omit the field: own subscription, nothing changes.
+        let own = """
+        {"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "subscription_status": "active"}
+        """.data(using: .utf8)!
+        let ownInfo = try decoder.decode(MinitiAPIService.UsageInfo.self, from: own)
+        XCTAssertTrue(ownInfo.isPro)
+        XCTAssertFalse(ownInfo.entitlementViaAccount)
+        XCTAssertFalse(ownInfo.isProViaAccount)
+
+        // The flag never promotes a free device.
+        let free = """
+        {"minutes_used": 10, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "free", "entitlement_via_account": true}
+        """.data(using: .utf8)!
+        XCTAssertFalse(try decoder.decode(MinitiAPIService.UsageInfo.self, from: free).isProViaAccount)
+    }
+
     func testUsageInfoCamelCase() throws {
         let json = """
         {

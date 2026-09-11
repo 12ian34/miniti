@@ -363,10 +363,77 @@ enum WebhookService {
         )
     }
 
+    // MARK: - Transport policy
+
+    /// Why a webhook URL is not usable. Webhook payloads carry the full transcript and
+    /// attendee list, so plaintext transport is refused except to this machine.
+    enum URLValidation: Equatable {
+        case valid(URL)
+        case empty
+        case malformed
+        case plaintextTransport
+        case unsupportedScheme
+
+        var url: URL? {
+            if case .valid(let url) = self { return url }
+            return nil
+        }
+
+        var isValid: Bool { url != nil }
+    }
+
+    /// Loopback hosts are the one narrow exception to the HTTPS rule: a local n8n or a
+    /// dev server on this machine. Nothing leaves the computer.
+    static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]"]
+
+    /// HTTPS with a host is required; `http://` is allowed only to loopback hosts.
+    static func validate(_ urlString: String) -> URLValidation {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .empty }
+        guard let url = URL(string: trimmed),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host, !host.isEmpty else { return .malformed }
+        switch scheme {
+        case "https":
+            return .valid(url)
+        case "http":
+            return loopbackHosts.contains(host.lowercased()) ? .valid(url) : .plaintextTransport
+        default:
+            return .unsupportedScheme
+        }
+    }
+
+    /// Short reason for Settings when `validate` rejects the URL. Nil when valid or empty.
+    static func validationMessage(for urlString: String) -> String? {
+        switch validate(urlString) {
+        case .valid, .empty: return nil
+        case .malformed: return "invalid URL — must start with https:// and include a host"
+        case .plaintextTransport: return "must use https:// — meeting data is only sent over an encrypted connection (http:// works for localhost only)"
+        case .unsupportedScheme: return "unsupported scheme — must start with https://"
+        }
+    }
+
+    /// What may appear in logs and exported diagnostics: scheme and host only. Hook URLs
+    /// from Zapier, Make, and n8n embed their secret in the path or query, and a pasted
+    /// URL can carry credentials, so neither is ever written to the log.
+    static func redactedEndpoint(_ urlString: String) -> String {
+        guard let url = URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let scheme = url.scheme, let host = url.host else { return "<invalid url>" }
+        if let port = url.port { return "\(scheme)://\(host):\(port)" }
+        return "\(scheme)://\(host)"
+    }
+
     // MARK: - Send
 
     static func send(payload: MeetingPayload, to webhookURL: String) {
-        guard !webhookURL.isEmpty, let url = URL(string: webhookURL) else { return }
+        let validation = validate(webhookURL)
+        guard let url = validation.url else {
+            if validation != .empty {
+                DebugLogger.shared.log(.app, "Webhook skipped: URL rejected (\(validation)) → \(redactedEndpoint(webhookURL))")
+            }
+            return
+        }
+        let endpoint = redactedEndpoint(webhookURL)
 
         Task.detached(priority: .utility) {
             do {
@@ -384,10 +451,12 @@ enum WebhookService {
                 if (200..<300).contains(status) {
                     DebugLogger.shared.log(.app, "Webhook sent (\(status)): \(payload.event)")
                 } else {
-                    DebugLogger.shared.log(.app, "Webhook non-2xx (\(status)): \(payload.event) → \(webhookURL)")
+                    DebugLogger.shared.log(.app, "Webhook non-2xx (\(status)): \(payload.event) → \(endpoint)")
                 }
             } catch {
-                DebugLogger.shared.log(.app, "Webhook FAILED: \(error.localizedDescription) → \(webhookURL)")
+                // URLError descriptions can embed the request URL; log only the error class.
+                let reason = (error as? URLError).map { "URLError \($0.code.rawValue)" } ?? String(describing: type(of: error))
+                DebugLogger.shared.log(.app, "Webhook FAILED: \(reason) → \(endpoint)")
             }
         }
     }

@@ -712,6 +712,9 @@ struct MenuBarView: View {
                                 Button("End & start") {
                                     appState.endAndStartCalendarMeeting(eventID: eventID)
                                 }
+                                Button("End") {
+                                    appState.endMeetingFromSmartPrompt()
+                                }
                             } else {
                                 Button("End") {
                                     appState.endMeetingFromSmartPrompt()

@@ -105,12 +105,30 @@ struct RecoveryKeyDisplay: View {
 
 /// Attach this device to an existing account by typing its recovery key.
 struct RestoreRecoveryKeySheet: View {
+    /// `.restore` enrolls an unenrolled device; `.move` re-homes an enrolled one
+    /// (`POST /api/auth/account/attach`) without signing it out.
+    enum Mode { case restore, move }
+
     @EnvironmentObject var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @State private var input = ""
     @State private var isRestoring = false
     @State private var error: String?
+    var mode: Mode = .restore
     var onRestored: (() -> Void)? = nil
+
+    private var title: String {
+        mode == .move ? "Move this device to another account" : "Restore with recovery key"
+    }
+
+    private var explanation: String {
+        switch mode {
+        case .restore:
+            return "Enter the key from your other device. It starts with M1 and has eight groups of four characters. This adds the device to that account; your Pro plan on a Mac is restored separately with its license key."
+        case .move:
+            return "Enter the recovery key of the account to join. This device keeps its meetings, usage, calendar, and CRM connections. If that account has a Pro plan, this device gets it too. It leaves its current account; if that account is then empty, it is closed."
+        }
+    }
 
     private var canRestore: Bool {
         !isRestoring && ClientAuthCrypto.normalizeRecoveryKey(input) != nil
@@ -118,11 +136,11 @@ struct RestoreRecoveryKeySheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Restore with recovery key")
+            Text(title)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(ColorPalette.Text.primary)
 
-            Text("Enter the key from your other device. It starts with M1 and has eight groups of four characters. This adds the device to that account; your Pro plan on a Mac is restored separately with its license key.")
+            Text(explanation)
                 .font(.system(size: 12))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -147,7 +165,7 @@ struct RestoreRecoveryKeySheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(isRestoring ? "Restoring…" : "Restore") { restore() }
+                Button(isRestoring ? (mode == .move ? "Moving…" : "Restoring…") : (mode == .move ? "Move" : "Restore")) { restore() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canRestore)
             }
@@ -162,13 +180,16 @@ struct RestoreRecoveryKeySheet: View {
         isRestoring = true
         error = nil
         Task { @MainActor in
-            let ok = await appState.restoreManagedAccount(recoveryKey: input)
+            let ok = mode == .move
+                ? await appState.attachManagedDevice(recoveryKey: input)
+                : await appState.restoreManagedAccount(recoveryKey: input)
             isRestoring = false
             if ok {
                 onRestored?()
                 dismiss()
             } else {
-                error = appState.managedEnrollmentError ?? "Could not restore this account."
+                error = appState.managedEnrollmentError
+                    ?? (mode == .move ? "Could not move this device." : "Could not restore this account.")
             }
         }
     }
@@ -288,6 +309,7 @@ struct ManagedAccountSettingsSection: View {
     @State private var revealedKey: String?
     @State private var copied = false
     @State private var isPresentingRestore = false
+    @State private var isPresentingMove = false
     @State private var isConfirmingReveal = false
     @State private var isConfirmingRotate = false
     @State private var isConfirmingSignOut = false
@@ -312,6 +334,11 @@ struct ManagedAccountSettingsSection: View {
         }
         .sheet(isPresented: $isPresentingRestore) {
             RestoreRecoveryKeySheet()
+                .environmentObject(appState)
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $isPresentingMove) {
+            RestoreRecoveryKeySheet(mode: .move, onRestored: { notice = "This device is now on the other account." })
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
         }
@@ -416,6 +443,13 @@ struct ManagedAccountSettingsSection: View {
                 .foregroundStyle(.secondary)
         }
 
+        Button("Move this device to another account…") { isPresentingMove = true }
+            .disabled(isBusy)
+            .id("account.move")
+        Text("Bought Pro on another Mac? Move this device onto that account and it shares the plan.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+
         HStack {
             Button("Sign out this device") { isConfirmingSignOut = true }
                 .disabled(isBusy)
@@ -503,5 +537,195 @@ struct ManagedAccountSettingsSection: View {
             _ = await appState.deleteManagedAccount()
             isBusy = false
         }
+    }
+}
+
+
+// MARK: - Calendar meeting filters (shared by macOS and iOS Settings)
+
+/// Settings → Calendar → Meeting filters: which calendar events count as meetings,
+/// with a preview of the coming week so the rules can be judged before trusting them.
+/// Reads and writes `AppState.calendarMeetingFilters`; a change re-applies to the
+/// upcoming list immediately without a network call.
+struct CalendarMeetingFiltersSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var newPrefix = ""
+    @State private var prefixMessage: String?
+    @State private var previewRows: [AppState.CalendarFilterPreviewRow]?
+    @State private var previewError: String?
+    @State private var isLoadingPreview = false
+
+    private var filters: Binding<MinitiAPIService.CalendarMeetingFilterPreferences> {
+        $appState.calendarMeetingFilters
+    }
+
+    var body: some View {
+        Section("Meeting filters") {
+            Text("Events that are not meetings are hidden from upcoming meetings, so they never trigger a reminder, an auto-start countdown, or the next-meeting prompt.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Toggle("Skip out of office", isOn: filters.skipOutOfOffice)
+            Toggle("Skip focus time", isOn: filters.skipFocusTime)
+            Toggle("Skip working location", isOn: filters.skipWorkingLocation)
+            Toggle("Skip birthdays", isOn: filters.skipBirthdays)
+            Toggle("Skip all-day events", isOn: filters.skipAllDay)
+            Toggle("Skip events you declined", isOn: filters.skipDeclined)
+
+            Text("Skip titles that start with")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            ForEach(filters.wrappedValue.titlePrefixes, id: \.self) { prefix in
+                HStack {
+                    Text(prefix)
+                    Spacer()
+                    Button(role: .destructive) {
+                        removePrefix(prefix)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Delete \(prefix)")
+                }
+            }
+            HStack {
+                TextField("Add a title prefix (example: gym)", text: $newPrefix)
+                    .textFieldStyle(.roundedBorder)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    #endif
+                    .onSubmit { addPrefix() }
+                Button("Add") { addPrefix() }
+                    .disabled(newPrefix.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if let prefixMessage {
+                Text(prefixMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Button(isLoadingPreview ? "Loading…" : "Preview next 7 days") { loadPreview() }
+                    .disabled(isLoadingPreview || !appState.isGoogleCalendarConnected)
+                Spacer()
+                Button("Restore defaults") {
+                    appState.calendarMeetingFilters = .defaults
+                    prefixMessage = nil
+                    refreshPreviewIfLoaded()
+                }
+                .disabled(appState.calendarMeetingFilters == .defaults)
+            }
+            if !appState.isGoogleCalendarConnected {
+                Text("Connect Google Calendar to preview the week.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let previewError {
+                Text(previewError)
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Status.error)
+            }
+            if let previewRows {
+                previewList(previewRows)
+            }
+        }
+        .id("integrations.meetingFilters")
+        .onChange(of: appState.calendarMeetingFilters) { _, _ in
+            refreshPreviewIfLoaded()
+        }
+    }
+
+    @ViewBuilder
+    private func previewList(_ rows: [AppState.CalendarFilterPreviewRow]) -> some View {
+        let skipped = rows.filter { $0.skipReason != nil }.count
+        Text(rows.isEmpty
+             ? "Nothing on the calendar in the next 7 days."
+             : "\(rows.count) events in the next 7 days, \(skipped) skipped.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        ForEach(rows) { row in
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: row.skipReason == nil ? "checkmark.circle" : "minus.circle")
+                    .foregroundStyle(row.skipReason == nil ? ColorPalette.Accent.green : ColorPalette.Text.muted)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.title)
+                        .lineLimit(1)
+                        .foregroundStyle(row.skipReason == nil ? ColorPalette.Text.primary : ColorPalette.Text.muted)
+                    Text(previewSubtitle(row))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("\(row.title), \(previewSubtitle(row))")
+        }
+    }
+
+    private func previewSubtitle(_ row: AppState.CalendarFilterPreviewRow) -> String {
+        let when: String
+        if let start = row.start {
+            when = row.isAllDay
+                ? start.formatted(date: .abbreviated, time: .omitted)
+                : start.formatted(date: .abbreviated, time: .shortened)
+        } else {
+            when = "unscheduled"
+        }
+        if let reason = row.skipReason {
+            return "\(when) · skipped: \(reason.label)"
+        }
+        return "\(when) · meeting"
+    }
+
+    private func addPrefix() {
+        let cleaned = MinitiAPIService.CalendarMeetingFilterPreferences.normalizedPrefixes([newPrefix]).first
+        guard let cleaned else {
+            prefixMessage = "Type a word or phrase first."
+            return
+        }
+        var updated = appState.calendarMeetingFilters
+        if updated.titlePrefixes.contains(cleaned) {
+            prefixMessage = "“\(cleaned)” is already in the list."
+            return
+        }
+        guard updated.titlePrefixes.count < MinitiAPIService.CalendarMeetingFilterPreferences.maxTitlePrefixes else {
+            prefixMessage = "The list is full (\(MinitiAPIService.CalendarMeetingFilterPreferences.maxTitlePrefixes)). Remove one first."
+            return
+        }
+        updated.titlePrefixes.append(cleaned)
+        appState.calendarMeetingFilters = updated
+        newPrefix = ""
+        prefixMessage = nil
+    }
+
+    private func removePrefix(_ prefix: String) {
+        var updated = appState.calendarMeetingFilters
+        updated.titlePrefixes.removeAll { $0 == prefix }
+        appState.calendarMeetingFilters = updated
+        prefixMessage = nil
+    }
+
+    private func loadPreview() {
+        isLoadingPreview = true
+        previewError = nil
+        Task { @MainActor in
+            do {
+                previewRows = try await appState.previewCalendarMeetingFilters()
+            } catch {
+                previewError = "Could not load the calendar: \(error.localizedDescription)"
+            }
+            isLoadingPreview = false
+        }
+    }
+
+    /// The preview is a pure function of fetched events and the filters, so a filter
+    /// change re-evaluates the already loaded rows through one more fetch only when
+    /// a preview is showing.
+    private func refreshPreviewIfLoaded() {
+        guard previewRows != nil, !isLoadingPreview else { return }
+        loadPreview()
     }
 }

@@ -209,6 +209,80 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(engine.endCandidateSince)
     }
 
+    func testJoinStartAdoptsTheCallThatAppearsInsteadOfOfferingATransition() {
+        // Sasha's report: Join on a Meet reminder starts notes first, then the browser
+        // joins the call. That call must become the recording's own, not "New meeting detected".
+        var engine = CallLifecycleEngine()
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, expectsCall: true, at: base)
+        let chrome = app("com.google.Chrome", name: "Google Chrome", confidence: .browser)
+        let recording = context(isRecording: true)
+
+        _ = engine.ingest(snapshot: snapshot(at: 20, calls: [chrome]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 22, calls: [chrome]), context: recording),
+            [.adoptExpectedCall(chrome)]
+        )
+        XCTAssertEqual(engine.associatedApp?.bundleID, chrome.bundleID)
+        XCTAssertNil(engine.expectedCallUntil)
+        XCTAssertEqual(engine.ingest(snapshot: snapshot(at: 30, calls: [chrome]), context: recording), [])
+
+        // The adopted call is the association: hanging up ends this recording like any other.
+        let quiet = context(isRecording: true, transcriptGap: 60)
+        _ = engine.ingest(snapshot: snapshot(at: 100, calls: []), context: quiet)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 110, calls: []), context: quiet),
+            [.beginEndingGrace(app: chrome, askOnly: false)]
+        )
+    }
+
+    func testJoinLinkOpenedAfterAnAsynchronousStartStillArmsTheExpectation() {
+        // Managed starts register with the engine after the link has already been opened.
+        var engine = CallLifecycleEngine()
+        engine.noteJoinLinkOpened(at: base)
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, at: base.addingTimeInterval(1))
+        XCTAssertNotNil(engine.expectedCallUntil)
+
+        let chrome = app("com.google.Chrome", name: "Google Chrome", confidence: .browser)
+        let recording = context(isRecording: true)
+        _ = engine.ingest(snapshot: snapshot(at: 5, calls: [chrome]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 7, calls: [chrome]), context: recording),
+            [.adoptExpectedCall(chrome)]
+        )
+    }
+
+    func testExpectedCallWindowExpiresBackToTransitionCandidates() {
+        var engine = CallLifecycleEngine()
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, expectsCall: true, at: base)
+        let facetime = app("com.apple.FaceTime", name: "FaceTime")
+        let recording = context(isRecording: true)
+        let late = CallLifecycleEngine.expectedCallWindow + 1
+
+        _ = engine.ingest(snapshot: snapshot(at: late, calls: [facetime]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: late + 2, calls: [facetime]), context: recording),
+            [.offerTransition(to: facetime)]
+        )
+        XCTAssertNil(engine.associatedApp)
+    }
+
+    func testExpectationIsIgnoredWhenAnAssociationAlreadyExists() {
+        var engine = CallLifecycleEngine()
+        let zoom = app()
+        engine.noteRecordingStarted(activeCalls: [zoom], startedFrom: nil, expectsCall: true, at: base)
+        XCTAssertNil(engine.expectedCallUntil)
+        engine.noteJoinLinkOpened(at: base)
+        XCTAssertNil(engine.expectedCallUntil)
+
+        let slack = app("com.tinyspeck.slackmacgap", name: "Slack")
+        let recording = context(isRecording: true)
+        _ = engine.ingest(snapshot: snapshot(at: 0, calls: [zoom, slack]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 2, calls: [zoom, slack]), context: recording),
+            [.offerTransition(to: slack)]
+        )
+    }
+
     func testTransitionOfferedOncePerApp() {
         var engine = CallLifecycleEngine()
         let zoom = app()
@@ -407,6 +481,7 @@ final class CallLifecycleTests: XCTestCase {
         XCTAssertNil(engine.associatedApp)
         XCTAssertFalse(engine.hasObservedAssociatedActive)
         XCTAssertNil(engine.endCandidateSince)
+        XCTAssertNil(engine.expectedCallUntil)
     }
 
     #if os(macOS)

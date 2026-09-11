@@ -302,6 +302,7 @@ enum SettingsSearchCatalog {
         .init("integrations.smartMeetings", "Smart Meetings", section: "Meeting Automation", destination: .calendar, keywords: ["meeting ended", "handoff", "transition", "call detection", "zoom", "call ended"]),
         .init("integrations.googleCalendar", "Google Calendar", section: "Google Calendar", destination: .calendar, keywords: ["connect", "disconnect", "events"]),
         .init("integrations.autoStart", "Auto-start Recording", section: "Meeting Automation", destination: .calendar, keywords: ["countdown", "calendar"]),
+        .init("integrations.meetingFilters", "Meeting Filters", section: "Meeting Filters", destination: .calendar, keywords: ["out of office", "ooo", "focus time", "all-day", "declined", "skip", "preview", "filter", "pto", "holiday"]),
         .init("integrations.calendarAutoStop", "Auto-stop After Meeting Ends", section: "Meeting Automation", destination: .calendar, keywords: ["calendar", "quiet"]),
         .init("integrations.attio", "Attio CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
         .init("integrations.twenty", "Twenty CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
@@ -1136,7 +1137,10 @@ final class AppState: ObservableObject {
     @AppStorage("captureMicrophone") var captureMicrophone: Bool = true
     @AppStorage("defaultLanguage") var defaultLanguage: String = TranscriptionLanguage.english.rawValue
     @Published var meetingLanguage: String = TranscriptionLanguage.english.rawValue
-    @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = false {
+    /// On by default in managed mode (2.8.0). Structured reliability events only; the
+    /// backend stores a bounded window and nothing here carries transcript or audio.
+    /// A person who switched it off keeps it off: the default applies only to an unset key.
+    @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = true {
         didSet {
             if !shareDiagnostics {
                 pendingClientEvents.removeAll()
@@ -1146,7 +1150,9 @@ final class AppState: ObservableObject {
             }
         }
     }
-    @AppStorage("webhookURL") var webhookURL: String = ""
+    @AppStorage("webhookURL") var webhookURL: String = "" {
+        didSet { updateLogRedaction() }
+    }
     @AppStorage("salesInsightsEnabled") var salesInsightsEnabled: Bool = false
     @AppStorage("playbookInsightsEnabled") var playbookInsightsEnabled: Bool = false
     @AppStorage("templateInsightsEnabled") var templateInsightsEnabled: Bool = false
@@ -1274,6 +1280,27 @@ final class AppState: ObservableObject {
     @Published var isGoogleCalendarConnected: Bool = false
     @Published var googleCalendarEmail: String?
     @Published var upcomingEvents: [MinitiAPIService.CalendarEvent] = []
+    /// Every non-cancelled event from the last calendar fetch, before the meeting
+    /// filters. `upcomingEvents` is this list minus what the filters skip, so a
+    /// filter change re-applies without another network call.
+    private var fetchedCalendarEvents: [MinitiAPIService.CalendarEvent] = []
+    /// Which calendar events count as meetings (Settings → Calendar → Meeting filters).
+    @Published var calendarMeetingFilters = MinitiAPIService.CalendarMeetingFilterPreferences.load() {
+        didSet {
+            guard calendarMeetingFilters != oldValue else { return }
+            calendarMeetingFilters.save()
+            applyCalendarMeetingFilters()
+        }
+    }
+
+    /// One row of the "next 7 days" preview in Settings.
+    struct CalendarFilterPreviewRow: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let start: Date?
+        let isAllDay: Bool
+        let skipReason: MinitiAPIService.CalendarMeetingSkipReason?
+    }
     @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent?
 
     var upcomingMeetingEvents: [MinitiAPIService.CalendarEvent] {
@@ -1773,7 +1800,9 @@ final class AppState: ObservableObject {
     }
     
     private func updateLogRedaction() {
-        DebugLogger.shared.setRedactPatterns([deepgramApiKey, openaiApiKey])
+        // The webhook URL is a secret too: hook URLs embed their token in the path.
+        // WebhookService never logs it, but URLError text can, so redact it everywhere.
+        DebugLogger.shared.setRedactPatterns([deepgramApiKey, openaiApiKey, webhookURL])
     }
     
     private func setupServices() {
@@ -2353,6 +2382,11 @@ final class AppState: ObservableObject {
 
         case .reactivateDuringGrace:
             cancelEndingGrace(reason: .reactivated)
+
+        case .adoptExpectedCall(let app):
+            // Join / calendar-link start: the call that appeared is this recording's own
+            // call. Nothing to show; end detection now tracks it like any association.
+            DebugLogger.shared.log(.app, "expected_call_adopted (\(app.displayName))")
 
         case .offerTransition(let app):
             guard isRecording, endingGrace == nil, smartMeetingPrompt == nil else { return }
@@ -5691,6 +5725,12 @@ final class AppState: ObservableObject {
             // any join surface without waiting for the next meeting.
             openedJoinLinkEventIDs.insert(event.id)
             DebugLogger.shared.log(.app, "Opened join link for \(event.title)")
+            #if os(macOS)
+            // The browser or app that picks this link up is this meeting's call, not a
+            // new meeting. Expect it, so the lifecycle engine adopts it instead of
+            // prompting "End the current meeting and start a new one?".
+            callLifecycleEngine.noteJoinLinkOpened()
+            #endif
         } else {
             DebugLogger.shared.log(.app, "Join link open failed for \(event.title)")
         }
@@ -6112,25 +6152,73 @@ final class AppState: ObservableObject {
         )
     }
 
+    /// What happened when a correction was saved from a transcript surface. Views
+    /// show this instead of closing silently: a rejected pair, a full dictionary,
+    /// or a save that matched no earlier text all looked identical to "nothing
+    /// happened" in the field (Sasha, 2026-09-11).
+    enum DictionaryCorrectionOutcome: Equatable {
+        /// Pair stored. `rewroteEarlierMentions` is true when at least one existing
+        /// segment changed; false when the fix applies to new text only.
+        case saved(rewroteEarlierMentions: Bool)
+        /// Empty side, or the replacement is exactly the heard text.
+        case invalid
+        /// The dictionary already holds the maximum number of corrections.
+        case full
+
+        var isSaved: Bool {
+            if case .saved = self { return true }
+            return false
+        }
+
+        /// One-line message for the editor. Nil when there is nothing to say.
+        func message(heard: String, fixEarlierMentions: Bool) -> String? {
+            switch self {
+            case .invalid:
+                return "that is the same word. type the spelling you want, capitals included"
+            case .full:
+                return "your dictionary already has \(PersonalDictionaryPreferences.maxCorrections) corrections. remove one in Settings → Language"
+            case .saved(let rewrote):
+                guard fixEarlierMentions, !rewrote else { return nil }
+                return "saved for new mentions. no earlier “\(heard)” matched in this transcript"
+            }
+        }
+    }
+
     /// Save a correction pair and optionally rewrite earlier mentions in the
     /// current live meeting. Never combined with a finals append in the same turn.
+    /// After the meeting has stopped, a rewrite is also persisted straight away so
+    /// the saved meeting, the minutes file, and any webhook resend carry it even if
+    /// the app quits before Home.
     @discardableResult
     func saveDictionaryCorrection(
         heard: String,
         correct: String,
         fixEarlierMentions: Bool = true
-    ) -> PersonalDictionaryPreferences.UpsertResult {
+    ) -> DictionaryCorrectionOutcome {
         let result = PersonalDictionaryPreferences.upsertCorrection(heard: heard, correct: correct)
-        guard result == .saved else {
-            DebugLogger.shared.log(.app, "Dictionary correction not saved (\(result))")
-            return result
+        switch result {
+        case .invalid:
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (invalid)")
+            return .invalid
+        case .full:
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (full)")
+            return .full
+        case .saved:
+            break
         }
         reloadTranscriptCorrector()
+        var rewrote = false
         if fixEarlierMentions {
-            applyRetroactiveCorrectionsToLiveTranscript()
+            rewrote = applyRetroactiveCorrectionsToLiveTranscript()
+            if rewrote, !isRecording, currentMeeting != nil {
+                saveCurrentMeetingIfNeeded()
+            }
         }
-        DebugLogger.shared.log(.app, "Dictionary correction saved: '\(heard)' -> '\(correct)'")
-        return result
+        DebugLogger.shared.log(
+            .app,
+            "Dictionary correction saved: '\(heard)' -> '\(correct)' (earlier mentions rewritten: \(rewrote), recording: \(isRecording))"
+        )
+        return .saved(rewroteEarlierMentions: rewrote)
     }
 
     /// One pass over liveSegments changing only matching text. Skips the assignment
@@ -6159,15 +6247,23 @@ final class AppState: ObservableObject {
         correct: String,
         to meeting: Meeting,
         fixEarlierMentions: Bool = true
-    ) -> Bool {
+    ) -> DictionaryCorrectionOutcome {
         let result = PersonalDictionaryPreferences.upsertCorrection(heard: heard, correct: correct)
-        guard result == .saved else {
-            DebugLogger.shared.log(.app, "Dictionary correction not saved (\(result))")
-            return false
+        switch result {
+        case .invalid:
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (invalid)")
+            return .invalid
+        case .full:
+            DebugLogger.shared.log(.app, "Dictionary correction not saved (full)")
+            return .full
+        case .saved:
+            break
         }
         reloadTranscriptCorrector()
 
-        guard fixEarlierMentions, let corrector = transcriptCorrector else { return true }
+        guard fixEarlierMentions, let corrector = transcriptCorrector else {
+            return .saved(rewroteEarlierMentions: false)
+        }
         var changed = false
         for segment in meeting.segments {
             let corrected = corrector.apply(to: segment.text)
@@ -6175,7 +6271,7 @@ final class AppState: ObservableObject {
             segment.text = corrected
             changed = true
         }
-        guard changed else { return true }
+        guard changed else { return .saved(rewroteEarlierMentions: false) }
         meeting.markTranscriptCorrected()
         do {
             try modelContext?.save()
@@ -6192,7 +6288,7 @@ final class AppState: ObservableObject {
             let payload = WebhookService.payloadFromMeeting(meeting)
             WebhookService.send(payload: payload, to: webhookURL)
         }
-        return true
+        return .saved(rewroteEarlierMentions: true)
     }
 
     @discardableResult
@@ -7124,11 +7220,15 @@ final class AppState: ObservableObject {
         lastTranscriptHealthDebugLogAt = 0
         lastAudioActivityAt = 0
         #if os(macOS)
-        // Association forms only here: from the start prompt's app, or from exactly one
-        // recognized call being active right now. Mid-recording calls never associate.
+        // Association forms here: from the start prompt's app, or from exactly one
+        // recognized call being active right now. Mid-recording calls never associate,
+        // except the call a join-style start is waiting for (calendar event with a
+        // conference link, or a join link the user opened): that one is adopted within
+        // the engine's bounded window instead of being offered as a "new meeting".
         callLifecycleEngine.noteRecordingStarted(
             activeCalls: latestCallSnapshot?.activeCalls ?? [],
-            startedFrom: pendingCallAssociationApp
+            startedFrom: pendingCallAssociationApp,
+            expectsCall: selectedCalendarEvent?.joinURL != nil
         )
         pendingCallAssociationApp = nil
         suppressAutoCallEndUntil = nil
@@ -8721,16 +8821,22 @@ final class AppState: ObservableObject {
         }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
-            let events = try await minitiAPIService.googleEvents(deviceId: deviceId)
+            let events = try await minitiAPIService.googleEvents(deviceId: deviceId, maxResults: 40, includeFiltered: true)
             let withLink = events.reduce(into: 0) { $0 += $1.joinURL != nil ? 1 : 0 }
             let withRawLinkFields = events.reduce(into: 0) {
                 $0 += ($1.meetLink != nil || $1.conferenceUrl != nil) ? 1 : 0
             }
+            // Out of office, focus time, and similar blocks are not meetings: they must
+            // never raise a reminder, an auto-start countdown, or "end and start next".
+            // The fetch asks for the skipped events too so the person's own filter
+            // settings decide, and a settings change re-applies without a refetch.
+            fetchedCalendarEvents = events
+            let meetings = Self.filterCalendarMeetings(events, preferences: calendarMeetingFilters)
             DebugLogger.shared.log(
                 .app,
-                "Google Calendar fetched \(events.count) events, \(withLink) with a join link (\(withRawLinkFields) carried raw link fields)"
+                "Google Calendar fetched \(events.count) events, \(withLink) with a join link (\(withRawLinkFields) carried raw link fields), \(events.count - meetings.count) skipped as non-meetings"
             )
-            upcomingEvents = events
+            upcomingEvents = meetings
             rescheduleMeetingReminders()
             if let pendingID = pendingReminderJoinEventID {
                 pendingReminderJoinEventID = nil
@@ -8748,6 +8854,47 @@ final class AppState: ObservableObject {
         }
     }
     
+    nonisolated static func filterCalendarMeetings(
+        _ events: [MinitiAPIService.CalendarEvent],
+        preferences: MinitiAPIService.CalendarMeetingFilterPreferences
+    ) -> [MinitiAPIService.CalendarEvent] {
+        events.filter { $0.skipReason(under: preferences) == nil }
+    }
+
+    /// Re-derive `upcomingEvents` from the last fetch after the filters changed.
+    private func applyCalendarMeetingFilters() {
+        guard !ScreenshotMode.isActive, !fetchedCalendarEvents.isEmpty else { return }
+        let meetings = Self.filterCalendarMeetings(fetchedCalendarEvents, preferences: calendarMeetingFilters)
+        guard meetings.map(\.id) != upcomingEvents.map(\.id) else { return }
+        upcomingEvents = meetings
+        rescheduleMeetingReminders()
+    }
+
+    /// Settings → Calendar → Meeting filters → "Preview next 7 days": every event
+    /// in the coming week with the reason it would be skipped, or nil for a meeting.
+    func previewCalendarMeetingFilters(days: Int = 7) async throws -> [CalendarFilterPreviewRow] {
+        guard let minitiAPIService else { return [] }
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        let formatter = ISO8601DateFormatter()
+        let timeMax = formatter.string(from: Date().addingTimeInterval(TimeInterval(days) * 86_400))
+        let events = try await minitiAPIService.googleEvents(
+            deviceId: deviceId,
+            timeMax: timeMax,
+            maxResults: 50,
+            includeFiltered: true
+        )
+        let preferences = calendarMeetingFilters
+        return events.map { event in
+            CalendarFilterPreviewRow(
+                id: event.id,
+                title: event.title,
+                start: event.startDate,
+                isAllDay: event.isAllDay,
+                skipReason: event.skipReason(under: preferences)
+            )
+        }
+    }
+
     func startCalendarRefreshTimer() {
         guard !ScreenshotMode.isActive else { return }
         calendarRefreshTimer?.invalidate()
@@ -9378,6 +9525,28 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Move this enrolled device to another account with that account's recovery key.
+    /// Unlike restore this never signs the device out: usage, integrations, and the device
+    /// id are untouched, and a Pro plan on the destination account applies here at once.
+    func attachManagedDevice(recoveryKey: String) async -> Bool {
+        guard !ScreenshotMode.isActive else { return true }
+        managedEnrollmentError = nil
+        do {
+            _ = try await ClientAuthManager.shared.attachToAccount(recoveryKeyInput: recoveryKey)
+            refreshClientAuthStatus()
+            await loadManagedDevices()
+            if appMode == .managed { await refreshUsage() }
+            return true
+        } catch {
+            managedEnrollmentError = error.localizedDescription
+            refreshClientAuthStatus()
+            return false
+        }
+    }
+
+    /// Pro on this device because another device on the account holds the subscription.
+    var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
+
     func revealRecoveryKey() -> String? {
         ClientAuthManager.shared.revealRecoveryKey()
     }
@@ -10004,7 +10173,7 @@ final class AppState: ObservableObject {
         )
         let calendarCategory = UNNotificationCategory(
             identifier: smartMeetingNotificationCategory + ".calendar",
-            actions: [endAndStart, keep],
+            actions: [endAndStart, end, keep],
             intentIdentifiers: []
         )
         let quietCategory = UNNotificationCategory(
@@ -11011,9 +11180,7 @@ final class AppState: ObservableObject {
             sawAnyWindowSegment = true
             let tokens = TrainingMetrics.tokenize(seg.text)
             youWordCount += tokens.count
-            for phraseTokens in fillers {
-                fillerCount += TrainingMetrics.countPhraseOccurrences(of: phraseTokens, in: tokens)
-            }
+            fillerCount += TrainingMetrics.countFillerOccurrences(of: fillers, in: tokens).reduce(0, +)
         }
         guard sawAnyWindowSegment else { return }
 

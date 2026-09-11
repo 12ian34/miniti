@@ -824,6 +824,7 @@ struct TranscriptTrimView: View {
     @State private var correctingHeardText: String?
     @State private var correctionDraft = ""
     @State private var fixEarlierMentions = true
+    @State private var correctionMessage: String?
 
     private var selectedTextSelections: [TranscriptTextSelection] {
         cachedRenderModel.textSelections(overlapping: selectedRange)
@@ -902,8 +903,9 @@ struct TranscriptTrimView: View {
                     heard: heard,
                     correct: $correctionDraft,
                     fixEarlierMentions: $fixEarlierMentions,
+                    message: correctionMessage,
                     onSave: { saveCorrection(heard: heard) },
-                    onCancel: { correctingHeardText = nil }
+                    onCancel: { correctingHeardText = nil; correctionMessage = nil }
                 )
                 .frame(minWidth: 280)
             }
@@ -918,10 +920,11 @@ struct TranscriptTrimView: View {
                     heard: heard,
                     correct: $correctionDraft,
                     fixEarlierMentions: $fixEarlierMentions,
+                    message: correctionMessage,
                     onSave: { saveCorrection(heard: heard) },
-                    onCancel: { correctingHeardText = nil }
+                    onCancel: { correctingHeardText = nil; correctionMessage = nil }
                 )
-                .presentationDetents([.height(280)])
+                .presentationDetents([.height(300)])
                 .presentationBackground(ColorPalette.Background.primary)
             }
         }
@@ -1081,15 +1084,23 @@ struct TranscriptTrimView: View {
 
     private func saveCorrection(heard: String) {
         let snapshots = currentSnapshots
-        let applied = appState.applyDictionaryCorrection(
+        let outcome = appState.applyDictionaryCorrection(
             heard: heard,
             correct: correctionDraft,
             to: meeting,
             fixEarlierMentions: fixEarlierMentions
         )
+        // A rejected pair keeps the editor open with the reason. A pair that saved
+        // but matched nothing also stays open one beat so the person knows the
+        // dictionary changed even though this transcript did not.
+        if let message = outcome.message(heard: heard, fixEarlierMentions: fixEarlierMentions) {
+            correctionMessage = message
+            guard outcome.isSaved else { return }
+        }
+        correctionMessage = nil
         correctingHeardText = nil
         selectedRange = nil
-        guard applied, fixEarlierMentions else { return }
+        guard outcome == .saved(rewroteEarlierMentions: true), fixEarlierMentions else { return }
         // Same undo contract as trim: restores transcript text only.
         undoSnapshots = snapshots
         registerSystemUndo(for: snapshots)

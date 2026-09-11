@@ -328,9 +328,10 @@ struct TrainingMetrics: Sendable {
 
                 questionsAsked += seg.text.filter { $0 == "?" }.count
 
-                for (phraseTokens, label) in configuredFillersWithTokens {
-                    let count = countPhraseOccurrences(of: phraseTokens, in: tokens)
-                    if count > 0 { fillerMap[label, default: 0] += count }
+                // Longest-match, non-overlapping across every configured phrase (P0.8).
+                let counts = countFillerOccurrences(of: configuredFillersWithTokens.map(\.tokens), in: tokens)
+                for (entry, count) in zip(configuredFillersWithTokens, counts) where count > 0 {
+                    fillerMap[entry.label, default: 0] += count
                 }
             }
 
@@ -493,6 +494,36 @@ struct TrainingMetrics: Sendable {
             }
         }
         return count
+    }
+
+    /// Count every configured filler phrase in one pass so no token is counted twice:
+    /// at each position the longest matching phrase wins and the scan skips past it, so
+    /// "uh huh" is one "uh huh" and not also an "uh". Phrases are matched independently
+    /// otherwise; a phrase never matches inside another phrase's tokens. Returns one
+    /// count per phrase, in the order given (empty phrases count zero).
+    static func countFillerOccurrences(of phrases: [[String]], in tokens: [String]) -> [Int] {
+        var counts = [Int](repeating: 0, count: phrases.count)
+        guard !tokens.isEmpty, !phrases.isEmpty else { return counts }
+        var idx = 0
+        while idx < tokens.count {
+            var best = -1
+            var bestLength = 0
+            for (phraseIndex, phrase) in phrases.enumerated() {
+                let length = phrase.count
+                guard length > bestLength, idx + length <= tokens.count else { continue }
+                if tokens[idx..<(idx + length)].elementsEqual(phrase) {
+                    best = phraseIndex
+                    bestLength = length
+                }
+            }
+            if best >= 0 {
+                counts[best] += 1
+                idx += bestLength
+            } else {
+                idx += 1
+            }
+        }
+        return counts
     }
     
     static func computeLongestMonologue(for speaker: Int, in segments: [Segment]) -> Int {

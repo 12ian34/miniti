@@ -295,11 +295,33 @@ final class DeepgramParsingTests: XCTestCase {
         let pairs = PersonalDictionaryPreferences.normalizedCorrections([
             .init(heard: "  Meet  Up ", correct: "Meetup"),
             .init(heard: "MEET UP", correct: "Other"), // duplicate heard
-            .init(heard: "same", correct: "SAME"), // identity
+            .init(heard: "same", correct: "same"), // exact identity
+            .init(heard: " Same ", correct: "Same"), // identity after trimming
             .init(heard: "", correct: "x"),
             .init(heard: "ok", correct: ""),
         ])
         XCTAssertEqual(pairs, [.init(heard: "meet up", correct: "Meetup")])
+    }
+
+    /// Sasha's case (2026-09-11): fixing capitals on a name is a real correction.
+    /// Deepgram often hears "lightdash"; the matcher is case-insensitive and the
+    /// replacement keeps its capitals, so a capitals-only pair must be accepted.
+    func testPersonalDictionaryCorrectionsAcceptCapitalsOnlyFixes() {
+        let pairs = PersonalDictionaryPreferences.normalizedCorrections([
+            .init(heard: "lightdash", correct: "Lightdash"),
+            .init(heard: "ian ahuja", correct: "Ian Ahuja"),
+        ])
+        XCTAssertEqual(pairs, [
+            .init(heard: "lightdash", correct: "Lightdash"),
+            .init(heard: "ian ahuja", correct: "Ian Ahuja"),
+        ])
+        let corrector = TranscriptCorrector(corrections: pairs)
+        XCTAssertEqual(
+            corrector?.apply(to: "We use lightdash. ian ahuja built LIGHTDASH dashboards."),
+            "We use Lightdash. Ian Ahuja built Lightdash dashboards."
+        )
+        // Once the transcript already reads correctly, applying again is a no-op.
+        XCTAssertEqual(corrector?.apply(to: "Lightdash is fine"), "Lightdash is fine")
     }
 
     func testPersonalDictionaryCorrectionsSaveAddsTerm() {
@@ -359,8 +381,9 @@ final class DeepgramParsingTests: XCTestCase {
             PersonalDictionaryPreferences.currentCorrections(defaults: defaults),
             [.init(heard: "many tea", correct: "miniti")]
         )
+        // Only an exact identity is invalid; a capitals-only fix is a real correction.
         XCTAssertEqual(
-            PersonalDictionaryPreferences.upsertCorrection(heard: "same", correct: "Same", defaults: defaults),
+            PersonalDictionaryPreferences.upsertCorrection(heard: "same", correct: "same", defaults: defaults),
             .invalid
         )
 

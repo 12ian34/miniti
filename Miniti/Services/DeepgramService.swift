@@ -203,17 +203,21 @@ enum PersonalDictionaryPreferences {
         for pair in pairs {
             // Colons are stripped: Deepgram's `replace=find:replacement` splits on
             // the colon, so a colon inside either side would corrupt the pair.
-            let heard = pair.heard
+            let heardAsTyped = pair.heard
                 .replacingOccurrences(of: ":", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
-                .lowercased()
+            let heard = heardAsTyped.lowercased()
             let correct = pair.correct
                 .replacingOccurrences(of: ":", with: "")
                 .trimmingCharacters(in: .whitespacesAndNewlines)
                 .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             guard !heard.isEmpty, !correct.isEmpty else { continue }
-            guard heard != correct.lowercased() else { continue }
+            // Only an exact identity is meaningless. A capitals-only fix ("lightdash"
+            // to "Lightdash") is the most common correction for a product or person
+            // name: the matcher is case-insensitive and Deepgram `replace` keeps the
+            // replacement's case, so it works everywhere the pair is applied.
+            guard heardAsTyped != correct else { continue }
             guard !seen.contains(heard) else { continue }
             seen.insert(heard)
             normalized.append(CorrectionPair(heard: heard, correct: correct))

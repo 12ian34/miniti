@@ -15,6 +15,24 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-09-11 - v2.8.0
+
+This release is available on macOS now. iOS 2.8.0 is submitted to Apple and follows after App Review.
+
+- new: (macOS and iOS) Pro follows your account. Buy Pro on one device and every device on the same account gets it
+- new: (macOS and iOS) move a device to another account from Settings → Account & Plan with that account's recovery key. It keeps its meetings, usage, and connections
+- new: (macOS and iOS) the next-meeting prompt has an End meeting button, so you can end the current meeting without starting the next one
+- improvement: (macOS and iOS) live summary and question updates arrive about 3 times faster
+- improvement: (macOS and iOS) Share Diagnostics is on by default in managed mode. It sends error and health events only, never transcript or audio. Turn it off in Settings → Privacy
+- improvement: (macOS and iOS) webhooks only send over https, and webhook addresses never appear in diagnostics logs
+- improvement: (macOS and iOS) the correct-word editor tells you when a correction was not saved or matched nothing, instead of closing quietly
+- fix: (macOS) pressing Join no longer asks you to end the meeting you just started
+- fix: (macOS and iOS) correcting only the capitals of a word, such as lightdash to Lightdash, now works
+- fix: (macOS and iOS) a correction made after the meeting has stopped is saved to the meeting straight away
+- fix: (macOS and iOS) filler counts no longer double count. An "uh huh" counts once, and Coaching calls them detected fillers
+- fix: (macOS) task cards in the CRM send preview line up. Short tasks no longer sit with a gap on the left
+- new: (macOS and iOS) out of office, focus time, all-day, and declined events no longer count as meetings, so they never trigger reminders, auto-start, or the next-meeting prompt. Settings → Calendar → Meeting filters lets you change the rules, add your own title words, and preview which of next week's events would be skipped
+
 ### 2026-09-10 - v2.7.0
 
 This release is available on macOS now. iOS 2.7.0 is submitted to Apple and follows after App Review.

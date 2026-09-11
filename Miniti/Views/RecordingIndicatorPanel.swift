@@ -771,6 +771,14 @@ private struct RecordingIndicatorView: View {
                     ) {
                         appState.endAndStartCalendarMeeting(eventID: eventID)
                     }
+                    // Josh's case: the current meeting is over but the next one is not
+                    // his to record. End now without starting anything.
+                    indicatorActionButton(
+                        "end meeting",
+                        systemImage: "stop.fill",
+                        role: .recording,
+                        action: appState.endMeetingFromSmartPrompt
+                    )
                 } else if prompt.kind == .callTransition {
                     indicatorActionButton(
                         "end & start next",

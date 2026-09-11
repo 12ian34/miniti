@@ -188,6 +188,96 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(manager.status, .notEnrolled)
     }
 
+    /// Captures the one request the manager makes and answers it with a canned body.
+    final class StubURLProtocol: URLProtocol {
+        nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data))?
+        nonisolated(unsafe) static var lastRequest: URLRequest?
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            Self.lastRequest = request
+            let (status, body) = Self.handler?(request) ?? (500, Data())
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: body)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+
+    private func stubbedSession() -> URLSession {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [StubURLProtocol.self]
+        return URLSession(configuration: config)
+    }
+
+    func testAttachMovesTheInstallationAndReplacesAccountKeyAndTokens() async throws {
+        let stored = credentials(acknowledged: false)
+        let store = InMemoryClientAuthStore(stored)
+        let manager = ClientAuthManager(
+            store: store,
+            baseURL: "https://api.test/api",
+            session: stubbedSession(),
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }
+        )
+        let destinationKey = ClientAuthCrypto.generateRecoveryKey()
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/auth/account/attach")
+            XCTAssertEqual(request.httpMethod, "POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer tok")
+            XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Request-Proof"), "attach is a proof-bearing write")
+            let body = (request.httpBody ?? request.httpBodyStream.map { stream -> Data in
+                stream.open(); defer { stream.close() }
+                var data = Data(); var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: buffer.count); if n <= 0 { break }; data.append(buffer, count: n) }
+                return data
+            }) ?? Data()
+            let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            XCTAssertEqual(json?["recovery_key"] as? String, destinationKey)
+            let reply = """
+            {"token_type":"Bearer","access_token":"tok2","expires_in":3600,"refresh_token":"mrt_y","refresh_expires_in":7776000,"account_id":"acct_dest","device_id":"550e8400-e29b-41d4-a716-446655440000","device_cap":5,"moved":true}
+            """
+            return (200, Data(reply.utf8))
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let moved = try await manager.attachToAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(destinationKey))
+        XCTAssertTrue(moved)
+        XCTAssertTrue(manager.isEnrolled, "a move never signs the device out")
+        XCTAssertEqual(manager.status.accountID, "acct_dest")
+        XCTAssertEqual(manager.status.enrollmentPath, "migrate", "the enrollment path is history, not membership")
+        XCTAssertTrue(manager.status.recoveryKeyAcknowledged)
+        XCTAssertEqual(manager.revealRecoveryKey(), ClientAuthCrypto.formatRecoveryKey(destinationKey))
+        let token = try await manager.accessToken()
+        XCTAssertEqual(token, "tok2")
+        XCTAssertEqual(store.load()?.refreshToken, "mrt_y")
+    }
+
+    func testAttachRejectsBadKeysLocallyAndMapsServerConflicts() async {
+        let store = InMemoryClientAuthStore(credentials())
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "d" })
+        StubURLProtocol.lastRequest = nil
+        do {
+            _ = try await manager.attachToAccount(recoveryKeyInput: "M1-NOPE")
+            XCTFail("expected invalidRecoveryKey")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .invalidRecoveryKey)
+        }
+        XCTAssertNil(StubURLProtocol.lastRequest, "no request for a malformed key")
+
+        StubURLProtocol.handler = { _ in (409, Data(#"{"error":"subscription_conflict","message":"x"}"#.utf8)) }
+        defer { StubURLProtocol.handler = nil }
+        let before = store.load()
+        do {
+            _ = try await manager.attachToAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+            XCTFail("expected subscriptionConflict")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .subscriptionConflict)
+        }
+        XCTAssertEqual(store.load()?.accountID, before?.accountID, "a refused move changes nothing locally")
+        XCTAssertEqual(store.load()?.recoveryKey, before?.recoveryKey)
+    }
+
     func testUnenrolledManagerRefusesToAuthorize() async {
         let manager = ClientAuthManager(store: InMemoryClientAuthStore(), deviceIDProvider: { "d" })
         XCTAssertFalse(manager.isEnrolled)
