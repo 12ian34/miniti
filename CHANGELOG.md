@@ -35,7 +35,7 @@ This release is available on macOS and iOS.
 
 ### 2026-09-10 - v2.7.0
 
-This release is available on macOS now. iOS 2.7.0 is submitted to Apple and follows after App Review.
+This release shipped on macOS. On iOS it was never released: 2.8.0 replaced it in App Review, so iPhone and iPad went from 2.6.0 straight to 2.8.0.
 
 - new: (macOS and iOS) join button on meeting reminders and upcoming meetings. One click opens the Meet or Zoom link and starts miniti
 - new: (macOS) select a word in the live transcript to correct it. miniti fixes earlier mentions, keeps fixing it for the rest of the meeting, and remembers it next time
