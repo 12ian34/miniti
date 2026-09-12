@@ -17,7 +17,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### 2026-09-11 - v2.8.0
 
-This release is available on macOS now. iOS 2.8.0 is submitted to Apple and follows after App Review.
+This release is available on macOS and iOS.
 
 - new: (macOS and iOS) Pro follows your account. Buy Pro on one device and every device on the same account gets it
 - new: (macOS and iOS) move a device to another account from Settings → Account & Plan with that account's recovery key. It keeps its meetings, usage, and connections
