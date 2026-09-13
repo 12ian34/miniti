@@ -132,6 +132,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case recording
     case language
     case ai
+    case templates
     case notifications
     case calendar
     case crm
@@ -149,6 +150,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .recording: return "Recording & Audio"
         case .language: return "Language"
         case .ai: return "AI & Models"
+        case .templates: return "Templates"
         case .notifications: return "Notifications"
         case .calendar: return "Calendar & Meetings"
         case .crm: return "CRM"
@@ -166,6 +168,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .recording: return "Audio sources, permissions, and recording behavior"
         case .language: return "Transcription language and vocabulary"
         case .ai: return "Transcription and insight models"
+        case .templates: return "Built-in and your own insight templates"
         case .notifications: return "Meeting reminders and coaching nudges"
         case .calendar: return "Google Calendar and meeting automation"
         case .crm: return "Attio and Twenty connections"
@@ -183,6 +186,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .recording: return "waveform"
         case .language: return "character.book.closed"
         case .ai: return "sparkles"
+        case .templates: return "list.bullet.rectangle"
         case .notifications: return "bell"
         case .calendar: return "calendar"
         case .crm: return "person.2"
@@ -199,6 +203,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case "audio", "recording": return .recording
         case "language": return .language
         case "ai", "models": return .ai
+        case "templates": return .templates
         case "notifications": return .notifications
         case "integrations", "calendar": return .calendar
         case "crm": return .crm
@@ -286,6 +291,9 @@ enum SettingsSearchCatalog {
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
+
+        .init("templates.list", "Templates", section: "Templates", destination: .templates, keywords: ["BANT", "SPIN", "interview", "stand-up", "1:1", "check-in", "specialist view", "sections"]),
+        .init("templates.custom", "Your Templates", section: "Templates", destination: .templates, keywords: ["custom", "new template", "edit", "import", "export", "duplicate", "preview"]),
 
         .init("language.default", "Default Language", section: "Language", destination: .language, keywords: ["transcription language"]),
         .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms", "correction", "replace"]),
@@ -695,6 +703,8 @@ final class AppState: ObservableObject {
     // sections (section key -> text). `liveTemplateID` is nil until the view is enabled.
     @Published var liveTemplateID: String? = nil
     @Published var liveTemplateSections: [String: String] = [:]
+    /// The person's own templates (roadmap P2.1), loaded once and persisted on every change.
+    @Published private(set) var customInsightTemplates: [InsightTemplate] = CustomInsightTemplates.load()
     // Docs topics: an updating list of lookup-worthy subjects extracted from the
     // transcript. Each topic is looked up independently (auto for Pro/BYOK,
     // manual for managed-free), rather than one bulk fetch of the transcript.
@@ -891,6 +901,20 @@ final class AppState: ObservableObject {
     @Published private(set) var showRecoveryKeyNotice = false
     @Published private(set) var managedDevices: [ClientAuthDevice] = []
     @Published private(set) var managedDevicesError: String?
+    /// Set when the on-disk meeting store could not be opened at launch (roadmap P0.2).
+    /// Settings uses it to disable export/import; the recovery screen owns the rest.
+    @Published private(set) var persistentStoreFailure: PersistentStoreOpenFailure?
+    /// The most recent save or load that did not persist (roadmap P0.3). Rendered once at the
+    /// app root by `PersistenceIssueBanner`; cleared by dismiss, a successful retry, or the
+    /// next successful commit of the same operation. See `AppState+Persistence.swift`.
+    @Published private(set) var persistenceIssue: PersistenceIssue?
+    /// Re-runs the failed commit. Nil when the operation is not safely repeatable.
+    var persistenceRetryAction: (() -> Void)?
+    /// Seams so tests can inject failures. Production keeps the plain SwiftData calls.
+    var persistenceSaveHandler: (ModelContext) throws -> Void = { try $0.save() }
+    var persistenceFetchHandler: (ModelContext, FetchDescriptor<Meeting>) throws -> [Meeting] = { try $0.fetch($1) }
+    /// Sees every diagnostics event before the share/mode guards; tests assert through it.
+    var diagnosticEventObserver: ((String, [String: String]) -> Void)?
     private var recoveryKeyNoticeSnoozed = false
     private var enrollmentTask: Task<Bool, Never>?
     @Published var isLoadingUsage = false
@@ -968,14 +992,90 @@ final class AppState: ObservableObject {
 
     /// The template the Templates view uses for new meetings (and the live one when set).
     var selectedInsightTemplate: InsightTemplate {
-        InsightTemplate.builtIn(id: insightTemplateID)
+        insightTemplate(id: insightTemplateID)
             ?? InsightTemplate.builtIn(id: InsightTemplate.defaultID)
             ?? InsightTemplate.builtIn[0]
     }
 
     /// The template attached to the live meeting, falling back to the selected default.
     var liveTemplate: InsightTemplate {
-        InsightTemplate.builtIn(id: liveTemplateID) ?? selectedInsightTemplate
+        insightTemplate(id: liveTemplateID) ?? selectedInsightTemplate
+    }
+
+    /// Built-in first, then the person's own (roadmap P2.1).
+    func insightTemplate(id: String?) -> InsightTemplate? {
+        guard let id else { return nil }
+        return InsightTemplate.builtIn(id: id) ?? customInsightTemplates.first { $0.id == id }
+    }
+
+    /// What the Templates submenu lists.
+    var availableInsightTemplates: [InsightTemplate] {
+        InsightTemplate.builtIn + customInsightTemplates
+    }
+
+    // MARK: Custom templates
+
+    /// Add or replace one of the person's templates and persist the list.
+    func saveCustomInsightTemplate(_ template: InsightTemplate) {
+        guard template.isCustom else { return }
+        if let index = customInsightTemplates.firstIndex(where: { $0.id == template.id }) {
+            customInsightTemplates[index] = template
+        } else {
+            customInsightTemplates.append(template)
+        }
+        CustomInsightTemplates.save(customInsightTemplates)
+        DebugLogger.shared.log(.app, "Custom template saved: sections=\(template.sections.count)")
+        if liveTemplateID == template.id { liveTemplateSections = liveTemplateSections.filter { section in template.sections.contains { $0.key == section.key } } }
+    }
+
+    /// Delete one of the person's templates. Meetings that used it keep their own copy.
+    func deleteCustomInsightTemplate(id: String) {
+        customInsightTemplates.removeAll { $0.id == id }
+        CustomInsightTemplates.save(customInsightTemplates)
+        if insightTemplateID == id { insightTemplateID = InsightTemplate.defaultID }
+        if liveTemplateID == id { liveTemplateID = nil }
+        DebugLogger.shared.log(.app, "Custom template deleted")
+    }
+
+    @discardableResult
+    func duplicateInsightTemplate(_ template: InsightTemplate) -> InsightTemplate {
+        let copy = CustomInsightTemplates.duplicate(template)
+        saveCustomInsightTemplate(copy)
+        return copy
+    }
+
+    /// Re-read the stored list; screenshot mode installs its seeded template after init.
+    func reloadCustomInsightTemplates() {
+        customInsightTemplates = CustomInsightTemplates.load()
+    }
+
+    var canAddCustomInsightTemplate: Bool {
+        customInsightTemplates.count < InsightTemplate.maxCustomTemplates
+    }
+
+    /// Fill `template` from a saved meeting's transcript without touching the meeting. Used by
+    /// the editor's preview so people see what a template produces before using it live.
+    func previewInsightTemplate(_ template: InsightTemplate, using meeting: Meeting) async throws -> [String: String] {
+        let transcript = meeting.fullTranscript
+        let language = meeting.language
+        guard !transcript.isEmpty else { return [:] }
+        let model = OpenAIModel.gpt5Mini
+        if appMode == .managed, minitiAPIService != nil {
+            let response = try await generateManagedInsightsWithRetry(
+                deviceId: DeviceIdentifier.getOrCreateDeviceId(), transcript: transcript,
+                existingSummary: nil, existingTitle: nil,
+                mode: InsightsMode.template.rawValue, model: model.rawValue,
+                language: language, template: template
+            )
+            return response.toLiveInsights(template: template).templateSections
+        }
+        guard let insightsService, !openaiApiKey.isEmpty else {
+            throw MinitiAPIService.ServiceError.serverError("add an OpenAI key in Settings → Account to preview templates")
+        }
+        return try await insightsService.generateLiveInsights(
+            transcript: transcript, existingSummary: nil, existingTitle: nil,
+            mode: .template, model: model, apiKey: openaiApiKey, language: language, template: template
+        ).templateSections
     }
 
     var hasLiveTemplateContent: Bool {
@@ -1422,7 +1522,7 @@ final class AppState: ObservableObject {
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
     private let pendingClientEventsDefaultsKey = "pendingClientEvents"
-    private var pendingClientEvents: [MinitiAPIService.ClientEventPayload] = []
+    private(set) var pendingClientEvents: [MinitiAPIService.ClientEventPayload] = []
     private var clientEventsFlushTask: Task<Void, Never>?
     private let diagnosticsSessionId = UUID().uuidString
     private var isFlushingPendingSessionReports = false
@@ -1768,6 +1868,13 @@ final class AppState: ObservableObject {
         // launch-time network work and fill the published state the scene needs.
         if ScreenshotMode.isActive {
             ScreenshotMode.apply(to: self)
+            return
+        }
+
+        // The unit-test host constructs AppState hundreds of times; none of those launches may
+        // refresh usage, check for updates, poll the calendar, or flush queued events against
+        // production. Tests that need a network path inject a stubbed service explicitly.
+        if Self.isRunningUnderXCTest {
             return
         }
         
@@ -3982,7 +4089,7 @@ final class AppState: ObservableObject {
         meeting.docTopics = merged
         if currentMeeting?.id == meetingID { liveDocTopics = merged }
         if !merged.isEmpty { docsSuccessCount += 1 }
-        try? modelContext?.save()
+        commit(.docsTopics)
 
         if canAutoLookupDocs {
             for topic in merged where topic.lookupState == .pending {
@@ -4220,7 +4327,7 @@ final class AppState: ObservableObject {
                 self.docsLookupError = self.docsQuotaReachedMessage
             }
         }
-        try? modelContext?.save()
+        commit(.docsLookup)
 
         if case .answered = outcome {
             docsSuccessCount += 1
@@ -5847,7 +5954,7 @@ final class AppState: ObservableObject {
                 training: training,
                 questions: liveQuestions,
                 docs: liveDocTopics.compactMap { $0.card },
-                template: InsightTemplate.builtIn(id: liveTemplateID),
+                template: insightTemplate(id: liveTemplateID),
                 templateSections: liveTemplateSections,
                 calendarEventId: meeting.calendarEventId,
                 attendees: meeting.attendees
@@ -5934,11 +6041,12 @@ final class AppState: ObservableObject {
         #endif
 
         if let meeting = currentMeeting, let modelContext {
-            deletedMeetingIDs.insert(meeting.id)
-            pendingMeetingSaves.removeValue(forKey: meeting.id)
-            pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
-            modelContext.delete(meeting)
-            try? modelContext.save()
+            // No revert: the delete stays pending in the context (never rolled back, see
+            // AppState+Persistence.swift) and the retry or the next successful save commits it.
+            commit(.discard, in: modelContext, mutate: { [self] in
+                noteMeetingDeleted(meeting)
+                modelContext.delete(meeting)
+            })
         }
         
         clearCurrentSession()
@@ -5954,6 +6062,12 @@ final class AppState: ObservableObject {
         finalizingInsightMeetingIDs.remove(meeting.id)
         pendingMeetingSaves.removeValue(forKey: meeting.id)
         pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
+    }
+
+    /// Set by `persistenceIssue` writers in the persistence extension; stored here because
+    /// extensions cannot declare stored properties.
+    func setPersistenceIssue(_ issue: PersistenceIssue?) {
+        persistenceIssue = issue
     }
 
     /// Whether a meeting was discarded or deleted during this app run. Async work that resumes
@@ -6092,7 +6206,7 @@ final class AppState: ObservableObject {
         }
 
         if requestedMode == .template {
-            let template = InsightTemplate.builtIn(id: meeting.insightTemplateID) ?? selectedInsightTemplate
+            let template = meeting.insightTemplate ?? selectedInsightTemplate
             let baseline = meeting.insightTemplateID == template.id ? meeting.templateSections : [:]
             do {
                 let templateInsights: InsightsService.LiveInsights
@@ -6117,7 +6231,7 @@ final class AppState: ObservableObject {
                     )
                 }
                 guard !isMeetingDeleted(meetingID) else { return }
-                meeting.insightTemplateID = template.id
+                meeting.applyInsightTemplate(template)
                 meeting.templateSections = templateInsights.templateSections
                 markInsightsUpdated(.template, meeting: meeting)
             } catch {
@@ -6127,7 +6241,7 @@ final class AppState: ObservableObject {
         }
 
         guard !isMeetingDeleted(meetingID) else { return }
-        try? modelContext?.save()
+        commit(.insightsRegeneration)
 
         // Re-export markdown with updated insights
         #if os(macOS)
@@ -6164,6 +6278,8 @@ final class AppState: ObservableObject {
         case invalid
         /// The dictionary already holds the maximum number of corrections.
         case full
+        /// Applied in memory, but the store did not accept the save (roadmap P0.3).
+        case saveFailed
 
         var isSaved: Bool {
             if case .saved = self { return true }
@@ -6177,6 +6293,8 @@ final class AppState: ObservableObject {
                 return "that is the same word. type the spelling you want, capitals included"
             case .full:
                 return "your dictionary already has \(PersonalDictionaryPreferences.maxCorrections) corrections. remove one in Settings → Language"
+            case .saveFailed:
+                return "correction didn't save. try again"
             case .saved(let rewrote):
                 guard fixEarlierMentions, !rewrote else { return nil }
                 return "saved for new mentions. no earlier “\(heard)” matched in this transcript"
@@ -6273,11 +6391,7 @@ final class AppState: ObservableObject {
         }
         guard changed else { return .saved(rewroteEarlierMentions: false) }
         meeting.markTranscriptCorrected()
-        do {
-            try modelContext?.save()
-        } catch {
-            DebugLogger.shared.log(.app, "Dictionary correction save failed: \(error.localizedDescription)")
-        }
+        guard commit(.correction) else { return .saveFailed }
         #if os(macOS)
         if autoExportMarkdown {
             let markdown = meeting.fullMeetingAsMarkdown()
@@ -6334,12 +6448,7 @@ final class AppState: ObservableObject {
         guard didChange else { return false }
         meeting.markTranscriptEdited()
 
-        do {
-            try modelContext.save()
-        } catch {
-            DebugLogger.shared.log(.app, "Transcript trim save FAILED: \(error.localizedDescription)")
-            return false
-        }
+        guard commit(.transcriptTrim, in: modelContext) else { return false }
 
         #if os(macOS)
         if autoExportMarkdown {
@@ -6381,12 +6490,7 @@ final class AppState: ObservableObject {
             }
         meeting.markTranscriptEdited()
 
-        do {
-            try modelContext.save()
-        } catch {
-            DebugLogger.shared.log(.app, "Transcript restore save FAILED: \(error.localizedDescription)")
-            return false
-        }
+        guard commit(.transcriptRestore, in: modelContext) else { return false }
 
         #if os(macOS)
         if autoExportMarkdown {
@@ -6444,8 +6548,7 @@ final class AppState: ObservableObject {
         guard let modelContext else { return }
         guard currentMeeting == nil, !isRecording else { return }
         
-        let descriptor = FetchDescriptor<Meeting>()
-        guard let meetings = try? modelContext.fetch(descriptor) else { return }
+        guard let meetings = fetchMeetings(.interruptedMeetingCheck, in: modelContext) else { return }
         let now = Date()
         let interruptedMeetings = meetings
             .filter { $0.endTime == nil && !$0.segments.isEmpty }
@@ -6597,7 +6700,12 @@ final class AppState: ObservableObject {
             }
         }
 
-        try? modelContext?.save()
+        guard commit(.staleMeetingFinalize) else {
+            // Nothing is reported to the backend for a finalization that did not persist;
+            // the next launch finds the same drafts and tries again.
+            DebugLogger.shared.log(.app, "Stale interrupted meetings NOT finalized: count=\(meetings.count)", level: .warning)
+            return
+        }
         DebugLogger.shared.log(.app, "Finalized stale interrupted meetings: count=\(meetings.count)")
 
         for report in pendingReports {
@@ -6631,7 +6739,7 @@ final class AppState: ObservableObject {
     /// the Templates view, and show it. Changing the template mid-meeting discards the previous
     /// template's sections and fills the new one from the transcript so far.
     func selectInsightTemplate(_ id: String) {
-        guard let template = InsightTemplate.builtIn(id: id) else { return }
+        guard let template = insightTemplate(id: id) else { return }
         insightTemplateID = template.id
         let changed = liveTemplateID != template.id
         if changed {
@@ -6649,14 +6757,14 @@ final class AppState: ObservableObject {
     /// Choose the template for a saved meeting and fill it straight away. Picking a template is
     /// an explicit request for its notes, so this does not wait for a second tap on "update".
     func selectInsightTemplate(_ id: String, for meeting: Meeting) async {
-        guard let template = InsightTemplate.builtIn(id: id) else { return }
+        guard let template = insightTemplate(id: id) else { return }
         insightTemplateID = template.id
         setInsightModeEnabled(.template, enabled: true)
         insightsMode = .template
         if meeting.insightTemplateID != template.id {
-            meeting.insightTemplateID = template.id
+            meeting.applyInsightTemplate(template)
             meeting.templateSections = [:]
-            try? modelContext?.save()
+            commit(.templateChange)
         }
         if currentMeeting?.id == meeting.id {
             liveTemplateID = template.id
@@ -7006,7 +7114,11 @@ final class AppState: ObservableObject {
         payload.meeting.suggestedQuestions = payload.suggestedQuestions
         payload.meeting.docTopics = payload.docTopics
         if let templateID = payload.insightTemplateID {
-            payload.meeting.insightTemplateID = templateID
+            if let template = insightTemplate(id: templateID) {
+                payload.meeting.applyInsightTemplate(template)
+            } else {
+                payload.meeting.insightTemplateID = templateID
+            }
         }
         payload.meeting.templateSections = payload.templateSections
         payload.meeting.speakerNames = payload.speakerNames
@@ -7032,11 +7144,16 @@ final class AppState: ObservableObject {
         )
         let didSave: Bool
         do {
-            try modelContext.save()
+            try persistenceSaveHandler(modelContext)
             didSave = true
+            clearPersistenceIssue(for: .liveTranscript)
         } catch {
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
+            // One banner per outage, not one per 60 s checkpoint; the queue keeps retrying.
+            if persistenceIssue?.operation != .liveTranscript {
+                reportPersistenceFailure(.liveTranscript, kind: .save, error: error, retry: nil)
+            }
             didSave = false
         }
         os_signpost(
@@ -7861,12 +7978,12 @@ final class AppState: ObservableObject {
         }
         
         guard canGenerate else {
-            try? modelContext?.save()
+            commit(.finalInsights)
             return
         }
 
         guard !transcript.isEmpty else {
-            try? modelContext?.save()
+            commit(.finalInsights)
             return
         }
 
@@ -7934,7 +8051,7 @@ final class AppState: ObservableObject {
                 }
                 #endif
             }
-            try? modelContext?.save()
+            commit(.finalInsights)
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
             enqueueDiagnosticEvent("insights_final_standard_failed", category: .insights, level: .warning)
@@ -7999,7 +8116,7 @@ final class AppState: ObservableObject {
                     liveChampion = meddpiccInsights.champion
                     liveCompetition = meddpiccInsights.competition
                 }
-                try? modelContext?.save()
+                commit(.finalInsights)
                 DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
             } catch {
                 DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
@@ -8046,7 +8163,7 @@ final class AppState: ObservableObject {
                     return
                 }
 
-                meeting.insightTemplateID = template.id
+                meeting.applyInsightTemplate(template)
                 if !templateInsights.templateSections.isEmpty {
                     meeting.templateSections = templateInsights.templateSections
                 }
@@ -8055,7 +8172,7 @@ final class AppState: ObservableObject {
                    !templateInsights.templateSections.isEmpty {
                     liveTemplateSections = templateInsights.templateSections
                 }
-                try? modelContext?.save()
+                commit(.finalInsights)
                 DebugLogger.shared.log(.app, "Final insights complete (template): sections=\(templateInsights.templateSections.count)")
             } catch {
                 DebugLogger.shared.log(.app, "Final insights FAILED (template): \(error.localizedDescription)")
@@ -8094,14 +8211,14 @@ final class AppState: ObservableObject {
             if currentMeeting?.id == meetingIDAtRequest {
                 liveQuestions = questionsInsights.questions
             }
-            try? modelContext?.save()
+            commit(.finalInsights)
             DebugLogger.shared.log(.app, "Final insights complete (questions): count=\(questionsInsights.questions.count)")
         } catch {
             DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
         }
 
         guard isFinalInsightsRequestStillCurrent() else { return }
-        try? modelContext?.save()
+        commit(.finalInsights)
 
         #if os(macOS)
         if autoExportMarkdown {
@@ -8315,7 +8432,7 @@ final class AppState: ObservableObject {
                 if !templateInsights.templateSections.isEmpty {
                     liveTemplateSections = templateInsights.templateSections
                 }
-                meeting.insightTemplateID = template.id
+                meeting.applyInsightTemplate(template)
                 meeting.templateSections = liveTemplateSections
                 markInsightsUpdated(.template, meeting: meeting)
             } else if appMode == .managed, let minitiAPIService {
@@ -8353,7 +8470,7 @@ final class AppState: ObservableObject {
                 markInsightsUpdated(.standard, meeting: meeting)
             }
             
-            try? modelContext?.save()
+            commit(.insights)
         } catch {
             DebugLogger.shared.log(.app, "Generate insights FAILED: \(error.localizedDescription)")
             enqueueDiagnosticEvent("insights_generate_failed", category: .insights, level: .warning)
@@ -8452,14 +8569,46 @@ final class AppState: ObservableObject {
         return false
     }
     
+    // MARK: - Persistent store outcome
+
+    /// Record how the launch-time store open went. Emits one diagnostics event per distinct
+    /// failure (no meeting content, only category/domain/code) and clears on a successful retry.
+    func notePersistentStore(_ state: PersistentStoreState) {
+        switch state {
+        case .ready:
+            if persistentStoreFailure != nil {
+                DebugLogger.shared.log(.app, "Persistent store opened after recovery retry", level: .recovery)
+            }
+            persistentStoreFailure = nil
+        case .failed(let failure, let readOnly):
+            guard persistentStoreFailure != failure else { return }
+            persistentStoreFailure = failure
+            enqueueDiagnosticEvent(
+                "persistent_store_open_failed",
+                category: .app,
+                level: .error,
+                details: [
+                    "category": failure.category.rawValue,
+                    "domain": failure.domain,
+                    "code": String(failure.code),
+                    "read_only_open": readOnly == nil ? "failed" : "ok",
+                ]
+            )
+        }
+    }
+
     // MARK: - Diagnostics Events
 
-    private func enqueueDiagnosticEvent(
+    func enqueueDiagnosticEvent(
         _ name: String,
         category: MinitiAPIService.ClientEventPayload.EventCategory,
         level: MinitiAPIService.ClientEventPayload.EventLevel = .info,
         details: [String: String] = [:]
     ) {
+        diagnosticEventObserver?(name, details)
+        // The unit-test host shares this device's defaults and enrollment; it must never queue
+        // events that would later flush to production as if a real session produced them.
+        guard !Self.isRunningUnderXCTest else { return }
         guard shareDiagnostics else { return }
         guard appMode == .managed else { return }
         guard minitiAPIService != nil else { return }
@@ -8669,18 +8818,15 @@ final class AppState: ObservableObject {
         }
         
         guard let modelContext else { return }
-        let descriptor = FetchDescriptor<Meeting>()
-        guard let meetings = try? modelContext.fetch(descriptor) else { return }
+        guard let meetings = fetchMeetings(.sessionReference, in: modelContext) else { return }
         if let targetID = meetingId,
            let target = meetings.first(where: { $0.id == targetID }) {
-            target.managedSessionId = nil
-            try? modelContext.save()
+            commit(.sessionReference, in: modelContext, mutate: { target.managedSessionId = nil })
             return
         }
         
         if let fallback = meetings.first(where: { $0.managedSessionId == sessionId }) {
-            fallback.managedSessionId = nil
-            try? modelContext.save()
+            commit(.sessionReference, in: modelContext, mutate: { fallback.managedSessionId = nil })
         }
     }
     
@@ -9900,7 +10046,7 @@ final class AppState: ObservableObject {
         }
 
         // Template sections if available (always included, like MEDDPICC)
-        if let template = InsightTemplate.builtIn(id: liveTemplateID) {
+        if let template = insightTemplate(id: liveTemplateID) {
             md += InsightTemplateSections.markdown(template: template, sections: liveTemplateSections)
         }
 

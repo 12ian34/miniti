@@ -315,7 +315,7 @@ private struct MainWindowSceneBridge: View {
                 appDelegate.openMainWindow = {
                     openWindow(id: "main")
                 }
-                if ScreenshotMode.current == .settings || ScreenshotMode.current == .settingsAccount {
+                if ScreenshotMode.current?.opensSettings == true {
                     // The capture waits for this window; see ScreenshotMode.beginMacCapture.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                         openSettings()
@@ -339,33 +339,37 @@ struct MinitiApp: App {
         InterfaceScale(rawValue: interfaceScaleRaw) ?? .standard
     }
     
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Meeting.self,
-            TranscriptSegment.self,
-        ])
-        if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
-            return seeded
-        }
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-        
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-    
+    /// Opened once at launch and again on "try again" from the recovery screen. The store is
+    /// never deleted or recreated on failure (roadmap P0.2).
+    @State private var storeState: PersistentStoreState = PersistentStore.open()
+
+    /// Scenes need a container even while the real store is unavailable, so
+    /// `@Environment(\.modelContext)` never traps; nothing written to it is kept.
+    private static let fallbackContainer: ModelContainer? = PersistentStore.makeInMemoryFallback()
+
+    private var activeContainer: ModelContainer? {
+        storeState.container ?? Self.fallbackContainer
+    }
+
+    private func retryStoreOpen() {
+        let next = PersistentStore.open()
+        storeState = next
+        appState.notePersistentStore(next)
+    }
+
     var body: some Scene {
         WindowGroup("Miniti", id: "main") {
             Group {
-                if appState.requiresForceUpdate {
+                if case .failed(let failure, let readOnly) = storeState {
+                    StoreRecoveryView(failure: failure, readOnlyContainer: readOnly, retry: retryStoreOpen)
+                } else if appState.requiresForceUpdate {
                     ForceUpdateView()
                 } else if !appState.hasAcceptedTerms {
                     TermsAcceptanceView()
                 } else if appState.hasCompletedOnboarding {
                     MainWindow()
                         .environmentObject(keyboardService)
+                        .persistenceIssueOverlay()
                         .onAppear {
                             setupKeyboardShortcuts()
                         }
@@ -379,15 +383,16 @@ struct MinitiApp: App {
             .minitiReduceMotionAware()
             .onAppear {
                 appDelegate.appState = appState
+                appState.notePersistentStore(storeState)
                 RecordingIndicatorCoordinator.shared.configure(appState: appState)
             }
             .background {
                 MainWindowIdentifierInstaller()
                 MainWindowSceneBridge(appDelegate: appDelegate)
             }
+            .modifier(OptionalModelContainer(container: activeContainer))
         }
         .handlesExternalEvents(matching: ["*"])
-        .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 Task {
@@ -465,8 +470,8 @@ struct MinitiApp: App {
                 .environment(\.interfaceScale, interfaceScale)
                 .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
                 .minitiReduceMotionAware()
+                .modifier(OptionalModelContainer(container: activeContainer))
         }
-        .modelContainer(sharedModelContainer)
         
         Window("Debug Log", id: "debug-log") {
             DebugLogView()

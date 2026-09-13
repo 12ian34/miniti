@@ -1277,24 +1277,55 @@ struct MEDDPICCContent: View {
 
 // MARK: - Templates specialist view (shared)
 
-/// The "Templates" entry in the specialist menu: a submenu of the built-in templates, with
-/// the active one checked. Used on both platforms so the menus stay identical.
+/// The "Templates" entry in the specialist menu: the built-in templates, then the person's
+/// own, with the active one checked, and a way into Settings → Templates. Used on both
+/// platforms so the menus stay identical.
 struct InsightTemplateMenu: View {
+    @EnvironmentObject private var appState: AppState
+    #if os(macOS)
+    @Environment(\.openSettings) private var openSettings
+    #endif
     let activeTemplateID: String?
     let onSelect: (String) -> Void
+
+    private func templateButton(_ template: InsightTemplate) -> some View {
+        Button {
+            onSelect(template.id)
+        } label: {
+            Label {
+                Text(template.summary.isEmpty ? template.name : "\(template.name) — \(template.summary)")
+            } icon: {
+                Image(systemName: template.id == activeTemplateID ? "checkmark.circle.fill" : template.systemImage)
+            }
+        }
+    }
+
+    private func openTemplateSettings() {
+        appState.selectedSettingsTab = SettingsDestination.templates.rawValue
+        appState.pendingSettingsSearchTarget = "templates.custom"
+        #if os(macOS)
+        openSettings()
+        #else
+        appState.showSettings = true
+        #endif
+    }
 
     var body: some View {
         Menu {
             ForEach(InsightTemplate.builtIn) { template in
-                Button {
-                    onSelect(template.id)
-                } label: {
-                    Label {
-                        Text("\(template.name) — \(template.summary)")
-                    } icon: {
-                        Image(systemName: template.id == activeTemplateID ? "checkmark.circle.fill" : template.systemImage)
-                    }
+                templateButton(template)
+            }
+            if !appState.customInsightTemplates.isEmpty {
+                Divider()
+                ForEach(appState.customInsightTemplates) { template in
+                    templateButton(template)
                 }
+            }
+            Divider()
+            Button {
+                openTemplateSettings()
+            } label: {
+                Label("manage templates…", systemImage: "slider.horizontal.3")
             }
         } label: {
             Label {

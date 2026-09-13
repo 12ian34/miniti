@@ -76,32 +76,34 @@ struct MinitiMobileApp: App {
         InterfaceScale(rawValue: interfaceScaleRaw) ?? .standard
     }
     
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Meeting.self,
-            TranscriptSegment.self,
-        ])
-        if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
-            return seeded
-        }
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-        
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-    
+    /// Opened once at launch and again on "try again" from the recovery screen. The store is
+    /// never deleted or recreated on failure (roadmap P0.2).
+    @State private var storeState: PersistentStoreState = PersistentStore.open()
+
+    private static let fallbackContainer: ModelContainer? = PersistentStore.makeInMemoryFallback()
+
+    private var activeContainer: ModelContainer? {
+        storeState.container ?? Self.fallbackContainer
+    }
+
+    private func retryStoreOpen() {
+        let next = PersistentStore.open()
+        storeState = next
+        appState.notePersistentStore(next)
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
-                if appState.requiresForceUpdate {
+                if case .failed(let failure, let readOnly) = storeState {
+                    StoreRecoveryView(failure: failure, readOnlyContainer: readOnly, retry: retryStoreOpen)
+                } else if appState.requiresForceUpdate {
                     ForceUpdateView()
                 } else if !appState.hasAcceptedTerms {
                     TermsAcceptanceView()
                 } else if appState.hasCompletedOnboarding {
                     MainTabView()
+                        .persistenceIssueOverlay()
                 } else {
                     OnboardingView()
                 }
@@ -113,6 +115,10 @@ struct MinitiMobileApp: App {
             .preferredColorScheme(.dark)
             .onAppear {
                 appDelegate.appState = appState
+                appState.notePersistentStore(storeState)
+                #if DEBUG
+                ScreenshotMode.scheduleIOSReadyMarker()
+                #endif
             }
             .onOpenURL { url in
                 switch url.scheme?.lowercased() {
@@ -126,8 +132,8 @@ struct MinitiMobileApp: App {
                     break
                 }
             }
+            .modifier(OptionalModelContainer(container: activeContainer))
         }
-        .modelContainer(sharedModelContainer)
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
                 let saveLease = MeetingBackgroundSaveLease.begin()

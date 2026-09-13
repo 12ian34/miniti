@@ -1,19 +1,14 @@
 NEW
 
-- Pro follows your account. Buy Pro on one device and every device on the same account gets it.
-- Move a device to another account from Settings, Account & Plan with that account's recovery key. It keeps its meetings, usage, and connections.
-- The next-meeting prompt has an End meeting button, so you can end the current meeting without starting the next one.
-- Out of office, focus time, all-day, and declined events no longer count as meetings. Settings, Calendar, Meeting filters lets you change the rules, add your own title words, and preview which of next week's events would be skipped.
+- Make your own templates. Settings, Templates: name it, add up to 8 sections with a line on what goes in each, preview it against a past meeting, then pick it from the More menu like BANT or SPIN. Duplicate a built-in to start, and export or import a template as a file.
+- If miniti can't open your meetings it shows a recovery screen instead of crashing. Your data is never touched, and you can still export what it can read.
 
 IMPROVED
 
-- Live summary and question updates arrive about 3 times faster.
-- Share Diagnostics is on by default in managed mode. It sends error and health events only, never transcript or audio. Turn it off in Settings, Privacy.
-- Webhooks only send over https, and webhook addresses never appear in diagnostics logs.
-- The correct-word editor tells you when a correction was not saved or matched nothing, instead of closing quietly.
+- Security work on miniti's servers behind the scenes. Nothing changes for you.
 
 FIXED
 
-- Correcting only the capitals of a word, such as lightdash to Lightdash, now works.
-- A correction made after the meeting has stopped is saved to the meeting straight away.
-- Filler counts no longer double count. An "uh huh" counts once, and Coaching calls them detected fillers.
+- When something doesn't save, such as a pin, a rename, or a delete, miniti tells you and offers a retry.
+- If your history can't be read, miniti says so instead of showing an empty list.
+- A correction that can't be saved keeps the editor open and tells you why.

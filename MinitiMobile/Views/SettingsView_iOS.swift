@@ -238,6 +238,10 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
                 
+                if category == .templates {
+                    InsightTemplatesSettingsSections()
+                }
+
                 if category == .account {
                 if appState.appMode == .managed {
                     Section("Subscription") {
@@ -636,7 +640,13 @@ private struct SettingsDetailView_iOS: View {
                             Label("Import Granola CSV", systemImage: "tray.and.arrow.down")
                         }
                     }
-                    .disabled(isImportingGranola)
+                    .disabled(isImportingGranola || appState.persistentStoreFailure != nil)
+
+                    if appState.persistentStoreFailure != nil {
+                        Text("import is unavailable until the meeting database opens")
+                            .font(.caption)
+                            .foregroundStyle(ColorPalette.Status.error)
+                    }
 
                     if let granolaImportMessage {
                         Label(
@@ -895,6 +905,7 @@ private struct SettingsDetailView_iOS: View {
     }
 
     private func importGranolaCSV(from url: URL) {
+        guard appState.persistentStoreFailure == nil else { return }
         isImportingGranola = true
         granolaImportMessage = nil
         granolaImportFailed = false

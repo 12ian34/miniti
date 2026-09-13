@@ -29,6 +29,9 @@ IOS_SCENES=(
   "11-settings"
   "12-recording-template"
   "13-meeting-coaching"
+  "14-store-recovery"
+  "15-persistence-issue"
+  "16-settings-templates"
 )
 MAC_SCENES=(
   "01-home"
@@ -42,6 +45,9 @@ MAC_SCENES=(
   "09-recording-template"
   "10-meeting-coaching"
   "11-settings-account"
+  "12-store-recovery"
+  "13-persistence-issue"
+  "14-settings-templates"
 )
 
 # scene_key "03-recording-insights" -> "recording-insights"

@@ -20,6 +20,20 @@ or all of it in one go with `scripts/screenshots/all.sh`. Afterwards, look at ev
 before shipping it: a green run proves the app rendered a scene, not that the scene is
 the one you want on the store.
 
+## Smoke gate
+
+`scripts/screenshots/smoke.sh [ios|mac|all]` is the launch-and-render check from roadmap
+P0.6. It builds both Debug apps and runs every scene into `out-smoke/` (never the marketing
+`out/`). A run passes only if each macOS scene opens its window, renders, writes its PNG,
+and exits 0, and each iOS scene reaches first layout: the app writes
+`<container>/tmp/miniti-screenshot-ready-<scene>` after the settle delay, and
+`capture-ios.sh` fails the scene when that marker is missing, which is the only way to tell
+a crash from a blank capture because `simctl launch` returns as soon as the process starts.
+Two scenes exist only for this gate: `store-recovery` (the P0.2 screen, rendered from a
+synthetic corruption failure with the seeded store as the read-only export source) and
+`persistence-issue` (Home with the P0.3 "didn't save" banner). Quit the installed Miniti
+first on macOS; the capture build refuses to run beside it.
+
 ## How it works
 
 The app has a **screenshot mode**, switched on by the `-MinitiScreenshotScene <scene>`
@@ -66,6 +80,9 @@ when installed). A card whose capture is missing fails the run and writes nothin
 | `11-settings` | `09-recording-template` — Templates view (BANT) |
 | `12-recording-template` — Templates view (BANT) | `10-meeting-coaching` — saved meeting, coaching tab |
 | `13-meeting-coaching` — saved meeting, coaching tab | `11-settings-account` — Settings, Account & Plan |
+| `14-store-recovery` — smoke gate only: P0.2 recovery screen | `12-store-recovery` — smoke gate only |
+| `15-persistence-issue` — smoke gate only: P0.3 banner on Home | `13-persistence-issue` — smoke gate only |
+| `16-settings-templates` — Settings, Templates with one custom template | `14-settings-templates` |
 
 Scene lists live in `env.sh`; the app-side switch is `ScreenshotScene` in
 `Miniti/ScreenshotMode.swift`. Adding a scene means: add a case there, add it to the

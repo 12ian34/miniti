@@ -155,16 +155,16 @@ struct HistoryView_iOS: View {
     }
 
     private func deleteMeetings(_ meetings: [Meeting]) {
-        for meeting in meetings {
-            appState.noteMeetingDeleted(meeting)
-            modelContext.delete(meeting)
-        }
-        try? modelContext.save()
+        appState.commit(.delete, in: modelContext, mutate: {
+            for meeting in meetings {
+                appState.noteMeetingDeleted(meeting)
+                modelContext.delete(meeting)
+            }
+        })
     }
 
     private func togglePin(_ meeting: Meeting) {
-        meeting.isPinned.toggle()
-        try? modelContext.save()
+        appState.commit(.pin, in: modelContext, mutate: { meeting.isPinned.toggle() }, revert: { meeting.isPinned.toggle() })
     }
 }
 
@@ -413,26 +413,23 @@ struct MeetingDetail_iOS: View {
                 hasOtherSelves: hasOtherSelves,
                 showMarkAllMicAsSelf: meeting.micSpeakerIDs.count > 1,
                 onSave: { newName in
-                    meeting.setSpeakerName(id: key, name: newName)
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSpeakerName(id: key, name: newName) })
                     renamingSpeaker = nil
                 },
                 onClear: {
-                    meeting.setSpeakerName(id: key, name: nil)
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSpeakerName(id: key, name: nil) })
                     renamingSpeaker = nil
                 },
                 onMarkAsSelf: {
-                    meeting.setSelfSpeaker(id: target.id, isSelf: true)
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSelfSpeaker(id: target.id, isSelf: true) })
                     renamingSpeaker = nil
                 },
                 onUnmarkAsSelf: {
-                    meeting.setSelfSpeaker(id: target.id, isSelf: false)
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSelfSpeaker(id: target.id, isSelf: false) })
                     renamingSpeaker = nil
                 },
                 onMarkAllMicAsSelf: {
-                    meeting.markAllMicSpeakersAsSelf()
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.markAllMicSpeakersAsSelf() })
                     renamingSpeaker = nil
                 },
                 onCancel: {
@@ -838,11 +835,12 @@ struct MeetingDetail_iOS: View {
     }
     
     private func saveTitle() {
-        meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if meeting.title.isEmpty {
-            meeting.title = "untitled"
-        }
-        try? modelContext.save()
+        appState.commit(.rename, in: modelContext, mutate: {
+            meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if meeting.title.isEmpty {
+                meeting.title = "untitled"
+            }
+        })
     }
     
     @ViewBuilder

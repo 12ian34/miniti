@@ -534,6 +534,11 @@ struct SpeakerIdentityState: Sendable, Equatable {
 
 @MainActor
 final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDelegate, @unchecked Sendable {
+    /// Seams for tests: a `URLProtocol`-backed configuration can refuse or drop the WebSocket
+    /// handshake, and the endpoint can point at a local server. Production leaves both alone.
+    var sessionConfiguration: URLSessionConfiguration = .default
+    var endpointURL = URL(string: "wss://api.deepgram.com/v1/listen")!
+
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var credential: String = ""
@@ -797,7 +802,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         _sendTask = nil
         error = nil
         
-        var components = URLComponents(string: "wss://api.deepgram.com/v1/listen")!
+        var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)!
         var queryItems = [
             URLQueryItem(name: "model", value: "nova-3"),
             URLQueryItem(name: "language", value: language),
@@ -834,7 +839,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             forHTTPHeaderField: "Authorization"
         )
         
-        urlSession = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
+        urlSession = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: OperationQueue.main)
         webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()
         DebugLogger.shared.log(.deepgram, "WebSocket resume requested")
