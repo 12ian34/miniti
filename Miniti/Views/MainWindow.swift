@@ -440,8 +440,7 @@ struct MainWindow: View {
                 deleteMeeting(meeting)
             },
             onTogglePin: { meeting in
-                meeting.isPinned.toggle()
-                try? modelContext.save()
+                appState.commit(.pin, in: modelContext, mutate: { meeting.isPinned.toggle() }, revert: { meeting.isPinned.toggle() })
                 refreshMeetings()
             }
         )
@@ -599,10 +598,12 @@ struct MainWindow: View {
         if selectedMeetingID == meeting.id {
             selectedMeetingID = nil
         }
-        // Delete from context
-        appState.noteMeetingDeleted(meeting)
-        modelContext.delete(meeting)
-        try? modelContext.save()
+        // Delete from context. Mark before deleting (in-flight saves must not resurrect it).
+        // If the save fails the delete stays pending and the banner offers a retry.
+        appState.commit(.delete, in: modelContext, mutate: {
+            appState.noteMeetingDeleted(meeting)
+            modelContext.delete(meeting)
+        })
         refreshMeetings()
     }
 
@@ -615,8 +616,9 @@ struct MainWindow: View {
     }
 
     private func refreshMeetings() {
-        let descriptor = FetchDescriptor<Meeting>()
-        guard let fetched = try? modelContext.fetch(descriptor) else { return }
+        // A failed fetch keeps the previous list and raises the banner; it never renders as
+        // an empty history.
+        guard let fetched = appState.fetchMeetings(.historyLoad, in: modelContext) else { return }
         meetings = fetched.sorted { $0.startTime > $1.startTime }
         coachingOverviewStore.refreshIfNeeded(meetings: meetings)
         navigationHistory.retainMeetings(Set(fetched.map(\.id)))
@@ -1792,26 +1794,23 @@ struct MeetingDetailView: View {
                 hasOtherSelves: hasOtherSelves,
                 showMarkAllMicAsSelf: meeting.micSpeakerIDs.count > 1,
                 onSave: { newName in
-                    meeting.setSpeakerName(id: key, name: newName)
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSpeakerName(id: key, name: newName) })
                     renamingSpeaker = nil
                 },
                 onClear: {
-                    meeting.setSpeakerName(id: key, name: nil)
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSpeakerName(id: key, name: nil) })
                     renamingSpeaker = nil
                 },
                 onMarkAsSelf: {
-                    meeting.setSelfSpeaker(id: target.id, isSelf: true)
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSelfSpeaker(id: target.id, isSelf: true) })
                     renamingSpeaker = nil
                 },
                 onUnmarkAsSelf: {
-                    meeting.setSelfSpeaker(id: target.id, isSelf: false)
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSelfSpeaker(id: target.id, isSelf: false) })
                     renamingSpeaker = nil
                 },
                 onMarkAllMicAsSelf: {
-                    meeting.markAllMicSpeakersAsSelf()
-                    try? modelContext.save()
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.markAllMicSpeakersAsSelf() })
                     renamingSpeaker = nil
                 },
                 onCancel: {
@@ -2031,11 +2030,12 @@ struct MeetingDetailView: View {
     }
     
     private func saveTitle() {
-        meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if meeting.title.isEmpty {
-            meeting.title = "untitled"
-        }
-        try? modelContext.save()
+        appState.commit(.rename, in: modelContext, mutate: {
+            meeting.title = meeting.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            if meeting.title.isEmpty {
+                meeting.title = "untitled"
+            }
+        })
     }
     
     private var insightsContent: some View {

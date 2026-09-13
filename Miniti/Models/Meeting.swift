@@ -49,6 +49,9 @@ final class Meeting {
     // existing stores lightweight-migratable.
     var insightTemplateID: String?
     var templateSectionsJSON: String?
+    // JSON-encoded InsightTemplate for custom templates, so a meeting keeps rendering its
+    // sections after the template is edited or deleted (2.9.0). Nil for built-ins.
+    var templateDefinitionJSON: String?
 
     // Docs topics + their resolved lookup cards (JSON-encoded [DocTopic])
     var docTopicsJSON: String?
@@ -170,9 +173,22 @@ final class Meeting {
         }
     }
 
-    /// The template these sections belong to, when it is one we know.
+    /// The template these sections belong to: a built-in by id, else the copy stored with
+    /// the meeting when a custom template was applied.
     var insightTemplate: InsightTemplate? {
-        InsightTemplate.builtIn(id: insightTemplateID)
+        if let builtIn = InsightTemplate.builtIn(id: insightTemplateID) { return builtIn }
+        guard let json = templateDefinitionJSON, let data = json.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(InsightTemplate.self, from: data)
+    }
+
+    /// Attach a template to this meeting, keeping a copy of custom definitions.
+    func applyInsightTemplate(_ template: InsightTemplate) {
+        insightTemplateID = template.id
+        if template.isBuiltIn {
+            templateDefinitionJSON = nil
+        } else if let data = try? JSONEncoder().encode(template) {
+            templateDefinitionJSON = String(data: data, encoding: .utf8)
+        }
     }
 
     var hasTemplateInsights: Bool {

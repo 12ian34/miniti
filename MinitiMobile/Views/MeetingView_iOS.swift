@@ -66,7 +66,7 @@ struct MeetingView_iOS: View {
                     if let value, !value.isEmpty { md += "**\(label):** \(value)\n\n" }
                 }
             }
-            if let template = InsightTemplate.builtIn(id: appState.liveTemplateID) {
+            if let template = appState.insightTemplate(id: appState.liveTemplateID) {
                 md += InsightTemplateSections.markdown(template: template, sections: appState.liveTemplateSections, headingLevel: 2)
             }
             if !appState.liveNotes.isEmpty { md += "## Notes\n\n\(appState.liveNotes)\n" }

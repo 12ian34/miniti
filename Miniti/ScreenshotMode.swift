@@ -45,6 +45,13 @@ enum ScreenshotScene: String, CaseIterable {
     case settings
     /// Settings with the Account & Plan destination selected (managed account section).
     case settingsAccount = "settings-account"
+    /// Settings → Templates with one custom template seeded (2.9.0).
+    case settingsTemplates = "settings-templates"
+    /// The P0.2 recovery screen, rendered from a synthetic corruption failure with the seeded
+    /// store standing in as the read-only export source.
+    case storeRecovery = "store-recovery"
+    /// Home with the P0.3 "didn't save" banner raised (with a retry action).
+    case persistenceIssue = "persistence-issue"
 
     var isLiveRecording: Bool {
         switch self {
@@ -73,6 +80,11 @@ enum ScreenshotScene: String, CaseIterable {
     /// Scenes that open the seeded saved meeting's detail screen.
     var opensSavedMeeting: Bool {
         self == .meeting || self == .meetingCoaching
+    }
+
+    /// Scenes that render inside the Settings window/sheet rather than the main window.
+    var opensSettings: Bool {
+        self == .settings || self == .settingsAccount || self == .settingsTemplates
     }
 
     var coachingOverviewTab: CoachingOverviewTab {
@@ -158,7 +170,8 @@ enum ScreenshotMode {
             "mainWindow.sidebarCollapsed": false,
             "mainWindow.historyCollapsed": false,
             "mainWindow.insightsCollapsed": false,
-            "selectedSettingsDestination": scene == .settingsAccount ? "account" : "general",
+            "selectedSettingsDestination": scene == .settingsAccount ? "account" : scene == .settingsTemplates ? "templates" : "general",
+            CustomInsightTemplates.storageKey: ScreenshotFixtures.customTemplateData,
             "deepgramApiKey": "",
             "openaiApiKey": "",
             "webhookURL": "",
@@ -240,7 +253,7 @@ enum ScreenshotMode {
         if scene.opensSavedMeeting {
             appState.pendingOpenSavedMeetingID = savedMeetingID
         }
-        if scene == .settings || scene == .settingsAccount {
+        if scene.opensSettings {
             #if os(iOS)
             appState.showSettings = true
             #endif
@@ -249,7 +262,45 @@ enum ScreenshotMode {
             // Scroll the Account & Plan form to the managed-account section.
             appState.pendingSettingsSearchTarget = "account.recoveryKey"
         }
+        if scene == .settingsTemplates {
+            appState.reloadCustomInsightTemplates()
+            appState.selectedSettingsTab = SettingsDestination.templates.rawValue
+            appState.pendingSettingsSearchTarget = "templates.custom"
+        }
+        if scene == .persistenceIssue {
+            appState.setPersistenceIssue(PersistenceIssue(operation: .pin, kind: .save))
+            appState.persistenceRetryAction = {}
+        }
     }
+
+    /// Synthetic failure for the `store-recovery` scene; the seeded container plays the
+    /// read-only store so the export button renders too.
+    static var syntheticStoreFailure: PersistentStoreOpenFailure {
+        PersistentStoreOpenFailure(category: .corruption, domain: "NSSQLiteErrorDomain", code: 26, reason: "file is not a database")
+    }
+
+    // MARK: iOS readiness marker
+
+    #if os(iOS)
+    /// Where the iOS smoke gate looks: `<app container>/tmp/miniti-screenshot-ready-<scene>`.
+    /// `simctl launch` returns as soon as the process starts, so a crash before first layout
+    /// would otherwise pass as a blank capture.
+    static func iosReadyMarkerURL(for scene: ScreenshotScene) -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent("miniti-screenshot-ready-\(scene.rawValue)")
+    }
+
+    /// Call from the root view's `onAppear`: writes the marker after the settle delay.
+    @MainActor
+    static func scheduleIOSReadyMarker() {
+        guard let scene = current else { return }
+        let url = iosReadyMarkerURL(for: scene)
+        try? FileManager.default.removeItem(at: url)
+        DispatchQueue.main.asyncAfter(deadline: .now() + settleSeconds) {
+            try? Data("ready".utf8).write(to: url, options: .atomic)
+            DebugLogger.shared.log(.app, "Screenshot mode: ready marker written for \(scene.rawValue)")
+        }
+    }
+    #endif
 
     // MARK: macOS capture
 
@@ -281,7 +332,7 @@ enum ScreenshotMode {
             try? await Task.sleep(for: .seconds(settleSeconds))
 
             var target = main
-            if scene == .settings || scene == .settingsAccount {
+            if scene.opensSettings {
                 // The main window's scene bridge opens the Settings scene on appear.
                 guard let settings = await waitForWindow(timeout: 10, where: { window in
                     window.isVisible && window !== main && window.styleMask.contains(.titled)
@@ -403,6 +454,21 @@ enum ScreenshotMode {
 
 /// Plausible B2B content for the seeded store. No real customers or people.
 enum ScreenshotFixtures {
+    /// One custom template so Settings → Templates shows the "Your templates" list filled.
+    static var customTemplateData: Data {
+        let template = InsightTemplateDraft(
+            name: "Customer QBR",
+            summary: "Quarterly review with an account",
+            sections: [
+                .init(title: "health", guidance: "Adoption, satisfaction, and sentiment as expressed."),
+                .init(title: "renewal", guidance: "Renewal timing, budget, and who signs."),
+                .init(title: "asks", guidance: "Feature requests and support asks the customer raised."),
+                .init(title: "next steps", guidance: "Agreed follow-ups with owners and dates."),
+            ]
+        ).build(id: "custom_screenshot01")
+        return (try? JSONEncoder().encode([template].compactMap { $0 })) ?? Data()
+    }
+
     static let calendarEmail = "ian@miniti.app"
     static let micSpeaker = DeepgramService.micSpeakerID
     /// Remote speakers for the live discovery call.

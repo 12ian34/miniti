@@ -61,6 +61,7 @@ struct SettingsView: View {
                         destinationRow(.recording)
                         destinationRow(.language)
                         destinationRow(.ai)
+                        destinationRow(.templates)
                         destinationRow(.notifications)
                     }
 
@@ -170,6 +171,8 @@ struct SettingsView: View {
             LanguageSettingsView()
         case .ai:
             AISettingsView()
+        case .templates:
+            InsightTemplatesSettingsView()
         case .notifications:
             NotificationsSettingsView()
         case .calendar:
@@ -228,7 +231,7 @@ private struct SettingsScrollTargetModifier: ViewModifier {
     }
 }
 
-private extension View {
+extension View {
     func settingsSearchScrolling(for destination: SettingsDestination) -> some View {
         modifier(SettingsScrollTargetModifier(destination: destination))
     }
@@ -1412,7 +1415,13 @@ struct IntegrationsSettingsView: View {
                             Label("Import CSV…", systemImage: "tray.and.arrow.down")
                         }
                     }
-                    .disabled(isImportingGranola)
+                    .disabled(isImportingGranola || appState.persistentStoreFailure != nil)
+                }
+
+                if appState.persistentStoreFailure != nil {
+                    Text("import is unavailable until the meeting database opens")
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Status.error)
                 }
 
                 if let granolaImportMessage {
@@ -1474,8 +1483,14 @@ struct IntegrationsSettingsView: View {
                             Text("Export All Meetings")
                         }
                     }
-                    .disabled(isExportingAll)
+                    .disabled(isExportingAll || appState.persistentStoreFailure != nil)
                     .id("data.exportAll")
+                }
+
+                if appState.persistentStoreFailure != nil {
+                    Text("export is unavailable until the meeting database opens. use export meetings on the recovery screen instead")
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Status.error)
                 }
             }
             }
@@ -1649,6 +1664,7 @@ struct IntegrationsSettingsView: View {
     }
 
     private func importGranolaCSV(from url: URL) {
+        guard appState.persistentStoreFailure == nil else { return }
         isImportingGranola = true
         granolaImportMessage = nil
         granolaImportFailed = false
@@ -1687,11 +1703,10 @@ struct IntegrationsSettingsView: View {
     }
 
     private func exportAllMeetings() {
+        guard appState.persistentStoreFailure == nil else { return }
         isExportingAll = true
         exportAllCount = nil
-        let descriptor = FetchDescriptor<Meeting>()
-        guard let meetings = try? modelContext.fetch(descriptor) else {
-            DebugLogger.shared.log(.app, "Export all: failed to fetch meetings from modelContext")
+        guard let meetings = appState.fetchMeetings(.exportAll, in: modelContext) else {
             isExportingAll = false
             return
         }

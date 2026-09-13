@@ -188,27 +188,10 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(manager.status, .notEnrolled)
     }
 
-    /// Captures the one request the manager makes and answers it with a canned body.
-    final class StubURLProtocol: URLProtocol {
-        nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data))?
-        nonisolated(unsafe) static var lastRequest: URLRequest?
-        override class func canInit(with request: URLRequest) -> Bool { true }
-        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-        override func startLoading() {
-            Self.lastRequest = request
-            let (status, body) = Self.handler?(request) ?? (500, Data())
-            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
-            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-            client?.urlProtocol(self, didLoad: body)
-            client?.urlProtocolDidFinishLoading(self)
-        }
-        override func stopLoading() {}
-    }
-
+    // `StubURLProtocol` and the stubbed session live in TestSupport.swift, shared with the
+    // transport and journey tests.
     private func stubbedSession() -> URLSession {
-        let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [StubURLProtocol.self]
-        return URLSession(configuration: config)
+        TestSupport.stubbedSession()
     }
 
     func testAttachMovesTheInstallationAndReplacesAccountKeyAndTokens() async throws {

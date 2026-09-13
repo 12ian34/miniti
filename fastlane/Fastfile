@@ -170,6 +170,7 @@ platform :ios do
       destination: ios_unit_test_destination,
       derived_data_path: IOS_DERIVED_DATA_PATH,
       only_testing: ["MinitiMobileTests"],
+      code_coverage: true,
       clean: false
     )
   end
@@ -349,6 +350,7 @@ platform :mac do
       destination: "platform=macOS",
       derived_data_path: MAC_DERIVED_DATA_PATH,
       only_testing: ["MinitiTests"],
+      code_coverage: true,
       clean: false
     )
   end

@@ -715,6 +715,65 @@ final class TrainingMetricsTests: XCTestCase {
         XCTAssertEqual(veryLargeHistory.last, 10_000)
     }
 
+    // MARK: Coaching charts, six series (roadmap P0.6)
+
+    @MainActor
+    func testCoachingChartPointsCoverAllSixSeriesAndSkipMissingOrNonFiniteValues() {
+        let rows = [
+            trainingRow(day: 4, talkRatio: 0.70),
+            trainingRow(day: 3, talkRatio: .nan),
+            trainingRow(day: 2, talkRatio: nil),
+            trainingRow(day: 1, talkRatio: 0.40),
+        ]
+        let series: [(CoachingMetric, (TrainingRow) -> Double?)] = [
+            (.fillers, { $0.fillers }),
+            (.pace, { $0.pace }),
+            (.clarity, { $0.clarity }),
+            (.questions, { Double($0.questions) }),
+            (.talkRatio, { $0.talkRatio }),
+            (.monologue, { Double($0.longestMonologue) }),
+        ]
+        XCTAssertEqual(series.map { $0.0 }, CoachingMetric.allCases, "every metric has a chart series")
+
+        for (metric, value) in series {
+            let points = TrainingStatsOverview.chartPoints(from: rows, value: value)
+            XCTAssertEqual(points.map(\.id), points.map(\.id).uniqued(), "\(metric) points keep their meeting identity")
+            XCTAssertEqual(points.map(\.meetingIndex), points.map(\.meetingIndex).sorted(), "\(metric) is in meeting order")
+            XCTAssertTrue(points.allSatisfy { $0.value.isFinite }, "\(metric) never charts NaN or infinity")
+            if metric == .talkRatio {
+                XCTAssertEqual(points.map(\.meetingIndex), [1, 4], "the nil and NaN meetings leave gaps, not zeros")
+                XCTAssertEqual(points.map(\.value), [0.40, 0.70])
+            } else {
+                XCTAssertEqual(points.count, rows.count, "\(metric) has a value for every meeting")
+            }
+        }
+    }
+
+    @MainActor
+    func testCoachingChartHandlesEmptyAndSingleMeetingHistories() {
+        XCTAssertTrue(TrainingStatsOverview.chartPoints(from: []) { $0.talkRatio }.isEmpty)
+        XCTAssertEqual(TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 0), [])
+        XCTAssertEqual(TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 1), [1])
+        let single = TrainingStatsOverview.chartPoints(from: [trainingRow(day: 1, talkRatio: 0.5)]) { $0.talkRatio }
+        XCTAssertEqual(single.map(\.meetingIndex), [1])
+    }
+
+    @MainActor
+    func testCoachingChartAxisAlwaysStartsAtOneEndsAtLastAndStaysReadable() {
+        for count in [1, 7, 40, 400, 4_000] {
+            let axis = TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: count)
+            XCTAssertEqual(axis.first, 1, "count \(count)")
+            XCTAssertEqual(axis.last, Double(count), "count \(count)")
+            XCTAssertEqual(axis, axis.sorted(), "count \(count)")
+            XCTAssertEqual(axis.count, Set(axis).count, "count \(count) has no duplicate ticks")
+            XCTAssertLessThanOrEqual(axis.count, 7, "count \(count) stays readable")
+            XCTAssertTrue(axis.allSatisfy { $0 == $0.rounded() }, "count \(count) ticks are whole meetings")
+        }
+        XCTAssertEqual(TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 7), [1, 2, 4, 6, 7])
+        XCTAssertEqual(TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 40), [1, 10, 20, 30, 40])
+        XCTAssertEqual(TrainingStatsOverview.chartAxisMeetingIndices(meetingCount: 400), [1, 100, 200, 300, 400])
+    }
+
     private func trainingRow(day: TimeInterval, talkRatio: Double?) -> TrainingRow {
         TrainingRow(
             id: UUID(),
@@ -792,5 +851,12 @@ final class TrainingMetricsTests: XCTestCase {
             questionsAsked: 0,
             avgWordsPerTurn: Double(words)
         )
+    }
+}
+
+private extension Array where Element: Hashable {
+    func uniqued() -> [Element] {
+        var seen = Set<Element>()
+        return filter { seen.insert($0).inserted }
     }
 }

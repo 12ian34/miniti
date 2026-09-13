@@ -3,6 +3,19 @@ import Foundation
 /// Communicates with the Miniti backend for managed mode.
 /// Handles usage checking, session management (Deepgram grant JWTs), and insights proxy.
 final class MinitiAPIService: @unchecked Sendable {
+
+    // MARK: - Transport
+
+    private let session: URLSession
+    private let auth: ClientAuthManager
+
+    /// Production uses the shared session and the app's enrolled auth manager. Tests inject a
+    /// `URLProtocol`-backed session and an in-memory manager so every failure class (timeout,
+    /// offline, 4xx, 5xx, malformed body, token refresh) runs without the network.
+    init(session: URLSession = .shared, auth: ClientAuthManager = .shared) {
+        self.session = session
+        self.auth = auth
+    }
     
     // MARK: - Configuration
     
@@ -57,7 +70,6 @@ final class MinitiAPIService: @unchecked Sendable {
     /// says this installation was revoked. `requiresAuth: false` lets public metadata
     /// (`/version`) go out without an account.
     private func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
-        let auth = ClientAuthManager.shared
         var request = original
         if auth.isEnrolled {
             do {
@@ -71,7 +83,7 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.notEnrolled
         }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
         }
@@ -87,7 +99,7 @@ final class MinitiAPIService: @unchecked Sendable {
             } catch let error as ClientAuthError {
                 throw ServiceError.serverError(error.localizedDescription)
             }
-            return try await URLSession.shared.data(for: retry)
+            return try await session.data(for: retry)
         case "installation_revoked", "device_auth_required":
             auth.clearLocal()
             throw ServiceError.authRevoked
@@ -1954,9 +1966,33 @@ struct AttioMeetingPayload: Sendable {
     let topics: [String]
     let notes: String?
     let meddpicc: [String: String]
+    /// Filled template sections in template order (2.9.0): `name` plus `[title, value]` pairs.
+    let template: TemplateSections?
     let transcriptEditedAt: Date?
     let transcriptRevision: Int?
     let insightsStale: Bool
+
+    struct TemplateSections: Sendable {
+        struct Entry: Sendable, Equatable {
+            let title: String
+            let value: String
+        }
+
+        let name: String
+        let sections: [Entry]
+
+        init?(template: InsightTemplate?, sections: [String: String]) {
+            guard let template else { return nil }
+            let ordered = template.orderedSections(from: sections).map { Entry(title: $0.section.title, value: $0.value) }
+            guard !ordered.isEmpty else { return nil }
+            name = template.name
+            self.sections = ordered
+        }
+
+        var dictionary: [String: Any] {
+            ["name": name, "sections": sections.map { ["title": $0.title, "value": $0.value] }]
+        }
+    }
 
     static func normalizedActionItems(from items: [String]) -> [String] {
         let placeholders: Set<String> = [
@@ -2048,6 +2084,7 @@ struct AttioMeetingPayload: Sendable {
             topics: meeting.topics,
             notes: notesTrimmed.isEmpty ? nil : notesTrimmed,
             meddpicc: meddpicc,
+            template: TemplateSections(template: meeting.insightTemplate, sections: meeting.templateSections),
             transcriptEditedAt: meeting.transcriptEditedAt,
             transcriptRevision: meeting.hasTranscriptEdits ? meeting.transcriptRevision : nil,
             insightsStale: false
@@ -2068,6 +2105,7 @@ struct AttioMeetingPayload: Sendable {
         if let endedAt { result["ended_at"] = endedAt }
         if let summary { result["summary"] = summary }
         if let notes { result["notes"] = notes }
+        if let template { result["template"] = template.dictionary }
         if let transcriptEditedAt {
             result["transcript_edited_at"] = ISO8601DateFormatter().string(from: transcriptEditedAt)
         }

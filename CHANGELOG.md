@@ -15,6 +15,16 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-09-13 - v2.9.0
+
+- new: (macOS and iOS) make your own templates. Settings, Templates: name it, add up to 8 sections with a line on what goes in each, preview it against a past meeting, then pick it from the More menu like BANT or SPIN. Duplicate a built-in to start, and export or import a template as a file
+- new: (macOS) template sections are included when you send a meeting to Attio or Twenty
+- new: (macOS and iOS) if miniti can't open your meetings it shows a recovery screen instead of crashing. Your data is never touched, and you can still export what it can read
+- fix: (macOS and iOS) when something doesn't save, such as a pin, a rename, or a delete, miniti tells you and offers a retry
+- fix: (macOS and iOS) if your history can't be read, miniti says so instead of showing an empty list
+- fix: (macOS and iOS) a correction that can't be saved keeps the editor open and tells you why
+- improvement: security work on miniti's servers behind the scenes. Nothing changes for you
+
 ### 2026-09-11 - v2.8.0
 
 This release is available on macOS and iOS.
