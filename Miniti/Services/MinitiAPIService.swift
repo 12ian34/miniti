@@ -1114,6 +1114,9 @@ final class MinitiAPIService: @unchecked Sendable {
         case notEnrolled
         /// The server revoked this installation; local credentials were cleared.
         case authRevoked
+        /// The managed Jev classifier proxy is not configured or not deployed (503/404);
+        /// callers fall back to GPT or the local heuristics.
+        case classifierUnavailable
         
         var errorDescription: String? {
             switch self {
@@ -1133,6 +1136,8 @@ final class MinitiAPIService: @unchecked Sendable {
                 return "Server error: \(message)"
             case .rateLimited:
                 return "Too many requests. Please wait a moment."
+            case .classifierUnavailable:
+                return "The speaker and sales classifier is not available right now."
             }
         }
     }
@@ -1957,10 +1962,88 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.serverError("HTTP 401")
         default:
             if let apiError = try? Self.decoder.decode(APIError.self, from: data) {
+                if apiError.error == "classifier_unavailable" { throw ServiceError.classifierUnavailable }
                 throw ServiceError.serverError(apiError.message ?? apiError.error)
             }
             throw ServiceError.serverError("HTTP \(httpResponse.statusCode)")
         }
+    }
+
+    // MARK: - Jev classifier (managed)
+
+    struct ClassifyAttendee: Encodable, Equatable, Sendable {
+        let name: String
+        let role: String?
+        let isSelf: Bool
+    }
+
+    struct ClassifySalesResult: Decodable, Equatable, Sendable {
+        /// Raw probability the window is a commercial conversation, 0…1.
+        let isSales: Double
+        /// 0…4 commercial-stage rubric position; display only.
+        let stage: Double?
+    }
+
+    struct ClassifySpeakerChoice: Decodable, Equatable, Sendable {
+        let choice: String
+        let confidence: Double
+    }
+
+    struct ClassifySpeakerNamesResult: Decodable, Equatable, Sendable {
+        let speakers: [String: ClassifySpeakerChoice]
+
+        /// Attendee names chosen for speaker IDs, `unknown` dropped.
+        var namedSpeakers: [String: String] {
+            speakers.reduce(into: [:]) { out, entry in
+                if entry.value.choice != "unknown" { out[entry.key] = entry.value.choice }
+            }
+        }
+    }
+
+    /// Managed sales-conversation judgment over a bounded recent-transcript window.
+    /// Throws `ServiceError.classifierUnavailable` against a backend without the proxy.
+    func classifySalesConversation(
+        deviceId: String,
+        meetingTitle: String?,
+        transcriptWindow: String
+    ) async throws -> ClassifySalesResult {
+        var body: [String: Any] = ["kind": "sales_nudge", "transcriptWindow": transcriptWindow]
+        if let meetingTitle, !meetingTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            body["meetingTitle"] = meetingTitle
+        }
+        let request = makeRequest(path: "/classify", method: "POST", deviceId: deviceId, body: body)
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let (data, response) = try await send(request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(ClassifySalesResult.self, from: data, endpoint: "/classify sales_nudge")
+        DebugLogger.shared.log(.app, "API classify sales: chars=\(transcriptWindow.count), isSales=\(String(format: "%.2f", decoded.isSales)), duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt))")
+        return decoded
+    }
+
+    /// Managed attendee speaker naming: one Choice per speaker ID over the attendee list.
+    func classifySpeakerNames(
+        deviceId: String,
+        transcript: String,
+        attendees: [ClassifyAttendee],
+        speakerIDs: [String]
+    ) async throws -> ClassifySpeakerNamesResult {
+        let body: [String: Any] = [
+            "kind": "speaker_names",
+            "transcript": transcript,
+            "attendees": attendees.map { attendee -> [String: Any] in
+                var dict: [String: Any] = ["name": attendee.name, "isSelf": attendee.isSelf]
+                if let role = attendee.role { dict["role"] = role }
+                return dict
+            },
+            "speakerIDs": speakerIDs,
+        ]
+        let request = makeRequest(path: "/classify", method: "POST", deviceId: deviceId, body: body)
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let (data, response) = try await send(request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(ClassifySpeakerNamesResult.self, from: data, endpoint: "/classify speaker_names")
+        DebugLogger.shared.log(.app, "API classify speakers: chars=\(transcript.count), ids=\(speakerIDs.count), named=\(decoded.namedSpeakers.count), duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt))")
+        return decoded
     }
 }
 

@@ -19,6 +19,8 @@
 		D20000000000000000000011 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
 		D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
 		D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
+		D20000000000000000000071 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
+		D20000000000000000000072 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
 		D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		3C2BEFA52F9981830058C8BE /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2BEFA42F9981830058C8BE /* UpdateService.swift */; };
 		A10000010000000000000001 /* MinitiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* MinitiApp.swift */; };
@@ -270,6 +272,7 @@
 		D20000000000000000000050 /* Acknowledgements */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Acknowledgements; sourceTree = "<group>"; };
 		D20000000000000000000060 /* AcknowledgementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgementsView.swift; sourceTree = "<group>"; };
 		D20000000000000000000020 /* OnDeviceDiarizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000070 /* JevClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevClassifierTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000022 /* TemplateSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSettingsViews.swift; sourceTree = "<group>"; };
 		D10000000000000000000025 /* CustomInsightTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -475,6 +478,7 @@
 			children = (
 				D10000000000000000000025 /* CustomInsightTemplateTests.swift */,
 				D20000000000000000000020 /* OnDeviceDiarizationTests.swift */,
+				D20000000000000000000070 /* JevClassifierTests.swift */,
 				D1000000000000000000001C /* MeetingJourneyTests.swift */,
 				D10000000000000000000019 /* CalendarEventDecodingTests.swift */,
 				D10000000000000000000016 /* MinitiAPIServiceTransportTests.swift */,
@@ -860,6 +864,7 @@
 			files = (
 				D10000000000000000000026 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */,
+				D20000000000000000000071 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001D /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001A /* CalendarEventDecodingTests.swift in Sources */,
 				D10000000000000000000017 /* MinitiAPIServiceTransportTests.swift in Sources */,
@@ -886,6 +891,7 @@
 			files = (
 				D10000000000000000000027 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */,
+				D20000000000000000000072 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001E /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001B /* CalendarEventDecodingTests.swift in Sources */,
 				D10000000000000000000018 /* MinitiAPIServiceTransportTests.swift in Sources */,
