@@ -39,6 +39,8 @@ sed -i '' 's/CURRENT_PROJECT_VERSION = OLD_BUILD;/CURRENT_PROJECT_VERSION = NEW_
 
 ### 2. Build, sign, notarize, package
 
+The first build on a machine runs `scripts/fetch-nemotron-model.sh` as a build phase (190 MB from HuggingFace, pinned and checksummed, into the gitignored `Miniti/Resources/NemotronDiarizer/`); it needs network once and is a no-op afterwards. `scripts/fetch-nemotron-model.sh --verify` checks the files without downloading. The DMG and the App Store upload are about 190 MB larger than 2.9.x because of it.
+
 ```sh
 fastlane mac release
 ```

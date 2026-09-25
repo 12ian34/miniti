@@ -166,6 +166,19 @@ final class OnDeviceDiarizationService: ObservableObject {
     /// finalisation delay so speaker labels never arrive after the words.
     nonisolated static let preset = Nemotron3Config.low
 
+    /// The model ships inside the app: `Miniti/Resources/NemotronDiarizer` (a folder
+    /// reference, filled by `scripts/fetch-nemotron-model.sh` as a build phase) holds the
+    /// preset's `.mlmodelc` and `learnable_sil_emb.bin`. Nil when the folder is missing
+    /// from the bundle, in which case the HuggingFace download is the backup.
+    nonisolated static var bundledModelDirectory: URL? {
+        guard let dir = Bundle.main.url(forResource: "NemotronDiarizer", withExtension: nil) else { return nil }
+        let fm = FileManager.default
+        let model = dir.appendingPathComponent(preset.modelFileName).appendingPathComponent("coremldata.bin")
+        let silence = dir.appendingPathComponent(ModelNames.Nemotron3.silenceEmbeddingFile)
+        guard fm.fileExists(atPath: model.path), fm.fileExists(atPath: silence.path) else { return nil }
+        return dir
+    }
+
     @Published private(set) var status: Status
     private var models: [TranscriptSource: Nemotron3Models] = [:]
     private var prepareTask: Task<Void, Never>?
@@ -199,9 +212,9 @@ final class OnDeviceDiarizationService: ObservableObject {
         case .unsupported:
             return "Needs a Mac or iPhone with Apple silicon. Deepgram separates speakers on this device."
         case .idle:
-            return "Model not downloaded yet. Turn the setting on to download it."
+            return "Off. Turn the setting on to load the model."
         case .preparing(let fraction):
-            return "Downloading and preparing the model, \(Int((fraction * 100).rounded()))%."
+            return fraction > 0 ? "Downloading and preparing the model, \(Int((fraction * 100).rounded()))%." : "Preparing the model."
         case .ready:
             return "Ready. New recordings separate speakers on this device."
         case .failed(let message):
@@ -219,20 +232,29 @@ final class OnDeviceDiarizationService: ObservableObject {
         prepareTask = Task { [weak self] in
             guard let self else { return }
             do {
+                let bundled = Self.bundledModelDirectory
                 for source in missing.sorted(by: { $0.rawValue < $1.rawValue }) {
-                    let loaded = try await Nemotron3Models.loadFromHuggingFace(
-                        config: Self.preset,
-                        computeUnits: .all,
-                        progressHandler: { [weak self] progress in
-                            let fraction = progress.fractionCompleted
-                            Task { @MainActor [weak self] in
-                                guard let self, case .preparing = self.status else { return }
-                                self.status = .preparing(fraction)
+                    let loaded: Nemotron3Models
+                    if let bundled {
+                        loaded = try await Nemotron3Models.load(config: Self.preset, directory: bundled, computeUnits: .all)
+                    } else {
+                        // Backup path: the bundle is missing its model folder (a build without
+                        // the fetch phase). Download from HuggingFace into the app container.
+                        DebugLogger.shared.log(.audio, "On-device diarization model not in the app bundle; downloading")
+                        loaded = try await Nemotron3Models.loadFromHuggingFace(
+                            config: Self.preset,
+                            computeUnits: .all,
+                            progressHandler: { [weak self] progress in
+                                let fraction = progress.fractionCompleted
+                                Task { @MainActor [weak self] in
+                                    guard let self, case .preparing = self.status else { return }
+                                    self.status = .preparing(fraction)
+                                }
                             }
-                        }
-                    )
+                        )
+                    }
                     self.models[source] = loaded
-                    DebugLogger.shared.log(.audio, "On-device diarization model ready for \(source.rawValue) (compile \(String(format: "%.1f", loaded.compilationDuration))s)")
+                    DebugLogger.shared.log(.audio, "On-device diarization model ready for \(source.rawValue) from \(bundled != nil ? "bundle" : "download") (compile \(String(format: "%.1f", loaded.compilationDuration))s)")
                 }
                 self.status = .ready
             } catch {
