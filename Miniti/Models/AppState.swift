@@ -291,6 +291,7 @@ enum SettingsSearchCatalog {
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
         .init("recording.onDeviceSpeakers", "On-device Speaker Separation", section: "Recording", destination: .recording, keywords: ["diarization", "nemotron", "beta", "privacy", "speakers", "local"]),
+        .init("ai.jevClassifier", "Faster Speaker Naming and Sales Detection", section: "Models", destination: .ai, keywords: ["typesafe", "jev", "classifier", "beta", "speaker names", "sales"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
         .init("templates.list", "Templates", section: "Templates", destination: .templates, keywords: ["BANT", "SPIN", "interview", "stand-up", "1:1", "check-in", "specialist view", "sections"]),
@@ -1318,6 +1319,10 @@ final class AppState: ObservableObject {
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
+    /// Managed-mode TypeSafe Jev classifier for attendee speaker naming and the sales
+    /// nudge (docs/jev-system-one-plan.md, slice 1). Default off: it sends bounded transcript
+    /// windows to a third processor, so it is opt-in with copy that names the vendor.
+    @AppStorage("jevClassifierEnabled") var jevClassifierEnabled: Bool = false
     /// Timestamp (TimeInterval since 1970) after which the calendar nudge card on the
     /// home screen should stop being hidden. 0 = never dismissed. `.infinity` (or any
     /// value > 10 years from now) = permanently dismissed via the `×` button.
@@ -1362,6 +1367,26 @@ final class AppState: ObservableObject {
     private var salesDetectionSignalsSeen: Set<String> = []
     private var salesDetectionNudgeFired = false
     nonisolated static let salesDetectionMinDistinctSignals = 3
+
+    // Jev sales judgment (managed, opt-in). Constants are the eval's operating point;
+    // rerun scripts/jev-eval in miniti-api before changing any of them or the question
+    // version behind /api/classify.
+    /// Ask every this many new final segments.
+    nonisolated static let jevSalesTickSegments = 8
+    /// State window: the most recent finals sent with each ask.
+    nonisolated static let jevSalesWindowSegments = 40
+    /// Raw Noul threshold per tick (v1-2026-09-21 question).
+    nonisolated static let jevSalesThreshold = 0.7
+    /// Consecutive ticks at or above the threshold before the nudge fires.
+    nonisolated static let jevSalesConsecutiveTicks = 2
+    /// Never ask more often than this, whatever the segment count does.
+    nonisolated static let jevSalesMinInterval: TimeInterval = 20
+    private var jevSalesScores: [Double] = []
+    private var jevSalesLastTickSegmentCount = 0
+    private var jevSalesLastRequestAt: Date?
+    private var jevSalesRequestInFlight = false
+    /// False after a classifier failure this meeting: the phrase heuristic takes over.
+    private var jevSalesHealthy = true
     /// Deliberately commercial-only vocabulary: generic meeting words ("decision",
     /// "timeline") are excluded so ordinary planning meetings don't trigger this.
     nonisolated static let salesSignalPhrases: [String] = [
@@ -3580,6 +3605,7 @@ final class AppState: ObservableObject {
                 }
                 recordEnvironmentEvidence(for: segment)
                 evaluateSalesDetection(for: text)
+                evaluateJevSalesDetection(finalCount: updated.filter(\.isFinal).count)
             }
             switch mergeResult {
             case .appended:
@@ -4488,6 +4514,88 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Managed Jev speaker naming (opt-in). Returns nil, meaning "use GPT as today", when
+    /// the setting is off, there are no calendar candidates, no speaker still needs a name,
+    /// or the classifier fails. Answers still pass `transcriptSupportedSpeakerNames` after
+    /// this, exactly like GPT answers.
+    private func inferSpeakerNamesWithJevIfEnabled(
+        finalSegments: [LiveSegment],
+        candidates: [String],
+        meetingID: UUID
+    ) async -> [String: String]? {
+        guard appMode == .managed, jevClassifierEnabled, let minitiAPIService else { return nil }
+        guard !candidates.isEmpty else { return nil }
+        let unresolved = Self.unresolvedSpeakerIDs(in: finalSegments, named: liveSpeakerNames, overrides: liveSpeakerOverrides, selfIDs: liveSelfSpeakerIDs)
+        guard !unresolved.isEmpty else { return nil }
+        let kept = Self.jevSpeakerNamingSegments(finalSegments, candidateNames: candidates)
+        let transcript = transcriptTextWithSpeakerIDs(from: kept)
+        guard !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        let attendees = (currentMeeting?.attendees ?? []).compactMap { attendee -> MinitiAPIService.ClassifyAttendee? in
+            let name = attendee.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !name.isEmpty else { return nil }
+            return MinitiAPIService.ClassifyAttendee(name: name, role: nil, isSelf: attendee.isSelf)
+        }
+        guard attendees.contains(where: { !$0.isSelf }) else { return nil }
+        do {
+            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+            let result = try await minitiAPIService.classifySpeakerNames(
+                deviceId: deviceId,
+                transcript: transcript,
+                attendees: attendees,
+                speakerIDs: unresolved.map(String.init)
+            )
+            guard currentMeeting?.id == meetingID else { return nil }
+            DebugLogger.shared.log(.app, "Speaker-names via Jev: ids=\(unresolved), kept=\(kept.count)/\(finalSegments.count) turns, named=\(result.namedSpeakers.count)")
+            return result.namedSpeakers
+        } catch {
+            DebugLogger.shared.log(.app, "Speaker-names via Jev failed, using GPT: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// Speaker IDs with speech that have neither an inferred name nor a user override,
+    /// excluding the person recording.
+    nonisolated static func unresolvedSpeakerIDs(in segments: [LiveSegment], named: [String: String], overrides: Set<String>, selfIDs: Set<Int>) -> [Int] {
+        var seen: [Int] = []
+        for segment in segments where segment.isFinal {
+            let id = segment.speaker
+            guard !selfIDs.contains(id), !seen.contains(id) else { continue }
+            guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let key = String(id)
+            if overrides.contains(key) { continue }
+            if !(named[key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+            seen.append(id)
+        }
+        return seen.sorted()
+    }
+
+    /// Turns worth sending for attendee naming: the first 6 finals, any final that contains
+    /// an attendee first name or an introduction pattern, and one neighbour either side.
+    /// Bounds the state Jev sees (it degrades with irrelevant context) and keeps the words
+    /// that carry naming evidence.
+    nonisolated static func jevSpeakerNamingSegments(_ segments: [LiveSegment], candidateNames: [String]) -> [LiveSegment] {
+        let finals = segments.filter { $0.isFinal }
+        guard !finals.isEmpty else { return [] }
+        let names = candidateNames.flatMap { [$0, String($0.split(separator: " ").first ?? "")] }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { $0.count > 2 }
+        let intro = try? NSRegularExpression(pattern: "\\b(i'm|i am|this is|my name is|it's me|speaking|here)\\b", options: [.caseInsensitive])
+        var keep = Set<Int>()
+        for (index, segment) in finals.enumerated() {
+            let lower = segment.text.lowercased()
+            let mentionsName = names.contains { name in
+                lower.range(of: "\\b\(NSRegularExpression.escapedPattern(for: name))\\b", options: .regularExpression) != nil
+            }
+            let hasIntro = intro.map { $0.firstMatch(in: segment.text, range: NSRange(segment.text.startIndex..., in: segment.text)) != nil } ?? false
+            if index < 6 || mentionsName || hasIntro {
+                keep.insert(index)
+                if index > 0 { keep.insert(index - 1) }
+                if index + 1 < finals.count { keep.insert(index + 1) }
+            }
+        }
+        return finals.enumerated().filter { keep.contains($0.offset) }.map(\.element)
+    }
+
     /// When the calendar has exactly one non-self named attendee and the
     /// transcript has exactly one confirmed system-channel speaker with enough
     /// speech, name that speaker after the attendee without an API request.
@@ -4588,7 +4696,9 @@ final class AppState: ObservableObject {
 
         do {
             let inferred: [String: String]
-            if appMode == .managed, let minitiAPIService {
+            if let jevNames = await inferSpeakerNamesWithJevIfEnabled(finalSegments: finalSegments, candidates: candidates, meetingID: meetingID) {
+                inferred = jevNames
+            } else if appMode == .managed, let minitiAPIService {
                 let deviceId = DeviceIdentifier.getOrCreateDeviceId()
                 inferred = try await minitiAPIService.inferSpeakerNames(
                     deviceId: deviceId,
@@ -5841,6 +5951,10 @@ final class AppState: ObservableObject {
         liveMicSpeakerIDs = []
         salesDetectionSignalsSeen = []
         salesDetectionNudgeFired = false
+        jevSalesScores = []
+        jevSalesLastTickSegmentCount = 0
+        jevSalesLastRequestAt = nil
+        jevSalesHealthy = true
         resetEnvironmentInference()
         refreshEnvironmentContextEvidence()
         evaluateEnvironmentInference()
@@ -7984,6 +8098,10 @@ final class AppState: ObservableObject {
         liveMicSpeakerIDs = []
         salesDetectionSignalsSeen = []
         salesDetectionNudgeFired = false
+        jevSalesScores = []
+        jevSalesLastTickSegmentCount = 0
+        jevSalesLastRequestAt = nil
+        jevSalesHealthy = true
         resetEnvironmentInference()
         recordingDuration = 0
         recordingStartDate = nil
@@ -10870,9 +10988,27 @@ final class AppState: ObservableObject {
             salesDetectionSignalsSeen.formUnion(matches)
         }
         guard salesDetectionSignalsSeen.count >= Self.salesDetectionMinDistinctSignals else { return }
-        // Consume the once-per-meeting shot only when a surface actually accepted the
-        // alert — iOS declines foreground delivery, so the suggestion stays pending
-        // and lands when the app is next in the background.
+        // While the Jev classifier is answering, the phrase list stays silent: its false
+        // positives (standups that say "deals" and "pricing") are what the classifier fixes.
+        // Any classifier failure hands the decision straight back here.
+        guard !Self.phraseHeuristicSuppressed(classifierActive: isJevSalesClassifierActive, classifierHealthy: jevSalesHealthy) else { return }
+        fireSalesDetectionNudge(reason: "signals=\(salesDetectionSignalsSeen.sorted())")
+    }
+
+    /// The phrase heuristic yields to the classifier only while the classifier is on and
+    /// has not failed this meeting.
+    nonisolated static func phraseHeuristicSuppressed(classifierActive: Bool, classifierHealthy: Bool) -> Bool {
+        classifierActive && classifierHealthy
+    }
+
+    private var isJevSalesClassifierActive: Bool {
+        appMode == .managed && jevClassifierEnabled && minitiAPIService != nil
+    }
+
+    /// One nudge per meeting, suggest-only. Consume the once-per-meeting shot only when a
+    /// surface actually accepted the alert — iOS declines foreground delivery, so the
+    /// suggestion stays pending and lands when the app is next in the background.
+    private func fireSalesDetectionNudge(reason: String) {
         let delivered = deliverLiveRecordingAlert(
             identifier: "miniti.nudge.sales.\(UUID().uuidString)",
             kind: .salesDetected,
@@ -10881,7 +11017,63 @@ final class AppState: ObservableObject {
         )
         guard delivered else { return }
         salesDetectionNudgeFired = true
-        DebugLogger.shared.log(.app, "Sales detection nudge fired: signals=\(salesDetectionSignalsSeen.sorted())")
+        DebugLogger.shared.log(.app, "Sales detection nudge fired: \(reason)")
+    }
+
+    /// Fire when the last `jevSalesConsecutiveTicks` scores all clear the threshold.
+    nonisolated static func shouldFireJevSalesNudge(scores: [Double], threshold: Double = jevSalesThreshold, consecutive: Int = jevSalesConsecutiveTicks) -> Bool {
+        guard scores.count >= consecutive else { return false }
+        return scores.suffix(consecutive).allSatisfy { $0 >= threshold }
+    }
+
+    /// The bounded state window for one sales tick: the last `jevSalesWindowSegments`
+    /// non-empty finals as "Speaker N: text" lines, newest last.
+    nonisolated static func jevSalesWindow(from segments: [LiveSegment], limit: Int = jevSalesWindowSegments) -> String {
+        var lines: [String] = []
+        for segment in segments.reversed() where segment.isFinal {
+            let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { continue }
+            let label = DeepgramService.isMicAppSpeakerID(segment.speaker) ? "Mic\(segment.speaker - DeepgramService.micSpeakerID)" : "Remote\(segment.speaker)"
+            lines.append("\(label): \(text)")
+            if lines.count >= limit { break }
+        }
+        return lines.reversed().joined(separator: "\n")
+    }
+
+    /// Managed Jev sales judgment on the existing final-segment path: every
+    /// `jevSalesTickSegments` new finals (and at least `jevSalesMinInterval` apart) send the
+    /// recent window; two consecutive ticks over the threshold fire the same once-per-meeting
+    /// nudge the heuristic uses. Failure marks the classifier unhealthy for this meeting.
+    private func evaluateJevSalesDetection(finalCount: Int) {
+        guard isJevSalesClassifierActive, jevSalesHealthy, isRecording,
+              notifyOnSalesDetection, !salesDetectionNudgeFired, !salesInsightsEnabled,
+              !jevSalesRequestInFlight else { return }
+        guard finalCount >= jevSalesLastTickSegmentCount + Self.jevSalesTickSegments else { return }
+        if let last = jevSalesLastRequestAt, Date().timeIntervalSince(last) < Self.jevSalesMinInterval { return }
+        guard let minitiAPIService, let meetingID = currentMeeting?.id else { return }
+        let window = Self.jevSalesWindow(from: liveSegments)
+        guard !window.isEmpty else { return }
+        jevSalesLastTickSegmentCount = finalCount
+        jevSalesLastRequestAt = Date()
+        jevSalesRequestInFlight = true
+        let title = currentTitleSuffix
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.jevSalesRequestInFlight = false }
+            do {
+                let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+                let result = try await minitiAPIService.classifySalesConversation(deviceId: deviceId, meetingTitle: title, transcriptWindow: window)
+                guard self.currentMeeting?.id == meetingID, self.isRecording else { return }
+                self.jevSalesScores.append(result.isSales)
+                if Self.shouldFireJevSalesNudge(scores: self.jevSalesScores), !self.salesDetectionNudgeFired, !self.salesInsightsEnabled {
+                    self.fireSalesDetectionNudge(reason: "jev scores=\(self.jevSalesScores.suffix(3).map { String(format: "%.2f", $0) })")
+                }
+            } catch {
+                guard self.currentMeeting?.id == meetingID else { return }
+                self.jevSalesHealthy = false
+                DebugLogger.shared.log(.app, "Jev sales classifier failed, phrase heuristic takes over this meeting: \(error.localizedDescription)")
+            }
+        }
     }
 
     /// Routes live questions/coaching without assuming that a frontmost Miniti window

@@ -495,6 +495,14 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.trailing)
                     }
+
+                    if appState.appMode == .managed {
+                        Toggle("Faster speaker naming and sales detection (beta)", isOn: $appState.jevClassifierEnabled)
+                            .id("ai.jevClassifier")
+                        Text("Uses TypeSafe's Jev model to match speakers to calendar attendees and to spot sales conversations in under a second, instead of GPT and a word list. Sends short recent transcript windows to TypeSafe through miniti's servers. GPT still writes names it cannot match and every summary. Off by default while it is in beta.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .id("ai.models")
 
