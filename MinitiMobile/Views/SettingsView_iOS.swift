@@ -550,6 +550,17 @@ private struct SettingsDetailView_iOS: View {
                     Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("Separate speakers on this device (beta)", isOn: $appState.onDeviceSpeakerSeparationEnabled)
+                        .id("recording.onDeviceSpeakers")
+                        .disabled(!OnDeviceDiarizationService.isHardwareSupported)
+                        .onChange(of: appState.onDeviceSpeakerSeparationEnabled) { _, _ in
+                            appState.refreshOnDeviceDiarizationAvailability()
+                        }
+                    OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
+                    Text("Runs NVIDIA's Nemotron speaker model on this device to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. Downloads a 190 MB model the first time you turn it on. Applies to new recordings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Live Activity") {
@@ -1433,5 +1444,17 @@ struct PermissionBadge_iOS: View {
         }
         .font(.caption)
         .foregroundStyle(granted ? .green : .red)
+    }
+}
+
+
+/// Live status line for the on-device speaker separation toggle.
+private struct OnDeviceSpeakerSeparationStatusText: View {
+    @ObservedObject var service: OnDeviceDiarizationService
+
+    var body: some View {
+        Text(service.statusDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }

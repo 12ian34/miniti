@@ -1,0 +1,361 @@
+import Foundation
+import FluidAudio
+
+// MARK: - Speaker timeline
+
+/// Per-source speaker-activity timeline written by the on-device diarizer and read by the
+/// off-main Deepgram parse. One byte per 10 ms frame holds the dominant Nemotron speaker slot
+/// (0…7) or `silence`. Deepgram word timestamps are socket-relative; `markSocketStart()`
+/// records how much diarizer audio each source had received when the current socket started
+/// sending, so a socket time maps onto the timeline as `origin + t`.
+///
+/// Thread-safe: written from the diarization queue and the audio thread, read from the parse
+/// task. Reads are cheap (one pass over a word's frames), writes append.
+final class OnDeviceSpeakerTimeline: @unchecked Sendable {
+    struct Lookup: Equatable, Sendable {
+        /// Provider speaker number in the same namespace Deepgram's `speaker` field uses:
+        /// channel-local, arrival-ordered, stable for the whole meeting.
+        let providerSpeaker: Int
+        /// Agreement × coverage in `0…1`; `fallbackConfidence` when borrowed from a neighbour.
+        let confidence: Double
+    }
+
+    static let silence: UInt8 = 255
+    static let frameSeconds: Double = 0.01
+    static let sampleRate: Double = 16_000
+    /// A word past the diarizer horizon, or inside a pause, borrows the last active speaker
+    /// from at most this far back. Longer gaps mean nobody was talking; keep the provider default.
+    static let neighbourLookbackSeconds: Double = 3.0
+    /// Confidence given to a borrowed speaker: below the segmentation switch gate (0.58), so a
+    /// borrowed label can continue a turn but never start one.
+    static let fallbackConfidence: Double = 0.3
+
+    let sources: Set<TranscriptSource>
+    private let lock = NSLock()
+    private var dominant: [TranscriptSource: [UInt8]] = [:]
+    private var fedSamples: [TranscriptSource: Int] = [:]
+    private var socketOriginSeconds: [TranscriptSource: Double] = [:]
+
+    init(sources: Set<TranscriptSource>) {
+        self.sources = sources
+        for source in sources {
+            dominant[source] = []
+            fedSamples[source] = 0
+            socketOriginSeconds[source] = 0
+        }
+    }
+
+    func covers(_ source: TranscriptSource) -> Bool { sources.contains(source) }
+
+    /// Advance the diarizer clock for `source`. Call before the same samples go to Deepgram.
+    func noteAudioFed(source: TranscriptSource, sampleCount: Int) {
+        guard sampleCount > 0, sources.contains(source) else { return }
+        lock.lock(); defer { lock.unlock() }
+        fedSamples[source, default: 0] += sampleCount
+    }
+
+    /// Socket time 0 of the Deepgram connection now sending == this much diarizer audio.
+    func markSocketStart() {
+        lock.lock(); defer { lock.unlock() }
+        for source in sources {
+            socketOriginSeconds[source] = Double(fedSamples[source] ?? 0) / Self.sampleRate
+        }
+    }
+
+    /// Append one chunk of speaker probabilities (`[frameCount * numSpeakers]`, 10 ms frames).
+    func append(source: TranscriptSource, probabilities: [Float], frameCount: Int, numSpeakers: Int, threshold: Float = 0.5) {
+        guard frameCount > 0, numSpeakers > 0, probabilities.count >= frameCount * numSpeakers, sources.contains(source) else { return }
+        var frames = [UInt8](repeating: Self.silence, count: frameCount)
+        for frame in 0..<frameCount {
+            var best = -1
+            var bestProbability = threshold
+            let base = frame * numSpeakers
+            for slot in 0..<numSpeakers {
+                let probability = probabilities[base + slot]
+                if probability > bestProbability {
+                    bestProbability = probability
+                    best = slot
+                }
+            }
+            if best >= 0 { frames[frame] = UInt8(best) }
+        }
+        lock.lock(); defer { lock.unlock() }
+        dominant[source, default: []].append(contentsOf: frames)
+    }
+
+    /// Seconds of diarizer output available for `source`.
+    func processedSeconds(source: TranscriptSource) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        return Double(dominant[source]?.count ?? 0) * Self.frameSeconds
+    }
+
+    /// Seconds of audio fed for `source`.
+    func fedSeconds(source: TranscriptSource) -> Double {
+        lock.lock(); defer { lock.unlock() }
+        return Double(fedSamples[source] ?? 0) / Self.sampleRate
+    }
+
+    /// Speaker for a word spanning `socketStart..<socketEnd` seconds of the current socket.
+    /// Majority of the dominant speaker over the word's frames; a silent or not-yet-processed
+    /// span borrows the last active speaker within `neighbourLookbackSeconds`; nil otherwise.
+    func lookup(source: TranscriptSource, socketStart: Double, socketEnd: Double) -> Lookup? {
+        lock.lock(); defer { lock.unlock() }
+        guard let frames = dominant[source], let origin = socketOriginSeconds[source] else { return nil }
+        let absoluteStart = max(0, origin + socketStart)
+        let absoluteEnd = max(absoluteStart, origin + socketEnd)
+        let first = Int(absoluteStart / Self.frameSeconds)
+        let lastExclusive = max(first + 1, Int((absoluteEnd / Self.frameSeconds).rounded(.up)))
+        let requested = lastExclusive - first
+        let available = max(0, min(lastExclusive, frames.count) - first)
+
+        if available > 0 {
+            var counts = [Int](repeating: 0, count: 256)
+            for index in first..<(first + available) { counts[Int(frames[index])] += 1 }
+            counts[Int(Self.silence)] = 0
+            var best = -1
+            var bestCount = 0
+            for slot in 0..<Int(Self.silence) where counts[slot] > bestCount {
+                best = slot
+                bestCount = counts[slot]
+            }
+            if best >= 0 {
+                let nonSilent = counts.reduce(0, +)
+                let agreement = Double(bestCount) / Double(max(nonSilent, 1))
+                let coverage = Double(available) / Double(max(requested, 1))
+                return Lookup(providerSpeaker: best, confidence: agreement * coverage)
+            }
+        }
+
+        // Silent span, or beyond the horizon: borrow the most recent active speaker.
+        let searchEnd = min(first + available, frames.count)
+        let searchStart = max(0, searchEnd - Int(Self.neighbourLookbackSeconds / Self.frameSeconds))
+        var index = searchEnd - 1
+        while index >= searchStart {
+            if frames[index] != Self.silence {
+                return Lookup(providerSpeaker: Int(frames[index]), confidence: Self.fallbackConfidence)
+            }
+            index -= 1
+        }
+        return nil
+    }
+}
+
+// MARK: - Service
+
+/// Runs NVIDIA Nemotron-3-Diarization on device (Core ML via FluidAudio) on the same 16 kHz PCM
+/// miniti streams to Deepgram, one diarizer per capture source. While a session is active its
+/// `OnDeviceSpeakerTimeline` replaces Deepgram's per-word speaker numbers, and the Deepgram
+/// socket is opened without the diarization add-on. Every failure path leaves Deepgram
+/// diarization in charge: unsupported hardware, model not downloaded, load failure, or an
+/// inference error mid-session.
+@MainActor
+final class OnDeviceDiarizationService: ObservableObject {
+    enum Status: Equatable {
+        /// Not Apple silicon (or Core ML unavailable); the setting is shown as unavailable.
+        case unsupported
+        /// Supported, nothing loaded.
+        case idle
+        /// Downloading or compiling; fraction in `0…1`.
+        case preparing(Double)
+        /// Models loaded for every requested source; sessions can start.
+        case ready
+        case failed(String)
+    }
+
+    /// Model-card streaming profile with 1.04 s latency; sits inside Deepgram's own
+    /// finalisation delay so speaker labels never arrive after the words.
+    nonisolated static let preset = Nemotron3Config.low
+
+    @Published private(set) var status: Status
+    private var models: [TranscriptSource: Nemotron3Models] = [:]
+    private var prepareTask: Task<Void, Never>?
+    /// The live session, read from the audio thread by `ingest`.
+    nonisolated(unsafe) private var _session: Session?
+    private(set) var activeTimeline: OnDeviceSpeakerTimeline?
+
+    nonisolated static var isHardwareSupported: Bool {
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        var value: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let ok = sysctlbyname("hw.optional.arm64", &value, &size, nil, 0) == 0
+        return ok && value == 1
+        #endif
+    }
+
+    init() {
+        status = Self.isHardwareSupported ? .idle : .unsupported
+    }
+
+    var isReady: Bool {
+        if case .ready = status { return true }
+        return false
+    }
+
+    /// One-line status for Settings.
+    var statusDescription: String {
+        switch status {
+        case .unsupported:
+            return "Needs a Mac or iPhone with Apple silicon. Deepgram separates speakers on this device."
+        case .idle:
+            return "Model not downloaded yet. Turn the setting on to download it."
+        case .preparing(let fraction):
+            return "Downloading and preparing the model, \(Int((fraction * 100).rounded()))%."
+        case .ready:
+            return "Ready. New recordings separate speakers on this device."
+        case .failed(let message):
+            return "Could not load the model (\(message)). Deepgram separates speakers until it loads."
+        }
+    }
+
+    /// Download (first time) and load one model per source. Safe to call repeatedly.
+    func prepare(sources: Set<TranscriptSource>) {
+        guard Self.isHardwareSupported else { status = .unsupported; return }
+        if prepareTask != nil { return }
+        let missing = sources.filter { models[$0] == nil }
+        guard !missing.isEmpty else { status = .ready; return }
+        status = .preparing(0)
+        prepareTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for source in missing.sorted(by: { $0.rawValue < $1.rawValue }) {
+                    let loaded = try await Nemotron3Models.loadFromHuggingFace(
+                        config: Self.preset,
+                        computeUnits: .all,
+                        progressHandler: { [weak self] progress in
+                            let fraction = progress.fractionCompleted
+                            Task { @MainActor [weak self] in
+                                guard let self, case .preparing = self.status else { return }
+                                self.status = .preparing(fraction)
+                            }
+                        }
+                    )
+                    self.models[source] = loaded
+                    DebugLogger.shared.log(.audio, "On-device diarization model ready for \(source.rawValue) (compile \(String(format: "%.1f", loaded.compilationDuration))s)")
+                }
+                self.status = .ready
+            } catch {
+                self.status = .failed(error.localizedDescription)
+                DebugLogger.shared.log(.audio, "On-device diarization model load failed: \(error.localizedDescription)")
+            }
+            self.prepareTask = nil
+        }
+    }
+
+    /// Drop loaded models (setting switched off). Active sessions keep running to their end.
+    func unload() {
+        prepareTask?.cancel()
+        prepareTask = nil
+        models = [:]
+        if status != .unsupported { status = .idle }
+    }
+
+    /// Start diarizing `sources` for one recording session. Returns nil, leaving Deepgram
+    /// diarization in charge, unless models for at least one requested source are loaded.
+    func beginSession(sources: Set<TranscriptSource>) -> OnDeviceSpeakerTimeline? {
+        guard isReady, _session == nil else { return nil }
+        let usable = sources.filter { models[$0] != nil }
+        guard !usable.isEmpty else { return nil }
+        let timeline = OnDeviceSpeakerTimeline(sources: usable)
+        var diarizers: [TranscriptSource: Nemotron3Diarizer] = [:]
+        for source in usable {
+            guard let model = models[source] else { continue }
+            diarizers[source] = Nemotron3Diarizer(config: Self.preset, models: model)
+        }
+        let session = Session(timeline: timeline, diarizers: diarizers)
+        _session = session
+        activeTimeline = timeline
+        DebugLogger.shared.log(.audio, "On-device diarization session started: sources=\(usable.map(\.rawValue).sorted())")
+        return timeline
+    }
+
+    /// Stop feeding the diarizers and flush their tails. The timeline stays valid for any
+    /// transcript still being parsed.
+    func endSession() {
+        guard let session = _session else { return }
+        _session = nil
+        activeTimeline = nil
+        session.finish()
+        DebugLogger.shared.log(.audio, "On-device diarization session ended: mic=\(String(format: "%.0f", session.timeline.processedSeconds(source: .microphone)))s system=\(String(format: "%.0f", session.timeline.processedSeconds(source: .system)))s")
+    }
+
+    /// Feed the PCM16 the app is about to send to Deepgram. Call before `sendAudio` so the
+    /// socket-start alignment sees these samples. Cheap when no session is active.
+    nonisolated func ingest(_ data: Data, multichannel: Bool, monoSource: TranscriptSource) {
+        guard let session = _session else { return }
+        session.ingest(data, multichannel: multichannel, monoSource: monoSource)
+    }
+
+    /// Split the PCM16 miniti sends to Deepgram into Float samples per source. Dual capture is
+    /// interleaved stereo (channel 0 mic, channel 1 system); everything else is mono.
+    nonisolated static func splitPCM16(_ data: Data, multichannel: Bool, monoSource: TranscriptSource) -> [TranscriptSource: [Float]] {
+        let sampleCount = data.count / MemoryLayout<Int16>.size
+        guard sampleCount > 0 else { return [:] }
+        var ints = [Int16](repeating: 0, count: sampleCount)
+        _ = ints.withUnsafeMutableBytes { data.copyBytes(to: $0) }
+        let scale: Float = 1.0 / 32_768.0
+        if multichannel {
+            let frames = sampleCount / 2
+            var mic = [Float](repeating: 0, count: frames)
+            var system = [Float](repeating: 0, count: frames)
+            for frame in 0..<frames {
+                mic[frame] = Float(ints[frame * 2]) * scale
+                system[frame] = Float(ints[frame * 2 + 1]) * scale
+            }
+            return [.microphone: mic, .system: system]
+        }
+        return [monoSource: ints.map { Float($0) * scale }]
+    }
+
+    // MARK: Session
+
+    final class Session: @unchecked Sendable {
+        let timeline: OnDeviceSpeakerTimeline
+        private let queue = DispatchQueue(label: "com.miniti.onDeviceDiarization", qos: .userInitiated)
+        private var diarizers: [TranscriptSource: Nemotron3Diarizer]
+        private var failed = false
+
+        init(timeline: OnDeviceSpeakerTimeline, diarizers: [TranscriptSource: Nemotron3Diarizer]) {
+            self.timeline = timeline
+            self.diarizers = diarizers
+        }
+
+        func ingest(_ data: Data, multichannel: Bool, monoSource: TranscriptSource) {
+            let split = OnDeviceDiarizationService.splitPCM16(data, multichannel: multichannel, monoSource: monoSource)
+            for (source, samples) in split where timeline.covers(source) {
+                // Clock advances on the audio thread so `markSocketStart` (same thread, right
+                // after this call) sees exactly the samples Deepgram is about to receive.
+                timeline.noteAudioFed(source: source, sampleCount: samples.count)
+                queue.async { [self] in process(source: source, samples: samples) }
+            }
+        }
+
+        private func process(source: TranscriptSource, samples: [Float]) {
+            guard !failed, let diarizer = diarizers[source] else { return }
+            diarizer.appendAudio(samples)
+            do {
+                for chunk in try diarizer.processBufferedAudio() {
+                    timeline.append(source: source, probabilities: chunk.probabilities, frameCount: chunk.frameCount, numSpeakers: chunk.numSpeakers)
+                }
+            } catch {
+                failed = true
+                DebugLogger.shared.log(.audio, "On-device diarization stopped for this session: \(error.localizedDescription)")
+            }
+        }
+
+        func finish() {
+            queue.async { [self] in
+                guard !failed else { return }
+                for (source, diarizer) in diarizers {
+                    if let chunks = try? diarizer.finishStream() {
+                        for chunk in chunks {
+                            timeline.append(source: source, probabilities: chunk.probabilities, frameCount: chunk.frameCount, numSpeakers: chunk.numSpeakers)
+                        }
+                    }
+                }
+                diarizers = [:]
+            }
+        }
+    }
+}

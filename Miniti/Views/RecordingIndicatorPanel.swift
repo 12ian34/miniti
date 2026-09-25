@@ -243,8 +243,8 @@ final class RecordingIndicatorCoordinator {
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            Task { @MainActor [weak self] in
+        ) { [weak self] _ in
+            Task { @MainActor in
                 self?.clampPanelToVisibleScreen()
             }
         }
@@ -369,8 +369,8 @@ final class RecordingIndicatorCoordinator {
             forName: NSWindow.didMoveNotification,
             object: panel,
             queue: .main
-        ) { _ in
-            Task { @MainActor [weak self] in
+        ) { [weak self] _ in
+            Task { @MainActor in
                 self?.savePanelPosition()
             }
         }

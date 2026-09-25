@@ -15,6 +15,10 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v2.10.0
+
+- new: (macOS and iOS) separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on Apple silicon instead of Deepgram's speaker detection. In our tests on recorded meetings it put 6 to 20% more of the words on the right speaker, and it does best in a room with several people on one mic. Audio still goes to Deepgram for the words. A 190 MB model downloads the first time you turn it on. Off by default while it is in beta
+
 ### 2026-09-13 - v2.9.0
 
 - new: (macOS and iOS) make your own templates. Settings, Templates: name it, add up to 8 sections with a line on what goes in each, preview it against a past meeting, then pick it from the More menu like BANT or SPIN. Duplicate a built-in to start, and export or import a template as a file
