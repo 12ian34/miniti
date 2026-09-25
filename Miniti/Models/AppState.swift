@@ -290,6 +290,7 @@ enum SettingsSearchCatalog {
         .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
+        .init("recording.onDeviceSpeakers", "On-device Speaker Separation", section: "Recording", destination: .recording, keywords: ["diarization", "nemotron", "beta", "privacy", "speakers", "local"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
         .init("templates.list", "Templates", section: "Templates", destination: .templates, keywords: ["BANT", "SPIN", "interview", "stand-up", "1:1", "check-in", "specialist view", "sections"]),
@@ -1309,6 +1310,13 @@ final class AppState: ObservableObject {
     @AppStorage("notifyOnSalesDetection") var notifyOnSalesDetection: Bool = true
     @AppStorage("notifyOnUpcomingMeeting") var notifyOnUpcomingMeeting: Bool = false
     @AppStorage("autoInferSpeakerNames") var autoInferSpeakerNames: Bool = true
+    /// Separate speakers with the on-device Nemotron model instead of Deepgram's diarizer.
+    /// Default off (beta). When the model is loaded, new sessions open the Deepgram socket
+    /// without the diarization add-on and take speaker numbers from the on-device timeline.
+    @AppStorage("onDeviceSpeakerSeparation") var onDeviceSpeakerSeparationEnabled: Bool = false
+    /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
+    /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
+    let onDeviceDiarization = OnDeviceDiarizationService()
     /// Timestamp (TimeInterval since 1970) after which the calendar nudge card on the
     /// home screen should stop being hidden. 0 = never dismissed. `.infinity` (or any
     /// value > 10 years from now) = permanently dismissed via the `×` button.
@@ -1915,6 +1923,7 @@ final class AppState: ObservableObject {
     private func setupServices() {
         audioCaptureService = AudioCaptureService()
         deepgramService = DeepgramService()
+        refreshOnDeviceDiarizationAvailability()
         insightsService = InsightsService()
         minitiAPIService = MinitiAPIService()
         #if os(iOS)
@@ -2165,7 +2174,8 @@ final class AppState: ObservableObject {
                     sessionKeyterms: self.deepgramSessionKeyterms(),
                     multichannel: useMultichannel,
                     monoSource: monoSource,
-                    preserveSpeakerIdentities: true
+                    preserveSpeakerIdentities: true,
+                    onDeviceSpeakerTimeline: self.onDeviceDiarization.activeTimeline
                 )
                 
                 // Give the socket a short window to establish before next retry.
@@ -2600,10 +2610,10 @@ final class AppState: ObservableObject {
             presentCallEndAskPrompt(app: app)
             return
         }
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             let authorized = settings.authorizationStatus == .authorized
                 || settings.authorizationStatus == .provisional
-            Task { @MainActor [weak self] in
+            Task { @MainActor in
                 guard let self else { return }
                 if authorized {
                     self.startEndingGrace(app: app)
@@ -4784,6 +4794,44 @@ final class AppState: ObservableObject {
     /// single-mic continuity for the primary `1000` identity), so names, overrides,
     /// and self marks attached to existing segments must be preserved. Only the
     /// naming-request pacing resets so inference re-runs for the new identities.
+    /// Capture sources this platform diarizes on device.
+    private var onDeviceDiarizationSources: Set<TranscriptSource> {
+        #if os(macOS)
+        return [.microphone, .system]
+        #else
+        return [.microphone]
+        #endif
+    }
+
+    /// Load or drop the on-device diarization models to match the setting. Called at
+    /// launch and whenever the setting changes. Never touches an active session.
+    func refreshOnDeviceDiarizationAvailability() {
+        guard !ScreenshotMode.isActive else { return }
+        if onDeviceSpeakerSeparationEnabled {
+            onDeviceDiarization.prepare(sources: onDeviceDiarizationSources)
+        } else {
+            onDeviceDiarization.unload()
+        }
+    }
+
+    /// Start an on-device diarization session for the sources this recording captures, or
+    /// nil (Deepgram diarizes) when the setting is off or the models are not ready.
+    private func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource) -> OnDeviceSpeakerTimeline? {
+        guard onDeviceSpeakerSeparationEnabled else { return nil }
+        let sources: Set<TranscriptSource> = multichannel ? [.microphone, .system] : [monoSource]
+        return onDeviceDiarization.beginSession(sources: sources)
+    }
+
+    /// Audio callback that feeds the on-device diarizer (when a session is active) and then
+    /// Deepgram. Order matters: the diarizer clock advances before the socket sees the packet.
+    private func makeAudioBufferHandler(multichannel: Bool, monoSource: TranscriptSource) -> @Sendable (Data) -> Void {
+        let diarization = onDeviceDiarization
+        return { [weak deepgramService] data in
+            diarization.ingest(data, multichannel: multichannel, monoSource: monoSource)
+            deepgramService?.sendAudio(data)
+        }
+    }
+
     func resetSpeakerIdentityForDeepgramReconnect() {
         lastSpeakerNamesSegmentCount = 0
         lastSpeakerNamesRequestAt = nil
@@ -6001,9 +6049,14 @@ final class AppState: ObservableObject {
         Task { @MainActor in
             audioCaptureService.stopCapture()
             do {
-                audioCaptureService.onAudioBuffer = { [weak deepgramService] data in
-                    deepgramService?.sendAudio(data)
-                }
+                #if os(macOS)
+                let repairMultichannel = captureMicrophone && captureSystemAudio
+                let repairMonoSource: TranscriptSource = captureMicrophone ? .microphone : .system
+                #else
+                let repairMultichannel = false
+                let repairMonoSource: TranscriptSource = .microphone
+                #endif
+                audioCaptureService.onAudioBuffer = makeAudioBufferHandler(multichannel: repairMultichannel, monoSource: repairMonoSource)
                 try await audioCaptureService.startCapture(
                     microphone: captureMicrophone,
                     systemAudio: captureSystemAudio
@@ -7379,19 +7432,19 @@ final class AppState: ObservableObject {
             // still hold their speaker IDs — seed so new allocations can't collide.
             deepgramService.seedRestoredSpeakerIdentities(Set(liveSegments.map(\.speaker)))
         }
+        let onDeviceTimeline = beginOnDeviceDiarizationSession(multichannel: useMultichannel, monoSource: monoSource)
         deepgramService.connect(
             language: meetingLanguage,
             personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
             sessionKeyterms: deepgramSessionKeyterms(),
             multichannel: useMultichannel,
             monoSource: monoSource,
-            preserveSpeakerIdentities: isResumedSession
+            preserveSpeakerIdentities: isResumedSession,
+            onDeviceSpeakerTimeline: onDeviceTimeline
         )
 
         // Configure audio capture
-        audioCaptureService.onAudioBuffer = { [weak deepgramService] data in
-            deepgramService?.sendAudio(data)
-        }
+        audioCaptureService.onAudioBuffer = makeAudioBufferHandler(multichannel: useMultichannel, monoSource: monoSource)
         
         // Start capturing
         Task {
@@ -7637,6 +7690,7 @@ final class AppState: ObservableObject {
         #endif
         
         audioCaptureService?.stopCapture()
+        onDeviceDiarization.endSession()
         Task { await flushClientEvents(trigger: "stop recording") }
 
         // Report usage to backend in managed mode
@@ -7720,13 +7774,15 @@ final class AppState: ObservableObject {
                     // summary or the "finishing" state (plan B5 contract).
                     if autoInferSpeakerNames, hasUnnamedNonSelfSpeaker(in: finalSegments) {
                         let passSegments = finalSegments
-                        Task { @MainActor [weak self] in
-                            await self?.updateSpeakerNamesInBackground(
+                        // The enclosing stop task already holds self strongly; a weak inner
+                        // capture changes nothing and trips Xcode 27's capture diagnostic.
+                        Task { @MainActor in
+                            await updateSpeakerNamesInBackground(
                                 finalSegments: passSegments,
                                 segmentCount: passSegments.count,
                                 meetingID: meetingIDAtStop
                             )
-                            self?.saveCurrentMeetingIfNeeded()
+                            saveCurrentMeetingIfNeeded()
                         }
                     }
 

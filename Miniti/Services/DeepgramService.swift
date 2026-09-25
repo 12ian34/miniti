@@ -466,6 +466,11 @@ struct SpeakerIdentityState: Sendable, Equatable {
     private var allocatedMicAppIDs: Set<Int> = []
     private(set) var generation: UInt64 = 0
     private var micContinuityAvailable: Bool = false
+    /// Sources whose provider speaker numbers come from the on-device diarizer, which keeps
+    /// one arrival-ordered slot per speaker for the whole meeting. Those sources are keyed
+    /// at generation 0 so a socket reconnect keeps every app ID; Deepgram-diarized sources
+    /// stay generation-aware because Deepgram restarts numbering per socket.
+    private var stableProviderSources: Set<TranscriptSource> = []
 
     /// Begin a new WebSocket connection. `preservingIdentities` keeps earlier
     /// allocations (reconnect within one meeting); false resets for a fresh
@@ -493,9 +498,16 @@ struct SpeakerIdentityState: Sendable, Equatable {
         }
     }
 
+    /// Mark `sources` as diarized on device (provider numbers stable across reconnects).
+    /// Call after `beginConnection` for every socket of the session.
+    mutating func setStableProviderSources(_ sources: Set<TranscriptSource>) {
+        stableProviderSources = sources
+    }
+
     mutating func appSpeakerID(source: TranscriptSource, providerID: Int) -> Int {
         guard source != .unknown else { return providerID }
-        let key = "\(source.rawValue)#\(providerID)#\(generation)"
+        let keyGeneration: UInt64 = stableProviderSources.contains(source) ? 0 : generation
+        let key = "\(source.rawValue)#\(providerID)#\(keyGeneration)"
         if let existing = assignments[key] { return existing }
 
         let appID: Int
@@ -515,7 +527,7 @@ struct SpeakerIdentityState: Sendable, Equatable {
             }
             allocatedMicAppIDs.insert(appID)
         case .system:
-            if generation == 0 {
+            if keyGeneration == 0 {
                 appID = providerID
                 nextSystemAppID = max(nextSystemAppID, providerID + 1)
             } else {
@@ -550,6 +562,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     // Written from @MainActor (connect/disconnect), read from audio thread (sendAudio).
     nonisolated(unsafe) private var _sendTask: URLSessionWebSocketTask?
     nonisolated(unsafe) private var _sendConnected = false
+    /// On-device speaker timeline for the current session, or nil when Deepgram diarizes.
+    /// Read on the audio thread (`sendAudio`) and captured into the off-main parse.
+    nonisolated(unsafe) private var _onDeviceTimeline: OnDeviceSpeakerTimeline?
+    /// True until the first audio packet of the current socket, which pins socket time 0
+    /// onto the diarizer clock.
+    nonisolated(unsafe) private var _socketAudioStartPending = false
     
     @Published var transcriptUpdate: TranscriptUpdate?
     @Published var speakerSegments: [SpeakerSegment] = []  // Multiple segments per response
@@ -764,7 +782,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         sessionKeyterms: [String] = [],
         multichannel: Bool = false,
         monoSource: TranscriptSource = .microphone,
-        preserveSpeakerIdentities: Bool = false
+        preserveSpeakerIdentities: Bool = false,
+        onDeviceSpeakerTimeline: OnDeviceSpeakerTimeline? = nil
     ) {
         guard !credential.isEmpty else {
             DebugLogger.shared.log(.deepgram, "No credential — cannot connect")
@@ -796,6 +815,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         isMultichannel = multichannel
         self.monoSource = monoSource
         speakerIdentityState.beginConnection(preservingIdentities: preserveSpeakerIdentities)
+        speakerIdentityState.setStableProviderSources(onDeviceSpeakerTimeline?.sources ?? [])
+        _onDeviceTimeline = onDeviceSpeakerTimeline
+        _socketAudioStartPending = onDeviceSpeakerTimeline != nil
+        if let onDeviceSpeakerTimeline {
+            DebugLogger.shared.log(.deepgram, "On-device diarization active for \(onDeviceSpeakerTimeline.sources.map(\.rawValue).sorted()); diarize_model omitted")
+        }
         resetSessionCounters()
         isConnected = false
         _sendConnected = false
@@ -803,26 +828,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         error = nil
         
         var components = URLComponents(url: endpointURL, resolvingAgainstBaseURL: false)!
-        var queryItems = [
-            URLQueryItem(name: "model", value: "nova-3"),
-            URLQueryItem(name: "language", value: language),
-            URLQueryItem(name: "smart_format", value: "true"),
-            URLQueryItem(name: "filler_words", value: "true"),
-            // Prefer diarize_model over deprecated diarize=true. Streaming latest = v1 today;
-            // auto-upgrades when Deepgram ships a newer streaming diarizer.
-            URLQueryItem(name: "diarize_model", value: "latest"),
-            URLQueryItem(name: "interim_results", value: "true"),
-            URLQueryItem(name: "utterance_end_ms", value: "1000"),
-            URLQueryItem(name: "vad_events", value: "true"),
-            URLQueryItem(name: "endpointing", value: "300"),
-            URLQueryItem(name: "encoding", value: "linear16"),
-            URLQueryItem(name: "sample_rate", value: "16000"),
-            URLQueryItem(name: "channels", value: String(channelCount)),
-        ]
-        if multichannel {
-            queryItems.append(URLQueryItem(name: "multichannel", value: "true"))
-        }
-        components.queryItems = queryItems
+        components.queryItems = Self.makeListenQueryItems(
+            language: language,
+            channelCount: channelCount,
+            multichannel: multichannel,
+            providerDiarization: onDeviceSpeakerTimeline == nil
+        )
             + keyterms.map { URLQueryItem(name: "keyterm", value: $0) }
             + replaceItems
         
@@ -883,6 +894,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         stopKeepAlive()
         _sendConnected = false
         _sendTask = nil
+        _socketAudioStartPending = false
+        // Keep `_onDeviceTimeline` until the next connect: in-flight parses for this
+        // socket still need it, and a reconnect within the meeting replaces it anyway.
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
         urlSession?.invalidateAndCancel()
@@ -920,10 +934,66 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
     
+    /// Fixed part of the `/v1/listen` query. `providerDiarization` adds Deepgram's streaming
+    /// diarizer (`diarize_model=latest`, billed per channel-minute); sessions diarized on
+    /// device leave it out and take speaker numbers from `OnDeviceSpeakerTimeline`.
+    nonisolated static func makeListenQueryItems(
+        language: String,
+        channelCount: Int,
+        multichannel: Bool,
+        providerDiarization: Bool
+    ) -> [URLQueryItem] {
+        var queryItems = [
+            URLQueryItem(name: "model", value: "nova-3"),
+            URLQueryItem(name: "language", value: language),
+            URLQueryItem(name: "smart_format", value: "true"),
+            URLQueryItem(name: "filler_words", value: "true"),
+        ]
+        if providerDiarization {
+            // Prefer diarize_model over deprecated diarize=true. Streaming latest = v1 today;
+            // auto-upgrades when Deepgram ships a newer streaming diarizer.
+            queryItems.append(URLQueryItem(name: "diarize_model", value: "latest"))
+        }
+        queryItems += [
+            URLQueryItem(name: "interim_results", value: "true"),
+            URLQueryItem(name: "utterance_end_ms", value: "1000"),
+            URLQueryItem(name: "vad_events", value: "true"),
+            URLQueryItem(name: "endpointing", value: "300"),
+            URLQueryItem(name: "encoding", value: "linear16"),
+            URLQueryItem(name: "sample_rate", value: "16000"),
+            URLQueryItem(name: "channels", value: String(channelCount)),
+        ]
+        if multichannel {
+            queryItems.append(URLQueryItem(name: "multichannel", value: "true"))
+        }
+        return queryItems
+    }
+
+    /// Provider speaker number and confidence for one word. With an on-device timeline that
+    /// covers the word's source the timeline decides; otherwise Deepgram's own fields stand.
+    nonisolated static func providerSpeaker(
+        wordStart: Double,
+        wordEnd: Double,
+        deepgramSpeaker: Int?,
+        deepgramConfidence: Double?,
+        source: TranscriptSource,
+        timeline: OnDeviceSpeakerTimeline?
+    ) -> (speaker: Int, confidence: Double?) {
+        if let timeline, timeline.covers(source),
+           let hit = timeline.lookup(source: source, socketStart: wordStart, socketEnd: wordEnd) {
+            return (hit.providerSpeaker, hit.confidence)
+        }
+        return (deepgramSpeaker ?? 0, deepgramConfidence)
+    }
+
     nonisolated func sendAudio(_ data: Data) {
         // Use nonisolated refs to avoid creating a Task { @MainActor } per audio
         // buffer (~4/sec). URLSessionWebSocketTask.send is thread-safe.
         guard _sendConnected, let task = _sendTask else { return }
+        if _socketAudioStartPending {
+            _socketAudioStartPending = false
+            _onDeviceTimeline?.markSocketStart()
+        }
         audioPacketsSent += 1
         audioBytesSent += data.count
         task.send(.data(data)) { [weak self] error in
@@ -988,13 +1058,15 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         let multichannel = self.isMultichannel
                         let mono = self.monoSource
                         let identity = self.speakerIdentityState
+                        let timeline = self._onDeviceTimeline
                         let parsed = await Task.detached(priority: .userInitiated) {
                             Self.processTranscriptJSON(
                                 json,
                                 isMultichannel: multichannel,
                                 monoSource: mono,
                                 segmentationState: state,
-                                identityState: identity
+                                identityState: identity,
+                                speakerTimeline: timeline
                             )
                         }.value
                         guard generation == self.connectionGeneration,
@@ -1043,7 +1115,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         isMultichannel: Bool,
         monoSource: TranscriptSource,
         segmentationState: SegmentationState,
-        identityState: SpeakerIdentityState
+        identityState: SpeakerIdentityState,
+        speakerTimeline: OnDeviceSpeakerTimeline? = nil
     ) -> BackgroundParseResult {
         guard let data = json.data(using: .utf8) else { return .ignored }
         let response: DeepgramResponse
@@ -1074,15 +1147,22 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         // mic channel is no longer flattened to a single reserved ID.
         var nextIdentityState = identityState
         let words = alternative.words.map { word in
-            let providerSpeaker = word.speaker ?? 0
-            let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: providerSpeaker)
+            let provider = providerSpeaker(
+                wordStart: word.start,
+                wordEnd: word.end,
+                deepgramSpeaker: word.speaker,
+                deepgramConfidence: word.speakerConfidence,
+                source: source,
+                timeline: speakerTimeline
+            )
+            let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: provider.speaker)
             return TranscriptUpdate.Word(
                 text: word.punctuatedWord ?? word.word,
                 start: word.start,
                 end: word.end,
                 confidence: word.confidence,
                 speaker: appSpeaker,
-                speakerConfidence: word.speakerConfidence
+                speakerConfidence: provider.confidence
             )
         }
 

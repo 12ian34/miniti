@@ -8,6 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		3C2BEFA32F997DAC0058C8BE /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 3C2BEFA22F997DAC0058C8BE /* Sparkle */; };
+		D20000000000000000000003 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D20000000000000000000002 /* FluidAudio */; };
+		D20000000000000000000004 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D20000000000000000000005 /* FluidAudio */; };
+		D20000000000000000000011 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
+		D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
+		D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
+		D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		3C2BEFA52F9981830058C8BE /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2BEFA42F9981830058C8BE /* UpdateService.swift */; };
 		A10000010000000000000001 /* MinitiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* MinitiApp.swift */; };
 		A10000010000000000000002 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000002 /* MainWindow.swift */; };
@@ -253,6 +259,8 @@
 		D10000000000000000000019 /* CalendarEventDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarEventDecodingTests.swift; sourceTree = "<group>"; };
 		D1000000000000000000001C /* MeetingJourneyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingJourneyTests.swift; sourceTree = "<group>"; };
 		D1000000000000000000001F /* CustomInsightTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplates.swift; sourceTree = "<group>"; };
+		D20000000000000000000010 /* OnDeviceDiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationService.swift; sourceTree = "<group>"; };
+		D20000000000000000000020 /* OnDeviceDiarizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000022 /* TemplateSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSettingsViews.swift; sourceTree = "<group>"; };
 		D10000000000000000000025 /* CustomInsightTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplateTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -263,6 +271,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3C2BEFA32F997DAC0058C8BE /* Sparkle in Frameworks */,
+				D20000000000000000000003 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -270,6 +279,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				D20000000000000000000004 /* FluidAudio in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -380,6 +390,7 @@
 			isa = PBXGroup;
 			children = (
 				D1000000000000000000001F /* CustomInsightTemplates.swift */,
+				D20000000000000000000010 /* OnDeviceDiarizationService.swift */,
 				D10000000000000000000001 /* PersistentStore.swift */,
 				AE0000010000000000000021 /* InsightTemplates.swift */,
 				AE0000010000000000000031 /* ClientAuth.swift */,
@@ -451,6 +462,7 @@
 			isa = PBXGroup;
 			children = (
 				D10000000000000000000025 /* CustomInsightTemplateTests.swift */,
+				D20000000000000000000020 /* OnDeviceDiarizationTests.swift */,
 				D1000000000000000000001C /* MeetingJourneyTests.swift */,
 				D10000000000000000000019 /* CalendarEventDecodingTests.swift */,
 				D10000000000000000000016 /* MinitiAPIServiceTransportTests.swift */,
@@ -604,6 +616,7 @@
 			mainGroup = A50000010000000000000001;
 			packageReferences = (
 				3C2BEFA12F997DAC0058C8BE /* XCRemoteSwiftPackageReference "Sparkle" */,
+				D20000000000000000000001 /* XCRemoteSwiftPackageReference "FluidAudio" */,
 			);
 			productRefGroup = A50000010000000000000003 /* Products */;
 			projectDirPath = "";
@@ -665,6 +678,7 @@
 			files = (
 				D10000000000000000000023 /* TemplateSettingsViews.swift in Sources */,
 				D10000000000000000000020 /* CustomInsightTemplates.swift in Sources */,
+				D20000000000000000000011 /* OnDeviceDiarizationService.swift in Sources */,
 				D1000000000000000000000E /* PersistenceIssueBanner.swift in Sources */,
 				D1000000000000000000000B /* AppState+Persistence.swift in Sources */,
 				D10000000000000000000005 /* StoreRecoveryView.swift in Sources */,
@@ -715,6 +729,7 @@
 			files = (
 				D10000000000000000000024 /* TemplateSettingsViews.swift in Sources */,
 				D10000000000000000000021 /* CustomInsightTemplates.swift in Sources */,
+				D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */,
 				D1000000000000000000000F /* PersistenceIssueBanner.swift in Sources */,
 				D1000000000000000000000C /* AppState+Persistence.swift in Sources */,
 				D10000000000000000000006 /* StoreRecoveryView.swift in Sources */,
@@ -771,6 +786,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D10000000000000000000026 /* CustomInsightTemplateTests.swift in Sources */,
+				D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */,
 				D1000000000000000000001D /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001A /* CalendarEventDecodingTests.swift in Sources */,
 				D10000000000000000000017 /* MinitiAPIServiceTransportTests.swift in Sources */,
@@ -796,6 +812,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D10000000000000000000027 /* CustomInsightTemplateTests.swift in Sources */,
+				D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */,
 				D1000000000000000000001E /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001B /* CalendarEventDecodingTests.swift in Sources */,
 				D10000000000000000000018 /* MinitiAPIServiceTransportTests.swift in Sources */,
@@ -1314,6 +1331,14 @@
 				minimumVersion = 2.9.5;
 			};
 		};
+		D20000000000000000000001 /* XCRemoteSwiftPackageReference "FluidAudio" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/FluidInference/FluidAudio";
+			requirement = {
+				kind = upToNextMinorVersion;
+				minimumVersion = 0.17.4;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -1321,6 +1346,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 3C2BEFA12F997DAC0058C8BE /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		D20000000000000000000002 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D20000000000000000000001 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
+		};
+		D20000000000000000000005 /* FluidAudio */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D20000000000000000000001 /* XCRemoteSwiftPackageReference "FluidAudio" */;
+			productName = FluidAudio;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
