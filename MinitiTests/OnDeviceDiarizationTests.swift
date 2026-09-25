@@ -250,3 +250,30 @@ final class OnDeviceDiarizationEndToEndTests: XCTestCase {
         print("E2E: \(String(format: "%.0f", audioSeconds))s audio in \(String(format: "%.1f", wall))s wall (rtf \(String(format: "%.3f", wall / audioSeconds))), speakers \(speakers.sorted()), coverage \(covered)/\(probes)")
     }
 }
+
+// MARK: - Acknowledgements ship with the app
+
+final class AcknowledgementsTests: XCTestCase {
+    func testEveryAcknowledgementHasItsLicenceTextInTheBundle() {
+        let entries = Acknowledgements.entries
+        XCTAssertGreaterThanOrEqual(entries.count, 8)
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count, "entry ids must be unique")
+        for entry in entries {
+            let text = Acknowledgements.text(for: entry)
+            XCTAssertNotNil(text, "missing licence file \(entry.file)")
+            XCTAssertGreaterThan(text?.count ?? 0, 200, "licence file \(entry.file) looks truncated")
+        }
+    }
+
+    func testBundledModelNoticesCarryTheRequiredTerms() throws {
+        let openmdw = try XCTUnwrap(Acknowledgements.entries.first { $0.id == "openmdw" }.flatMap { Acknowledgements.text(for: $0) })
+        XCTAssertTrue(openmdw.contains("OpenMDW License Agreement, version 1.1"))
+        XCTAssertTrue(openmdw.contains("retain in your distribution"))
+        let notice = try XCTUnwrap(Acknowledgements.entries.first { $0.id == "nemotron" }.flatMap { Acknowledgements.text(for: $0) })
+        XCTAssertTrue(notice.contains("NVIDIA"))
+        XCTAssertTrue(notice.contains("FluidInference"))
+        let apache = try XCTUnwrap(Acknowledgements.entries.first { $0.id == "fluidaudio" }.flatMap { Acknowledgements.text(for: $0) })
+        XCTAssertTrue(apache.contains("Apache License"))
+        XCTAssertTrue(apache.contains("Version 2.0"))
+    }
+}

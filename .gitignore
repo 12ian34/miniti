@@ -47,3 +47,6 @@ shn.md
 .claude/
 scripts/screenshots/out-smoke/
 
+
+# Nemotron-3 Core ML model, fetched by scripts/fetch-nemotron-model.sh (build phase); 190 MB, not in git
+Miniti/Resources/NemotronDiarizer/

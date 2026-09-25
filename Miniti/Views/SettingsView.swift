@@ -1209,7 +1209,7 @@ struct AudioSettingsView: View {
                         appState.refreshOnDeviceDiarizationAvailability()
                     }
                 OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
-                Text("Runs NVIDIA's Nemotron speaker model on this Mac to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. Downloads a 190 MB model the first time you turn it on. Applies to new recordings.")
+                Text("Runs NVIDIA's Nemotron speaker model on this Mac to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. The model ships inside miniti, so nothing is downloaded. Applies to new recordings.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1821,6 +1821,8 @@ struct AboutSettingsView: View {
                         }
                 }
                 .id("privacy.version")
+                AcknowledgementsSection()
+                .id("privacy.acknowledgements")
                 Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
                         Text("Website")

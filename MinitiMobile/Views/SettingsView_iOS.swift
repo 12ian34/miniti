@@ -558,7 +558,7 @@ private struct SettingsDetailView_iOS: View {
                             appState.refreshOnDeviceDiarizationAvailability()
                         }
                     OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
-                    Text("Runs NVIDIA's Nemotron speaker model on this device to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. Downloads a 190 MB model the first time you turn it on. Applies to new recordings.")
+                    Text("Runs NVIDIA's Nemotron speaker model on this device to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. The model ships inside miniti, so nothing is downloaded. Applies to new recordings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -804,6 +804,8 @@ private struct SettingsDetailView_iOS: View {
                             }
                     }
                     .id("privacy.version")
+                    AcknowledgementsSection()
+                    .id("privacy.acknowledgements")
                     Text("Pro is an auto-renewable subscription. Cancel anytime in Apple ID subscriptions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -1,0 +1,8 @@
+Nemotron-3-Diarization
+Copyright (c) NVIDIA Corporation. Licensed under the OpenMDW License Agreement, version 1.1.
+https://huggingface.co/nvidia/Nemotron-3-Diarization
+
+miniti ships this model inside the app to separate speakers on your device. The bundled files are the Core ML conversion published by FluidInference at
+https://huggingface.co/FluidInference/nemotron-3-diarization-coreml (revision 1b0b133f, weights ga-2026-09-23), also under OpenMDW-1.1. The conversion keeps NVIDIA's weights and changes only the export format (fp16 Core ML, fixed-capacity streaming state).
+
+The full agreement is reproduced under "OpenMDW License 1.1" in this list.
