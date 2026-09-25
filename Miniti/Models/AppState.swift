@@ -329,6 +329,7 @@ enum SettingsSearchCatalog {
 
         .init("privacy.diagnostics", "Share Diagnostics", section: "Privacy", destination: .privacySupport, keywords: ["reliability", "errors", "telemetry"]),
         .init("privacy.version", "Version", section: "About", destination: .privacySupport, keywords: ["build", "update"]),
+        .init("privacy.acknowledgements", "Acknowledgements", section: "About", destination: .privacySupport, keywords: ["licenses", "licences", "open source", "nemotron", "fluidaudio", "sparkle", "credits"]),
         .init("privacy.docs", "Miniti Docs", section: "Help", destination: .privacySupport, keywords: ["documentation", "learn"]),
         .init("privacy.support", "Support", section: "Help", destination: .privacySupport, keywords: ["help", "contact"]),
         .init("privacy.legal", "Privacy & Terms", section: "About", destination: .privacySupport, keywords: ["policy", "legal"])
@@ -1442,6 +1443,16 @@ final class AppState: ObservableObject {
     @Published private(set) var smartMeetingPrompt: SmartMeetingPrompt?
     private var calendarRefreshTimer: Timer?
     private var autoStartCheckTimer: Timer?
+    /// Bounded retry for a launch-time (or wake-time) calendar status check that could not
+    /// reach the backend. A thrown check is "unknown", never "disconnected": after a reboot
+    /// the app often starts before the network does, and treating that as signed-out left
+    /// people reconnecting Google Calendar by hand every morning (2026-09-25).
+    private var calendarStatusRetryTask: Task<Void, Never>?
+    private var calendarStatusRetryAttempt = 0
+    private var lastCalendarStatusRecheckAt: Date?
+    /// Set once the launch-time status check has returned, so an activation recheck
+    /// cannot run a second check (and a second events fetch) during a normal cold start.
+    private var calendarLaunchCheckCompleted = false
     private var autoStartCountdownTimer: Timer?
     private var dismissedAutoStartEventIDs: Set<String> = []
     /// One browser/tab open per calendar event for a given meeting start. Cleared with
@@ -1507,6 +1518,10 @@ final class AppState: ObservableObject {
     /// level stream rather than sampled inside the 30s auto-stop tick, which would be just as
     /// likely to land in a pause between words as on someone actually talking.
     private var lastAudioActivityAt: CFAbsoluteTime = 0
+    /// Last `SpeechStarted` from Deepgram's VAD this recording (0 = none yet). Feeds the
+    /// quiet-prompt audio gap while transcription is healthy, so room noise cannot keep
+    /// the "has this meeting ended?" question from ever appearing (2026-09-25).
+    private var lastSpeechDetectedAt: CFAbsoluteTime = 0
     static let speechMicLevelThreshold: Float = 0.008
     static let speechSystemLevelThreshold: Float = 0.006
     private var deepgramReconnectTask: Task<Void, Never>?
@@ -1893,20 +1908,26 @@ final class AppState: ObservableObject {
             isLoadingUsage = true
             Task {
                 await refreshUsage()
+                // The calendar status call needs the device-auth enrollment that
+                // refreshUsage establishes; running it in parallel could throw
+                // notEnrolled on a fresh install and look like a disconnect.
+                await refreshGoogleCalendarStatus()
+                startCalendarRefreshTimer()
+                startAutoStartMonitoring()
                 await flushPendingSessionEndReports(trigger: "launch")
                 await flushClientEvents(trigger: "launch")
+            }
+        } else {
+            // Check Google Calendar connection and fetch events
+            Task {
+                await refreshGoogleCalendarStatus()
+                startCalendarRefreshTimer()
+                startAutoStartMonitoring()
             }
         }
         
         // Check for app updates (all modes)
         Task { await checkForUpdates() }
-        
-        // Check Google Calendar connection and fetch events
-        Task {
-            await refreshGoogleCalendarStatus()
-            startCalendarRefreshTimer()
-            startAutoStartMonitoring()
-        }
         
         #if os(iOS)
         // Clean up orphaned Live Activities (app was killed while recording, state lost)
@@ -1950,6 +1971,17 @@ final class AppState: ObservableObject {
                 self?.handleTranscriptUpdate(update)
             }
             .store(in: &cancellables)
+
+        // Deepgram's own speech detection: the quiet prompt's "speech-like audio" signal
+        // while the pipeline is healthy. It stamps a timestamp only; prompts are cleared
+        // by transcript, not by a VAD blip.
+        deepgramService?.$lastSpeechStartedAt
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] at in
+                guard at > 0 else { return }
+                self?.lastSpeechDetectedAt = at
+            }
+            .store(in: &cancellables)
         
         // Subscribe to speaker-segmented results for better speaker tracking
         deepgramService?.$speakerSegments
@@ -1982,7 +2014,7 @@ final class AppState: ObservableObject {
                     if micLevel > Self.speechMicLevelThreshold
                         || (self.captureSystemAudio && sysLevel > Self.speechSystemLevelThreshold) {
                         self.lastAudioActivityAt = CFAbsoluteTimeGetCurrent()
-                        self.noteSmartMeetingActivity()
+                        self.noteSmartMeetingActivity(source: .audioLevel)
                     }
                 }
                 .store(in: &cancellables)
@@ -2021,7 +2053,7 @@ final class AppState: ObservableObject {
         // Skip empty updates
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
-        noteSmartMeetingActivity()
+        noteSmartMeetingActivity(source: .transcript)
         
         if update.isFinal {
             // Final result - will be handled by speaker segments for better accuracy
@@ -2261,7 +2293,13 @@ final class AppState: ObservableObject {
         let nowAbsolute = CFAbsoluteTimeGetCurrent()
         let now = Date()
         let transcriptGap = nowAbsolute - lastTranscriptReceivedAt
-        let audioGap = audioActivityGap(at: nowAbsolute)
+        // Speech-like audio: Deepgram's VAD while the pipeline is healthy (room noise is
+        // not speech), the raw capture level otherwise. Hard stops keep the raw level.
+        let audioGap = Self.smartMeetingSpeechGap(
+            pipelineHealthy: audioRecoveryState == .healthy,
+            speechGap: lastSpeechDetectedAt > 0 ? nowAbsolute - lastSpeechDetectedAt : nil,
+            levelGap: audioActivityGap(at: nowAbsolute)
+        )
         let jointQuietGap = min(transcriptGap, audioGap)
         let crossedBoundary = Self.quietPeriodCrossedCommonMeetingBoundary(
             quietStartedAt: now.addingTimeInterval(-jointQuietGap),
@@ -2273,12 +2311,17 @@ final class AppState: ObservableObject {
             $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
 
+        // Supporting signal, independent of the calendar auto-stop setting: past the
+        // event's end the question comes sooner. It is an ask, never a stop.
+        let calendarEventEnded = selectedCalendarEvent?.endDate.map { $0 < now } ?? false
+
         guard Self.shouldOfferSmartQuietPrompt(
             hasMeaningfulTranscript: hasMeaningfulTranscript,
             transcriptGap: transcriptGap,
             audioGap: audioGap,
             autoStopMinutes: autoStopMinutes,
             crossedCommonBoundary: crossedBoundary,
+            calendarEventEnded: calendarEventEnded,
             alreadyPromptedThisQuietEpisode: smartQuietEpisodePrompted,
             isSuppressed: isSuppressed
         ) else { return }
@@ -2297,7 +2340,30 @@ final class AppState: ObservableObject {
         )
     }
 
-    private func noteSmartMeetingActivity() {
+    enum SmartMeetingActivitySource {
+        /// Interim or final words arrived: someone is talking.
+        case transcript
+        /// The capture level crossed the speech threshold: could be talking, could be a fan.
+        case audioLevel
+    }
+
+    /// While transcription is healthy, words are the evidence of speech and the raw level
+    /// is not: a noise burst must not dismiss the "has this meeting ended?" question or
+    /// forget a "Keep recording" answer. With the pipeline down, the level is all there is.
+    nonisolated static func audioLevelActivityResetsQuietEpisode(pipelineHealthy: Bool) -> Bool {
+        !pipelineHealthy
+    }
+
+    private func noteSmartMeetingActivity(source: SmartMeetingActivitySource) {
+        if source == .audioLevel,
+           !Self.audioLevelActivityResetsQuietEpisode(pipelineHealthy: audioRecoveryState == .healthy) {
+            // Conservative exception: speech-like audio still cancels an automatic
+            // calendar handoff countdown, which is a silent split.
+            if let prompt = smartMeetingPrompt, prompt.kind == .calendar, prompt.countdown != nil {
+                cancelSmartMeetingCountdown(keepPrompt: true)
+            }
+            return
+        }
         smartMeetingSuppressedUntil = nil
         smartQuietEpisodePrompted = false
         guard let prompt = smartMeetingPrompt else { return }
@@ -2419,6 +2485,7 @@ final class AppState: ObservableObject {
 
     private func handleSystemDidWake() {
         updateCallActivityMonitoringState()
+        recheckGoogleCalendarStatusIfNeeded(trigger: "wake")
         if finalizeGraceOnWake {
             finalizeGraceOnWake = false
             finalizeEndingGrace(trigger: "wake_after_sleep", markAutoStopped: true)
@@ -2501,9 +2568,12 @@ final class AppState: ObservableObject {
             cancelEndingGrace(reason: .reactivated)
 
         case .adoptExpectedCall(let app):
-            // Join / calendar-link start: the call that appeared is this recording's own
-            // call. Nothing to show; end detection now tracks it like any association.
-            DebugLogger.shared.log(.app, "expected_call_adopted (\(app.displayName))")
+            // Join / calendar-link start, or a plain start followed by a call within the
+            // inferred window: the call that appeared is this recording's own call.
+            // Nothing to show; end detection now tracks it (inferred: ask-only).
+            let inferred = callLifecycleEngine.associationSource == .adoptedInferred
+            DebugLogger.shared.log(.app, inferred ? "inferred_call_adopted (\(app.displayName))" : "expected_call_adopted (\(app.displayName))")
+            refreshEnvironmentContextEvidence()
 
         case .offerTransition(let app):
             guard isRecording, endingGrace == nil, smartMeetingPrompt == nil else { return }
@@ -2852,21 +2922,42 @@ final class AppState: ObservableObject {
         return false
     }
 
+    /// Which "speech-like audio" gap the quiet prompt should trust. Deepgram's VAD is
+    /// speech-specific; the capture level counts fans, keyboards and traffic as activity
+    /// and kept the prompt from ever maturing in a normal room. The VAD only exists while
+    /// the socket is alive and delivering, so a degraded pipeline falls back to the level.
+    nonisolated static func smartMeetingSpeechGap(
+        pipelineHealthy: Bool,
+        speechGap: TimeInterval?,
+        levelGap: TimeInterval
+    ) -> TimeInterval {
+        guard pipelineHealthy, let speechGap else { return levelGap }
+        return speechGap
+    }
+
+    /// Quiet threshold once the meeting's calendar event has ended: the same two minutes
+    /// the calendar-aware auto-stop uses, applied to the ask.
+    nonisolated static let smartMeetingCalendarEndedQuietThreshold: TimeInterval = 2 * 60
+
     nonisolated static func shouldOfferSmartQuietPrompt(
         hasMeaningfulTranscript: Bool,
         transcriptGap: TimeInterval,
         audioGap: TimeInterval,
         autoStopMinutes: Int,
         crossedCommonBoundary: Bool,
+        calendarEventEnded: Bool = false,
         alreadyPromptedThisQuietEpisode: Bool,
         isSuppressed: Bool
     ) -> Bool {
         guard hasMeaningfulTranscript,
               !alreadyPromptedThisQuietEpisode,
               !isSuppressed else { return false }
-        let threshold = crossedCommonBoundary
+        var threshold = crossedCommonBoundary
             ? 2 * 60
             : smartMeetingQuietThreshold(autoStopMinutes: autoStopMinutes)
+        if calendarEventEnded {
+            threshold = min(threshold, smartMeetingCalendarEndedQuietThreshold)
+        }
         return transcriptGap >= threshold && audioGap >= threshold
     }
 
@@ -3510,7 +3601,7 @@ final class AppState: ObservableObject {
         // carried no text of its own and so never stamped the timestamp.
         if receivedTranscriptContent {
             lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
-            noteSmartMeetingActivity()
+            noteSmartMeetingActivity(source: .transcript)
         }
         
         // Single atomic mutation — one @Published change instead of N
@@ -4711,7 +4802,7 @@ final class AppState: ObservableObject {
         // Monitor unreliability is "no information", never in-room evidence.
         let snapshot = latestCallSnapshot
         let monitorReliable = snapshot?.isReliable ?? false
-        environmentEvidence.hasAssociatedCallApp = callLifecycleEngine.associatedApp != nil
+        environmentEvidence.hasAssociatedCallApp = callLifecycleEngine.associatedAppForEnvironmentEvidence != nil
         environmentEvidence.recognizedCallAppActive =
             monitorReliable && !(snapshot?.activeCalls.isEmpty ?? true)
         #endif
@@ -7324,6 +7415,7 @@ final class AppState: ObservableObject {
         isMonitoring = false
         audioLevels.reset()
         lastAudioActivityAt = 0
+        lastSpeechDetectedAt = 0
     }
     
     /// Restart monitoring after toggling an audio source
@@ -7389,6 +7481,7 @@ final class AppState: ObservableObject {
         consecutiveTranscriptRecoveries = 0
         lastTranscriptHealthDebugLogAt = 0
         lastAudioActivityAt = 0
+        lastSpeechDetectedAt = 0
         #if os(macOS)
         // Association forms here: from the start prompt's app, or from exactly one
         // recognized call being active right now. Mid-recording calls never associate,
@@ -9001,18 +9094,116 @@ final class AppState: ObservableObject {
             applyGoogleCalendarDisconnectedState()
             return
         }
+        defer { calendarLaunchCheckCompleted = true }
+        if DeviceIdentifier.isUsingSessionOnlyID {
+            // The backend keys the Google connection by device ID; asking with a temporary
+            // ID would answer "not connected" for a device that is. Unknown, retry later.
+            DebugLogger.shared.log(.app, "Google Calendar status check deferred: session-only device ID")
+            scheduleCalendarStatusRetry()
+            return
+        }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        let result: Result<MinitiAPIService.GoogleStatusResponse, any Error>
         do {
-            let status = try await minitiAPIService.googleStatus(deviceId: deviceId)
-            isGoogleCalendarConnected = status.connected
-            googleCalendarEmail = status.email
-            if status.connected {
-                await fetchUpcomingEvents()
-            } else {
-                applyGoogleCalendarDisconnectedState()
-            }
+            result = .success(try await minitiAPIService.googleStatus(deviceId: deviceId))
         } catch {
-            DebugLogger.shared.log(.app, "Google Calendar status check failed: \(error.localizedDescription)")
+            result = .failure(error)
+        }
+        switch Self.calendarStatusOutcome(from: result.map(\.connected)) {
+        case .connected:
+            cancelCalendarStatusRetry()
+            let status = try? result.get()
+            isGoogleCalendarConnected = true
+            googleCalendarEmail = status?.email
+            await fetchUpcomingEvents()
+        case .disconnected:
+            // The backend answered: this device really has no Google connection.
+            cancelCalendarStatusRetry()
+            applyGoogleCalendarDisconnectedState()
+        case .unknown:
+            // No answer (network not up yet, DNS, token refresh failed on the wire):
+            // keep whatever state we had and try again shortly. Never treat silence
+            // as a sign-out.
+            if case .failure(let error) = result {
+                DebugLogger.shared.log(.app, "Google Calendar status check failed: \(error.localizedDescription)")
+                if case MinitiAPIService.ServiceError.notEnrolled = error, appMode != .managed {
+                    // Nothing will enrol this install outside managed mode, so a retry
+                    // ladder would only spin. Same end state as before: unconfirmed.
+                    return
+                }
+            }
+            scheduleCalendarStatusRetry()
+        }
+    }
+
+    enum CalendarStatusOutcome: Equatable {
+        case connected
+        case disconnected
+        case unknown
+    }
+
+    /// A thrown status check is no information about the connection.
+    nonisolated static func calendarStatusOutcome(from result: Result<Bool, any Error>) -> CalendarStatusOutcome {
+        switch result {
+        case .success(true): return .connected
+        case .success(false): return .disconnected
+        case .failure: return .unknown
+        }
+    }
+
+    /// Retry ladder for an unanswered status check: quick at first (the network usually
+    /// arrives within a minute of login), then every five minutes for as long as the
+    /// calendar is enabled and still unconfirmed.
+    nonisolated static func calendarStatusRetryDelay(attempt: Int) -> TimeInterval {
+        let ladder: [TimeInterval] = [5, 15, 45, 120]
+        guard attempt >= 1 else { return ladder[0] }
+        return attempt <= ladder.count ? ladder[attempt - 1] : 300
+    }
+
+    private func scheduleCalendarStatusRetry() {
+        guard googleCalendarEnabled, !ScreenshotMode.isActive else { return }
+        calendarStatusRetryTask?.cancel()
+        calendarStatusRetryAttempt += 1
+        let delay = Self.calendarStatusRetryDelay(attempt: calendarStatusRetryAttempt)
+        DebugLogger.shared.log(.app, "calendar_status_retry_scheduled attempt=\(calendarStatusRetryAttempt) in=\(Int(delay))s")
+        calendarStatusRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            guard self.googleCalendarEnabled, !self.isGoogleCalendarConnected else { return }
+            await self.refreshGoogleCalendarStatus()
+            if self.isGoogleCalendarConnected {
+                DebugLogger.shared.log(.app, "calendar_status_retry_recovered attempt=\(self.calendarStatusRetryAttempt)")
+                self.startCalendarRefreshTimer()
+                self.startAutoStartMonitoring()
+            }
+        }
+    }
+
+    private func cancelCalendarStatusRetry() {
+        calendarStatusRetryTask?.cancel()
+        calendarStatusRetryTask = nil
+        calendarStatusRetryAttempt = 0
+    }
+
+    /// The app became active or the Mac woke while the calendar is enabled but unconfirmed:
+    /// ask again, at most once a minute. A deliberately disconnected person gets one
+    /// cheap `connected: false` per activation and nothing changes for them.
+    func recheckGoogleCalendarStatusIfNeeded(trigger: String) {
+        guard !ScreenshotMode.isActive, googleCalendarEnabled, !isGoogleCalendarConnected else { return }
+        // The launch Task owns the first check; an activation during a cold start must
+        // not race it (managed enrollment may still be in flight).
+        guard calendarLaunchCheckCompleted else { return }
+        let now = Date()
+        if let last = lastCalendarStatusRecheckAt, now.timeIntervalSince(last) < 60 { return }
+        lastCalendarStatusRecheckAt = now
+        DebugLogger.shared.log(.app, "calendar_status_recheck trigger=\(trigger)")
+        Task { [weak self] in
+            guard let self else { return }
+            await self.refreshGoogleCalendarStatus()
+            if self.isGoogleCalendarConnected {
+                self.startCalendarRefreshTimer()
+                self.startAutoStartMonitoring()
+            }
         }
     }
     
@@ -9156,6 +9347,7 @@ final class AppState: ObservableObject {
         let now = Date()
         for event in upcomingEvents {
             guard let start = event.startDate else { continue }
+            guard event.status.lowercased() != "cancelled" else { continue }
             guard !dismissedAutoStartEventIDs.contains(event.id) else { continue }
             
             let secsUntilStart = start.timeIntervalSince(now)
@@ -9379,6 +9571,7 @@ final class AppState: ObservableObject {
     }
 
     func applyGoogleCalendarDisconnectedState() {
+        cancelCalendarStatusRetry()
         isGoogleCalendarConnected = false
         googleCalendarEmail = nil
         upcomingEvents = []
@@ -9654,6 +9847,13 @@ final class AppState: ObservableObject {
         if ClientAuthManager.shared.isEnrolled {
             if !clientAuthStatus.isEnrolled { refreshClientAuthStatus() }
             return true
+        }
+        if DeviceIdentifier.isUsingSessionOnlyID {
+            // The real device ID exists but the Keychain could not be read right now
+            // (locked, prompting). Enrolling would bind a new account and stored
+            // credentials to a temporary identity; wait for the next trigger instead.
+            DebugLogger.shared.log(.app, "enrollment_deferred_session_only_device_id trigger=\(trigger)")
+            return false
         }
         if let enrollmentTask { return await enrollmentTask.value }
         let task = Task<Bool, Never> { @MainActor [weak self] in

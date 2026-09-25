@@ -572,6 +572,7 @@ struct CalendarMeetingFiltersSection: View {
             Toggle("Skip birthdays", isOn: filters.skipBirthdays)
             Toggle("Skip all-day events", isOn: filters.skipAllDay)
             Toggle("Skip events you declined", isOn: filters.skipDeclined)
+            Toggle("Skip events with no guests or meeting link", isOn: filters.skipWithoutGuestsOrLink)
 
             Text("Skip titles that start with")
                 .font(.caption)

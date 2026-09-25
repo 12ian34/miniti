@@ -2007,6 +2007,58 @@ final class AppStateComputationTests: XCTestCase {
         ))
     }
 
+    func testSmartQuietPromptUsesTwoMinuteThresholdAfterCalendarEnd() {
+        // Past the event's end the ask comes at two minutes (the calendar auto-stop window),
+        // regardless of the silence picker; before it, the normal table applies.
+        XCTAssertTrue(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 121,
+            audioGap: 121,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            calendarEventEnded: true,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 121,
+            audioGap: 121,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            calendarEventEnded: false,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+        // Still both signals: speech-like audio within the window holds the ask.
+        XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
+            hasMeaningfulTranscript: true,
+            transcriptGap: 121,
+            audioGap: 30,
+            autoStopMinutes: 0,
+            crossedCommonBoundary: false,
+            calendarEventEnded: true,
+            alreadyPromptedThisQuietEpisode: false,
+            isSuppressed: false
+        ))
+    }
+
+    func testSmartMeetingSpeechGapPrefersDeepgramSpeechWhilePipelineHealthy() {
+        // Healthy pipeline with VAD evidence: the room's noise floor (level gap ~0) is ignored.
+        XCTAssertEqual(AppState.smartMeetingSpeechGap(pipelineHealthy: true, speechGap: 400, levelGap: 0.05), 400)
+        // Healthy but no SpeechStarted has arrived this recording: keep the level.
+        XCTAssertEqual(AppState.smartMeetingSpeechGap(pipelineHealthy: true, speechGap: nil, levelGap: 0.05), 0.05)
+        // Reconnecting or degraded: the VAD cannot be trusted, the level is all there is.
+        XCTAssertEqual(AppState.smartMeetingSpeechGap(pipelineHealthy: false, speechGap: 400, levelGap: 0.05), 0.05)
+    }
+
+    func testAudioLevelActivityOnlyResetsQuietEpisodeWhenPipelineIsDown() {
+        // A noise burst must not dismiss the ask or forget "Keep recording" while words
+        // are the available evidence of speech.
+        XCTAssertFalse(AppState.audioLevelActivityResetsQuietEpisode(pipelineHealthy: true))
+        XCTAssertTrue(AppState.audioLevelActivityResetsQuietEpisode(pipelineHealthy: false))
+    }
+
     func testSmartQuietPromptIsOncePerEpisodeAndHonoursSuppression() {
         XCTAssertFalse(AppState.shouldOfferSmartQuietPrompt(
             hasMeaningfulTranscript: true,
@@ -2657,6 +2709,39 @@ final class AppStateComputationTests: XCTestCase {
         return try! decoder.decode(MinitiAPIService.UsageInfo.self, from: data)
     }
 
+    // MARK: - Calendar status after launch / reboot (2026-09-25)
+
+    func testCalendarStatusOutcomeTreatsErrorsAsUnknownNotDisconnected() {
+        XCTAssertEqual(AppState.calendarStatusOutcome(from: .success(true)), .connected)
+        XCTAssertEqual(AppState.calendarStatusOutcome(from: .success(false)), .disconnected)
+        // Network not up yet after login, DNS, token refresh on the wire: no information.
+        XCTAssertEqual(AppState.calendarStatusOutcome(from: .failure(URLError(.notConnectedToInternet))), .unknown)
+        XCTAssertEqual(AppState.calendarStatusOutcome(from: .failure(MinitiAPIService.ServiceError.notEnrolled)), .unknown)
+    }
+
+    func testCalendarStatusRetryLadderIsQuickThenEveryFiveMinutes() {
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 0), 5)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 1), 5)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 2), 15)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 3), 45)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 4), 120)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 5), 300)
+        XCTAssertEqual(AppState.calendarStatusRetryDelay(attempt: 40), 300)
+    }
+
+    func testDeviceIDIsOnlyCreatedWhenTheKeychainItemIsAbsent() {
+        // A stored fallback always wins.
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: errSecItemNotFound, hasFallback: true), .useFallback)
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: errSecInteractionNotAllowed, hasFallback: true), .useFallback)
+        // Genuinely absent: first launch, create and persist.
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: errSecItemNotFound, hasFallback: false), .createAndPersist)
+        // Locked, prompting, or otherwise unreadable: never mint a replacement identity,
+        // which would look like a Google Calendar disconnect on the backend.
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: errSecInteractionNotAllowed, hasFallback: false), .sessionOnly)
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: errSecAuthFailed, hasFallback: false), .sessionOnly)
+        XCTAssertEqual(DeviceIdentifier.resolution(afterReadStatus: -34018, hasFallback: false), .sessionOnly)
+    }
+
     func testMeetingFilterPreferencesNormalizeAndRoundTrip() {
         typealias Prefs = MinitiAPIService.CalendarMeetingFilterPreferences
         XCTAssertEqual(Prefs.normalizedPrefixes(["  Out  Of Office ", "ooo", "OOO", "", "gym"]), ["out of office", "ooo", "gym"])
@@ -2669,9 +2754,27 @@ final class AppStateComputationTests: XCTestCase {
         let loaded = Prefs.load(defaults: defaults)
         XCTAssertFalse(loaded.skipAllDay)
         XCTAssertTrue(loaded.titlePrefixes.contains("gym"))
+        XCTAssertTrue(loaded.skipWithoutGuestsOrLink)
+        var noGuestsOff = Prefs.defaults
+        noGuestsOff.skipWithoutGuestsOrLink = false
+        noGuestsOff.save(defaults: defaults)
+        XCTAssertFalse(Prefs.load(defaults: defaults).skipWithoutGuestsOrLink)
         // Saving the defaults clears the key so a future default change applies.
         Prefs.defaults.save(defaults: defaults)
         XCTAssertNil(defaults.data(forKey: Prefs.storageKey))
+
+        // A blob written before the no-guests rule existed (2.9.0) still decodes, keeps
+        // the person's prefixes, and picks up the new rule's default. Losing the decode
+        // would silently reset every custom filter on upgrade.
+        let legacy = """
+        {"skipOutOfOffice":true,"skipFocusTime":false,"skipWorkingLocation":true,"skipBirthdays":true,\
+        "skipAllDay":true,"skipDeclined":true,"titlePrefixes":["ooo","gym"]}
+        """
+        defaults.set(Data(legacy.utf8), forKey: Prefs.storageKey)
+        let migrated = Prefs.load(defaults: defaults)
+        XCTAssertFalse(migrated.skipFocusTime)
+        XCTAssertEqual(migrated.titlePrefixes, ["ooo", "gym"])
+        XCTAssertTrue(migrated.skipWithoutGuestsOrLink)
     }
 
     func testMeetingFiltersRespectEveryToggleAndCustomPrefixes() {
@@ -2682,13 +2785,30 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(Self.makeCalendarEvent(id: "3", title: "Ian", eventType: "outOfOffice").skipReason(under: all), .outOfOffice)
         XCTAssertEqual(Self.makeCalendarEvent(id: "4", title: "Gym", eventType: "focusTime").skipReason(under: all), .focusTime)
         XCTAssertEqual(Self.makeCalendarEvent(id: "5", title: "PTO - Lisbon").skipReason(under: all), .title("pto"))
+        // A block the person made for themselves: no link, no other guest, self-organized.
+        XCTAssertEqual(Self.makeCalendarEvent(id: "10", title: "Kids pickup").skipReason(under: all), .noGuestsOrLink)
+        XCTAssertEqual(
+            Self.makeCalendarEvent(id: "11", title: "Kids pickup", organizerEmail: "me@x.com", organizerIsSelf: true).skipReason(under: all),
+            .noGuestsOrLink
+        )
+        // Any of a link, another guest, or an outside organizer makes it a meeting.
+        XCTAssertNil(Self.makeCalendarEvent(id: "12", title: "Lunch", meetLink: "https://meet.google.com/abc-defg-hij").skipReason(under: all))
+        XCTAssertNil(Self.makeCalendarEvent(id: "13", title: "1:1", guests: ["sam@acme.com"]).skipReason(under: all))
+        XCTAssertNil(
+            Self.makeCalendarEvent(id: "14", title: "Board update", organizerEmail: "chair@acme.com", organizerIsSelf: false).skipReason(under: all),
+            "an invitation from someone else with a hidden guest list is still a meeting"
+        )
+        // More specific reasons win over the no-guests rule so the preview names the real cause.
+        XCTAssertEqual(Self.makeCalendarEvent(id: "15", title: "Focus time").skipReason(under: all), .title("focus time"))
 
         var relaxed = Prefs.defaults
         relaxed.skipAllDay = false
         relaxed.skipDeclined = false
         relaxed.skipOutOfOffice = false
         relaxed.skipFocusTime = false
+        relaxed.skipWithoutGuestsOrLink = false
         relaxed.titlePrefixes = ["gym"]
+        XCTAssertNil(Self.makeCalendarEvent(id: "10", title: "Kids pickup").skipReason(under: relaxed))
         XCTAssertNil(Self.makeCalendarEvent(id: "1", title: "Team day", isAllDay: true).skipReason(under: relaxed))
         XCTAssertNil(Self.makeCalendarEvent(id: "2", title: "Sync", selfDeclined: true).skipReason(under: relaxed))
         XCTAssertNil(Self.makeCalendarEvent(id: "3", title: "Ian", eventType: "outOfOffice").skipReason(under: relaxed))
@@ -2702,7 +2822,14 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(serverSkipped.skipReason, "event_type")
         XCTAssertNil(serverSkipped.skipReason(under: relaxed))
         XCTAssertEqual(
-            AppState.filterCalendarMeetings([serverSkipped, Self.makeCalendarEvent(id: "9", title: "Weekly sync")], preferences: all).map(\.id),
+            AppState.filterCalendarMeetings(
+                [
+                    serverSkipped,
+                    Self.makeCalendarEvent(id: "9", title: "Weekly sync", guests: ["sam@acme.com"]),
+                    Self.makeCalendarEvent(id: "16", title: "Kids pickup"),
+                ],
+                preferences: all
+            ).map(\.id),
             ["9"]
         )
     }
@@ -2719,11 +2846,14 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertFalse(Self.makeCalendarEvent(id: "6", title: "Out of office - Portugal").isRecordableMeeting)
         XCTAssertFalse(Self.makeCalendarEvent(id: "7", title: "  pto").isRecordableMeeting)
         XCTAssertFalse(Self.makeCalendarEvent(id: "8", title: "Focus time").isRecordableMeeting)
-        // Real meetings, including ones that merely mention those words, survive.
-        XCTAssertTrue(Self.makeCalendarEvent(id: "9", title: "Design review", eventType: "default").isRecordableMeeting)
-        XCTAssertTrue(Self.makeCalendarEvent(id: "10", title: "Prep for holiday campaign").isRecordableMeeting)
+        // Real meetings (someone else invited), including ones that merely mention those words, survive.
+        XCTAssertTrue(Self.makeCalendarEvent(id: "9", title: "Design review", eventType: "default", guests: ["sam@acme.com"]).isRecordableMeeting)
+        XCTAssertTrue(Self.makeCalendarEvent(id: "10", title: "Prep for holiday campaign", guests: ["sam@acme.com"]).isRecordableMeeting)
         XCTAssertTrue(Self.makeCalendarEvent(id: "11", title: "Lunch with Acme", meetLink: "https://meet.google.com/abc-defg-hij").isRecordableMeeting)
-        XCTAssertTrue(Self.makeCalendarEvent(id: "12", title: "Weekly sync").isRecordableMeeting)
+        XCTAssertTrue(Self.makeCalendarEvent(id: "12", title: "Weekly sync", guests: ["sam@acme.com"]).isRecordableMeeting)
+        // 2026-09-25: a timed block with nobody else invited and no link ("kids pickup")
+        // auto-started a recording. Under the defaults it is no longer a meeting.
+        XCTAssertFalse(Self.makeCalendarEvent(id: "13", title: "Kids pickup").isRecordableMeeting)
     }
 
     private static func makeCalendarEvent(
@@ -2736,9 +2866,18 @@ final class AppStateComputationTests: XCTestCase {
         eventType: String? = nil,
         isAllDay: Bool = false,
         selfDeclined: Bool = false,
-        skipReason: String? = nil
+        skipReason: String? = nil,
+        guests: [String] = [],
+        organizerEmail: String? = nil,
+        organizerIsSelf: Bool = true
     ) -> MinitiAPIService.CalendarEvent {
         let formatter = ISO8601DateFormatter()
+        var attendees: [[String: Any]] = selfDeclined
+            ? [["email": "me@x.com", "responseStatus": "declined", "organizer": false, "self": true, "domain": "x.com"]]
+            : []
+        for guest in guests {
+            attendees.append(["email": guest, "responseStatus": "accepted", "organizer": false, "self": false])
+        }
         var json: [String: Any] = [
             "id": id,
             "title": title,
@@ -2746,10 +2885,11 @@ final class AppStateComputationTests: XCTestCase {
             "end": formatter.string(from: end),
             "isAllDay": isAllDay,
             "status": "confirmed",
-            "attendees": selfDeclined
-                ? [["email": "me@x.com", "responseStatus": "declined", "organizer": false, "self": true, "domain": "x.com"]]
-                : [],
+            "attendees": attendees,
         ]
+        if let organizerEmail {
+            json["organizer"] = ["email": organizerEmail, "self": organizerIsSelf]
+        }
         // Real wire format from miniti-api is camelCase.
         if let eventType { json["eventType"] = eventType }
         if let skipReason { json["skipReason"] = skipReason }

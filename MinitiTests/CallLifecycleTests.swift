@@ -191,22 +191,105 @@ final class CallLifecycleTests: XCTestCase {
 
     func testMidRecordingCallNeverAssociatesRetroactively() {
         var engine = CallLifecycleEngine()
-        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil)
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, at: base)
         let facetime = app("com.apple.FaceTime", name: "FaceTime")
         let recording = context(isRecording: true)
 
-        // FaceTime appears mid-recording: transition candidate after the debounce, never association.
-        _ = engine.ingest(snapshot: snapshot(at: 0, calls: [facetime]), context: recording)
+        // FaceTime appears well into an in-person recording (past the inferred window):
+        // transition candidate after the debounce, never association.
+        let late = CallLifecycleEngine.inferredCallWindow + 60
+        _ = engine.ingest(snapshot: snapshot(at: late, calls: [facetime]), context: recording)
         XCTAssertEqual(
-            engine.ingest(snapshot: snapshot(at: 2, calls: [facetime]), context: recording),
+            engine.ingest(snapshot: snapshot(at: late + 2, calls: [facetime]), context: recording),
             [.offerTransition(to: facetime)]
         )
         XCTAssertNil(engine.associatedApp)
+        XCTAssertNil(engine.associationSource)
 
         // FaceTime hanging up must not produce any end candidate for this recording.
-        _ = engine.ingest(snapshot: snapshot(at: 10, calls: []), context: recording)
-        XCTAssertEqual(engine.ingest(snapshot: snapshot(at: 20, calls: []), context: recording), [])
+        _ = engine.ingest(snapshot: snapshot(at: late + 10, calls: []), context: recording)
+        XCTAssertEqual(engine.ingest(snapshot: snapshot(at: late + 20, calls: []), context: recording), [])
         XCTAssertNil(engine.endCandidateSince)
+    }
+
+    /// 2026-09-25: "press Record, then join the Zoom" never associated, so the call's end
+    /// went unnoticed and the recording ran for hours. A single call that appears shortly
+    /// after a plain start is this recording's call, and its end asks.
+    func testManualStartAdoptsEarlyCallAsInferredAndEndsAskOnly() {
+        var engine = CallLifecycleEngine()
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, at: base)
+        XCTAssertNotNil(engine.expectedCallUntil)
+        let zoom = app()
+        let recording = context(isRecording: true)
+
+        _ = engine.ingest(snapshot: snapshot(at: 30, calls: [zoom]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 32, calls: [zoom]), context: recording),
+            [.adoptExpectedCall(zoom)]
+        )
+        XCTAssertEqual(engine.associatedApp?.bundleID, zoom.bundleID)
+        XCTAssertEqual(engine.associationSource, .adoptedInferred)
+        // Not evidence that the meeting is remote: the recording was not started for it.
+        XCTAssertNil(engine.associatedAppForEnvironmentEvidence)
+        XCTAssertNil(engine.expectedCallUntil)
+
+        // Hanging up: an established, content-bearing session still only asks.
+        let quiet = context(isRecording: true, duration: 1800, transcriptGap: 60)
+        _ = engine.ingest(snapshot: snapshot(at: 1000, calls: []), context: quiet)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: 1010, calls: []), context: quiet),
+            [.beginEndingGrace(app: zoom, askOnly: true)]
+        )
+    }
+
+    func testJoinAdoptionStaysAutomaticAndCountsAsRemoteEvidence() {
+        var engine = CallLifecycleEngine()
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, expectsCall: true, at: base)
+        let zoom = app()
+        let recording = context(isRecording: true)
+        _ = engine.ingest(snapshot: snapshot(at: 30, calls: [zoom]), context: recording)
+        XCTAssertEqual(engine.ingest(snapshot: snapshot(at: 32, calls: [zoom]), context: recording), [.adoptExpectedCall(zoom)])
+        XCTAssertEqual(engine.associationSource, .adoptedExpected)
+        XCTAssertEqual(engine.associatedAppForEnvironmentEvidence?.bundleID, zoom.bundleID)
+
+        var single = CallLifecycleEngine()
+        single.noteRecordingStarted(activeCalls: [zoom], startedFrom: nil, at: base)
+        XCTAssertEqual(single.associationSource, .singleActiveAtStart)
+        var prompted = CallLifecycleEngine()
+        prompted.noteRecordingStarted(activeCalls: [], startedFrom: zoom, at: base)
+        XCTAssertEqual(prompted.associationSource, .startPrompt)
+    }
+
+    func testTwoCallsAtStartNeverArmInferredAdoption() {
+        var engine = CallLifecycleEngine()
+        let zoom = app()
+        let slack = app("com.tinyspeck.slackmacgap", name: "Slack")
+        engine.noteRecordingStarted(activeCalls: [zoom, slack], startedFrom: nil, at: base)
+        XCTAssertNil(engine.associatedApp)
+        XCTAssertNil(engine.expectedCallUntil)
+        let recording = context(isRecording: true)
+        // Both stay transition candidates; nothing is adopted by sort order.
+        _ = engine.ingest(snapshot: snapshot(at: 0, calls: [zoom, slack]), context: recording)
+        let events = engine.ingest(snapshot: snapshot(at: 2, calls: [zoom, slack]), context: recording)
+        XCTAssertEqual(events.count, 2)
+        XCTAssertTrue(events.contains(.offerTransition(to: zoom)))
+        XCTAssertTrue(events.contains(.offerTransition(to: slack)))
+        XCTAssertNil(engine.associatedApp)
+    }
+
+    func testInferredWindowExpiresBackToTransitionCandidates() {
+        var engine = CallLifecycleEngine()
+        engine.noteRecordingStarted(activeCalls: [], startedFrom: nil, at: base)
+        let zoom = app()
+        let recording = context(isRecording: true)
+        let late = CallLifecycleEngine.inferredCallWindow + 1
+        _ = engine.ingest(snapshot: snapshot(at: late, calls: [zoom]), context: recording)
+        XCTAssertEqual(
+            engine.ingest(snapshot: snapshot(at: late + 2, calls: [zoom]), context: recording),
+            [.offerTransition(to: zoom)]
+        )
+        XCTAssertNil(engine.associatedApp)
+        XCTAssertNil(engine.expectedCallUntil)
     }
 
     func testJoinStartAdoptsTheCallThatAppearsInsteadOfOfferingATransition() {

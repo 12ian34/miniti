@@ -1060,4 +1060,13 @@ final class FirstWordSpeakerGatingTests: XCTestCase {
             ImplicitSelfPolicy.allowed(micSpeakerCount: 1, hasDualSourceOrLegacy: false, environment: .remoteLikely)
         )
     }
+
+    // MARK: - Speech detection (vad_events)
+
+    func testSpeechStartedMessagesAreRecognisedWithoutDecoding() {
+        XCTAssertTrue(DeepgramService.isSpeechStartedMessage(#"{"type":"SpeechStarted","channel":[0,1],"timestamp":12.4}"#))
+        XCTAssertTrue(DeepgramService.isSpeechStartedMessage(#"{"type": "SpeechStarted", "channel": [0, 2], "timestamp": 3.1}"#))
+        XCTAssertFalse(DeepgramService.isSpeechStartedMessage(#"{"type":"UtteranceEnd","channel":[0,1],"last_word_end":9.2}"#))
+        XCTAssertFalse(DeepgramService.isSpeechStartedMessage(#"{"type":"Results","channel":{"alternatives":[{"transcript":"SpeechStarted","words":[]}]}}"#))
+    }
 }

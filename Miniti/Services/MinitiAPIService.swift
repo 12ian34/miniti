@@ -582,7 +582,18 @@ final class MinitiAPIService: @unchecked Sendable {
                 return reason
             }
             if let prefix = preferences.matchingTitlePrefix(for: title) { return .title(prefix) }
+            if preferences.skipWithoutGuestsOrLink, hasNoGuestsOrLink { return .noGuestsOrLink }
             return nil
+        }
+
+        /// A block the person made for themselves: no conference link, nobody else
+        /// invited, and not an invitation from someone else (Google may hide the guest
+        /// list, so another organizer is enough to keep it). "Kids pickup" is not a
+        /// meeting and must never auto-start a recording (2026-09-25).
+        var hasNoGuestsOrLink: Bool {
+            guard joinURL == nil, externalAttendees.isEmpty else { return false }
+            if let organizer, !organizer.isSelf { return false }
+            return true
         }
 
         /// True under the default filters. Kept for the auto-start and handoff
@@ -760,6 +771,7 @@ final class MinitiAPIService: @unchecked Sendable {
         case workingLocation
         case birthday
         case title(String)
+        case noGuestsOrLink
 
         init?(eventType: String) {
             switch eventType {
@@ -781,6 +793,7 @@ final class MinitiAPIService: @unchecked Sendable {
             case .workingLocation: return "working location"
             case .birthday: return "birthday"
             case .title(let prefix): return "title starts with “\(prefix)”"
+            case .noGuestsOrLink: return "no guests or meeting link"
             }
         }
     }
@@ -803,9 +816,35 @@ final class MinitiAPIService: @unchecked Sendable {
         var skipBirthdays = true
         var skipAllDay = true
         var skipDeclined = true
+        /// Timed events with no conference link, no other guest, and no outside
+        /// organizer are personal blocks, not meetings.
+        var skipWithoutGuestsOrLink = true
         var titlePrefixes: [String] = defaultTitlePrefixes
 
         static let defaults = CalendarMeetingFilterPreferences()
+
+        init() {}
+
+        // Tolerant decoding: a rule added in a later version must not make an older
+        // stored blob undecodable, which would silently reset the person's custom
+        // prefixes to the defaults. Every field falls back to its default.
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            let d = CalendarMeetingFilterPreferences()
+            skipOutOfOffice = try c.decodeIfPresent(Bool.self, forKey: .skipOutOfOffice) ?? d.skipOutOfOffice
+            skipFocusTime = try c.decodeIfPresent(Bool.self, forKey: .skipFocusTime) ?? d.skipFocusTime
+            skipWorkingLocation = try c.decodeIfPresent(Bool.self, forKey: .skipWorkingLocation) ?? d.skipWorkingLocation
+            skipBirthdays = try c.decodeIfPresent(Bool.self, forKey: .skipBirthdays) ?? d.skipBirthdays
+            skipAllDay = try c.decodeIfPresent(Bool.self, forKey: .skipAllDay) ?? d.skipAllDay
+            skipDeclined = try c.decodeIfPresent(Bool.self, forKey: .skipDeclined) ?? d.skipDeclined
+            skipWithoutGuestsOrLink = try c.decodeIfPresent(Bool.self, forKey: .skipWithoutGuestsOrLink) ?? d.skipWithoutGuestsOrLink
+            titlePrefixes = try c.decodeIfPresent([String].self, forKey: .titlePrefixes) ?? d.titlePrefixes
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case skipOutOfOffice, skipFocusTime, skipWorkingLocation, skipBirthdays
+            case skipAllDay, skipDeclined, skipWithoutGuestsOrLink, titlePrefixes
+        }
 
         static func load(defaults: UserDefaults = .standard) -> CalendarMeetingFilterPreferences {
             guard let data = defaults.data(forKey: storageKey),

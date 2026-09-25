@@ -17,7 +17,13 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### Unreleased - v2.10.0
 
-- new: (macOS and iOS) separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on Apple silicon instead of Deepgram's speaker detection. In our tests on recorded meetings it put 6 to 20% more of the words on the right speaker, and it does best in a room with several people on one mic. Audio still goes to Deepgram for the words. A 190 MB model downloads the first time you turn it on. Off by default while it is in beta
+- new: (macOS and iOS) separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on Apple silicon instead of Deepgram's speaker detection. In our tests on recorded meetings it got the speaker right for 6 to 20% more of the talking time, and it does best in a room with several people on one mic. Audio still goes to Deepgram for the words. The model ships inside the app, which is why this update is about 190 MB bigger. Off by default while it is in beta
+- improvement: (macOS and iOS) Settings, About now lists the open-source software and the speaker model miniti ships with, and their licences
+- new: (macOS and iOS) calendar events with no guests and no meeting link are not meetings any more, so a personal block like "kids pickup" never auto-starts a recording. Switch it off in Settings, Calendar, Meeting filters
+- improvement: (macOS) press record, then join a Zoom, Teams, Meet or Slack call, and miniti asks whether the meeting has finished within seconds of that call ending
+- fix: (macOS) the floating recording window can be dragged again on macOS 27
+- fix: (macOS and iOS) Google Calendar no longer shows as disconnected after a restart. miniti retries the connection check and checks again when you come back to the app
+- fix: (macOS and iOS) the "has this meeting ended?" question now appears in a noisy room, stays up until someone speaks, and comes 2 minutes after a calendar meeting's end time
 
 ### 2026-09-13 - v2.9.0
 
