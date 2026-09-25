@@ -393,6 +393,7 @@ struct MainWindow: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             refreshMeetings()
+            appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
             if appState.appMode == .managed {
                 Task { await appState.refreshUsage() }
             }

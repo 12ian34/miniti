@@ -205,6 +205,16 @@ struct CallLifecycleEngine {
     /// Recordings shorter than this receive an ask-only prompt instead of automatic ending.
     static let shortSessionMinimumDuration: TimeInterval = 60
 
+    /// How the recording came to be associated with its call app. Inferred associations
+    /// (a call that appeared shortly after a plain manual start) only ever ask at the end;
+    /// they never enter the automatic ending grace.
+    enum AssociationSource: Equatable {
+        case startPrompt
+        case singleActiveAtStart
+        case adoptedExpected
+        case adoptedInferred
+    }
+
     // Start-detection state (only meaningful while not recording).
     private(set) var startCandidate: (app: ActiveCallApplication, firstSeenAt: Date)?
     private(set) var promptedStartBundleID: String?
@@ -214,6 +224,13 @@ struct CallLifecycleEngine {
 
     // Association state (only meaningful while recording).
     private(set) var associatedApp: ActiveCallApplication?
+    private(set) var associationSource: AssociationSource?
+    /// The association as in-room/hybrid environment inference should see it. An inferred
+    /// call was not what the recording was started for, so it is no evidence that the
+    /// meeting is remote.
+    var associatedAppForEnvironmentEvidence: ActiveCallApplication? {
+        associationSource == .adoptedInferred ? nil : associatedApp
+    }
     private(set) var hasObservedAssociatedActive = false
     private(set) var endCandidateSince: Date?
     private var transitionCandidates: [String: Date] = [:]
@@ -228,13 +245,21 @@ struct CallLifecycleEngine {
     /// Covers a Meet lobby and a slow browser launch; bounded so an unrelated call much
     /// later stays a transition candidate.
     static let expectedCallWindow: TimeInterval = 300
+    /// How long after a plain manual start (no call active, no join link) a single call
+    /// that appears is taken to be the recording's own. "Press Record, then join the Zoom"
+    /// is the common ad-hoc flow; without this the call's end was never noticed and the
+    /// recording ran on for hours (2026-09-25). Shorter than the join window because
+    /// nothing announced a call; the end of an inferred call only ever asks.
+    static let inferredCallWindow: TimeInterval = 120
 
     /// Association forms at recording start — from the start prompt's app, or from
     /// exactly one recognized call being active. Apps appearing mid-recording never
     /// associate retroactively, so an unrelated call ending cannot end this recording.
-    /// The one exception is a start that expects a call (`expectsCall`): the user just
-    /// pressed Join or started notes for a meeting with a conference link, so the call
-    /// that appears in the next `expectedCallWindow` is this recording's own call.
+    /// Two bounded exceptions, both only when no call was active at the start: a start
+    /// that expects a call (`expectsCall`: the user pressed Join or started notes for a
+    /// meeting with a conference link) adopts the call that appears within
+    /// `expectedCallWindow`; any other start adopts a call that appears within the
+    /// shorter `inferredCallWindow` as an ask-only association.
     mutating func noteRecordingStarted(
         activeCalls: [ActiveCallApplication],
         startedFrom promptApp: ActiveCallApplication?,
@@ -247,15 +272,28 @@ struct CallLifecycleEngine {
         offeredTransitionBundleIDs = []
         if let promptApp {
             associatedApp = promptApp
+            associationSource = .startPrompt
         } else if activeCalls.count == 1 {
             associatedApp = activeCalls[0]
+            associationSource = .singleActiveAtStart
         } else {
             associatedApp = nil
+            associationSource = nil
         }
         if associatedApp == nil, expectsCall {
             expectedCallUntil = now.addingTimeInterval(Self.expectedCallWindow)
+            pendingAdoptionSource = .adoptedExpected
+        } else if associatedApp == nil, activeCalls.isEmpty {
+            // With two or more calls already active nothing is armed: the ambiguity
+            // stays in fallback mode. A join expectation armed before this call
+            // (asynchronous managed start) is kept.
+            if expectedCallUntil == nil {
+                expectedCallUntil = now.addingTimeInterval(Self.inferredCallWindow)
+                pendingAdoptionSource = .adoptedInferred
+            }
         } else if associatedApp != nil {
             expectedCallUntil = nil
+            pendingAdoptionSource = nil
         }
         // An expectation armed by a join link opened before the recording registered
         // (managed starts are asynchronous) survives this call.
@@ -270,15 +308,21 @@ struct CallLifecycleEngine {
     mutating func noteJoinLinkOpened(at now: Date = Date()) {
         guard associatedApp == nil else { return }
         expectedCallUntil = now.addingTimeInterval(Self.expectedCallWindow)
+        pendingAdoptionSource = .adoptedExpected
     }
+
+    /// Source the next adoption will record; set whenever `expectedCallUntil` is armed.
+    private var pendingAdoptionSource: AssociationSource?
 
     mutating func noteRecordingEnded() {
         associatedApp = nil
+        associationSource = nil
         hasObservedAssociatedActive = false
         endCandidateSince = nil
         transitionCandidates = [:]
         offeredTransitionBundleIDs = []
         expectedCallUntil = nil
+        pendingAdoptionSource = nil
     }
 
     /// The user dismissed the start prompt: suppress further prompts for this uninterrupted call.
@@ -332,8 +376,11 @@ struct CallLifecycleEngine {
                 if let since = endCandidateSince {
                     if now.timeIntervalSince(since) >= Self.endDebounce(for: associated.confidence),
                        context.transcriptGap >= Self.endQuietRequirement(for: associated.confidence) {
+                        // An inferred association was never announced as this recording's
+                        // call, so its end is a question, never an automatic stop.
                         let askOnly = !context.hasMeaningfulContent ||
-                            context.recordingDuration < Self.shortSessionMinimumDuration
+                            context.recordingDuration < Self.shortSessionMinimumDuration ||
+                            associationSource == .adoptedInferred
                         events.append(.beginEndingGrace(app: associated, askOnly: askOnly))
                         endCandidateSince = nil
                     }
@@ -348,6 +395,7 @@ struct CallLifecycleEngine {
         // conference link) adopts the first matured candidate instead of prompting.
         if let until = expectedCallUntil, now > until {
             expectedCallUntil = nil
+            pendingAdoptionSource = nil
         }
         let activeIDs = Set(snapshot.activeCalls.map(\.bundleID))
         transitionCandidates = transitionCandidates.filter { activeIDs.contains($0.key) }
@@ -356,8 +404,10 @@ struct CallLifecycleEngine {
                 guard now.timeIntervalSince(since) >= Self.startDebounce else { continue }
                 if associatedApp == nil, expectedCallUntil != nil {
                     associatedApp = app
+                    associationSource = pendingAdoptionSource ?? .adoptedExpected
                     hasObservedAssociatedActive = true
                     expectedCallUntil = nil
+                    pendingAdoptionSource = nil
                     transitionCandidates[app.bundleID] = nil
                     events.append(.adoptExpectedCall(app))
                 } else if !offeredTransitionBundleIDs.contains(app.bundleID) {

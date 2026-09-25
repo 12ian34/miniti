@@ -164,6 +164,60 @@ enum RecordingIndicatorDisclosurePolicy {
     }
 }
 
+/// Explicit pointer path for the panel header. A press that travels past the disclosure
+/// tolerance moves the window through AppKit's own `performDrag(with:)`; a press released
+/// in place toggles disclosure. The header used to rely on `isMovableByWindowBackground`
+/// reaching through the hosted SwiftUI Button, which macOS 27 no longer allows (the hosting
+/// view keeps the mouse-down), so dragging silently stopped there. The Button underneath
+/// still owns the accessibility label, hint, help text, and VoiceOver activation.
+struct RecordingIndicatorDragHandle: NSViewRepresentable {
+    var onClick: () -> Void
+
+    func makeNSView(context: Context) -> DragHandleView {
+        let view = DragHandleView()
+        view.onClick = onClick
+        return view
+    }
+
+    func updateNSView(_ nsView: DragHandleView, context: Context) {
+        nsView.onClick = onClick
+    }
+
+    final class DragHandleView: NSView {
+        var onClick: (() -> Void)?
+        private var mouseDownEvent: NSEvent?
+        private var didDrag = false
+
+        // Non-activating panel: the first click must count, as it did with the Button.
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func mouseDown(with event: NSEvent) {
+            mouseDownEvent = event
+            didDrag = false
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let down = mouseDownEvent, !didDrag else { return }
+            let start = down.locationInWindow
+            let current = event.locationInWindow
+            let translation = CGSize(width: current.x - start.x, height: current.y - start.y)
+            guard RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(for: translation) else { return }
+            didDrag = true
+            // AppKit runs its own tracking loop until mouse-up and posts didMoveNotification,
+            // so position persistence and screen clamping are untouched.
+            window?.performDrag(with: down)
+            mouseDownEvent = nil
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            let wasClick = mouseDownEvent != nil && !didDrag
+            mouseDownEvent = nil
+            didDrag = false
+            if wasClick { onClick?() }
+        }
+    }
+}
+
 enum RecordingIndicatorGeometry {
     static let screenMargin: CGFloat = 8
 
@@ -444,7 +498,6 @@ private extension NSRect {
 private struct RecordingIndicatorView: View {
     @EnvironmentObject var appState: AppState
     @ObservedObject var model: RecordingIndicatorModel
-    @State private var headerDragSuppressesToggle = false
 
     var body: some View {
         let presence = appState.recordingPresence
@@ -479,7 +532,6 @@ private struct RecordingIndicatorView: View {
         nudge: AppState.RecordingNudge?
     ) -> some View {
         Button {
-            guard !headerDragSuppressesToggle else { return }
             model.expanded.toggle()
         } label: {
             HStack(spacing: 8) {
@@ -543,22 +595,11 @@ private struct RecordingIndicatorView: View {
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                .onChanged { value in
-                    if RecordingIndicatorDisclosurePolicy.shouldSuppressToggle(
-                        for: value.translation
-                    ) {
-                        headerDragSuppressesToggle = true
-                    }
-                }
-                .onEnded { _ in
-                    // Keep suppression through the Button's mouse-up action, then reset
-                    // before the next click begins.
-                    DispatchQueue.main.async {
-                        headerDragSuppressesToggle = false
-                    }
-                }
+        // Pointer input goes to the drag handle (click toggles, drag moves the window);
+        // the Button keeps VoiceOver and help text.
+        .overlay(
+            RecordingIndicatorDragHandle { model.expanded.toggle() }
+                .accessibilityHidden(true)
         )
         .accessibilityLabel(collapsedAccessibilityLabel(presence, prompt: prompt, nudge: nudge))
         .accessibilityHint(model.expanded ? "Collapses meeting controls" : "Expands meeting controls")

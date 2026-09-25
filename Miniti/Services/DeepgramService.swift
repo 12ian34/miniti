@@ -570,6 +570,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     nonisolated(unsafe) private var _socketAudioStartPending = false
     
     @Published var transcriptUpdate: TranscriptUpdate?
+    /// Wall-clock time of the last `SpeechStarted` event from Deepgram's own voice
+    /// activity detection (`vad_events=true`). Speech-specific, unlike the raw capture
+    /// level, so a fan or keyboard does not count as someone talking.
+    @Published private(set) var lastSpeechStartedAt: CFAbsoluteTime = 0
     @Published var speakerSegments: [SpeakerSegment] = []  // Multiple segments per response
     @Published var connectionState: ConnectionState = .disconnected
     @Published var error: Error?
@@ -1031,8 +1035,14 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
 
     private enum BackgroundParseResult: Sendable {
         case transcript(ProcessedTranscript)
+        case speechStarted
         case ignored
         case warning(String)
+    }
+
+    /// Deepgram's VAD event. Cheap substring check so the full decode is skipped.
+    nonisolated static func isSpeechStartedMessage(_ json: String) -> Bool {
+        json.contains("\"type\":\"SpeechStarted\"") || json.contains("\"type\": \"SpeechStarted\"")
     }
 
     private func receiveMessages(generation: UInt64) {
@@ -1119,6 +1129,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         speakerTimeline: OnDeviceSpeakerTimeline? = nil
     ) -> BackgroundParseResult {
         guard let data = json.data(using: .utf8) else { return .ignored }
+        if isSpeechStartedMessage(json) { return .speechStarted }
         let response: DeepgramResponse
         do {
             response = try JSONDecoder().decode(DeepgramResponse.self, from: data)
@@ -1213,6 +1224,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         switch result {
         case .ignored:
             return
+        case .speechStarted:
+            lastSpeechStartedAt = CFAbsoluteTimeGetCurrent()
         case .warning(let message):
             DebugLogger.shared.log(.deepgram, "Parse warning: \(message)")
         case .transcript(let parsed):

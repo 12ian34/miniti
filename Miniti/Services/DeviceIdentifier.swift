@@ -11,36 +11,92 @@ enum DeviceIdentifier {
     // Every access is serialized by keychainLock. Cache the successful resolution
     // so routine API calls do not repeatedly cross into Security.framework.
     nonisolated(unsafe) private static var cachedDeviceId: String?
+    /// Identity used while the Keychain item exists but cannot be read (locked, ACL
+    /// prompt pending, transient Security error). Never persisted: the next successful
+    /// read restores the real ID. Minting and saving a new ID here would silently
+    /// replace the device identity, which also disconnects Google Calendar, CRM and
+    /// managed usage on the backend (2026-09-25).
+    nonisolated(unsafe) private static var sessionOnlyDeviceId: String?
+    
+    enum KeychainReadResult {
+        case found(String)
+        case missing
+        case unreadable(OSStatus)
+    }
+
+    /// What to do when no ID could be read from the Keychain.
+    enum MissingIDResolution: Equatable {
+        /// Reuse the UserDefaults fallback (persist it to the Keychain only if the item is absent).
+        case useFallback
+        /// The item is genuinely absent: create a new ID and persist it.
+        case createAndPersist
+        /// The item may exist but is unreadable right now: use a session-only ID, write nothing.
+        case sessionOnly
+    }
+
+    /// True while the app is running on a session-only ID because the Keychain item could
+    /// not be read. Callers that would bind durable state to the device identity (managed
+    /// enrollment, backend-keyed integrations) should wait rather than proceed.
+    static var isUsingSessionOnlyID: Bool {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        return cachedDeviceId == nil && sessionOnlyDeviceId != nil
+    }
+
+    nonisolated static func resolution(afterReadStatus status: OSStatus, hasFallback: Bool) -> MissingIDResolution {
+        if hasFallback { return .useFallback }
+        return status == errSecItemNotFound ? .createAndPersist : .sessionOnly
+    }
     
     /// Returns existing device ID or creates and persists a new one.
     static func getOrCreateDeviceId() -> String {
         keychainLock.lock()
         defer { keychainLock.unlock() }
         if let cachedDeviceId { return cachedDeviceId }
-        if let existing = getFromKeychain() {
+        let readStatus: OSStatus
+        switch getFromKeychain() {
+        case .found(let existing):
             clearFallbackFromDefaults()
+            if sessionOnlyDeviceId != nil {
+                DebugLogger.shared.log(.app, "device_id_keychain_recovered")
+                sessionOnlyDeviceId = nil
+            }
             cachedDeviceId = existing
             return existing
+        case .missing:
+            readStatus = errSecItemNotFound
+        case .unreadable(let status):
+            readStatus = status
         }
-        if let fallback = getFromDefaultsFallback() {
-            if saveToKeychain(fallback) {
+        let fallback = getFromDefaultsFallback()
+        switch resolution(afterReadStatus: readStatus, hasFallback: fallback != nil) {
+        case .useFallback:
+            let fallback = fallback!
+            if readStatus == errSecItemNotFound, saveToKeychain(fallback) {
                 clearFallbackFromDefaults()
             } else {
-                DebugLogger.shared.log(.app, "Using fallback device ID because keychain persistence is unavailable")
+                DebugLogger.shared.log(.app, "Using fallback device ID because keychain persistence is unavailable (status=\(readStatus))")
             }
             cachedDeviceId = fallback
             return fallback
+        case .createAndPersist:
+            let newId = UUID().uuidString
+            if saveToKeychain(newId) {
+                clearFallbackFromDefaults()
+            } else {
+                saveToDefaultsFallback(newId)
+                DebugLogger.shared.log(.app, "Persisted fallback device ID in UserDefaults because keychain save failed")
+            }
+            DebugLogger.shared.log(.app, "Created new device ID (\(newId.prefix(8))...)")
+            cachedDeviceId = newId
+            return newId
+        case .sessionOnly:
+            if let sessionOnlyDeviceId { return sessionOnlyDeviceId }
+            let temporary = UUID().uuidString
+            sessionOnlyDeviceId = temporary
+            DebugLogger.shared.log(.app, "device_id_keychain_unreadable status=\(readStatus); using a session-only ID until the keychain item can be read")
+            return temporary
         }
-        let newId = UUID().uuidString
-        if saveToKeychain(newId) {
-            clearFallbackFromDefaults()
-        } else {
-            saveToDefaultsFallback(newId)
-            DebugLogger.shared.log(.app, "Persisted fallback device ID in UserDefaults because keychain save failed")
-        }
-        DebugLogger.shared.log(.app, "Created new device ID (\(newId.prefix(8))...)")
-        cachedDeviceId = newId
-        return newId
     }
     
     /// Read the device ID without creating one (returns nil if not yet registered).
@@ -48,14 +104,19 @@ enum DeviceIdentifier {
         keychainLock.lock()
         defer { keychainLock.unlock() }
         if let cachedDeviceId { return cachedDeviceId }
-        let existing = getFromKeychain() ?? getFromDefaultsFallback()
+        let existing: String?
+        if case .found(let value) = getFromKeychain() {
+            existing = value
+        } else {
+            existing = getFromDefaultsFallback()
+        }
         cachedDeviceId = existing
         return existing
     }
     
     // MARK: - Keychain Operations
     
-    private static func getFromKeychain() -> String? {
+    private static func getFromKeychain() -> KeychainReadResult {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -67,13 +128,18 @@ enum DeviceIdentifier {
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let string = String(data: data, encoding: .utf8) else {
-            return nil
+        switch status {
+        case errSecSuccess:
+            guard let data = result as? Data,
+                  let string = String(data: data, encoding: .utf8) else {
+                return .unreadable(status)
+            }
+            return .found(string)
+        case errSecItemNotFound:
+            return .missing
+        default:
+            return .unreadable(status)
         }
-        
-        return string
     }
     
     private static func saveToKeychain(_ value: String) -> Bool {

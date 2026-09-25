@@ -407,8 +407,15 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else {
+            if status != errSecItemNotFound {
+                // A locked or prompting keychain looks like "not enrolled" to the rest of
+                // the app; the status makes that distinguishable in the debug log.
+                DebugLogger.shared.log(.app, "Device auth keychain read failed: status=\(status)")
+            }
+            return nil
+        }
         return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
     }
 

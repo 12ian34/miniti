@@ -144,10 +144,13 @@ struct MinitiMobileApp: App {
                     }
                     saveLease.end()
                 }
-            } else if newPhase == .active && appState.appMode == .managed {
-                Task {
-                    await appState.refreshUsage()
-                    await appState.retryPendingSessionEndReports()
+            } else if newPhase == .active {
+                appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
+                if appState.appMode == .managed {
+                    Task {
+                        await appState.refreshUsage()
+                        await appState.retryPendingSessionEndReports()
+                    }
                 }
             }
         }
