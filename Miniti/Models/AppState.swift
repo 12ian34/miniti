@@ -9343,9 +9343,12 @@ final class AppState: ObservableObject {
             // settings decide, and a settings change re-applies without a refetch.
             fetchedCalendarEvents = events
             let meetings = Self.filterCalendarMeetings(events, preferences: calendarMeetingFilters)
+            // Routine: this runs every minute and the word "skipped" would otherwise auto-classify
+            // it as a warning and swamp the debug log's important view.
             DebugLogger.shared.log(
                 .app,
-                "Google Calendar fetched \(events.count) events, \(withLink) with a join link (\(withRawLinkFields) carried raw link fields), \(events.count - meetings.count) skipped as non-meetings"
+                "Google Calendar fetched \(events.count) events, \(withLink) with a join link (\(withRawLinkFields) carried raw link fields), \(events.count - meetings.count) skipped as non-meetings",
+                level: .routine
             )
             upcomingEvents = meetings
             rescheduleMeetingReminders()
