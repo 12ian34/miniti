@@ -1254,7 +1254,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             originalSpeakerIDs: Array(Set(alternative.words.compactMap(\.speaker))).sorted(),
             mappedSpeakerIDs: Array(Set(words.map(\.speaker))).sorted(),
             wasMultichannel: isMultichannel,
-            onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s fed=\(String(format: "%.1f", speakerTimeline?.fedSeconds(source: source) ?? 0))s lastWord=\(String(format: "%.1f", alternative.words.last?.end ?? 0))s"
+            onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s fed=\(String(format: "%.1f", speakerTimeline?.fedSeconds(source: source) ?? 0))s lastWord=\(String(format: "%.1f", alternative.words.last?.end ?? 0))s mature=\(speakerTimeline?.matureSlots(source: source) ?? [])"
         ))
     }
 

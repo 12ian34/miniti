@@ -19,11 +19,43 @@ final class OnDeviceDiarizationTests: XCTestCase {
         return out
     }
 
+    /// Timeline whose slots are already mature (3 s of prior speech each), then the given frames
+    /// on the current socket.
     private func timeline(mic slots: [Int?]) -> OnDeviceSpeakerTimeline {
         let t = OnDeviceSpeakerTimeline(sources: [.microphone])
+        let used = Set(slots.compactMap { $0 })
+        let warm = Int(OnDeviceSpeakerTimeline.slotMaturitySeconds / OnDeviceSpeakerTimeline.frameSeconds)
+        for slot in used.sorted() {
+            t.noteAudioFed(source: .microphone, sampleCount: warm * 160)
+            t.append(source: .microphone, probabilities: probabilities(Array(repeating: slot, count: warm)), frameCount: warm, numSpeakers: 8)
+        }
+        t.noteAudioFed(source: .microphone, sampleCount: 160)
         t.markSocketStart()
         t.append(source: .microphone, probabilities: probabilities(slots), frameCount: slots.count, numSpeakers: 8)
         return t
+    }
+
+    func testImmatureSlotNeverTakesAWordUntilItHasThreeSecondsOfSpeech() {
+        let t = OnDeviceSpeakerTimeline(sources: [.microphone])
+        let warm = Int(OnDeviceSpeakerTimeline.slotMaturitySeconds / OnDeviceSpeakerTimeline.frameSeconds)
+        t.noteAudioFed(source: .microphone, sampleCount: 160)
+        t.markSocketStart()
+        // 3 s of speaker 0 (mature), then a 1 s burst of slot 3 (churn), then speaker 0 again
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 0, count: warm)), frameCount: warm, numSpeakers: 8)
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 3, count: 100)), frameCount: 100, numSpeakers: 8)
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 0, count: 100)), frameCount: 100, numSpeakers: 8)
+        XCTAssertEqual(t.matureSlots(source: .microphone), [0])
+        // A word inside the burst stays with the mature speaker, borrowed
+        let burst = t.lookup(source: .microphone, socketStart: 3.2, socketEnd: 3.6)
+        XCTAssertEqual(burst?.providerSpeaker, 0)
+        XCTAssertEqual(burst?.confidence, OnDeviceSpeakerTimeline.fallbackConfidence)
+        // Slot 3 keeps talking for 2 more seconds: now mature, and later words go to it
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 3, count: 200)), frameCount: 200, numSpeakers: 8)
+        XCTAssertEqual(t.matureSlots(source: .microphone), [0, 3])
+        XCTAssertEqual(t.lookup(source: .microphone, socketStart: 5.5, socketEnd: 5.9)?.providerSpeaker, 3)
+        // Earlier burst words still read as speaker 0 only if re-looked-up before maturity; a
+        // re-lookup now sees slot 3 as mature, which is fine: finals are never re-labelled.
+        XCTAssertEqual(t.lookup(source: .microphone, socketStart: 3.2, socketEnd: 3.6)?.providerSpeaker, 3)
     }
 
     // MARK: - Timeline lookup
@@ -98,16 +130,17 @@ final class OnDeviceDiarizationTests: XCTestCase {
 
     func testSocketOriginIsTheStartOfTheFirstSentPacket() {
         let t = OnDeviceSpeakerTimeline(sources: [.microphone])
-        // 2 s of audio fed and diarized (speaker 0) before the socket connected (dropped by Deepgram)
-        t.noteAudioFed(source: .microphone, sampleCount: 32_000)
-        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 0, count: 200)), frameCount: 200, numSpeakers: 8)
+        // 3.2 s of audio fed and diarized (speaker 0) before the socket connected (dropped by Deepgram)
+        t.noteAudioFed(source: .microphone, sampleCount: 51_200)
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 0, count: 320)), frameCount: 320, numSpeakers: 8)
         // The first packet Deepgram receives (100 ms) is ingested first, then the socket start is marked
         t.noteAudioFed(source: .microphone, sampleCount: 1_600)
         t.markSocketStart()
-        // 1 s of speaker 1 follows on the socket (the first packet is speaker 1 too)
-        t.noteAudioFed(source: .microphone, sampleCount: 14_400)
-        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 1, count: 100)), frameCount: 100, numSpeakers: 8)
-        XCTAssertEqual(t.fedSeconds(source: .microphone), 3.0, accuracy: 0.001)
+        // 3 s of speaker 1 on the socket, including that first packet, enough to mature the slot
+        t.noteAudioFed(source: .microphone, sampleCount: 46_400)
+        t.append(source: .microphone, probabilities: probabilities(Array(repeating: 1, count: 300)), frameCount: 300, numSpeakers: 8)
+        XCTAssertEqual(t.fedSeconds(source: .microphone), 6.2, accuracy: 0.001)
+        XCTAssertEqual(t.matureSlots(source: .microphone), [0, 1])
         // Socket 0.00–0.10 s is the first packet: speaker 1, not the pre-socket speaker 0
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.0, socketEnd: 0.1)?.providerSpeaker, 1)
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.1, socketEnd: 0.4)?.providerSpeaker, 1)
