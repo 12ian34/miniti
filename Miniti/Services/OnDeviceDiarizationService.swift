@@ -39,6 +39,9 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     private let lock = NSLock()
     private var dominant: [TranscriptSource: [UInt8]] = [:]
     private var fedSamples: [TranscriptSource: Int] = [:]
+    /// Size of the most recent packet per source, so `markSocketStart()` can place socket
+    /// time 0 at the *start* of the packet that opened the socket.
+    private var lastPacketSamples: [TranscriptSource: Int] = [:]
     private var socketOriginSeconds: [TranscriptSource: Double] = [:]
 
     init(sources: Set<TranscriptSource>) {
@@ -57,13 +60,19 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
         guard sampleCount > 0, sources.contains(source) else { return }
         lock.lock(); defer { lock.unlock() }
         fedSamples[source, default: 0] += sampleCount
+        lastPacketSamples[source] = sampleCount
     }
 
-    /// Socket time 0 of the Deepgram connection now sending == this much diarizer audio.
+    /// Call right after the ingest of the first packet a Deepgram socket sends: that packet's
+    /// first sample is the socket's time 0, so the origin is the audio fed *before* it.
+    /// (Counting the packet itself shifted every lookup late by one packet, which pushed the
+    /// last words of each turn onto the next speaker in the first live test, 2026-09-26.)
     func markSocketStart() {
         lock.lock(); defer { lock.unlock() }
         for source in sources {
-            socketOriginSeconds[source] = Double(fedSamples[source] ?? 0) / Self.sampleRate
+            let fed = fedSamples[source] ?? 0
+            let packet = lastPacketSamples[source] ?? 0
+            socketOriginSeconds[source] = Double(max(0, fed - packet)) / Self.sampleRate
         }
     }
 
