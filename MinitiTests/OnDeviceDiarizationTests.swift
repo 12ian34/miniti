@@ -96,17 +96,34 @@ final class OnDeviceDiarizationTests: XCTestCase {
         XCTAssertFalse(t.covers(.system))
     }
 
-    func testSocketOriginShiftsLookups() {
+    func testSocketOriginIsTheStartOfTheFirstSentPacket() {
         let t = OnDeviceSpeakerTimeline(sources: [.microphone])
-        // 2 s of audio fed and diarized (speaker 0) before this socket started sending
+        // 2 s of audio fed and diarized (speaker 0) before the socket connected (dropped by Deepgram)
         t.noteAudioFed(source: .microphone, sampleCount: 32_000)
         t.append(source: .microphone, probabilities: probabilities(Array(repeating: 0, count: 200)), frameCount: 200, numSpeakers: 8)
+        // The first packet Deepgram receives (100 ms) is ingested first, then the socket start is marked
+        t.noteAudioFed(source: .microphone, sampleCount: 1_600)
         t.markSocketStart()
-        // Then 1 s of speaker 1 on the new socket
-        t.noteAudioFed(source: .microphone, sampleCount: 16_000)
+        // 1 s of speaker 1 follows on the socket (the first packet is speaker 1 too)
+        t.noteAudioFed(source: .microphone, sampleCount: 14_400)
         t.append(source: .microphone, probabilities: probabilities(Array(repeating: 1, count: 100)), frameCount: 100, numSpeakers: 8)
         XCTAssertEqual(t.fedSeconds(source: .microphone), 3.0, accuracy: 0.001)
+        // Socket 0.00–0.10 s is the first packet: speaker 1, not the pre-socket speaker 0
+        XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.0, socketEnd: 0.1)?.providerSpeaker, 1)
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.1, socketEnd: 0.4)?.providerSpeaker, 1)
+    }
+
+    func testBorrowedWordsContinueTheLastDiarizedWordInTheResponse() {
+        let d = { (s: Int, c: Double) in DeepgramService.ProviderSpeaker(speaker: s, confidence: c, borrowed: false) }
+        let b = { (s: Int) in DeepgramService.ProviderSpeaker(speaker: s, confidence: OnDeviceSpeakerTimeline.fallbackConfidence, borrowed: true) }
+        // Timeline last heard speaker 0, but this utterance's diarized words are speaker 1
+        let out = DeepgramService.continueBorrowedSpeakers([d(1, 0.9), d(1, 1.0), b(0), b(0)])
+        XCTAssertEqual(out.map(\.speaker), [1, 1, 1, 1])
+        XCTAssertEqual(out.map(\.borrowed), [false, false, true, true])
+        // Nothing diarized yet: lookups stand
+        XCTAssertEqual(DeepgramService.continueBorrowedSpeakers([b(0), b(0)]).map(\.speaker), [0, 0])
+        // Borrowed words before the first diarized word keep their own guess
+        XCTAssertEqual(DeepgramService.continueBorrowedSpeakers([b(0), d(2, 0.8), b(5)]).map(\.speaker), [0, 2, 2])
     }
 
     func testAppendIgnoresMalformedInput() {
@@ -149,6 +166,10 @@ final class OnDeviceDiarizationTests: XCTestCase {
         let hit = DeepgramService.providerSpeaker(wordStart: 0.1, wordEnd: 0.3, deepgramSpeaker: 0, deepgramConfidence: 0.9, source: .microphone, timeline: t)
         XCTAssertEqual(hit.speaker, 4)
         XCTAssertEqual(hit.confidence ?? 0, 1.0, accuracy: 0.001)
+        XCTAssertFalse(hit.borrowed)
+        let past = DeepgramService.providerSpeaker(wordStart: 5.0, wordEnd: 5.3, deepgramSpeaker: 0, deepgramConfidence: 0.9, source: .microphone, timeline: t)
+        XCTAssertEqual(past.speaker, 4)
+        XCTAssertTrue(past.borrowed)
         // Source not covered: Deepgram's numbers stand
         let miss = DeepgramService.providerSpeaker(wordStart: 0.1, wordEnd: 0.3, deepgramSpeaker: 2, deepgramConfidence: 0.7, source: .system, timeline: t)
         XCTAssertEqual(miss.speaker, 2)
@@ -253,7 +274,7 @@ final class OnDeviceDiarizationEndToEndTests: XCTestCase {
         while offset < pcm.count {
             let end = min(offset + packet, pcm.count)
             service.ingest(pcm.subdata(in: offset..<end), multichannel: false, monoSource: .microphone)
-            if !socketMarked { timeline.markSocketStart(); socketMarked = true }
+            if !socketMarked { timeline.markSocketStart(); socketMarked = true }  // same order as the app: ingest, then mark
             offset = end
         }
         service.endSession()

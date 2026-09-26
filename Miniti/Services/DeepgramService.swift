@@ -973,6 +973,13 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         return queryItems
     }
 
+    struct ProviderSpeaker: Equatable, Sendable {
+        var speaker: Int
+        var confidence: Double?
+        /// True when the on-device timeline had not diarized the word yet and lent a neighbour.
+        var borrowed: Bool
+    }
+
     /// Provider speaker number and confidence for one word. With an on-device timeline that
     /// covers the word's source the timeline decides; otherwise Deepgram's own fields stand.
     nonisolated static func providerSpeaker(
@@ -982,12 +989,29 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         deepgramConfidence: Double?,
         source: TranscriptSource,
         timeline: OnDeviceSpeakerTimeline?
-    ) -> (speaker: Int, confidence: Double?) {
+    ) -> ProviderSpeaker {
         if let timeline, timeline.covers(source),
            let hit = timeline.lookup(source: source, socketStart: wordStart, socketEnd: wordEnd) {
-            return (hit.providerSpeaker, hit.confidence)
+            return ProviderSpeaker(speaker: hit.providerSpeaker, confidence: hit.confidence, borrowed: hit.confidence == OnDeviceSpeakerTimeline.fallbackConfidence)
         }
-        return (deepgramSpeaker ?? 0, deepgramConfidence)
+        return ProviderSpeaker(speaker: deepgramSpeaker ?? 0, confidence: deepgramConfidence, borrowed: false)
+    }
+
+    /// Words the diarizer has not reached yet continue the speaker of the last diarized word in
+    /// the same response, not whoever the timeline last heard. Within one utterance that is the
+    /// better guess, and it stops the interim line flipping speaker between updates as the
+    /// horizon advances. Words before the first diarized word keep their lookup result.
+    nonisolated static func continueBorrowedSpeakers(_ providers: [ProviderSpeaker]) -> [ProviderSpeaker] {
+        var out = providers
+        var lastDiarized: Int? = nil
+        for index in out.indices {
+            if !out[index].borrowed {
+                lastDiarized = out[index].speaker
+            } else if let lastDiarized {
+                out[index].speaker = lastDiarized
+            }
+        }
+        return out
     }
 
     nonisolated func sendAudio(_ data: Data) {
@@ -1162,8 +1186,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var nextIdentityState = identityState
         var onDeviceSlotCounts: [Int: Int] = [:]
         var onDeviceBorrowed = 0
-        let words = alternative.words.map { word in
-            let provider = providerSpeaker(
+        let onDeviceCovers = speakerTimeline?.covers(source) ?? false
+        var providers = alternative.words.map { word in
+            providerSpeaker(
                 wordStart: word.start,
                 wordEnd: word.end,
                 deepgramSpeaker: word.speaker,
@@ -1171,9 +1196,12 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 source: source,
                 timeline: speakerTimeline
             )
-            if let speakerTimeline, speakerTimeline.covers(source) {
+        }
+        if onDeviceCovers { providers = continueBorrowedSpeakers(providers) }
+        let words = zip(alternative.words, providers).map { word, provider in
+            if onDeviceCovers {
                 onDeviceSlotCounts[provider.speaker, default: 0] += 1
-                if provider.confidence == OnDeviceSpeakerTimeline.fallbackConfidence { onDeviceBorrowed += 1 }
+                if provider.borrowed { onDeviceBorrowed += 1 }
             }
             let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: provider.speaker)
             return TranscriptUpdate.Word(
@@ -1226,7 +1254,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             originalSpeakerIDs: Array(Set(alternative.words.compactMap(\.speaker))).sorted(),
             mappedSpeakerIDs: Array(Set(words.map(\.speaker))).sorted(),
             wasMultichannel: isMultichannel,
-            onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s"
+            onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s fed=\(String(format: "%.1f", speakerTimeline?.fedSeconds(source: source) ?? 0))s lastWord=\(String(format: "%.1f", alternative.words.last?.end ?? 0))s"
         ))
     }
 
