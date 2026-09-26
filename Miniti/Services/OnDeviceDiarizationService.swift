@@ -34,10 +34,19 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     /// yet diarized and borrows a neighbour, instead of getting a confidence discounted by
     /// coverage that the promotion gates would then reject.
     static let minimumCoverage: Double = 0.5
+    /// A speaker slot must have been dominant for this much speech before any word can be
+    /// attributed to it. Nemotron's arrival-order cache mints a new slot when one voice's
+    /// acoustics change (a phone line, a jingle, crowd noise behind a correspondent), and a
+    /// slot that never reaches this much speech was churn, not a person. Until a slot
+    /// matures its words stay with the current speaker, which is how Deepgram's lag reads
+    /// today. Found on BBC World Service audio in the third live test, 2026-09-26.
+    static let slotMaturitySeconds: Double = 3.0
 
     let sources: Set<TranscriptSource>
     private let lock = NSLock()
     private var dominant: [TranscriptSource: [UInt8]] = [:]
+    /// Dominant-frame count per slot per source; a slot is mature at `slotMaturitySeconds`.
+    private var slotFrames: [TranscriptSource: [Int]] = [:]
     private var fedSamples: [TranscriptSource: Int] = [:]
     /// Size of the most recent packet per source, so `markSocketStart()` can place socket
     /// time 0 at the *start* of the packet that opened the socket.
@@ -48,9 +57,19 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
         self.sources = sources
         for source in sources {
             dominant[source] = []
+            slotFrames[source] = [Int](repeating: 0, count: Int(Self.silence))
             fedSamples[source] = 0
             socketOriginSeconds[source] = 0
         }
+    }
+
+    private var maturityFrames: Int { Int(Self.slotMaturitySeconds / Self.frameSeconds) }
+
+    /// Slots with at least `slotMaturitySeconds` of dominant speech so far.
+    func matureSlots(source: TranscriptSource) -> [Int] {
+        lock.lock(); defer { lock.unlock() }
+        guard let counts = slotFrames[source] else { return [] }
+        return counts.enumerated().filter { $0.element >= maturityFrames }.map(\.offset)
     }
 
     func covers(_ source: TranscriptSource) -> Bool { sources.contains(source) }
@@ -95,6 +114,9 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
         }
         lock.lock(); defer { lock.unlock() }
         dominant[source, default: []].append(contentsOf: frames)
+        var counts = slotFrames[source] ?? [Int](repeating: 0, count: Int(Self.silence))
+        for frame in frames where frame != Self.silence { counts[Int(frame)] += 1 }
+        slotFrames[source] = counts
     }
 
     /// Seconds of diarizer output available for `source`.
@@ -115,6 +137,9 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     func lookup(source: TranscriptSource, socketStart: Double, socketEnd: Double) -> Lookup? {
         lock.lock(); defer { lock.unlock() }
         guard let frames = dominant[source], let origin = socketOriginSeconds[source] else { return nil }
+        let counts = slotFrames[source] ?? []
+        let mature = maturityFrames
+        let isMature: (UInt8) -> Bool = { slot in slot != Self.silence && Int(slot) < counts.count && counts[Int(slot)] >= mature }
         let absoluteStart = max(0, origin + socketStart)
         let absoluteEnd = max(absoluteStart, origin + socketEnd)
         let first = Int(absoluteStart / Self.frameSeconds)
@@ -124,28 +149,28 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
 
         let coverage = Double(available) / Double(max(requested, 1))
         if available > 0, coverage >= Self.minimumCoverage {
-            var counts = [Int](repeating: 0, count: 256)
-            for index in first..<(first + available) { counts[Int(frames[index])] += 1 }
-            counts[Int(Self.silence)] = 0
+            var wordCounts = [Int](repeating: 0, count: 256)
+            for index in first..<(first + available) where isMature(frames[index]) { wordCounts[Int(frames[index])] += 1 }
             var best = -1
             var bestCount = 0
-            for slot in 0..<Int(Self.silence) where counts[slot] > bestCount {
+            for slot in 0..<Int(Self.silence) where wordCounts[slot] > bestCount {
                 best = slot
-                bestCount = counts[slot]
+                bestCount = wordCounts[slot]
             }
             if best >= 0 {
-                let nonSilent = counts.reduce(0, +)
-                let agreement = Double(bestCount) / Double(max(nonSilent, 1))
+                let matureTotal = wordCounts.reduce(0, +)
+                let agreement = Double(bestCount) / Double(max(matureTotal, 1))
                 return Lookup(providerSpeaker: best, confidence: agreement)
             }
         }
 
-        // Silent span, or beyond the horizon: borrow the most recent active speaker.
+        // Silent span, only immature slots, or beyond the horizon: borrow the most recent
+        // mature speaker.
         let searchEnd = min(first + available, frames.count)
         let searchStart = max(0, searchEnd - Int(Self.neighbourLookbackSeconds / Self.frameSeconds))
         var index = searchEnd - 1
         while index >= searchStart {
-            if frames[index] != Self.silence {
+            if isMature(frames[index]) {
                 return Lookup(providerSpeaker: Int(frames[index]), confidence: Self.fallbackConfidence)
             }
             index -= 1
