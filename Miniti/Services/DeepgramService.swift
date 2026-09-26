@@ -1031,6 +1031,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let originalSpeakerIDs: [Int]
         let mappedSpeakerIDs: [Int]
         let wasMultichannel: Bool
+        /// Content-free summary of the on-device diarizer's view of this response, or nil.
+        var onDeviceSummary: String? = nil
     }
 
     private enum BackgroundParseResult: Sendable {
@@ -1063,7 +1065,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                             confirmedSpeakerIDs: self.confirmedSpeakerIDs,
                             pendingSpeakerEvidence: self.pendingSpeakerEvidence,
                             lastCommittedSpeakerBySource: self.lastCommittedSpeakerBySource,
-                            micSpeakerPromotionPolicy: self.micSpeakerPromotionPolicy
+                            micSpeakerPromotionPolicy: self.micSpeakerPromotionPolicy,
+                            onDeviceSources: self._onDeviceTimeline?.sources ?? []
                         )
                         let multichannel = self.isMultichannel
                         let mono = self.monoSource
@@ -1157,6 +1160,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         // provider speaker numbers to collision-free app speaker IDs. The
         // mic channel is no longer flattened to a single reserved ID.
         var nextIdentityState = identityState
+        var onDeviceSlotCounts: [Int: Int] = [:]
+        var onDeviceBorrowed = 0
         let words = alternative.words.map { word in
             let provider = providerSpeaker(
                 wordStart: word.start,
@@ -1166,6 +1171,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 source: source,
                 timeline: speakerTimeline
             )
+            if let speakerTimeline, speakerTimeline.covers(source) {
+                onDeviceSlotCounts[provider.speaker, default: 0] += 1
+                if provider.confidence == OnDeviceSpeakerTimeline.fallbackConfidence { onDeviceBorrowed += 1 }
+            }
             let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: provider.speaker)
             return TranscriptUpdate.Word(
                 text: word.punctuatedWord ?? word.word,
@@ -1216,7 +1225,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             originalWordCount: alternative.words.count,
             originalSpeakerIDs: Array(Set(alternative.words.compactMap(\.speaker))).sorted(),
             mappedSpeakerIDs: Array(Set(words.map(\.speaker))).sorted(),
-            wasMultichannel: isMultichannel
+            wasMultichannel: isMultichannel,
+            onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s"
         ))
     }
 
@@ -1250,6 +1260,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         .deepgram,
                         "Speaker mapping: channel=\(parsed.update.channelIndex.map(String.init) ?? "n/a"), source=\(parsed.update.source.rawValue), total=\(parsed.originalWordCount)"
                     )
+                }
+                if let summary = parsed.onDeviceSummary {
+                    DebugLogger.shared.log(.deepgram, "On-device speakers (\(parsed.update.source.rawValue)): \(summary) → app=\(parsed.mappedSpeakerIDs)")
                 }
                 for word in parsed.update.words {
                     var info = speakerHistory[word.speaker] ?? SpeakerInfo()
@@ -1300,6 +1313,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var pendingSpeakerEvidence: [Int: PendingSpeakerEvidence] = [:]
         var lastCommittedSpeakerBySource: [TranscriptSource: Int] = [:]
         var micSpeakerPromotionPolicy: MicSpeakerPromotionPolicy = .standard
+        /// Sources whose speaker numbers come from the on-device diarizer. Its slots are
+        /// stable and voice-based, so an additional mic speaker there never needs the strict
+        /// clone guard that exists for Deepgram's per-socket diarizer churn.
+        var onDeviceSources: Set<TranscriptSource> = []
     }
 
     nonisolated static func segmentBySpeaker(
@@ -1400,7 +1417,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     let isAdditionalMicSpeaker =
                         DeepgramService.isMicAppSpeakerID(newSpeaker)
                         && newSpeaker != DeepgramService.micSpeakerID
-                    let promotionPolicy = isAdditionalMicSpeaker
+                    let promotionPolicy = isAdditionalMicSpeaker && !state.onDeviceSources.contains(source)
                         ? state.micSpeakerPromotionPolicy
                         : .standard
                     let minWords = promotionPolicy.minWordsForNewMicSpeaker

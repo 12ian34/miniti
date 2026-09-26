@@ -33,11 +33,45 @@ final class OnDeviceDiarizationTests: XCTestCase {
         let t = timeline(mic: Array(repeating: 0, count: 30) + Array(repeating: 1, count: 30))
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.05, socketEnd: 0.25)?.providerSpeaker, 0)
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.35, socketEnd: 0.55)?.providerSpeaker, 1)
-        // A word straddling the boundary goes to whoever dominates it
+        // A word straddling the boundary goes to whoever dominates it, at the agreement share
         let straddle = t.lookup(source: .microphone, socketStart: 0.25, socketEnd: 0.45)
         XCTAssertEqual(straddle?.providerSpeaker, 1)
-        XCTAssertLessThan(straddle!.confidence, 1.0)
+        XCTAssertEqual(straddle!.confidence, 0.75, accuracy: 0.001)
         XCTAssertEqual(t.lookup(source: .microphone, socketStart: 0.0, socketEnd: 0.3)?.confidence ?? 0, 1.0, accuracy: 0.001)
+    }
+
+    func testLookupHalfCoveredWordKeepsFullAgreementConfidence() {
+        // 0.4 s diarized as speaker 2; a word spanning 0.3–0.5 s is half covered
+        let t = timeline(mic: Array(repeating: 2, count: 40))
+        let half = t.lookup(source: .microphone, socketStart: 0.3, socketEnd: 0.5)
+        XCTAssertEqual(half?.providerSpeaker, 2)
+        XCTAssertEqual(half?.confidence ?? 0, 1.0, accuracy: 0.001, "coverage must not discount confidence")
+        // Under half covered: borrowed at the fallback confidence instead
+        let mostlyPast = t.lookup(source: .microphone, socketStart: 0.35, socketEnd: 0.65)
+        XCTAssertEqual(mostlyPast?.providerSpeaker, 2)
+        XCTAssertEqual(mostlyPast?.confidence, OnDeviceSpeakerTimeline.fallbackConfidence)
+    }
+
+    // MARK: - Promotion of a second mic speaker from the on-device diarizer
+
+    private func word(_ text: String, _ start: Double, speaker: Int, confidence: Double) -> DeepgramService.TranscriptUpdate.Word {
+        DeepgramService.TranscriptUpdate.Word(text: text, start: start, end: start + 0.4, confidence: 0.95, speaker: speaker, speakerConfidence: confidence)
+    }
+
+    func testOnDeviceMicSpeakerPromotesUnderStrictPolicyButDeepgramOneDoesNot() {
+        // Eight words of a second mic voice (1001) at confidence 0.9 after the primary spoke.
+        var words = (0..<4).map { word("w\($0)", Double($0) * 0.5, speaker: DeepgramService.micSpeakerID, confidence: 0.9) }
+        words += (0..<8).map { word("s\($0)", 2.0 + Double($0) * 0.5, speaker: DeepgramService.micSpeakerID + 1, confidence: 0.9) }
+
+        var onDevice = DeepgramService.SegmentationState(micSpeakerPromotionPolicy: .strict, onDeviceSources: [.microphone])
+        onDevice.confirmedSpeakerIDs = [DeepgramService.micSpeakerID]
+        let promoted = DeepgramService.segmentBySpeaker(words: words, isFinal: true, confidence: 0.95, channelIndex: 0, source: .microphone, state: &onDevice)
+        XCTAssertEqual(Set(promoted.map(\.speaker)), [DeepgramService.micSpeakerID, DeepgramService.micSpeakerID + 1], "on-device slots use the standard policy even in a remote-likely meeting")
+
+        var deepgram = DeepgramService.SegmentationState(micSpeakerPromotionPolicy: .strict)
+        deepgram.confirmedSpeakerIDs = [DeepgramService.micSpeakerID]
+        let guarded = DeepgramService.segmentBySpeaker(words: words, isFinal: true, confidence: 0.95, channelIndex: 0, source: .microphone, state: &deepgram)
+        XCTAssertEqual(Set(guarded.map(\.speaker)), [DeepgramService.micSpeakerID], "Deepgram's second mic id still needs the strict evidence")
     }
 
     func testLookupSilentWordBorrowsRecentSpeakerAtLowConfidence() {
