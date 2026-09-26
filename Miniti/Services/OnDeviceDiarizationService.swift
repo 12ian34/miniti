@@ -16,7 +16,8 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
         /// Provider speaker number in the same namespace Deepgram's `speaker` field uses:
         /// channel-local, arrival-ordered, stable for the whole meeting.
         let providerSpeaker: Int
-        /// Agreement × coverage in `0…1`; `fallbackConfidence` when borrowed from a neighbour.
+        /// Share of the word's diarized frames that agree with the chosen speaker, `0…1`;
+        /// `fallbackConfidence` when borrowed from a neighbour.
         let confidence: Double
     }
 
@@ -29,6 +30,10 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     /// Confidence given to a borrowed speaker: below the segmentation switch gate (0.58), so a
     /// borrowed label can continue a turn but never start one.
     static let fallbackConfidence: Double = 0.3
+    /// A word whose diarized frames cover less than this share of its span is treated as not
+    /// yet diarized and borrows a neighbour, instead of getting a confidence discounted by
+    /// coverage that the promotion gates would then reject.
+    static let minimumCoverage: Double = 0.5
 
     let sources: Set<TranscriptSource>
     private let lock = NSLock()
@@ -108,7 +113,8 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
         let requested = lastExclusive - first
         let available = max(0, min(lastExclusive, frames.count) - first)
 
-        if available > 0 {
+        let coverage = Double(available) / Double(max(requested, 1))
+        if available > 0, coverage >= Self.minimumCoverage {
             var counts = [Int](repeating: 0, count: 256)
             for index in first..<(first + available) { counts[Int(frames[index])] += 1 }
             counts[Int(Self.silence)] = 0
@@ -121,8 +127,7 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
             if best >= 0 {
                 let nonSilent = counts.reduce(0, +)
                 let agreement = Double(bestCount) / Double(max(nonSilent, 1))
-                let coverage = Double(available) / Double(max(requested, 1))
-                return Lookup(providerSpeaker: best, confidence: agreement * coverage)
+                return Lookup(providerSpeaker: best, confidence: agreement)
             }
         }
 
