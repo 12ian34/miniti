@@ -365,3 +365,45 @@ final class AcknowledgementsTests: XCTestCase {
         XCTAssertTrue(apache.contains("Version 2.0"))
     }
 }
+
+#if os(macOS)
+// MARK: - Microphone selection (macOS)
+
+final class MicrophoneSelectionTests: XCTestCase {
+    private func device(_ id: UInt32, _ uid: String, _ name: String) -> AudioCaptureService.InputDevice {
+        AudioCaptureService.InputDevice(id: id, uid: uid, name: name, transport: "usb")
+    }
+
+    func testNoPreferenceUsesSystemDefault() {
+        let r = AudioCaptureService.resolveInputDevice(preferredUID: nil, devices: [device(1, "a", "A")], systemDefault: 7)
+        XCTAssertEqual(r.deviceID, 7)
+        XCTAssertFalse(r.usedFallback)
+        let empty = AudioCaptureService.resolveInputDevice(preferredUID: "", devices: [device(1, "a", "A")], systemDefault: 7)
+        XCTAssertEqual(empty.deviceID, 7)
+        XCTAssertFalse(empty.usedFallback)
+    }
+
+    func testPreferredDeviceWinsOverDefaultWhenPresent() {
+        let r = AudioCaptureService.resolveInputDevice(preferredUID: "rode", devices: [device(3, "airpods", "AirPods"), device(9, "rode", "RØDE")], systemDefault: 3)
+        XCTAssertEqual(r.deviceID, 9)
+        XCTAssertFalse(r.usedFallback)
+    }
+
+    func testMissingPreferredDeviceFallsBackToDefaultAndSaysSo() {
+        let r = AudioCaptureService.resolveInputDevice(preferredUID: "rode", devices: [device(3, "airpods", "AirPods")], systemDefault: 3)
+        XCTAssertEqual(r.deviceID, 3)
+        XCTAssertTrue(r.usedFallback)
+    }
+
+    func testEnumerationExcludesAggregatesAndListsRealInputs() {
+        // Runs against the real HAL: every listed device has a uid and a name, none is an aggregate.
+        let devices = AudioCaptureService.availableInputDevices()
+        for d in devices {
+            XCTAssertFalse(d.uid.isEmpty)
+            XCTAssertFalse(d.name.isEmpty)
+            XCTAssertNotEqual(d.transport, "aggregate")
+        }
+        XCTAssertEqual(Set(devices.map(\.uid)).count, devices.count, "uids must be unique")
+    }
+}
+#endif

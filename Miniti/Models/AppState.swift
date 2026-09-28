@@ -287,6 +287,7 @@ enum SettingsSearchCatalog {
 
         .init("recording.microphone", "Capture Microphone", section: "Audio Sources", destination: .recording, keywords: ["mic", "audio input"], platforms: [.macOS]),
         .init("recording.systemAudio", "Capture System Audio", section: "Audio Sources", destination: .recording, keywords: ["screen audio", "video calls"], platforms: [.macOS]),
+        .init("recording.microphoneDevice", "Microphone", section: "Audio Sources", destination: .recording, keywords: ["input device", "airpods", "usb mic", "which mic", "default input"], platforms: [.macOS]),
         .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
@@ -1319,6 +1320,17 @@ final class AppState: ObservableObject {
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
+    #if os(macOS)
+    /// UID of the microphone to record from; empty means the system default. Set from the
+    /// home mic menu or Settings → Recording. See `AudioCaptureService.preferredInputDeviceUID`.
+    @AppStorage("preferredInputDeviceUID") var preferredInputDeviceUID: String = "" {
+        didSet { audioCaptureService?.preferredInputDeviceUID = preferredInputDeviceUID }
+    }
+    /// Mirrors the capture service's device list and active device for the views.
+    @Published private(set) var availableInputDevices: [AudioCaptureService.InputDevice] = []
+    @Published private(set) var activeInputDeviceName: String?
+    @Published private(set) var isUsingFallbackInputDevice = false
+    #endif
     /// Managed-mode TypeSafe Jev classifier for attendee speaker naming and the sales
     /// nudge (docs/jev-system-one-plan.md, slice 1). Default off: it sends bounded transcript
     /// windows to a third processor, so it is opt-in with copy that names the vendor.
@@ -1969,6 +1981,15 @@ final class AppState: ObservableObject {
     private func setupServices() {
         audioCaptureService = AudioCaptureService()
         deepgramService = DeepgramService()
+        #if os(macOS)
+        audioCaptureService?.preferredInputDeviceUID = preferredInputDeviceUID
+        audioCaptureService?.$inputDevices.receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.availableInputDevices = $0 }.store(in: &cancellables)
+        audioCaptureService?.$activeInputDeviceName.receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.activeInputDeviceName = $0 }.store(in: &cancellables)
+        audioCaptureService?.$isUsingFallbackInputDevice.receive(on: DispatchQueue.main)
+            .sink { [weak self] in self?.isUsingFallbackInputDevice = $0 }.store(in: &cancellables)
+        #endif
         refreshOnDeviceDiarizationAvailability()
         insightsService = InsightsService()
         minitiAPIService = MinitiAPIService()

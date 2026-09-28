@@ -1162,6 +1162,9 @@ struct AudioSettingsView: View {
                 Text("Record audio from your microphone")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                MicrophoneDevicePicker()
+                    .id("recording.microphoneDevice")
                 
                 Toggle("Capture System Audio", isOn: $captureSystemAudio)
                     .id("recording.systemAudio")
@@ -1932,5 +1935,39 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+}
+
+
+/// Which microphone miniti records from. macOS moves the system default to earphones when
+/// they connect, so a chosen device keeps a desk mic in use with the earphones as output only.
+struct MicrophoneDevicePicker: View {
+    @EnvironmentObject var appState: AppState
+
+    var body: some View {
+        Picker("Microphone", selection: $appState.preferredInputDeviceUID) {
+            Text("System default").tag("")
+            ForEach(appState.availableInputDevices) { device in
+                Text(device.name).tag(device.uid)
+            }
+            if !appState.preferredInputDeviceUID.isEmpty,
+               !appState.availableInputDevices.contains(where: { $0.uid == appState.preferredInputDeviceUID }) {
+                Text("Chosen microphone (not connected)").tag(appState.preferredInputDeviceUID)
+            }
+        }
+        .onAppear { appState.audioCaptureService?.refreshInputDevices() }
+        Text(caption)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+
+    private var caption: String {
+        var lines = ["macOS switches the default input to earphones when they connect. Pick your mic here to keep miniti on it, with the earphones as output only."]
+        if appState.isUsingFallbackInputDevice {
+            lines.append("The chosen microphone is not connected, so miniti is using the system default.")
+        } else if let name = appState.activeInputDeviceName {
+            lines.append("Recording from \(name).")
+        }
+        return lines.joined(separator: " ")
     }
 }

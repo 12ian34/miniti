@@ -48,6 +48,29 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     @Published var isMicActive = false
     nonisolated(unsafe) private var isMicActiveForWatchdog = false
     @Published var isSystemAudioActive = false
+
+    /// An input device the user can pick instead of the system default.
+    struct InputDevice: Identifiable, Equatable, Sendable {
+        let id: AudioDeviceID
+        let uid: String
+        let name: String
+        let transport: String
+    }
+
+    /// Input devices with at least one input channel, excluding aggregates and the
+    /// app's own tap devices. Refreshed on every device-list change.
+    @Published private(set) var inputDevices: [InputDevice] = []
+    /// Name of the device the mic engine is actually reading, once capture runs.
+    @Published private(set) var activeInputDeviceName: String?
+    /// True when the preferred microphone was not available and capture fell back to the
+    /// system default.
+    @Published private(set) var isUsingFallbackInputDevice = false
+    /// UID of the microphone the user chose in Settings or the home mic menu; nil or
+    /// empty means the system default. macOS moves the default input to earphones when
+    /// they connect, which silently swapped a desk mic for AirPods (2026-09-28).
+    var preferredInputDeviceUID: String? {
+        didSet { if oldValue != preferredInputDeviceUID { preferredInputDeviceChanged() } }
+    }
     nonisolated(unsafe) private var isSystemAudioActiveForWatchdog = false
     
     // MARK: - Ring Buffer for Stereo Interleave
@@ -351,12 +374,90 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &devicesAddr, DispatchQueue.main
-        ) { _, _ in
+        ) { [weak self] _, _ in
             DebugLogger.shared.log(
                 .audio,
                 "Audio device list changed — output=\(Self.detailedOutputDeviceInfo()), input=\(Self.detailedInputDeviceInfo())"
             )
+            Task { @MainActor in
+                self?.refreshInputDevices()
+                self?.preferredInputDeviceChanged()
+            }
         }
+        refreshInputDevices()
+    }
+
+    // MARK: - Microphone selection
+
+    func refreshInputDevices() {
+        let devices = Self.availableInputDevices()
+        if devices != inputDevices { inputDevices = devices }
+    }
+
+    /// Enumerate input-capable devices. Aggregates are skipped: the app's own system-audio
+    /// tap is one, and a user-made aggregate would double-capture.
+    nonisolated static func availableInputDevices() -> [InputDevice] {
+        var propSize: UInt32 = 0
+        var addr = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize) == noErr else { return [] }
+        let count = Int(propSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &propSize, &deviceIDs) == noErr else { return [] }
+        var out: [InputDevice] = []
+        for id in deviceIDs {
+            guard streamChannelCount(id, scope: kAudioObjectPropertyScopeInput) > 0 else { continue }
+            let transport = deviceTransportType(id) ?? 0
+            if transport == kAudioDeviceTransportTypeAggregate || transport == kAudioDeviceTransportTypeVirtual { continue }
+            guard let uid = deviceUID(id), !uid.isEmpty else { continue }
+            out.append(InputDevice(id: id, uid: uid, name: deviceName(id) ?? uid, transport: transportTypeName(transport)))
+        }
+        return out
+    }
+
+    nonisolated private static func deviceName(_ deviceID: AudioDeviceID) -> String? {
+        var nameRef: CFString?
+        var nameSize = UInt32(MemoryLayout<CFString?>.size)
+        var nameAddr = AudioObjectPropertyAddress(
+            mSelector: kAudioObjectPropertyName, mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let err = withUnsafeMutablePointer(to: &nameRef) { ptr in
+            AudioObjectGetPropertyData(deviceID, &nameAddr, 0, nil, &nameSize, UnsafeMutableRawPointer(ptr))
+        }
+        return err == noErr ? (nameRef as String?) : nil
+    }
+
+    /// Which device the mic engine should open: the preferred UID when it is present,
+    /// otherwise the system default. `usedFallback` is true when a preference was set
+    /// but not found, so the UI can say so.
+    nonisolated static func resolveInputDevice(
+        preferredUID: String?,
+        devices: [InputDevice],
+        systemDefault: AudioDeviceID?
+    ) -> (deviceID: AudioDeviceID?, usedFallback: Bool) {
+        guard let preferredUID, !preferredUID.isEmpty else { return (systemDefault, false) }
+        if let match = devices.first(where: { $0.uid == preferredUID }) { return (match.id, false) }
+        return (systemDefault, true)
+    }
+
+    /// The device id the mic engine should currently be reading, after preference and fallback.
+    private func resolvedMicInputDeviceID() -> (deviceID: AudioDeviceID?, usedFallback: Bool) {
+        Self.resolveInputDevice(preferredUID: preferredInputDeviceUID, devices: Self.availableInputDevices(), systemDefault: Self.defaultInputDeviceID())
+    }
+
+    /// The preference changed, or the device list did: if the mic engine is reading a
+    /// different device from the one now resolved, restart it through the same coalesced
+    /// path a hardware reconfiguration uses.
+    private func preferredInputDeviceChanged() {
+        guard isCapturing, isMicActive else { return }
+        let resolved = resolvedMicInputDeviceID().deviceID
+        guard resolved != activeMicInputDeviceID else { return }
+        DebugLogger.shared.log(.audio, "Microphone selection changed — restarting mic tap (preferred=\(preferredInputDeviceUID ?? "default"))")
+        handleEngineConfigurationChange()
     }
     
     nonisolated static func defaultInputDeviceInfo() -> String {
@@ -835,6 +936,26 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         guard let audioEngine else { return }
         
         let inputNode = audioEngine.inputNode
+        // Point the input unit at the chosen microphone before reading its format. Without
+        // this the engine follows the system default, which macOS moves to earphones the
+        // moment they connect.
+        let resolved = resolvedMicInputDeviceID()
+        var chosenDeviceID: AudioDeviceID? = nil
+        if let preferred = preferredInputDeviceUID, !preferred.isEmpty {
+            if resolved.usedFallback {
+                DebugLogger.shared.log(.audio, "Preferred microphone not available (uid=\(preferred)); using the system default")
+            } else if let deviceID = resolved.deviceID, let unit = inputNode.audioUnit {
+                var device = deviceID
+                let err = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, UInt32(MemoryLayout<AudioDeviceID>.size))
+                if err == noErr {
+                    chosenDeviceID = deviceID
+                    DebugLogger.shared.log(.audio, "Mic input device set to preferred: \(Self.deviceName(deviceID) ?? "?") (id:\(deviceID), transport=\(Self.deviceTransportType(deviceID).map(Self.transportTypeName) ?? "?"))")
+                } else {
+                    DebugLogger.shared.log(.audio, "FAILED to select preferred microphone (err=\(err)); using the system default")
+                }
+            }
+        }
+        isUsingFallbackInputDevice = resolved.usedFallback || (preferredInputDeviceUID.map { !$0.isEmpty } == true && chosenDeviceID == nil)
         let nodeFormat = inputNode.outputFormat(forBus: 0)
         
         DebugLogger.shared.log(.audio, "Mic input format: \(nodeFormat.sampleRate)Hz, \(nodeFormat.channelCount)ch, \(nodeFormat.commonFormat.rawValue)fmt")
@@ -844,9 +965,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             throw AudioCaptureError.formatCreationFailed
         }
 
-        activeMicInputDeviceID = Self.defaultInputDeviceID()
+        activeMicInputDeviceID = chosenDeviceID ?? Self.defaultInputDeviceID()
         activeMicInputSampleRate = nodeFormat.sampleRate
         activeMicInputChannels = nodeFormat.channelCount
+        activeInputDeviceName = activeMicInputDeviceID.flatMap { Self.deviceName($0) }
         
         guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -923,7 +1045,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             try? await Task.sleep(nanoseconds: 250_000_000)
             guard self.isCapturing, self.isMicActive else { return }
             
-            let currentInputID = Self.defaultInputDeviceID()
+            let currentInputID = self.resolvedMicInputDeviceID().deviceID
             let currentFormat = self.audioEngine?.inputNode.outputFormat(forBus: 0)
             let hasMeaningfulInputChange: Bool
             if let currentFormat {
