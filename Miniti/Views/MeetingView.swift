@@ -2922,8 +2922,7 @@ struct AudioSourcePanel: View {
         HStack(alignment: .top, spacing: 8) {
             // Mic pill + waveform below it
             VStack(alignment: .center, spacing: 4) {
-                AudioSourcePill(
-                    label: "mic",
+                MicrophoneSourcePill(
                     isEnabled: $appState.captureMicrophone,
                     color: Color(hex: "3FB950")
                 )
@@ -3691,4 +3690,86 @@ private struct ZonedOutSection<Content: View>: View {
     MeetingView()
         .environmentObject(AppState())
         .frame(width: 900, height: 600)
+}
+
+
+/// The mic pill opens a menu: the microphone on/off switch first, then which microphone
+/// miniti records from (System default or a specific device). Clicking used to toggle
+/// capture; the toggle is now the first menu item so a click can also pick the device.
+struct MicrophoneSourcePill: View {
+    @EnvironmentObject var appState: AppState
+    @Binding var isEnabled: Bool
+    let color: Color
+
+    var body: some View {
+        Menu {
+            Toggle("Microphone on", isOn: $isEnabled)
+            Divider()
+            Section("Record from") {
+                Picker("Record from", selection: $appState.preferredInputDeviceUID) {
+                    Text("System default").tag("")
+                    ForEach(appState.availableInputDevices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            if appState.isUsingFallbackInputDevice {
+                Text("Chosen microphone not connected, using the system default")
+            } else if let name = appState.activeInputDeviceName {
+                Text("Using \(name)")
+            }
+        } label: {
+            AudioSourcePillLabel(label: "mic", isEnabled: isEnabled, color: color)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .focusable(false)
+        .onAppear { appState.audioCaptureService?.refreshInputDevices() }
+        .help(appState.activeInputDeviceName.map { "Microphone: \($0). Click to switch it on or off, or pick another microphone." } ?? "Click to switch the microphone on or off, or pick which microphone to use.")
+    }
+}
+
+/// The pill's face, shared by the plain toggle pill and the microphone menu pill.
+struct AudioSourcePillLabel: View {
+    let label: String
+    let isEnabled: Bool
+    let color: Color
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isEnabled ? color.opacity(0.5) : Color(hex: "71717A"))
+                .frame(width: 6, height: 6)
+
+            Text(label)
+                .font(.system(size: 10, weight: .medium, design: .default))
+                .foregroundStyle(isEnabled ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
+                .lineLimit(1)
+
+            Text(isEnabled ? "on" : "off")
+                .font(.system(size: 10, weight: .regular, design: .default))
+                .foregroundStyle(isEnabled ? color.opacity(0.8) : Color(hex: "71717A").opacity(0.6))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color(hex: "0F0F11"))
+                .overlay(
+                    Capsule()
+                        .stroke(
+                            isEnabled
+                                ? color.opacity(isHovering ? 0.5 : 0.3)
+                                : Color(hex: "3F3F46").opacity(isHovering ? 0.8 : 0.5),
+                            lineWidth: 1
+                        )
+                )
+        )
+        .onHover { isHovering = $0 }
+    }
 }
