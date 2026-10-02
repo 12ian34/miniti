@@ -1,14 +1,14 @@
 NEW
 
-- Make your own templates. Settings, Templates: name it, add up to 8 sections with a line on what goes in each, preview it against a past meeting, then pick it from the More menu like BANT or SPIN. Duplicate a built-in to start, and export or import a template as a file.
-- If miniti can't open your meetings it shows a recovery screen instead of crashing. Your data is never touched, and you can still export what it can read.
+- Separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on your iPhone instead of Deepgram's speaker detection. In our tests it got the speaker right for 6 to 20% more of the talking time, and it does best with several people in a room. Audio still goes to Deepgram for the words. The model ships inside the app, so this update is about 190 MB bigger. Off by default while it is in beta.
+- Faster speaker naming and sales detection, in beta for managed accounts. Settings, AI, "Faster speaker naming and sales detection" matches speakers to your calendar attendees and spots sales conversations in under a second. Off by default.
+- Calendar events with no guests and no meeting link are not meetings any more, so a personal block never auto-starts a recording. Change it in Settings, Calendar, Meeting filters.
 
 IMPROVED
 
-- Security work on miniti's servers behind the scenes. Nothing changes for you.
+- Settings, About lists the open-source software and the speaker model miniti ships with, and their licences.
 
 FIXED
 
-- When something doesn't save, such as a pin, a rename, or a delete, miniti tells you and offers a retry.
-- If your history can't be read, miniti says so instead of showing an empty list.
-- A correction that can't be saved keeps the editor open and tells you why.
+- Google Calendar no longer shows as disconnected after a restart.
+- The "has this meeting ended?" question now appears in a noisy room, stays up until someone speaks, and comes 2 minutes after a calendar meeting's end time.
