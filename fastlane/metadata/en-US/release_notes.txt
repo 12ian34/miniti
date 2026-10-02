@@ -6,6 +6,7 @@ NEW
 
 IMPROVED
 
+- A meeting started from a calendar event keeps the event's title instead of being renamed from the conversation, so a 1:1 stays filed under the person's name.
 - Settings, About lists the open-source software and the speaker model miniti ships with, and their licences.
 
 FIXED

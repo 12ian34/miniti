@@ -3884,7 +3884,8 @@ final class AppState: ObservableObject {
         standardLastAttemptAt = Date()
         
         let segmentCount = finalSegments.count
-        let shouldUpdateTitle = segmentCount >= lastTitleUpdateCount + titleUpdateThreshold
+        let keepsCalendarTitle = !Self.shouldAcceptSuggestedTitle(calendarEventId: currentMeeting?.calendarEventId)
+        let shouldUpdateTitle = !keepsCalendarTitle && segmentCount >= lastTitleUpdateCount + titleUpdateThreshold
         let existingTitle = shouldUpdateTitle ? nil : currentTitleSuffix
         let titleForRequest = existingTitle.flatMap { $0.isEmpty ? nil : $0 }
         
@@ -5882,7 +5883,8 @@ final class AppState: ObservableObject {
         if let suggestedTitle = insights.suggestedTitle,
            !suggestedTitle.isEmpty,
            let meeting = currentMeeting,
-           mode == .standard {
+           mode == .standard,
+           Self.shouldAcceptSuggestedTitle(calendarEventId: meeting.calendarEventId) {
             let newSuffix = suggestedTitle.trimmingCharacters(in: .whitespaces)
             if newSuffix != currentTitleSuffix {
                 currentTitleSuffix = newSuffix
@@ -8328,7 +8330,8 @@ final class AppState: ObservableObject {
             }
             
             if let suggestedTitle = insights.suggestedTitle,
-               !suggestedTitle.isEmpty {
+               !suggestedTitle.isEmpty,
+               Self.shouldAcceptSuggestedTitle(calendarEventId: meeting.calendarEventId) {
                 meeting.title = suggestedTitle
                 if currentMeeting?.id == meetingIDAtRequest {
                     currentTitleSuffix = suggestedTitle
@@ -8766,6 +8769,15 @@ final class AppState: ObservableObject {
         }
         
         isGeneratingInsights = false
+    }
+
+    /// A meeting started from a calendar event keeps the event's title. The AI may still
+    /// suggest one, but it is ignored: people look for "1:1 with Sam" in History, not for
+    /// whatever the conversation drifted to (field request, 2026-10-02). Untitled and
+    /// ad-hoc meetings are still named from the conversation.
+    nonisolated static func shouldAcceptSuggestedTitle(calendarEventId: String?) -> Bool {
+        guard let calendarEventId else { return true }
+        return calendarEventId.trimmingCharacters(in: .whitespaces).isEmpty
     }
 
     nonisolated static func parseMeetingTitle(_ title: String) -> (String, String)? {
