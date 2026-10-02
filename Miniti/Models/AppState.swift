@@ -2538,7 +2538,8 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func handleCallActivitySnapshot(_ snapshot: CallActivitySnapshot) {
+    /// Internal (not private) so handoff tests can feed synthetic call snapshots.
+    func handleCallActivitySnapshot(_ snapshot: CallActivitySnapshot) {
         let previous = latestCallSnapshot
         latestCallSnapshot = snapshot
         if previous == nil || !snapshot.hasSameCalls(as: previous!) {

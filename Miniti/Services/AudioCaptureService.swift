@@ -128,6 +128,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private let maxMicRetryAttempts = 3
     private var pendingSystemRetryTask: Task<Void, Never>?
     private var systemCallbackWatchdogTask: Task<Void, Never>?
+    /// Mic liveness: the engine can stop delivering buffers with every flag still green
+    /// (an output-device switch stops an AVAudioEngine and posts a configuration change;
+    /// a skipped restart left it dead, 2026-10-02 field report). Written on the audio
+    /// thread, read by the mic watchdog on the main actor.
+    nonisolated(unsafe) private var lastMicBufferAt: CFAbsoluteTime = 0
+    private var micLivenessWatchdogTask: Task<Void, Never>?
+    private var lastMicStallRecoveryAt: CFAbsoluteTime = 0
     private var systemRetryAttempt = 0
     private let maxSystemRetryAttempts = 4
     nonisolated(unsafe) private var expectsMicAudio = false
@@ -855,6 +862,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         isCapturing = capturedAny
         startSystemCallbackWatchdogIfNeeded()
+        startMicLivenessWatchdogIfNeeded()
         DebugLogger.shared.log(.audio, "Capture result: mic=\(isMicActive), sys=\(isSystemAudioActive)")
     }
     
@@ -877,6 +885,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         pendingSystemRetryTask = nil
         systemCallbackWatchdogTask?.cancel()
         systemCallbackWatchdogTask = nil
+        micLivenessWatchdogTask?.cancel()
+        micLivenessWatchdogTask = nil
         systemRetryAttempt = 0
         expectsMicAudio = false
         expectsSystemAudio = false
@@ -906,6 +916,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         pendingSystemRetryTask = nil
         systemCallbackWatchdogTask?.cancel()
         systemCallbackWatchdogTask = nil
+        micLivenessWatchdogTask?.cancel()
+        micLivenessWatchdogTask = nil
         systemRetryAttempt = 0
         expectsMicAudio = false
         expectsSystemAudio = false
@@ -919,6 +931,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // MARK: - Microphone Capture
     
     nonisolated(unsafe) private var micBufferCount: Int = 0
+    /// Test hook: buffers the mic tap has delivered since the engine last started.
+    var micBufferCountForTesting: Int { micBufferCount }
     nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
     
     private func startMicrophoneCapture(skipPermissionCheck: Bool = false) async throws {
@@ -980,6 +994,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         DebugLogger.shared.log(.audio, "Mic converter armed (dynamic input format) → \(targetSampleRate)Hz")
         micBufferCount = 0
         lastMicHeartbeat = CFAbsoluteTimeGetCurrent()
+        lastMicBufferAt = CFAbsoluteTimeGetCurrent()
         
         let onBuffer = onAudioBuffer
         let hasCallback = onBuffer != nil
@@ -1056,10 +1071,20 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             } else {
                 hasMeaningfulInputChange = true
             }
-            
-            guard hasMeaningfulInputChange else {
-                DebugLogger.shared.log(.audio, "Engine config changed but mic input format/device is unchanged — skipping mic restart")
+            // The notification means the engine stopped itself (Apple: restart after a
+            // configuration change). An output-device switch (AirPods, a call app changing
+            // profile) does this with the input device and format unchanged, so the format
+            // comparison alone said "skip" and the mic stayed dead until stop/resume.
+            let engineRunning = self.audioEngine?.isRunning ?? false
+            guard Self.shouldRestartMicAfterConfigChange(
+                hasMeaningfulInputChange: hasMeaningfulInputChange,
+                engineRunning: engineRunning
+            ) else {
+                DebugLogger.shared.log(.audio, "Engine config changed but mic input format/device is unchanged and the engine is still running — skipping mic restart")
                 return
+            }
+            if !hasMeaningfulInputChange {
+                DebugLogger.shared.log(.audio, "Engine config changed with mic input unchanged, but the engine stopped — restarting mic tap")
             }
             
             guard !self.isRestartingMicAfterConfigChange else { return }
@@ -1233,6 +1258,86 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         guard expectsSystemAudio, isSystemAudioActive, !isRecoveryInProgress else { return false }
         guard callbackGap > 6, timeSinceLastRestart > 45 else { return false }
         return callbackCount > 10 || timeSinceWatchdogArmed > 8
+    }
+
+    /// A configuration change restarts the mic when the input actually changed, or when the
+    /// engine is no longer running: AVAudioEngine stops on every configuration change and
+    /// does not restart itself.
+    nonisolated static func shouldRestartMicAfterConfigChange(
+        hasMeaningfulInputChange: Bool,
+        engineRunning: Bool
+    ) -> Bool {
+        hasMeaningfulInputChange || !engineRunning
+    }
+
+    /// Mic liveness rule: the mic is wanted and reported active, no restart is already under
+    /// way, and no buffer has arrived for longer than `micStallGap`. The restart cooldown keeps
+    /// a mic that truly cannot start from being rebuilt every tick.
+    static let micStallGap: CFAbsoluteTime = 6
+    static let micStallRestartCooldown: CFAbsoluteTime = 15
+
+    nonisolated static func shouldRecoverMicStall(
+        expectsMicAudio: Bool,
+        isMicActive: Bool,
+        isRecoveryInProgress: Bool,
+        bufferGap: CFAbsoluteTime,
+        timeSinceLastRecovery: CFAbsoluteTime
+    ) -> Bool {
+        guard expectsMicAudio, isMicActive, !isRecoveryInProgress else { return false }
+        guard bufferGap > micStallGap else { return false }
+        return timeSinceLastRecovery > micStallRestartCooldown
+    }
+
+    private func startMicLivenessWatchdogIfNeeded() {
+        micLivenessWatchdogTask?.cancel()
+        micLivenessWatchdogTask = nil
+        guard isCapturing, expectsMicAudio else { return }
+
+        micLivenessWatchdogTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                guard !Task.isCancelled,
+                      let self,
+                      self.isCapturing,
+                      self.expectsMicAudio else { break }
+                await self.checkMicLivenessWatchdog()
+            }
+        }
+    }
+
+    private func checkMicLivenessWatchdog() async {
+        let now = CFAbsoluteTimeGetCurrent()
+        let bufferGap = now - lastMicBufferAt
+        let recoveryInProgress = isRestartingMicAfterConfigChange
+            || pendingMicRestartTask != nil
+            || pendingMicRetryTask != nil
+            || isEscalatingFullRestart
+        guard Self.shouldRecoverMicStall(
+            expectsMicAudio: expectsMicAudio,
+            isMicActive: isMicActive,
+            isRecoveryInProgress: recoveryInProgress,
+            bufferGap: bufferGap,
+            timeSinceLastRecovery: lastMicStallRecoveryAt > 0 ? now - lastMicStallRecoveryAt : .infinity
+        ) else { return }
+
+        lastMicStallRecoveryAt = now
+        let running = audioEngine?.isRunning ?? false
+        DebugLogger.shared.log(
+            .audio,
+            "Mic engine silent for \(String(format: "%.1f", bufferGap))s (isRunning=\(running), buffers=\(micBufferCount)) — restarting mic tap. Input: \(Self.detailedInputDeviceInfo())"
+        )
+        isRestartingMicAfterConfigChange = true
+        defer { isRestartingMicAfterConfigChange = false }
+        stopMicrophoneCapture()
+        do {
+            try await startMicrophoneCapture(skipPermissionCheck: true)
+            setMicActive(true)
+            DebugLogger.shared.log(.audio, "Mic stall recovery complete")
+        } catch {
+            setMicActive(false)
+            DebugLogger.shared.log(.audio, "Mic stall recovery FAILED: \(error.localizedDescription)")
+            scheduleMicRestartRetry(reason: "mic stall recovery failed")
+        }
     }
 
     private func startSystemCallbackWatchdogIfNeeded() {
@@ -2063,6 +2168,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         
         micBufferCount += 1
+        lastMicBufferAt = now
         if now - lastMicHeartbeat > 10.0 {
             lastMicHeartbeat = now
             let level = calculateLevelVDSP(buffer)
