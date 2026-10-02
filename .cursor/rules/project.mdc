@@ -1,40 +1,31 @@
 ---
-description: Miniti project context for Cursor
+description: miniti project context for Cursor
 globs: ["**/*.swift", "**/*.md", "Miniti.xcodeproj/**", "fastlane/**", "scripts/**"]
 alwaysApply: true
 ---
 
-# Miniti — Cursor project rules
+# miniti — Cursor project rules
 
-Full project context lives in [AGENTS.md](mdc:AGENTS.md) at the repo root. Read it when starting work on this codebase.
+Start with `README.md` (what the product is, how to build and test). Maintainers also keep an `AGENTS.md` and a `docs/` folder with internal plans; both are gitignored and may be absent in a fresh clone.
 
-Quick-reference pointers (all relative to repo root):
+Quick-reference pointers:
 
-- **Release runbook** — `RELEASE.md` (10 steps: bump → build → sign → notarize → appcast → test → ship)
-- **Architecture** — `docs/architecture.md` (file-by-file map)
-- **Cross-cutting patterns** — `docs/patterns.md` (hot paths, watchdogs, save queues, recovery, focus conventions)
-- **Audio pipeline** — `docs/audio.md`
-- **UI states** — `docs/ui-states.md`
-- **Backend + monetization** — `docs/monetization.md`
-- **Shipping / Sparkle / notarization** — `docs/distribution.md`
-- **Tests** — `docs/testing.md`
-- **Roadmap + research notes** — `docs/roadmap.md`
-- **Changelog** — `CHANGELOG.md` (public-audience wording)
+- **Release runbook** — `RELEASE.md`
+- **Changelog** — `CHANGELOG.md` (public-audience wording, flat `new:` / `improvement:` / `fix:` bullets, product name always lowercase)
 - **Visual design spec** — `design.md`
 - **Fastlane runbook** — `fastlane/RUNBOOK.md`
 
-## Non-negotiable conventions (summary)
+## Non-negotiable conventions
 
 - Colors route through `ColorPalette` in `Miniti/Models/ColorPalette.swift` — never hardcode hex literals in view code.
-- Typography: monospaced throughout (SF Mono macOS / Menlo iOS). Dark mode only.
 - `AppState` is the single source of truth. Transient high-frequency signals go in `AudioLevelsState` / `TranscriptRuntimeState`.
 - `appState.modelContext` must be wired from `@Environment(\.modelContext)` in the first view (`MainWindow.swift` macOS / `MainTabView.swift` iOS). Without it, saves silently no-op.
 - Hot-path rule: never `.filter` `@Published` arrays in callbacks that fire on every transcript finalize. Iterate `.reversed()` and break on window expiry.
-- Changelog: public-audience prose, no code refs. Never edit old entries. See `CHANGELOG.md`.
-- macOS is shipped sandboxed. Never call `codesign --force --sign` on a bundle with entitlements without passing `--entitlements` too — that's what caused the v1.24.0 history-wipe regression.
+- Keep `#if os()` branching localized; most of it lives in `AppState.swift`.
+- macOS is shipped sandboxed. Never call `codesign --force --sign` on a bundle with entitlements without passing `--entitlements` too.
+- Managed-mode auth is device-bound (`Miniti/Services/ClientAuth.swift`); never reintroduce a shared `X-API-Key`.
 
 ## When making changes
 
-1. Read `docs/patterns.md` before introducing new cross-cutting behavior.
-2. If a change invalidates a documented pattern or adds a new one, update the relevant doc in the same PR.
-3. For any release-adjacent change (build, sign, notarize, appcast, version files), treat `RELEASE.md` and `docs/distribution.md` as the spec — don't improvise.
+1. Add a test next to the code you touch; the same `MinitiTests` sources run against both apps.
+2. For any release-adjacent change (build, sign, notarize, appcast, version files), treat `RELEASE.md` as the spec — don't improvise.
