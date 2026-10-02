@@ -71,6 +71,14 @@ List the App Store screenshot sets on the editable version; pass prune:true to d
 
 Bump build/version if needed, build, and upload to App Store Connect with metadata/screenshots without auto-submitting
 
+### ios cancel_review
+
+```sh
+[bundle exec] fastlane ios cancel_review
+```
+
+Pull the pending App Review submission so a newer build can replace it
+
 ### ios submit
 
 ```sh

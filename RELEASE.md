@@ -95,7 +95,7 @@ Tell the backend agent (or edit `miniti-api` directly):
     sparkle:version            → N
     length                     → <bytes from release-info.sh>
     sparkle:edSignature        → <base64 from release-info.sh>
-    enclosure url              → https://miniti.app/dmg/miniti-X.Y.Z.dmg
+    enclosure url              → https://github.com/12ian34/miniti/releases/download/vX.Y.Z/miniti-X.Y.Z.dmg
   Keep prior <item>s (Sparkle renders "what's changed since your version" from them).
 
 - app/api/version/route.ts:
