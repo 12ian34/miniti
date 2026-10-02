@@ -558,6 +558,14 @@ final class AppStateComputationTests: XCTestCase {
     }
     #endif
 
+    // MARK: - suggested titles
+
+    func testCalendarLinkedMeetingsKeepTheEventTitle() {
+        XCTAssertFalse(AppState.shouldAcceptSuggestedTitle(calendarEventId: "evt_123"))
+        XCTAssertTrue(AppState.shouldAcceptSuggestedTitle(calendarEventId: nil), "ad-hoc meetings are still named from the conversation")
+        XCTAssertTrue(AppState.shouldAcceptSuggestedTitle(calendarEventId: "  "), "a blank id is no link")
+    }
+
     // MARK: - parseMeetingTitle
 
     func testParseMeetingTitleWithDash() {
