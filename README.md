@@ -87,6 +87,6 @@ Issues and pull requests are welcome. For anything beyond a small fix, open an i
 
 ## Licence
 
-miniti is a paid product with its source published for transparency and contributions. The code is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): you may read, build, modify and share it for any noncommercial purpose, and you may not use it for a commercial purpose, which includes selling it, offering it as a service, or shipping it in a competing product. Contact [i@ianahuja.com](mailto:i@ianahuja.com) for a commercial licence. Use the apps themselves on the terms at [miniti.app/terms](https://miniti.app/terms).
+miniti is a paid product with its source published for transparency and contributions. The code is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE): you may read, build, modify and share it for any noncommercial purpose, and you may not use it for a commercial purpose, which includes selling it, offering it as a service, or shipping it in a competing product. Contact [ian@miniti.app](mailto:ian@miniti.app) for a commercial licence. Use the apps themselves on the terms at [miniti.app/terms](https://miniti.app/terms).
 
 The miniti name and logo are not covered by the licence.
