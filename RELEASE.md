@@ -57,9 +57,18 @@ bash scripts/release-info.sh
 
 Confirm all sanity checks are `[ok]`; DMG signing, notarization, stapling, and Sparkle signing are release-blocking. Copy the five appcast values for step 5.
 
-### 4. Upload DMG to Netlify blobs
+### 4. Publish the DMG as a GitHub release asset
 
-From the website repo (`../minitidotapp`):
+Since 2.10.0 the DMG is about 170 MB (bundled Nemotron model). Netlify functions stream a response for at most 30 seconds, which truncates it at about 122 MB, so DMGs are published as release assets on the public app repo and the website's `/dmg/*` and latest-download routes 302 there (`EXTERNAL_DMG_URLS` in `../minitidotapp/netlify/functions/_download.mjs`). The tag must exist first (step 9 creates it; create it early for this step):
+
+```sh
+git tag vX.Y.Z
+gh release create vX.Y.Z miniti.dmg#miniti-X.Y.Z.dmg --title "miniti X.Y.Z for macOS" --notes "macOS X.Y.Z (build N). Notarized Developer ID DMG. Changelog: https://miniti.app/changelog"
+```
+
+The enclosure URL for the appcast is `https://github.com/12ian34/miniti/releases/download/vX.Y.Z/miniti-X.Y.Z.dmg`. Add the version to `EXTERNAL_DMG_URLS` and bump `LATEST_DMG_VERSION` on the website. Never attach a Mac DMG to the miniti-linux releases.
+
+Pre-2.10.0 DMGs stay on Netlify Blobs (small enough to stream). The old upload path, kept for reference, from the website repo (`../minitidotapp`):
 
 ```sh
 netlify blobs:set downloads miniti-X.Y.Z.dmg --input ../miniti/miniti.dmg --force
@@ -91,6 +100,7 @@ Tell the backend agent (or edit `miniti-api` directly):
 
 - app/api/version/route.ts:
     MACOS_LATEST_VERSION → X.Y.Z once the Sparkle DMG is live
+    MACOS_MIN_VERSION / IOS_MIN_VERSION are 2.6.0 since 2026-10-02: the backend's client-auth mode is `require`, so anything older cannot authenticate
     IOS_LATEST_VERSION   → X.Y.Z only once the App Store build is live
     legacy force-update notes → keep concise and platform-appropriate
   Do not touch MACOS_MIN_VERSION / IOS_MIN_VERSION unless you're intentionally force-updating.
@@ -140,7 +150,7 @@ fastlane ios release version:X.Y.Z build:N
 fastlane ios submit version:X.Y.Z build:N
 ```
 
-The first command uploads the binary and metadata. Wait for Apple to process the build, then the second command attaches that exact build, submits it for review, and enables automatic release after approval.
+The first command uploads the binary and metadata. Wait for Apple to process the build, then the second command attaches that exact build, submits it for review, and enables automatic release after approval. If a build is already waiting for review and must be replaced, `fastlane ios cancel_review` pulls it first (2.10.0: build 123 was replaced by 124 this way).
 
 Before submission, confirm the release already has current review info and screenshots in App Store Connect. When the UI changed, regenerate the screenshots from the real app rather than editing them by hand:
 
