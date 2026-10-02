@@ -15,7 +15,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### Unreleased - v2.10.0
+### 2026-10-02 - v2.10.0
 
 - new: (macOS and iOS) separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on Apple silicon instead of Deepgram's speaker detection. In our tests on recorded meetings it got the speaker right for 6 to 20% more of the talking time, and it does best in a room with several people on one mic. Audio still goes to Deepgram for the words. The model ships inside the app, which is why this update is about 190 MB bigger. Off by default while it is in beta
 - new: (macOS and iOS) faster speaker naming and sales detection, in beta for managed accounts. Settings, AI, "Faster speaker naming and sales detection" matches speakers to your calendar attendees and spots sales conversations with TypeSafe's Jev model in under a second instead of GPT and a word list. In our tests it named the same speakers as GPT 24 times faster and caught every sales call the word list missed. Sends short recent transcript windows to TypeSafe through miniti's servers. Off by default
