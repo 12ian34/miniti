@@ -15,6 +15,9 @@ final class Meeting {
     var discussionFlow: [String] = []
     var notes: String = ""
     var transcriptEditedAt: Date?
+    /// Name of the markdown file this meeting was last exported as, so a later export
+    /// after a rename replaces it instead of leaving two files (2.11.0).
+    var lastExportedMarkdownFilename: String?
     var transcriptRevision: Int = 0
     var isPinned: Bool = false
     var insightsUpdatedAt: Date?

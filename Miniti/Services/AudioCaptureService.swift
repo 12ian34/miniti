@@ -1273,8 +1273,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     /// Mic liveness rule: the mic is wanted and reported active, no restart is already under
     /// way, and no buffer has arrived for longer than `micStallGap`. The restart cooldown keeps
     /// a mic that truly cannot start from being rebuilt every tick.
-    static let micStallGap: CFAbsoluteTime = 6
-    static let micStallRestartCooldown: CFAbsoluteTime = 15
+    nonisolated static let micStallGap: CFAbsoluteTime = 6
+    nonisolated static let micStallRestartCooldown: CFAbsoluteTime = 15
 
     nonisolated static func shouldRecoverMicStall(
         expectsMicAudio: Bool,

@@ -568,6 +568,13 @@ struct ReadyStateView: View {
                 CalendarNudgeCard()
             }
 
+            // Exports failing (missing folder): say so where the person will see it.
+            if appState.autoExportMarkdown,
+               appState.markdownExportIssue != nil,
+               !appState.isMarkdownExportIssueCardDismissed {
+                MarkdownExportIssueCard()
+            }
+
             // Auto-start banner
             if let event = appState.pendingAutoStartEvent {
                 AutoStartBanner(
@@ -3791,5 +3798,84 @@ struct AudioSourcePillLabel: View {
                 )
         )
         .onHover { isHovering = $0 }
+    }
+}
+
+/// Home card shown while auto-export is on and the last export failed. Field report
+/// 2026-10-05: a chosen folder that no longer existed lost weeks of meetings silently.
+struct MarkdownExportIssueCard: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isHovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(ColorPalette.Status.error)
+                    .frame(width: 18)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("meetings are not being saved to your folder")
+                        .font(.system(size: 13, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+
+                    Text(appState.markdownExportIssue ?? "")
+                        .font(.system(size: 11, weight: .regular, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer(minLength: 8)
+
+                Button {
+                    appState.isMarkdownExportIssueCardDismissed = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .padding(4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("hide until the next failure")
+            }
+
+            HStack(spacing: 10) {
+                Button {
+                    appState.presentExportFolderChooser()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "folder")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("choose folder")
+                            .font(.system(size: 11, weight: .semibold, design: .default))
+                    }
+                    .foregroundStyle(ColorPalette.Background.primary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
+                    )
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .onHover { hovering in
+                    withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
+                }
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(ColorPalette.Background.card)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(ColorPalette.Status.error.opacity(0.35), lineWidth: 1)
+                )
+        )
+        .accessibilityElement(children: .contain)
     }
 }

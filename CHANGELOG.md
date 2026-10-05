@@ -19,6 +19,8 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 - new: (macOS and iOS) search meetings by person, title, and date. Type with:sam, title:budget, on:14 sep, after:1 sep or last:2w, or pick them from the new people and date menus next to the search box. Every word you type must now match, so sasha pricing finds the call about pricing with Sasha. Results say why they matched, for example with Sasha Petrov, 14 Sep. The calendar event's title is kept with the meeting so title: finds a call by what the calendar called it even after a rename
 - improvement: (macOS) auto-start now waits for the call. A calendar meeting with a Zoom, Meet, Teams or Slack link starts recording when the call connects, up to 5 minutes early or 10 minutes late, instead of at the scheduled minute. If nobody joins within 10 minutes, miniti asks once whether to record anyway instead of recording an empty room. Meetings without a link still show the 15-second countdown at their start time
+- improvement: (macOS) export all meetings no longer leaves duplicates. miniti remembers the file each meeting was saved as, so a meeting that was renamed since its last export replaces its old file instead of sitting next to it
+- fix: (macOS) if your markdown export folder goes missing, miniti now says so instead of silently saving nothing. Home shows a card with a choose folder button, Settings, Data shows the last export or the error, and the Export All button reports how many failed. Before, a deleted or moved folder lost every meeting from then on
 
 ### 2026-10-02 - v2.10.0
 

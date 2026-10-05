@@ -1215,3 +1215,89 @@ final class TranscriptSourceModelTests: XCTestCase {
         XCTAssertTrue(micExplicitLowID.isLocalMic)
     }
 }
+
+// MARK: - Markdown export health (2.11.0, macOS export path)
+
+#if os(macOS)
+final class MarkdownExportTests: XCTestCase {
+    func testStaleExportsUseTheRecordedNameFirst() {
+        let stale = AppState.staleExportFilenames(
+            existing: ["2026-09-14-1000-old-title.md", "2026-09-14-1000-new-title.md", "notes.md"],
+            newFilename: "2026-09-14-1000-new-title.md",
+            recorded: "2026-09-14-1000-old-title.md",
+            minutePrefix: "2026-09-14-1000-",
+            anotherMeetingSharesMinute: true
+        )
+        XCTAssertEqual(stale, ["2026-09-14-1000-old-title.md"], "the recorded name is removed even when the minute is shared")
+    }
+
+    func testStaleExportsFallBackToTheMinutePrefixForLegacyFiles() {
+        let stale = AppState.staleExportFilenames(
+            existing: ["2026-09-14-1000-ai-title.md", "2026-09-14-1000-new-title.md", "2026-09-14-1001-other.md"],
+            newFilename: "2026-09-14-1000-new-title.md",
+            recorded: nil,
+            minutePrefix: "2026-09-14-1000-",
+            anotherMeetingSharesMinute: false
+        )
+        XCTAssertEqual(stale, ["2026-09-14-1000-ai-title.md"])
+    }
+
+    func testStaleExportsNeverGuessWhenTwoMeetingsShareTheMinute() {
+        let stale = AppState.staleExportFilenames(
+            existing: ["2026-09-14-1000-ai-title.md", "2026-09-14-1000-new-title.md"],
+            newFilename: "2026-09-14-1000-new-title.md",
+            recorded: nil,
+            minutePrefix: "2026-09-14-1000-",
+            anotherMeetingSharesMinute: true
+        )
+        XCTAssertTrue(stale.isEmpty)
+    }
+
+    func testReExportWithSameNameRemovesNothing() {
+        let stale = AppState.staleExportFilenames(
+            existing: ["2026-09-14-1000-same.md"],
+            newFilename: "2026-09-14-1000-same.md",
+            recorded: "2026-09-14-1000-same.md",
+            minutePrefix: "2026-09-14-1000-",
+            anotherMeetingSharesMinute: false
+        )
+        XCTAssertTrue(stale.isEmpty)
+    }
+
+    /// Real filesystem: a chosen folder that disappears must be reported, never silently
+    /// redirected, and choosing it again must recover.
+    @MainActor
+    func testMissingChosenFolderIsReportedAndRecoversWhenChosenAgain() throws {
+        let state = AppState()
+        let savedBookmark = state.markdownExportBookmarkData
+        let savedPath = state.markdownExportFolderPath
+        defer {
+            state.markdownExportBookmarkData = savedBookmark
+            state.markdownExportFolderPath = savedPath
+        }
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("miniti-export-\(UUID().uuidString)")
+        let folder = base.appendingPathComponent("notes")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        state.saveExportFolderBookmark(for: folder)
+
+        let meeting = Meeting(title: "Export check", notes: "")
+        XCTAssertTrue(state.exportMeetingAsMarkdownFile(markdown: "# hi", meeting: meeting), "export into an existing folder succeeds")
+        XCTAssertNil(state.markdownExportIssue)
+        XCTAssertEqual(meeting.lastExportedMarkdownFilename, AppState.exportFilename(for: meeting))
+
+        // The whole tree vanishes (not just the leaf), so recreation is impossible.
+        try FileManager.default.removeItem(at: base)
+        XCTAssertFalse(state.exportMeetingAsMarkdownFile(markdown: "# hi", meeting: meeting))
+        XCTAssertNotNil(state.markdownExportIssue, "a missing chosen folder must be surfaced")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: state.defaultExportFolderURL.appendingPathComponent(AppState.exportFilename(for: meeting)).path),
+                       "never silently redirect into the default folder")
+
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        state.saveExportFolderBookmark(for: folder)
+        XCTAssertNil(state.markdownExportIssue, "choosing a folder clears the issue")
+        XCTAssertTrue(state.exportMeetingAsMarkdownFile(markdown: "# hi again", meeting: meeting))
+        XCTAssertNil(state.markdownExportIssue)
+    }
+}
+#endif

@@ -1404,6 +1404,7 @@ struct IntegrationsSettingsView: View {
     @AppStorage("generateAgentsMd") private var generateAgentsMd: Bool = false
     @State private var isExportingAll = false
     @State private var exportAllCount: Int?
+    @State private var exportAllFailed = 0
     @State private var isGranolaImporterPresented = false
     @State private var isImportingGranola = false
     @State private var granolaImportMessage: String?
@@ -1463,7 +1464,7 @@ struct IntegrationsSettingsView: View {
 
             Section("Markdown Export") {
                 HStack {
-                    Text(resolvedExportPath)
+                    Text(appState.displayedExportFolderPath)
                         .font(.system(size: 11, design: .default))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -1474,6 +1475,24 @@ struct IntegrationsSettingsView: View {
                     }
                 }
                 .id("data.markdownFolder")
+
+                if let issue = appState.markdownExportIssue {
+                    Label(issue, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                } else if let last = appState.lastMarkdownExport {
+                    Text("Last export: \(last.filename), \(last.at.formatted(date: .abbreviated, time: .shortened))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                } else if appState.markdownExportFolderPath.isEmpty {
+                    Text("No folder chosen yet. Exports go to miniti's own Documents folder inside its container until you choose one.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
                 Toggle("Auto-export meetings as markdown", isOn: $autoExportMarkdown)
                     .id("data.autoExport")
@@ -1499,8 +1518,10 @@ struct IntegrationsSettingsView: View {
                                 Text("exporting…")
                             }
                         } else if let count = exportAllCount {
-                            Text("exported \(count) meeting\(count == 1 ? "" : "s")")
-                                .foregroundStyle(ColorPalette.Accent.green)
+                            Text(exportAllFailed > 0
+                                 ? "exported \(count) of \(count + exportAllFailed), \(exportAllFailed) failed"
+                                 : "exported \(count) meeting\(count == 1 ? "" : "s")")
+                                .foregroundStyle(exportAllFailed > 0 ? ColorPalette.Status.error : ColorPalette.Accent.green)
                         } else {
                             Text("Export All Meetings")
                         }
@@ -1679,12 +1700,6 @@ struct IntegrationsSettingsView: View {
         }
     }
 
-    private var resolvedExportPath: String {
-        markdownExportFolderPath.isEmpty
-            ? NSString("~/Documents/miniti").expandingTildeInPath
-            : markdownExportFolderPath
-    }
-
     private func importGranolaCSV(from url: URL) {
         guard appState.persistentStoreFailure == nil else { return }
         isImportingGranola = true
@@ -1712,16 +1727,7 @@ struct IntegrationsSettingsView: View {
     }
 
     private func chooseExportFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Select"
-        panel.message = "Choose a folder for exported meeting markdown files"
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.saveExportFolderBookmark(for: url)
-        }
+        appState.presentExportFolderChooser()
     }
 
     private func exportAllMeetings() {
@@ -1734,12 +1740,25 @@ struct IntegrationsSettingsView: View {
         }
         let finalized = meetings.filter { $0.endTime != nil && !$0.segments.isEmpty }
         DebugLogger.shared.log(.app, "Export all: \(meetings.count) total, \(finalized.count) finalized")
+        var exported = 0
+        var failed = 0
         for meeting in finalized {
             let markdown = meeting.fullMeetingAsMarkdown()
-            appState.exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
+            // One index rebuild at the end rather than one per file; a missing folder
+            // fails on the first meeting and is reported once rather than per meeting.
+            if appState.exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting, updateIndex: false) {
+                exported += 1
+            } else {
+                failed += 1
+                if appState.markdownExportIssue != nil, exported == 0 { break }
+            }
+        }
+        if exported > 0, appState.generateAgentsMd {
+            appState.updateAgentsMdIndex()
         }
         isExportingAll = false
-        exportAllCount = finalized.count
+        exportAllFailed = failed
+        exportAllCount = exported
         DispatchQueue.main.asyncAfter(deadline: .now() + 5) {
             exportAllCount = nil
         }

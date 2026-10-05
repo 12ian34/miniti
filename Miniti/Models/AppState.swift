@@ -891,6 +891,12 @@ final class AppState: ObservableObject {
     /// Last markdown filename written per meeting, so a re-export after an AI title change
     /// removes the stale file instead of leaving two exports for one meeting. In-memory only.
     var lastExportedMarkdownFilenames: [UUID: String] = [:]
+    /// Why the last markdown export failed, or nil after a success. Drives the Settings
+    /// status line and the Home card. Field report 2026-10-05: a chosen folder that no
+    /// longer existed lost every meeting silently.
+    @Published private(set) var markdownExportIssue: String?
+    @Published private(set) var lastMarkdownExport: (filename: String, at: Date)?
+    @Published var isMarkdownExportIssueCardDismissed = false
     #endif
 
     // MARK: - Update Check
@@ -10690,11 +10696,29 @@ final class AppState: ObservableObject {
     }
 
     /// Save a security-scoped bookmark for the export folder so sandboxed writes work across sessions.
+    #if os(macOS)
+    /// Folder picker shared by Settings and the Home card.
+    func presentExportFolderChooser() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Select"
+        panel.message = "Choose a folder for exported meeting markdown files"
+        if panel.runModal() == .OK, let url = panel.url {
+            saveExportFolderBookmark(for: url)
+        }
+    }
+    #endif
+
     func saveExportFolderBookmark(for url: URL) {
         do {
             let bookmark = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
             markdownExportBookmarkData = bookmark
             markdownExportFolderPath = url.path
+            markdownExportIssue = nil
+            isMarkdownExportIssueCardDismissed = false
             DebugLogger.shared.log(.app, "Export folder bookmark saved: \(url.path)")
         } catch {
             DebugLogger.shared.log(.app, "Export folder bookmark FAILED: \(error.localizedDescription)")
@@ -10702,29 +10726,103 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Resolve the bookmark and start accessing the security-scoped resource. Caller must call `stopAccessingSecurityScopedResource()` on the returned URL when done.
-    private func resolveExportFolderURL() -> URL? {
-        if !markdownExportBookmarkData.isEmpty {
+    enum ExportFolderResolution {
+        case ready(URL)
+        /// A folder was chosen before but cannot be reached now (deleted, moved to a place
+        /// the bookmark no longer covers, or the drive is gone). Never fall back silently.
+        case missing(path: String, reason: String)
+    }
+
+    /// Where exports go. The default, when nobody ever chose a folder, is the app's own
+    /// Documents folder (inside the sandbox container on macOS), created on demand.
+    var defaultExportFolderURL: URL {
+        URL(fileURLWithPath: NSString("~/Documents/miniti").expandingTildeInPath)
+    }
+
+    /// The path the Settings row shows: the chosen folder, or the real default location.
+    var displayedExportFolderPath: String {
+        markdownExportFolderPath.isEmpty ? defaultExportFolderURL.path : markdownExportFolderPath
+    }
+
+    /// Resolve the export folder. For `.ready`, the caller must call
+    /// `stopAccessingSecurityScopedResource()` on the URL when done.
+    private func resolveExportFolder() -> ExportFolderResolution {
+        let fm = FileManager.default
+        if !markdownExportBookmarkData.isEmpty || !markdownExportFolderPath.isEmpty {
             var isStale = false
-            if let url = try? URL(resolvingBookmarkData: markdownExportBookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
-                if isStale {
-                    // Re-save bookmark
-                    if let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
-                        markdownExportBookmarkData = fresh
-                    }
+            var resolved: URL?
+            if !markdownExportBookmarkData.isEmpty,
+               let url = try? URL(resolvingBookmarkData: markdownExportBookmarkData, options: .withSecurityScope, relativeTo: nil, bookmarkDataIsStale: &isStale) {
+                if isStale, let fresh = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil) {
+                    markdownExportBookmarkData = fresh
                 }
-                if url.startAccessingSecurityScopedResource() {
-                    return url
-                }
+                resolved = url
+            }
+            guard let url = resolved else {
+                return .missing(path: markdownExportFolderPath, reason: "miniti no longer has access to it")
+            }
+            let accessing = url.startAccessingSecurityScopedResource()
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
+                return .ready(url)
+            }
+            // The folder itself is gone. Recreating it is only possible when the bookmark
+            // still covers the path; try once, then report.
+            do {
+                try fm.createDirectory(at: url, withIntermediateDirectories: true)
+                DebugLogger.shared.log(.app, "Markdown export: recreated missing folder \(url.path)")
+                return .ready(url)
+            } catch {
+                if accessing { url.stopAccessingSecurityScopedResource() }
+                return .missing(path: url.path, reason: "the folder does not exist")
             }
         }
-        // Fallback: default ~/Documents/miniti (inside user home, no bookmark needed)
-        let fallback = URL(fileURLWithPath: NSString("~/Documents/miniti").expandingTildeInPath)
-        let fm = FileManager.default
+        let fallback = defaultExportFolderURL
         if !fm.fileExists(atPath: fallback.path) {
-            try? fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+            do {
+                try fm.createDirectory(at: fallback, withIntermediateDirectories: true)
+            } catch {
+                return .missing(path: fallback.path, reason: error.localizedDescription)
+            }
         }
-        return fallback
+        return .ready(fallback)
+    }
+
+    /// Legacy shape used by the AGENTS.md index: nil when the folder is not reachable.
+    private func resolveExportFolderURL() -> URL? {
+        if case .ready(let url) = resolveExportFolder() { return url }
+        return nil
+    }
+
+    private func recordExportFailure(_ message: String, details: [String: String]) {
+        markdownExportIssue = message
+        isMarkdownExportIssueCardDismissed = false
+        DebugLogger.shared.log(.app, "Markdown export FAILED — \(message)")
+        enqueueDiagnosticEvent("markdown_export_failed", category: .app, level: .warning, details: details)
+    }
+
+    /// Files from an earlier export of the same meeting that would otherwise sit beside the
+    /// new one. The recorded name (persisted on the meeting, or remembered this session)
+    /// is authoritative. For exports made before names were recorded, a file sharing this
+    /// meeting's start-minute prefix is a stale copy, unless another meeting also started
+    /// that minute, in which case nothing is guessed.
+    nonisolated static func staleExportFilenames(
+        existing: [String],
+        newFilename: String,
+        recorded: String?,
+        minutePrefix: String,
+        anotherMeetingSharesMinute: Bool
+    ) -> [String] {
+        var stale: [String] = []
+        if let recorded, recorded != newFilename, existing.contains(recorded) {
+            stale.append(recorded)
+        }
+        if !anotherMeetingSharesMinute {
+            for file in existing where file.hasPrefix(minutePrefix) && file.hasSuffix(".md") && file != newFilename && !stale.contains(file) {
+                stale.append(file)
+            }
+        }
+        return stale
     }
 
     nonisolated static func sanitizeFilename(from title: String) -> String {
@@ -10739,6 +10837,13 @@ final class AppState: ObservableObject {
         // Collapse consecutive dashes and strip leading/trailing dashes
         let collapsed = sanitized.replacingOccurrences(of: "-{2,}", with: "-", options: .regularExpression)
         return collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+    }
+
+    /// The start-minute prefix every export name of this meeting begins with.
+    nonisolated static func exportFilenamePrefix(for meeting: Meeting) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd-HHmm"
+        return formatter.string(from: meeting.startTime) + "-"
     }
 
     static func exportFilename(for meeting: Meeting) -> String {
@@ -10762,50 +10867,70 @@ final class AppState: ObservableObject {
         return titleSlug.isEmpty ? "\(datePrefix).md" : "\(datePrefix)-\(titleSlug).md"
     }
 
-    func exportMeetingAsMarkdownFile(markdown: String, meeting: Meeting) {
-        guard let folderURL = resolveExportFolderURL() else {
-            DebugLogger.shared.log(.app, "Markdown export FAILED — could not resolve export folder")
-            return
+    /// Writes one meeting's markdown. Returns false and records `markdownExportIssue` on
+    /// any failure; a success clears it. `updateIndex: false` lets export-all rebuild the
+    /// AGENTS.md index once at the end instead of once per file.
+    @discardableResult
+    func exportMeetingAsMarkdownFile(markdown: String, meeting: Meeting, updateIndex: Bool = true) -> Bool {
+        let folderURL: URL
+        switch resolveExportFolder() {
+        case .ready(let url):
+            folderURL = url
+        case .missing(let path, let reason):
+            recordExportFailure(
+                "the export folder \(path) is unavailable: \(reason). Meetings are not being saved there. Choose a folder again.",
+                details: ["reason": reason]
+            )
+            return false
         }
         defer { folderURL.stopAccessingSecurityScopedResource() }
 
         let fm = FileManager.default
-
-        // Create directory if needed
-        var isDir: ObjCBool = false
-        if !fm.fileExists(atPath: folderURL.path, isDirectory: &isDir) || !isDir.boolValue {
-            do {
-                try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
-                DebugLogger.shared.log(.app, "Markdown export: created folder \(folderURL.path)")
-            } catch {
-                DebugLogger.shared.log(.app, "Markdown export FAILED — could not create folder '\(folderURL.path)': \(error.localizedDescription)")
-                return
-            }
-        }
-
         let filename = Self.exportFilename(for: meeting)
         let fileURL = folderURL.appendingPathComponent(filename)
 
-        // A meeting can export more than once (goHome, then again when final insights land).
-        // If the AI title changed between exports the filename changes too; remove the stale
-        // file so one meeting never leaves two exports behind.
-        if let previous = lastExportedMarkdownFilenames[meeting.id], previous != filename {
-            try? fm.removeItem(at: folderURL.appendingPathComponent(previous))
-            DebugLogger.shared.log(.app, "Markdown export: removed stale export after title change")
+        // A meeting exports more than once (goHome, then again when final insights land,
+        // and on every export-all). If its title changed in between, the filename changes
+        // too; remove the earlier copy so one meeting never leaves two exports behind,
+        // across relaunches as well (the name is persisted on the meeting).
+        let recorded = meeting.lastExportedMarkdownFilename ?? lastExportedMarkdownFilenames[meeting.id]
+        let existing = (try? fm.contentsOfDirectory(atPath: folderURL.path)) ?? []
+        let minutePrefix = Self.exportFilenamePrefix(for: meeting)
+        let sharesMinute = (fetchMeetings(.exportAll, in: modelContext) ?? [])
+            .contains { $0.id != meeting.id && Self.exportFilenamePrefix(for: $0) == minutePrefix }
+        for stale in Self.staleExportFilenames(
+            existing: existing, newFilename: filename, recorded: recorded,
+            minutePrefix: minutePrefix, anotherMeetingSharesMinute: sharesMinute
+        ) {
+            try? fm.removeItem(at: folderURL.appendingPathComponent(stale))
+            DebugLogger.shared.log(.app, "Markdown export: removed stale export \(stale)")
         }
 
         do {
             try markdown.write(to: fileURL, atomically: true, encoding: .utf8)
             lastExportedMarkdownFilenames[meeting.id] = filename
+            if meeting.lastExportedMarkdownFilename != filename {
+                meeting.lastExportedMarkdownFilename = filename
+                try? modelContext?.save()
+            }
+            lastMarkdownExport = (filename, Date())
+            if markdownExportIssue != nil {
+                markdownExportIssue = nil
+                DebugLogger.shared.log(.app, "Markdown export recovered")
+            }
             DebugLogger.shared.log(.app, "Markdown exported: \(filename)")
         } catch {
-            DebugLogger.shared.log(.app, "Markdown export FAILED '\(filename)' to '\(folderURL.path)': \(error.localizedDescription)")
-            return
+            recordExportFailure(
+                "could not write \(filename) to \(folderURL.path): \(error.localizedDescription)",
+                details: ["reason": "write_failed"]
+            )
+            return false
         }
 
-        if generateAgentsMd {
+        if updateIndex && generateAgentsMd {
             updateAgentsMdIndex()
         }
+        return true
     }
 
     func updateAgentsMdIndex() {
