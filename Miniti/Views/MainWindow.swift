@@ -897,8 +897,11 @@ struct TerminalSidebar: View {
 
     /// The people and date menus show while the field is in use or a filter is active,
     /// so the row never crowds the list when someone is just browsing.
+    /// The row stays while search is active at all. Gating it on the text field's focus
+    /// removed the row on the mouse-down that blurred the field, so the people and date
+    /// buttons never received their click (2.11.0 field report).
     private var showsSearchFilters: Bool {
-        isSearchActive && (searchFieldFocused || MeetingSearchQuery.parse(searchText).hasFilters)
+        isSearchActive
     }
 
     private var historicalMeetings: [Meeting] {
