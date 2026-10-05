@@ -807,3 +807,61 @@ final class CallLifecycleTests: XCTestCase {
     }
     #endif
 }
+
+// MARK: - Auto-start waits for the call (2.11.0)
+
+final class AutoStartPolicyTests: XCTestCase {
+    private let t0 = Date(timeIntervalSince1970: 1_800_000_000)
+
+    private func decide(
+        offset: TimeInterval,
+        link: Bool = true,
+        detection: Bool = true,
+        callActive: Bool = false,
+        prompted: Bool = false
+    ) -> AppState.AutoStartDecision {
+        AppState.autoStartDecision(
+            eventStart: t0,
+            hasConferenceLink: link,
+            callDetectionAvailable: detection,
+            callActive: callActive,
+            noShowAlreadyPrompted: prompted,
+            now: t0.addingTimeInterval(offset)
+        )
+    }
+
+    func testLinkedEventWaitsForTheCallInsteadOfTheClock() {
+        XCTAssertEqual(decide(offset: -600), .none, "too early to arm")
+        XCTAssertEqual(decide(offset: -300), .waitForCall, "window opens 5 minutes early")
+        XCTAssertEqual(decide(offset: 0), .waitForCall, "the scheduled minute alone never records")
+        XCTAssertEqual(decide(offset: 420), .waitForCall, "7 minutes late is still inside the window")
+        XCTAssertEqual(decide(offset: 600), .waitForCall, "window closes at 10 minutes")
+    }
+
+    func testLinkedEventStartsTheMomentTheCallIsLive() {
+        XCTAssertEqual(decide(offset: -240, callActive: true), .startNow, "early joiners record from the join")
+        XCTAssertEqual(decide(offset: 420, callActive: true), .startNow, "a late call records from the connect")
+        XCTAssertEqual(decide(offset: -600, callActive: true), .none, "a call before the window is some other meeting")
+    }
+
+    func testNoShowAsksOnceThenStaysQuiet() {
+        XCTAssertEqual(decide(offset: 601), .noShowPrompt)
+        XCTAssertEqual(decide(offset: 601, prompted: true), .none)
+        XCTAssertEqual(decide(offset: 601, callActive: true), .noShowPrompt, "a call that appears after the window is not adopted silently")
+    }
+
+    func testEventsWithoutALinkKeepTheCountdown() {
+        XCTAssertEqual(decide(offset: -30, link: false), .none)
+        XCTAssertEqual(decide(offset: -16, link: false), .countdown(seconds: 16))
+        XCTAssertEqual(decide(offset: -0.4, link: false), .countdown(seconds: 1))
+        XCTAssertEqual(decide(offset: 0, link: false), .startNow)
+        XCTAssertEqual(decide(offset: 120, link: false), .startNow, "found already running after launch")
+        XCTAssertEqual(decide(offset: 121, link: false), .none)
+    }
+
+    func testWithoutCallDetectionTheClockRemainsTheTrigger() {
+        XCTAssertEqual(decide(offset: -10, detection: false), .countdown(seconds: 10))
+        XCTAssertEqual(decide(offset: 0, detection: false), .startNow)
+        XCTAssertEqual(decide(offset: 601, detection: false), .none, "no no-show ask without detection")
+    }
+}

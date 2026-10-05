@@ -372,6 +372,9 @@ final class AppState: ObservableObject {
             case callEnd
             /// A different recognized call app became active during the recording.
             case callTransition
+            /// Auto-start waited for the event's call and nobody joined within the window:
+            /// ask once whether to record anyway (macOS, 2.11.0).
+            case calendarNoShow
         }
 
         let id: String
@@ -1476,6 +1479,11 @@ final class AppState: ObservableObject {
     }
     @Published var pendingAutoStartEvent: MinitiAPIService.CalendarEvent?
     @Published var autoStartCountdown: Int = 0
+    /// True while auto-start holds `pendingAutoStartEvent` for its call to connect instead
+    /// of counting down to the scheduled minute (macOS, events with a conference link).
+    @Published var autoStartIsWaitingForCall = false
+    /// Events whose "hasn't started, record anyway?" ask was already shown.
+    private var autoStartNoShowPromptedEventIDs: Set<String> = []
     @Published var calendarEventEndedWhileRecording: Bool = false
     @Published private(set) var smartMeetingPrompt: SmartMeetingPrompt?
     private var calendarRefreshTimer: Timer?
@@ -2424,7 +2432,7 @@ final class AppState: ObservableObject {
             // Speech resumed after the call ended: treat like the quiet ask. If quiet
             // returns, the fallback prompt machinery re-raises the question later.
             clearSmartMeetingPrompt()
-        case .callStart, .callTransition:
+        case .callStart, .callTransition, .calendarNoShow:
             // Driven by another app's lifecycle, not by our audio activity.
             break
         }
@@ -2565,6 +2573,9 @@ final class AppState: ObservableObject {
         let events = callLifecycleEngine.ingest(snapshot: snapshot, context: context)
         for event in events {
             handleCallLifecycleEvent(event)
+        }
+        if autoStartIsWaitingForCall, pendingAutoStartEvent != nil {
+            checkAutoStart()
         }
     }
 
@@ -9488,6 +9499,72 @@ final class AppState: ObservableObject {
         cancelAutoStartCountdown()
     }
     
+    /// What auto-start should do for one eligible event right now. Pure so the window
+    /// edges are unit-tested. Field report 2026-10-05: recording began at the scheduled
+    /// minute while the call had not started; with call detection the call itself is
+    /// the trigger, and a no-show asks instead of recording an empty room.
+    enum AutoStartDecision: Equatable {
+        case none
+        /// Classic 15-second countdown to the scheduled minute.
+        case countdown(seconds: Int)
+        /// Hold the event and start the moment its call connects.
+        case waitForCall
+        case startNow
+        /// The wait ran out with no call: ask once, record only on a yes.
+        case noShowPrompt
+    }
+
+    /// How early a call may connect and still count as this event (back-to-back calls,
+    /// early joiners), and how long after the scheduled minute to keep waiting.
+    static let autoStartCallEarlyWindow: TimeInterval = 5 * 60
+    static let autoStartCallLateWindow: TimeInterval = 10 * 60
+    static let autoStartCountdownLead: TimeInterval = 16
+    static let autoStartLateStartGrace: TimeInterval = 120
+
+    nonisolated static func autoStartDecision(
+        eventStart: Date,
+        hasConferenceLink: Bool,
+        callDetectionAvailable: Bool,
+        callActive: Bool,
+        noShowAlreadyPrompted: Bool,
+        now: Date
+    ) -> AutoStartDecision {
+        let secsUntilStart = eventStart.timeIntervalSince(now)
+        if hasConferenceLink && callDetectionAvailable {
+            if secsUntilStart > autoStartCallEarlyWindow { return .none }
+            if secsUntilStart >= -autoStartCallLateWindow {
+                return callActive ? .startNow : .waitForCall
+            }
+            return noShowAlreadyPrompted ? .none : .noShowPrompt
+        }
+        if secsUntilStart > 0 && secsUntilStart <= autoStartCountdownLead {
+            return .countdown(seconds: max(1, Int(ceil(secsUntilStart))))
+        }
+        if secsUntilStart <= 0 && secsUntilStart >= -autoStartLateStartGrace {
+            return .startNow
+        }
+        return .none
+    }
+
+    /// macOS only: Smart meetings' call monitor is running and its last reading was
+    /// reliable. Anything else means "no information", so the clock stays the trigger.
+    private var autoStartCallDetectionAvailable: Bool {
+        #if os(macOS)
+        return smartMeetingsEnabled && (latestCallSnapshot?.isReliable ?? false)
+        #else
+        return false
+        #endif
+    }
+
+    private var autoStartCallActive: Bool {
+        #if os(macOS)
+        guard let snapshot = latestCallSnapshot, snapshot.isReliable else { return false }
+        return !snapshot.activeCalls.isEmpty
+        #else
+        return false
+        #endif
+    }
+
     private func checkAutoStart() {
         guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
         if currentMeeting != nil {
@@ -9496,32 +9573,119 @@ final class AppState: ObservableObject {
             }
             return
         }
-        guard autoStartFromCalendar, !isStartingMeeting else { return }
-        guard pendingAutoStartEvent == nil else { return }
-        
         let now = Date()
+        // A no-show ask expires with its event.
+        if let prompt = smartMeetingPrompt, prompt.kind == .calendarNoShow,
+           let event = upcomingEvents.first(where: { $0.id == prompt.eventID }),
+           let end = event.endDate, end <= now {
+            clearSmartMeetingPrompt()
+        }
+        guard autoStartFromCalendar, !isStartingMeeting else { return }
+
+        // While waiting for a call, keep re-evaluating that one event.
+        if let waiting = pendingAutoStartEvent, autoStartIsWaitingForCall {
+            guard let start = waiting.startDate else { cancelAutoStartCountdown(); return }
+            switch Self.autoStartDecision(
+                eventStart: start,
+                hasConferenceLink: waiting.joinURL != nil,
+                callDetectionAvailable: autoStartCallDetectionAvailable,
+                callActive: autoStartCallActive,
+                noShowAlreadyPrompted: autoStartNoShowPromptedEventIDs.contains(waiting.id),
+                now: now
+            ) {
+            case .startNow:
+                DebugLogger.shared.log(.app, "Auto-start: call connected for \(waiting.title), starting")
+                executeAutoStart()
+            case .noShowPrompt:
+                presentAutoStartNoShowPrompt(for: waiting)
+            case .waitForCall:
+                break
+            case .countdown, .none:
+                // Detection went away (Smart meetings off, monitor unreliable): fall back
+                // to the clock path on the next tick.
+                cancelAutoStartCountdown()
+            }
+            return
+        }
+        guard pendingAutoStartEvent == nil else { return }
+
         for event in upcomingEvents {
             guard let start = event.startDate else { continue }
             guard event.status.lowercased() != "cancelled" else { continue }
             guard !dismissedAutoStartEventIDs.contains(event.id) else { continue }
-            
-            let secsUntilStart = start.timeIntervalSince(now)
-            if secsUntilStart > 0 && secsUntilStart <= 16 {
-                let countdownSecs = max(1, Int(ceil(secsUntilStart)))
-                beginAutoStartCountdown(for: event, seconds: countdownSecs)
+
+            let decision = Self.autoStartDecision(
+                eventStart: start,
+                hasConferenceLink: event.joinURL != nil,
+                callDetectionAvailable: autoStartCallDetectionAvailable,
+                callActive: autoStartCallActive,
+                noShowAlreadyPrompted: autoStartNoShowPromptedEventIDs.contains(event.id),
+                now: now
+            )
+            switch decision {
+            case .none:
+                continue
+            case .countdown(let seconds):
+                beginAutoStartCountdown(for: event, seconds: seconds)
                 return
-            }
-            if secsUntilStart <= 0 && secsUntilStart >= -120 {
-                DebugLogger.shared.log(.app, "Auto-start: event \(event.title) already started, launching immediately")
+            case .waitForCall:
+                pendingAutoStartEvent = event
+                autoStartIsWaitingForCall = true
+                autoStartCountdown = 0
+                DebugLogger.shared.log(.app, "Auto-start: waiting for the call for \(event.title)")
+                return
+            case .startNow:
+                DebugLogger.shared.log(.app, "Auto-start: event \(event.title) \(autoStartCallActive ? "call is live" : "already started"), launching immediately")
                 dismissedAutoStartEventIDs.insert(event.id)
                 startMeetingFromEvent(event)
+                return
+            case .noShowPrompt:
+                presentAutoStartNoShowPrompt(for: event)
                 return
             }
         }
     }
-    
+
+    private func presentAutoStartNoShowPrompt(for event: MinitiAPIService.CalendarEvent) {
+        autoStartNoShowPromptedEventIDs.insert(event.id)
+        cancelAutoStartCountdown()
+        DebugLogger.shared.log(.app, "Auto-start: no call for \(event.title) within \(Int(Self.autoStartCallLateWindow / 60)) min, asking")
+        presentSmartMeetingPrompt(
+            SmartMeetingPrompt(
+                id: "calendar-no-show-\(event.id)",
+                kind: .calendarNoShow,
+                title: "\(event.title) hasn't started",
+                message: "Nobody has joined the call. Record anyway?",
+                eventID: event.id,
+                countdown: nil
+            )
+        )
+    }
+
+    /// Record from the no-show ask.
+    func recordFromNoShowPrompt() {
+        guard let prompt = smartMeetingPrompt, prompt.kind == .calendarNoShow,
+              let eventID = prompt.eventID,
+              let event = upcomingEvents.first(where: { $0.id == eventID }) else {
+            clearSmartMeetingPrompt()
+            return
+        }
+        clearSmartMeetingPrompt()
+        dismissedAutoStartEventIDs.insert(event.id)
+        startMeetingFromEvent(event)
+    }
+
+    /// Skip from the no-show ask: the event never auto-starts.
+    func skipNoShowPrompt() {
+        if let eventID = smartMeetingPrompt?.eventID {
+            dismissedAutoStartEventIDs.insert(eventID)
+        }
+        clearSmartMeetingPrompt()
+    }
+
     private func beginAutoStartCountdown(for event: MinitiAPIService.CalendarEvent, seconds: Int) {
         pendingAutoStartEvent = event
+        autoStartIsWaitingForCall = false
         autoStartCountdown = seconds
         DebugLogger.shared.log(.app, "Auto-start countdown: \(event.title) in \(seconds)s")
         
@@ -9544,6 +9708,7 @@ final class AppState: ObservableObject {
         autoStartCountdownTimer?.invalidate()
         autoStartCountdownTimer = nil
         pendingAutoStartEvent = nil
+        autoStartIsWaitingForCall = false
         autoStartCountdown = 0
         startMeetingFromEvent(event)
     }
@@ -9559,6 +9724,7 @@ final class AppState: ObservableObject {
         autoStartCountdownTimer?.invalidate()
         autoStartCountdownTimer = nil
         pendingAutoStartEvent = nil
+        autoStartIsWaitingForCall = false
         autoStartCountdown = 0
     }
 
@@ -10696,6 +10862,8 @@ final class AppState: ObservableObject {
     static let smartMeetingTakeNotesAction = "miniti.smart.take-notes"
     static let smartMeetingNotNowAction = "miniti.smart.not-now"
     static let smartMeetingEndNowAction = "miniti.smart.end-now"
+    static let smartMeetingRecordAction = "miniti.smart.record"
+    static let smartMeetingSkipAction = "miniti.smart.skip"
 
     static let meetingReminderNotificationCategory = "miniti.meeting-reminder"
     static let meetingReminderWithLinkCategory = "miniti.meeting-reminder.with-link"
@@ -10728,6 +10896,15 @@ final class AppState: ObservableObject {
             identifier: smartMeetingEndNowAction,
             title: "End now"
         )
+        let record = UNNotificationAction(
+            identifier: smartMeetingRecordAction,
+            title: "Record anyway",
+            options: [.foreground]
+        )
+        let skip = UNNotificationAction(
+            identifier: smartMeetingSkipAction,
+            title: "Skip"
+        )
         let calendarCategory = UNNotificationCategory(
             identifier: smartMeetingNotificationCategory + ".calendar",
             actions: [endAndStart, end, keep],
@@ -10751,6 +10928,11 @@ final class AppState: ObservableObject {
         let callGraceCategory = UNNotificationCategory(
             identifier: smartMeetingNotificationCategory + ".call-grace",
             actions: [keep, endNow],
+            intentIdentifiers: []
+        )
+        let calendarNoShowCategory = UNNotificationCategory(
+            identifier: smartMeetingNotificationCategory + ".calendar-no-show",
+            actions: [record, skip],
             intentIdentifiers: []
         )
         // `.foreground`: these actions start a recording and (with a link) open a
@@ -10783,7 +10965,7 @@ final class AppState: ObservableObject {
         // One installation call: categories not in this set are clobbered.
         UNUserNotificationCenter.current().setNotificationCategories([
             calendarCategory, quietCategory, callStartCategory, callTransitionCategory, callGraceCategory,
-            reminderWithLinkCategory, reminderNotesOnlyCategory
+            calendarNoShowCategory, reminderWithLinkCategory, reminderNotesOnlyCategory
         ])
     }
 
@@ -10807,6 +10989,7 @@ final class AppState: ObservableObject {
         case .quiet, .callEnd: categorySuffix = ".quiet"
         case .callStart: categorySuffix = ".call-start"
         case .callTransition: categorySuffix = ".call-transition"
+        case .calendarNoShow: categorySuffix = ".calendar-no-show"
         }
         let category = Self.smartMeetingNotificationCategory + categorySuffix
 
@@ -10878,6 +11061,10 @@ final class AppState: ObservableObject {
             dismissDetectedCallStartPrompt()
         case Self.smartMeetingEndNowAction:
             endEndingGraceNow()
+        case Self.smartMeetingRecordAction:
+            recordFromNoShowPrompt()
+        case Self.smartMeetingSkipAction:
+            skipNoShowPrompt()
         #endif
         default:
             break

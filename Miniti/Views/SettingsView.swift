@@ -1575,7 +1575,7 @@ struct IntegrationsSettingsView: View {
                     if appState.isGoogleCalendarConnected {
                         Toggle("Auto-start recording", isOn: $appState.autoStartFromCalendar)
                             .id("integrations.autoStart")
-                        Text("Show a 15-second countdown when a calendar meeting starts. Dismiss to skip.")
+                        Text("A meeting with a Zoom, Meet, Teams or Slack link starts recording when the call connects, up to 5 minutes early or 10 minutes late, and asks once if nobody joins. Meetings without a link show a 15-second countdown at their start time. Needs Smart meetings on for call detection.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         

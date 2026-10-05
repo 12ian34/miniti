@@ -749,6 +749,13 @@ struct MenuBarView: View {
                             Button("Keep") {
                                 appState.keepRecordingFromSmartMeetingPrompt()
                             }
+                        case .calendarNoShow:
+                            Button("Record anyway") {
+                                appState.recordFromNoShowPrompt()
+                            }
+                            Button("Skip") {
+                                appState.skipNoShowPrompt()
+                            }
                         }
                     }
                     .controlSize(.small)

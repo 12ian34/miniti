@@ -264,6 +264,7 @@ private struct SmartMeetingBanner: View {
         case .quiet: return "moon.zzz.fill"
         case .callStart, .callTransition: return "phone.fill"
         case .callEnd: return "phone.down.fill"
+        case .calendarNoShow: return "calendar.badge.exclamationmark"
         }
     }
 
@@ -332,6 +333,18 @@ private struct SmartMeetingBanner: View {
             .buttonStyle(.borderedProminent)
             .tint(ColorPalette.Accent.green)
             keepRecordingButton
+
+        case .calendarNoShow:
+            Button("Record anyway") {
+                appState.recordFromNoShowPrompt()
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(ColorPalette.Accent.green)
+
+            Button("Skip") {
+                appState.skipNoShowPrompt()
+            }
+            .buttonStyle(.bordered)
         }
     }
 
@@ -557,7 +570,11 @@ struct ReadyStateView: View {
 
             // Auto-start banner
             if let event = appState.pendingAutoStartEvent {
-                AutoStartBanner(event: event, countdown: appState.autoStartCountdown)
+                AutoStartBanner(
+                    event: event,
+                    countdown: appState.autoStartCountdown,
+                    isWaitingForCall: appState.autoStartIsWaitingForCall
+                )
             }
 
             // Start button or blocked state
@@ -710,6 +727,9 @@ private struct AutoStartBanner: View {
     @EnvironmentObject var appState: AppState
     let event: MinitiAPIService.CalendarEvent
     let countdown: Int
+    /// Auto-start is holding this event for its call to connect (2.11.0) rather than
+    /// counting down to the scheduled minute.
+    var isWaitingForCall: Bool = false
     
     var body: some View {
         VStack(spacing: 10) {
@@ -726,7 +746,7 @@ private struct AutoStartBanner: View {
                     .lineLimit(1)
             }
             
-            Text("starting in \(countdown)s")
+            Text(isWaitingForCall ? "waiting for your call to connect" : "starting in \(countdown)s")
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Accent.green)
             

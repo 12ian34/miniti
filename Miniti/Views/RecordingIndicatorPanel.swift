@@ -618,6 +618,7 @@ private struct RecordingIndicatorView: View {
             case .callStart: return "phone.fill"
             case .callEnd: return "phone.down.fill"
             case .callTransition: return "phone.fill"
+            case .calendarNoShow: return "calendar.badge.exclamationmark"
             }
         }
         if let nudge {
@@ -789,6 +790,20 @@ private struct RecordingIndicatorView: View {
                     systemImage: "record.circle",
                     role: .secondary,
                     action: appState.keepRecordingFromSmartMeetingPrompt
+                )
+            case .calendarNoShow:
+                indicatorActionButton(
+                    "record anyway",
+                    systemImage: "record.circle",
+                    role: .positive,
+                    isEmphasized: true,
+                    action: appState.recordFromNoShowPrompt
+                )
+                indicatorActionButton(
+                    "skip",
+                    systemImage: "xmark",
+                    role: .secondary,
+                    action: appState.skipNoShowPrompt
                 )
             case .calendar, .callTransition:
                 if let eventID = prompt.eventID {
