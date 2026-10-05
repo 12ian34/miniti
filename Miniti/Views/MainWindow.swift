@@ -191,6 +191,15 @@ struct MainWindow: View {
         }
         return dict
     }
+
+    /// "with Sam Jones · 14 Sep" per result when a people or date filter matched.
+    private var searchContexts: [UUID: String] {
+        var dict: [UUID: String] = [:]
+        for result in searchResults {
+            if let context = result.context { dict[result.meeting.id] = context }
+        }
+        return dict
+    }
     
     var body: some View {
         GeometryReader { geometry in
@@ -434,6 +443,7 @@ struct MainWindow: View {
             searchBlurRequest: searchBlurRequest,
             searchSnippets: searchSnippets,
             searchMatchCounts: searchMatchCounts,
+            searchContexts: searchContexts,
             onSearchFocusChange: { focused in
                 isMeetingSearchFocused = focused
             },
@@ -875,12 +885,21 @@ struct TerminalSidebar: View {
     var searchBlurRequest: Int = 0
     let searchSnippets: [UUID: String]
     let searchMatchCounts: [UUID: Int]
+    var searchContexts: [UUID: String] = [:]
     let onSearchFocusChange: (Bool) -> Void
     let onDeleteMeeting: (Meeting) -> Void
     let onTogglePin: (Meeting) -> Void
     @State private var collapsedStatusPulse = false
     @State private var searchFocusGeneration = 0
     @FocusState private var searchFieldFocused: Bool
+    @State private var isPeopleMenuPresented = false
+    @State private var isDateMenuPresented = false
+
+    /// The people and date menus show while the field is in use or a filter is active,
+    /// so the row never crowds the list when someone is just browsing.
+    private var showsSearchFilters: Bool {
+        isSearchActive && (searchFieldFocused || MeetingSearchQuery.parse(searchText).hasFilters)
+    }
 
     private var historicalMeetings: [Meeting] {
         meetings.filter { $0.id != appState.currentMeeting?.id }
@@ -1202,14 +1221,29 @@ struct TerminalSidebar: View {
                         }
                     }
 
+                    if showsSearchFilters {
+                        MeetingSearchFilterRow(
+                            meetings: historicalMeetings,
+                            searchText: $searchText,
+                            isPeopleMenuPresented: $isPeopleMenuPresented,
+                            isDateMenuPresented: $isDateMenuPresented
+                        )
+                        .padding(.horizontal, 10)
+                    }
+
                     if isSearchActive && !searchText.isEmpty && displayedMeetings.isEmpty {
                         VStack(spacing: 6) {
-                            Text("no results")
+                            Text("no meetings match")
                                 .font(.system(size: 11, weight: .medium, design: .default))
                                 .foregroundStyle(Theme.textDim)
+                            Text("try fewer words, or with: a name and on: a date")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(Theme.textDim.opacity(0.7))
+                                .multilineTextAlignment(.center)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.top, 20)
+                        .padding(.horizontal, 12)
                     } else {
                         ScrollView(showsIndicators: false) {
                             LazyVStack(alignment: .leading, spacing: 4) {
@@ -1227,6 +1261,7 @@ struct TerminalSidebar: View {
                                             searchQuery: isSearchActive ? searchText : nil,
                                             matchSnippet: searchSnippets[meeting.id],
                                             matchCount: searchMatchCounts[meeting.id],
+                                            matchContext: searchContexts[meeting.id],
                                             action: {
                                                 showTraining = false
                                                 selectedMeetingID = meeting.id
@@ -1361,6 +1396,8 @@ struct SidebarHistoryItem: View {
     var searchQuery: String? = nil
     var matchSnippet: String? = nil
     var matchCount: Int? = nil
+    /// Why a people or date filter matched: "with Sam Jones · 14 Sep".
+    var matchContext: String? = nil
     let action: () -> Void
     let onTogglePin: () -> Void
     let onDelete: () -> Void
@@ -1386,7 +1423,7 @@ struct SidebarHistoryItem: View {
                     if let query = searchQuery, !query.isEmpty {
                         highlightedText(
                             titleText,
-                            query: query,
+                            query: MeetingSearchQuery.parse(query).words.first ?? query,
                             baseColor: isSelected ? Theme.text : Theme.textMuted,
                             highlightColor: highlightColor,
                             font: .system(size: 11, weight: isSelected ? .semibold : .medium, design: .default)
@@ -1399,11 +1436,23 @@ struct SidebarHistoryItem: View {
                             .lineLimit(1)
                     }
 
+                    if let context = matchContext {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(Theme.accent.opacity(0.7))
+                                .frame(width: 5, height: 5)
+                            Text(context)
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(Theme.textDim)
+                                .lineLimit(1)
+                        }
+                    }
+
                     // Match snippet
                     if let snippet = matchSnippet, let query = searchQuery, !query.isEmpty {
                         highlightedText(
                             snippet,
-                            query: query,
+                            query: MeetingSearchQuery.parse(query).words.first ?? query,
                             baseColor: Theme.textDim,
                             highlightColor: highlightColor,
                             font: .system(size: 10, weight: .medium, design: .default)
@@ -4074,4 +4123,182 @@ enum CRMSearchScope: CaseIterable {
     MainWindow()
         .environmentObject(AppState())
         .environmentObject(KeyboardShortcutsService.shared)
+}
+
+
+// MARK: - Search filter row (people and date menus)
+
+/// The people and date menus under the history search field. Picking an entry inserts
+/// the matching `with:` / `on:` token into the typed query, so the field stays the single
+/// source of truth and anyone who prefers typing gets the same result.
+struct MeetingSearchFilterRow: View {
+    let meetings: [Meeting]
+    @Binding var searchText: String
+    @Binding var isPeopleMenuPresented: Bool
+    @Binding var isDateMenuPresented: Bool
+    @State private var peopleFilter = ""
+    @State private var customRangeStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    @State private var customRangeEnd = Date()
+
+    private var people: [MeetingSearchPerson] { MeetingSearchPerson.collect(from: meetings) }
+    private var filteredPeople: [MeetingSearchPerson] {
+        let needle = peopleFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return people }
+        return people.filter { $0.name.lowercased().contains(needle) }
+    }
+    private var hasFilters: Bool { MeetingSearchQuery.parse(searchText).hasFilters }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Button {
+                isDateMenuPresented = false
+                isPeopleMenuPresented.toggle()
+            } label: {
+                MinitiControlLabel(role: .secondary) {
+                    HStack(spacing: 4) {
+                        Text("people")
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .popover(isPresented: $isPeopleMenuPresented, arrowEdge: .bottom) {
+                peopleMenu
+            }
+
+            Button {
+                isPeopleMenuPresented = false
+                isDateMenuPresented.toggle()
+            } label: {
+                MinitiControlLabel(role: .secondary) {
+                    HStack(spacing: 4) {
+                        Text("date")
+                        Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .popover(isPresented: $isDateMenuPresented, arrowEdge: .bottom) {
+                dateMenu
+            }
+
+            Spacer(minLength: 0)
+
+            if hasFilters {
+                Button {
+                    searchText = MeetingSearchQuery.clearingFilters(from: searchText)
+                } label: {
+                    Text("clear")
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(Theme.textDim)
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .help("Remove the people and date filters, keep the words")
+            }
+        }
+        .font(.system(size: 10, weight: .medium, design: .default))
+    }
+
+    private func insert(_ token: String) {
+        searchText = MeetingSearchQuery.inserting(token: token, into: searchText)
+    }
+
+    private var peopleMenu: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("type to find a person", text: $peopleFilter)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11, design: .default))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.bg))
+            if filteredPeople.isEmpty {
+                Text(people.isEmpty ? "no attendees or named speakers yet" : "no one matches")
+                    .font(.system(size: 10, weight: .medium, design: .default))
+                    .foregroundStyle(Theme.textDim)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(filteredPeople) { person in
+                            Button {
+                                insert(person.token)
+                                isPeopleMenuPresented = false
+                            } label: {
+                                HStack {
+                                    Text(person.name)
+                                        .font(.system(size: 11, weight: .medium, design: .default))
+                                        .foregroundStyle(Theme.text)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text(person.source == .speaker ? "speaker · \(person.meetingCount)" : "\(person.meetingCount)")
+                                        .font(.system(size: 10, weight: .medium, design: .default))
+                                        .foregroundStyle(Theme.textDim)
+                                }
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 240)
+            }
+        }
+        .padding(8)
+        .frame(width: 240)
+    }
+
+    private var dateMenu: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(MeetingSearchDatePreset.allCases) { preset in
+                Button {
+                    insert(preset.token())
+                    isDateMenuPresented = false
+                } label: {
+                    Text(preset.label)
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .foregroundStyle(Theme.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Divider().padding(.vertical, 2)
+            Text("custom range")
+                .font(.system(size: 10, weight: .semibold, design: .default))
+                .foregroundStyle(Theme.textDim)
+                .padding(.horizontal, 8)
+            DatePicker("from", selection: $customRangeStart, in: ...customRangeEnd, displayedComponents: .date)
+                .datePickerStyle(.field)
+                .font(.system(size: 11, design: .default))
+                .padding(.horizontal, 8)
+            DatePicker("to", selection: $customRangeEnd, in: customRangeStart..., displayedComponents: .date)
+                .datePickerStyle(.field)
+                .font(.system(size: 11, design: .default))
+                .padding(.horizontal, 8)
+            Button {
+                for token in MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd) {
+                    insert(token)
+                }
+                isDateMenuPresented = false
+            } label: {
+                MinitiControlLabel(role: .primary, isEmphasized: true) {
+                    Text("apply range")
+                }
+            }
+            .buttonStyle(.plain)
+            .focusable(false)
+            .padding(.horizontal, 8)
+            .padding(.top, 2)
+        }
+        .padding(8)
+        .frame(width: 220)
+    }
 }

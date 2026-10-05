@@ -6,6 +6,7 @@ struct HistoryView_iOS: View {
     @EnvironmentObject private var appState: AppState
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var searchText = ""
+    @State private var isFilterSheetPresented = false
     /// Programmatic detail route. Rows still push their own detail views; screenshot
     /// mode uses this to land on a seeded meeting without a tap.
     @State private var detailPath: [UUID] = ScreenshotMode.current?.opensSavedMeeting == true ? [ScreenshotMode.savedMeetingID] : []
@@ -71,6 +72,15 @@ struct HistoryView_iOS: View {
         }
         return dict
     }
+
+    /// "with Sam Jones · 14 Sep" per result when a people or date filter matched.
+    private var searchContexts: [UUID: String] {
+        var dict: [UUID: String] = [:]
+        for result in searchResults {
+            if let context = result.context { dict[result.meeting.id] = context }
+        }
+        return dict
+    }
     
     var body: some View {
         NavigationStack(path: $detailPath) {
@@ -86,6 +96,23 @@ struct HistoryView_iOS: View {
             .navigationTitle("History")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search meetings...")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isFilterSheetPresented = true
+                    } label: {
+                        Label("filter", systemImage: MeetingSearchQuery.parse(searchText).hasFilters
+                              ? "line.3.horizontal.decrease.circle.fill"
+                              : "line.3.horizontal.decrease.circle")
+                    }
+                    .accessibilityLabel("Filter meetings by person or date")
+                }
+            }
+            .sheet(isPresented: $isFilterSheetPresented) {
+                MeetingSearchFilterSheet_iOS(meetings: Array(meetings), searchText: $searchText)
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
+            }
             .navigationDestination(for: UUID.self) { meetingID in
                 if let meeting = meetings.first(where: { $0.id == meetingID }) {
                     MeetingDetail_iOS(meeting: meeting)
@@ -104,9 +131,16 @@ struct HistoryView_iOS: View {
             Text("◌")
                 .font(.system(size: 48, weight: .ultraLight, design: .default))
                 .foregroundStyle(ColorPalette.Text.disabled)
-            Text(searchText.isEmpty ? "No sessions yet" : "No results")
+            Text(searchText.isEmpty ? "No sessions yet" : "No meetings match")
                 .font(.system(size: 14, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Text.muted)
+            if !searchText.isEmpty {
+                Text("Try fewer words, or with: a name and on: a date")
+                    .font(.system(size: 12, design: .default))
+                    .foregroundStyle(ColorPalette.Text.dim)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 24)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ColorPalette.Background.primary)
@@ -126,7 +160,8 @@ struct HistoryView_iOS: View {
                                 meeting: meeting,
                                 searchQuery: searchText.isEmpty ? nil : searchText,
                                 matchSnippet: searchSnippets[meeting.id],
-                                matchCount: searchMatchCounts[meeting.id]
+                                matchCount: searchMatchCounts[meeting.id],
+                                matchContext: searchContexts[meeting.id]
                             )
                         }
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
@@ -176,8 +211,15 @@ struct MeetingRow_iOS: View {
     var searchQuery: String? = nil
     var matchSnippet: String? = nil
     var matchCount: Int? = nil
+    /// Why a people or date filter matched: "with Sam Jones · 14 Sep".
+    var matchContext: String? = nil
 
     private var highlightColor: Color { ColorPalette.Accent.amber }
+    /// The first plain word is what gets highlighted; filter tokens never appear in text.
+    private var highlightTerm: String? {
+        guard let searchQuery, !searchQuery.isEmpty else { return nil }
+        return MeetingSearchQuery.parse(searchQuery).words.first
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -186,7 +228,7 @@ struct MeetingRow_iOS: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(ColorPalette.Accent.amber)
             }
-            if let query = searchQuery, !query.isEmpty {
+            if let query = highlightTerm {
                 highlightedText(
                     meeting.displayTitle,
                     query: query,
@@ -202,8 +244,20 @@ struct MeetingRow_iOS: View {
                     .lineLimit(1)
             }
 
+            if let context = matchContext {
+                HStack(spacing: 5) {
+                    Circle()
+                        .fill(ColorPalette.Accent.green.opacity(0.7))
+                        .frame(width: 5, height: 5)
+                    Text(context)
+                        .font(.system(size: 11, design: .default))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                        .lineLimit(1)
+                }
+            }
+
             // Match snippet
-            if let snippet = matchSnippet, let query = searchQuery, !query.isEmpty {
+            if let snippet = matchSnippet, let query = highlightTerm {
                 highlightedText(
                     snippet,
                     query: query,
@@ -1329,5 +1383,105 @@ private struct HistoricalTrainingMetricRow_iOS: View {
                     .foregroundStyle(ColorPalette.Text.disabled)
             }
         }
+    }
+}
+
+
+// MARK: - Filter sheet (people and date)
+
+/// People and date presets for history search. Each pick inserts the same `with:` / `on:`
+/// token someone could have typed, so the search field stays the single source of truth.
+struct MeetingSearchFilterSheet_iOS: View {
+    let meetings: [Meeting]
+    @Binding var searchText: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var peopleFilter = ""
+    @State private var customRangeStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    @State private var customRangeEnd = Date()
+
+    private var people: [MeetingSearchPerson] { MeetingSearchPerson.collect(from: meetings) }
+    private var filteredPeople: [MeetingSearchPerson] {
+        let needle = peopleFilter.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !needle.isEmpty else { return people }
+        return people.filter { $0.name.lowercased().contains(needle) }
+    }
+    private var query: MeetingSearchQuery { MeetingSearchQuery.parse(searchText) }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("People") {
+                    TextField("Type to find a person", text: $peopleFilter)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    if filteredPeople.isEmpty {
+                        Text(people.isEmpty ? "No attendees or named speakers yet" : "No one matches")
+                            .foregroundStyle(ColorPalette.Text.dim)
+                    }
+                    ForEach(filteredPeople.prefix(30)) { person in
+                        Button {
+                            insert(person.token)
+                        } label: {
+                            HStack {
+                                Text(person.name)
+                                    .foregroundStyle(ColorPalette.Text.primary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(person.source == .speaker ? "speaker · \(person.meetingCount)" : "\(person.meetingCount)")
+                                    .foregroundStyle(ColorPalette.Text.dim)
+                                    .font(.footnote)
+                                if query.people.contains(person.name.lowercased()) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(ColorPalette.Accent.green)
+                                }
+                            }
+                        }
+                    }
+                }
+                Section("Date") {
+                    ForEach(MeetingSearchDatePreset.allCases) { preset in
+                        Button {
+                            insert(preset.token())
+                        } label: {
+                            HStack {
+                                Text(preset.label)
+                                    .foregroundStyle(ColorPalette.Text.primary)
+                                Spacer()
+                                if MeetingSearchQuery.tokenize(searchText).contains(preset.token()) {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(ColorPalette.Accent.green)
+                                }
+                            }
+                        }
+                    }
+                    DatePicker("From", selection: $customRangeStart, in: ...customRangeEnd, displayedComponents: .date)
+                    DatePicker("To", selection: $customRangeEnd, in: customRangeStart..., displayedComponents: .date)
+                    Button("Apply range") {
+                        for token in MeetingSearchDatePreset.rangeTokens(from: customRangeStart, to: customRangeEnd) {
+                            insert(token)
+                        }
+                    }
+                }
+                if query.hasFilters {
+                    Section {
+                        Button("Clear filters", role: .destructive) {
+                            searchText = MeetingSearchQuery.clearingFilters(from: searchText)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Filter")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
+    }
+
+    private func insert(_ token: String) {
+        searchText = MeetingSearchQuery.inserting(token: token, into: searchText)
     }
 }

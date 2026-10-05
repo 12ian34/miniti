@@ -20,10 +20,12 @@
 		D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
 		D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000080 /* MeetingHandoffTests.swift */; };
+		D20000000000000000000094 /* MeetingSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000093 /* MeetingSearchTests.swift */; };
 		D20000000000000000000071 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
 		D20000000000000000000072 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
 		D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		D20000000000000000000082 /* MeetingHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000080 /* MeetingHandoffTests.swift */; };
+		D20000000000000000000095 /* MeetingSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000093 /* MeetingSearchTests.swift */; };
 		3C2BEFA52F9981830058C8BE /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2BEFA42F9981830058C8BE /* UpdateService.swift */; };
 		A10000010000000000000001 /* MinitiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* MinitiApp.swift */; };
 		A10000010000000000000002 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000002 /* MainWindow.swift */; };
@@ -32,6 +34,7 @@
 		A10000010000000000000005 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000005 /* InsightsView.swift */; };
 		A10000010000000000000007 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000007 /* SettingsView.swift */; };
 		A10000010000000000000008 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
+		D20000000000000000000091 /* MeetingSearchQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000090 /* MeetingSearchQuery.swift */; };
 		A10000010000000000000009 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		A10000010000000000000010 /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000010 /* AudioCaptureService.swift */; };
 		A10000010000000000000011 /* DeepgramService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000011 /* DeepgramService.swift */; };
@@ -81,6 +84,7 @@
 		AF0000010000000000000002 /* SelectableTextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF0000010000000000000003 /* SelectableTextView.swift */; };
 		B70000010000000000000002 /* LiveTranscriptTextPaneMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */; };
 		C10000010000000000000001 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
+		D20000000000000000000092 /* MeetingSearchQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000090 /* MeetingSearchQuery.swift */; };
 		C10000010000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		C10000010000000000000003 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
 		C10000010000000000000004 /* DeepgramService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000011 /* DeepgramService.swift */; };
@@ -198,6 +202,7 @@
 		A20000010000000000000005 /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
 		A20000010000000000000007 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20000010000000000000008 /* Meeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Meeting.swift; sourceTree = "<group>"; };
+		D20000000000000000000090 /* MeetingSearchQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSearchQuery.swift; sourceTree = "<group>"; };
 		A20000010000000000000009 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		A20000010000000000000010 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
 		A20000010000000000000011 /* DeepgramService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepgramService.swift; sourceTree = "<group>"; };
@@ -275,6 +280,7 @@
 		D20000000000000000000060 /* AcknowledgementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgementsView.swift; sourceTree = "<group>"; };
 		D20000000000000000000020 /* OnDeviceDiarizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000080 /* MeetingHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHandoffTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000093 /* MeetingSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSearchTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000070 /* JevClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevClassifierTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000022 /* TemplateSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSettingsViews.swift; sourceTree = "<group>"; };
 		D10000000000000000000025 /* CustomInsightTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplateTests.swift; sourceTree = "<group>"; };
@@ -395,6 +401,7 @@
 			children = (
 				D1000000000000000000000A /* AppState+Persistence.swift */,
 				A20000010000000000000008 /* Meeting.swift */,
+				D20000000000000000000090 /* MeetingSearchQuery.swift */,
 				A20000010000000000000009 /* AppState.swift */,
 				A20000010000000000000023 /* ColorPalette.swift */,
 				CA0000010000000000000001 /* CallLifecyclePolicy.swift */,
@@ -482,6 +489,7 @@
 				D10000000000000000000025 /* CustomInsightTemplateTests.swift */,
 				D20000000000000000000020 /* OnDeviceDiarizationTests.swift */,
 				D20000000000000000000080 /* MeetingHandoffTests.swift */,
+				D20000000000000000000093 /* MeetingSearchTests.swift */,
 				D20000000000000000000070 /* JevClassifierTests.swift */,
 				D1000000000000000000001C /* MeetingJourneyTests.swift */,
 				D10000000000000000000019 /* CalendarEventDecodingTests.swift */,
@@ -776,6 +784,7 @@
 				D20000000000000000000061 /* AcknowledgementsView.swift in Sources */,
 				A10000010000000000000007 /* SettingsView.swift in Sources */,
 				A10000010000000000000008 /* Meeting.swift in Sources */,
+				D20000000000000000000091 /* MeetingSearchQuery.swift in Sources */,
 				A10000010000000000000009 /* AppState.swift in Sources */,
 				A10000010000000000000010 /* AudioCaptureService.swift in Sources */,
 				A10000010000000000000011 /* DeepgramService.swift in Sources */,
@@ -815,6 +824,7 @@
 				D10000000000000000000006 /* StoreRecoveryView.swift in Sources */,
 				D10000000000000000000003 /* PersistentStore.swift in Sources */,
 				C10000010000000000000001 /* Meeting.swift in Sources */,
+				D20000000000000000000092 /* MeetingSearchQuery.swift in Sources */,
 				AE0000010000000000000013 /* ScreenshotMode.swift in Sources */,
 				AE0000010000000000000023 /* InsightTemplates.swift in Sources */,
 				AE0000010000000000000033 /* ClientAuth.swift in Sources */,
@@ -869,6 +879,7 @@
 				D10000000000000000000026 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */,
 				D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */,
+				D20000000000000000000094 /* MeetingSearchTests.swift in Sources */,
 				D20000000000000000000071 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001D /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001A /* CalendarEventDecodingTests.swift in Sources */,
@@ -897,6 +908,7 @@
 				D10000000000000000000027 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */,
 				D20000000000000000000082 /* MeetingHandoffTests.swift in Sources */,
+				D20000000000000000000095 /* MeetingSearchTests.swift in Sources */,
 				D20000000000000000000072 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001E /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001B /* CalendarEventDecodingTests.swift in Sources */,

@@ -5958,6 +5958,7 @@ final class AppState: ObservableObject {
         meeting.language = meetingLanguage
         if let calendarEvent {
             meeting.calendarEventId = calendarEvent.id
+            meeting.calendarEventTitle = calendarEvent.title
             meeting.attendees = calendarEvent.attendees.map { $0.toMeetingAttendee() }
         }
         currentMeeting = meeting
