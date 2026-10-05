@@ -23,6 +23,9 @@ final class Meeting {
     var language: String = "en"
     
     var calendarEventId: String?
+    /// The calendar event's own title, kept even if the meeting is renamed, so `title:`
+    /// search finds the call by what the calendar called it (2.11.0; nil before).
+    var calendarEventTitle: String?
     var attendeesJSON: String?
 
     // Import provenance. Optional fields keep existing SwiftData stores lightweight-migratable.
@@ -862,119 +865,207 @@ struct MeetingSearchResult {
     let score: Int
     let snippet: String?
     let matchCount: Int
+    /// Why this meeting matched a people or date filter: "with Sam Jones · 14 Sep".
+    /// Nil when only plain words matched (the snippet explains those).
+    var context: String? = nil
+
+    // Field weights: the title and the people on the call are what someone remembers,
+    // the transcript is the last resort.
+    private static let titleWeight = 100
+    private static let peopleWeight = 100
+    private static let speakerWeight = 60
+    private static let topicWeight = 50
+    private static let notesWeight = 40
+    private static let summaryWeight = 30
+    private static let itemWeight = 25
+    private static let fieldWeight = 20
+    private static let transcriptWeight = 10
 
     static func search(query: String, in meetings: [Meeting]) -> [MeetingSearchResult] {
-        guard !query.isEmpty else { return [] }
-        let q = query.lowercased()
+        search(query: MeetingSearchQuery.parse(query), in: meetings)
+    }
 
-        return meetings.compactMap { meeting in
+    static func search(
+        query: MeetingSearchQuery,
+        in meetings: [Meeting],
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) -> [MeetingSearchResult] {
+        guard !query.isEmpty else { return [] }
+
+        let results: [MeetingSearchResult] = meetings.compactMap { meeting in
+            // Filters first: cheap, and they decide membership.
+            if let range = query.dateRange, !range.contains(meeting.startTime) { return nil }
+            let attendees = meeting.attendees
+            let speakerNames = Array(meeting.speakerNames.values)
+            var matchedPeople: [String] = []
+            for person in query.people {
+                guard let name = matchPerson(person, attendees: attendees, speakerNames: speakerNames) else { return nil }
+                matchedPeople.append(name)
+            }
+            for title in query.titles {
+                let eventTitle = meeting.calendarEventTitle ?? ""
+                guard countOccurrences(of: title, in: meeting.title) > 0
+                        || countOccurrences(of: title, in: eventTitle) > 0 else { return nil }
+            }
+
             var score = 0
             var totalMatches = 0
             var bestSnippet: String? = nil
 
-            // Title (highest priority)
-            let titleMatches = countOccurrences(of: q, in: meeting.title)
-            if titleMatches > 0 {
-                score += 100
-                totalMatches += titleMatches
+            for word in query.words {
+                let outcome = matchWord(word, in: meeting, attendees: attendees, speakerNames: speakerNames, scope: query.scope)
+                guard outcome.score > 0 else { return nil }
+                score += outcome.score
+                totalMatches += outcome.matches
+                if bestSnippet == nil { bestSnippet = outcome.snippet }
             }
 
-            // Topics
-            for topic in meeting.topics {
-                let n = countOccurrences(of: q, in: topic)
-                if n > 0 {
-                    if score < 50 { score += 50 }
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = topic }
-                }
+            if query.words.isEmpty {
+                // Filter-only queries: every member scores the same; recency orders them.
+                score = 1
             }
 
-            // Notes
-            let notesMatches = countOccurrences(of: q, in: meeting.notes)
-            if notesMatches > 0 {
-                score += 40
-                totalMatches += notesMatches
-                if bestSnippet == nil { bestSnippet = extractSnippet(from: meeting.notes, matching: q) }
+            let daysSince = now.timeIntervalSince(meeting.startTime) / 86400
+            let recencyBoost = max(0, 10 - Int(daysSince))
+
+            var context: String? = nil
+            if !matchedPeople.isEmpty || query.dateRange != nil {
+                var parts: [String] = []
+                if !matchedPeople.isEmpty { parts.append("with " + matchedPeople.prefix(2).joined(separator: ", ")) }
+                parts.append(MeetingSearchQuery.displayDate(meeting.startTime, now: now, calendar: calendar))
+                context = parts.joined(separator: " · ")
             }
 
-            // Summary
-            if let summary = meeting.summaryText {
-                let n = countOccurrences(of: q, in: summary)
-                if n > 0 {
-                    score += 30
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: summary, matching: q) }
-                }
-            }
+            return MeetingSearchResult(
+                meeting: meeting,
+                score: score + recencyBoost,
+                snippet: bestSnippet,
+                matchCount: totalMatches,
+                context: context
+            )
+        }
 
-            // Action items
-            for item in meeting.actionItems {
-                let n = countOccurrences(of: q, in: item)
-                if n > 0 {
-                    if score < 25 { score += 25 }
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: item, matching: q) }
-                }
-            }
+        if query.dateRange != nil {
+            // Someone browsing a period wants it in order, not by relevance.
+            return results.sorted { $0.meeting.startTime > $1.meeting.startTime }
+        }
+        return results.sorted {
+            if $0.score != $1.score { return $0.score > $1.score }
+            return $0.meeting.startTime > $1.meeting.startTime
+        }
+    }
 
-            // Discussion flow
-            for item in meeting.discussionFlow {
-                let n = countOccurrences(of: q, in: item)
-                if n > 0 {
-                    if score < 25 { score += 25 }
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: item, matching: q) }
-                }
+    /// The display name of the first attendee or speaker that matches `needle` by name,
+    /// email or domain; nil when nobody does.
+    private static func matchPerson(_ needle: String, attendees: [MeetingAttendee], speakerNames: [String]) -> String? {
+        for attendee in attendees {
+            let name = attendee.displayName ?? ""
+            if name.lowercased().contains(needle)
+                || attendee.email.lowercased().contains(needle)
+                || attendee.domain.lowercased().contains(needle) {
+                return name.isEmpty ? attendee.email : name
             }
+        }
+        if let speaker = speakerNames.first(where: { $0.lowercased().contains(needle) }) {
+            return speaker
+        }
+        return nil
+    }
 
-            // MEDDPICC fields
+    private struct WordOutcome {
+        var score = 0
+        var matches = 0
+        var snippet: String? = nil
+    }
+
+    private static func matchWord(
+        _ word: String,
+        in meeting: Meeting,
+        attendees: [MeetingAttendee],
+        speakerNames: [String],
+        scope: MeetingSearchQuery.Scope?
+    ) -> WordOutcome {
+        var out = WordOutcome()
+        func hit(_ text: String, weight: Int, capped: Bool = false, snippet: Bool = true) {
+            let n = countOccurrences(of: word, in: text)
+            guard n > 0 else { return }
+            if capped { out.score = max(out.score, weight) } else { out.score += weight }
+            out.matches += n
+            if snippet, out.snippet == nil { out.snippet = extractSnippet(from: text, matching: word) }
+        }
+
+        let scopeTitle = scope == nil || scope == .title
+        let scopeNotes = scope == nil || scope == .notes
+        let scopeSummary = scope == nil || scope == .summary
+        let scopeTranscript = scope == nil || scope == .transcript
+
+        if scopeTitle {
+            hit(meeting.title, weight: titleWeight, snippet: false)
+            if let eventTitle = meeting.calendarEventTitle, eventTitle != meeting.title {
+                hit(eventTitle, weight: titleWeight, snippet: false)
+            }
+        }
+        if scope == nil {
+            for attendee in attendees {
+                let haystack = [attendee.displayName ?? "", attendee.email].joined(separator: " ")
+                hit(haystack, weight: peopleWeight, capped: true, snippet: false)
+            }
+            for name in speakerNames { hit(name, weight: speakerWeight, capped: true, snippet: false) }
+            for topic in meeting.topics { hit(topic, weight: topicWeight, capped: true) }
+        }
+        if scopeNotes { hit(meeting.notes, weight: notesWeight) }
+        if scopeSummary, let summary = meeting.summaryText { hit(summary, weight: summaryWeight) }
+        if scope == nil || scope == .summary {
+            for item in meeting.actionItems { hit(item, weight: itemWeight, capped: true) }
+            for item in meeting.discussionFlow { hit(item, weight: itemWeight, capped: true) }
             let meddpiccFields = [meeting.meddpiccMetrics, meeting.meddpiccEconomicBuyer,
                                   meeting.meddpiccDecisionCriteria, meeting.meddpiccDecisionProcess,
                                   meeting.meddpiccPaperProcess, meeting.meddpiccIdentifiedPain,
                                   meeting.meddpiccChampion, meeting.meddpiccCompetition]
-            for field in meddpiccFields.compactMap({ $0 }) {
-                let n = countOccurrences(of: q, in: field)
-                if n > 0 {
-                    if score < 20 { score += 20 }
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: field, matching: q) }
-                }
-            }
-
-            // Template sections
-            for value in meeting.templateSections.values {
-                let n = countOccurrences(of: q, in: value)
-                if n > 0 {
-                    if score < 20 { score += 20 }
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: value, matching: q) }
-                }
-            }
-
-            // Transcript (only for queries 3+ chars to avoid expensive scans)
-            if q.count >= 3 {
-                let transcriptText = meeting.segments.filter(\.isFinal).map(\.text).joined(separator: " ")
-                let n = countOccurrences(of: q, in: transcriptText)
-                if n > 0 {
-                    score += 10
-                    totalMatches += n
-                    if bestSnippet == nil { bestSnippet = extractSnippet(from: transcriptText, matching: q) }
-                }
-            }
-
-            guard score > 0 else { return nil }
-
-            // Slight recency boost
-            let daysSince = Date().timeIntervalSince(meeting.startTime) / 86400
-            let recencyBoost = max(0, 10 - Int(daysSince))
-
-            return MeetingSearchResult(meeting: meeting, score: score + recencyBoost, snippet: bestSnippet, matchCount: totalMatches)
+            for field in meddpiccFields.compactMap({ $0 }) { hit(field, weight: fieldWeight, capped: true) }
+            for value in meeting.templateSections.values { hit(value, weight: fieldWeight, capped: true) }
         }
-        .sorted { $0.score > $1.score }
+        // Transcript only for words of 3+ characters, as before, unless it was asked for.
+        if scopeTranscript, word.count >= 3 || scope == .transcript {
+            hit(transcriptText(for: meeting), weight: transcriptWeight)
+        }
+        return out
+    }
+
+    // MARK: - Transcript cache
+
+    /// Joined final transcript per meeting, keyed by its transcript revision so an edit
+    /// or a trim invalidates it. Search runs on every keystroke across every meeting;
+    /// joining hour-long transcripts each time was the only expensive part.
+    private static let transcriptCacheLock = NSLock()
+    nonisolated(unsafe) private static var transcriptCache: [UUID: (revision: Int, text: String)] = [:]
+
+    static func transcriptText(for meeting: Meeting) -> String {
+        let id = meeting.id
+        let revision = meeting.transcriptRevision
+        transcriptCacheLock.lock()
+        if let cached = transcriptCache[id], cached.revision == revision {
+            transcriptCacheLock.unlock()
+            return cached.text
+        }
+        transcriptCacheLock.unlock()
+        let text = meeting.segments.filter(\.isFinal).map(\.text).joined(separator: " ")
+        transcriptCacheLock.lock()
+        transcriptCache[id] = (revision, text)
+        transcriptCacheLock.unlock()
+        return text
+    }
+
+    /// Test hook: whether the cache currently holds this meeting at this revision.
+    static func isTranscriptCached(_ meeting: Meeting) -> Bool {
+        transcriptCacheLock.lock()
+        defer { transcriptCacheLock.unlock() }
+        return transcriptCache[meeting.id]?.revision == meeting.transcriptRevision
     }
 
     private static func countOccurrences(of query: String, in text: String) -> Int {
-        guard !text.isEmpty else { return 0 }
+        guard !text.isEmpty, !query.isEmpty else { return 0 }
         let lower = text.lowercased()
         var count = 0
         var searchStart = lower.startIndex

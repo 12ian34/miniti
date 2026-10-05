@@ -15,6 +15,10 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v2.11.0
+
+- new: (macOS and iOS) search meetings by person, title, and date. Type with:sam, title:budget, on:14 sep, after:1 sep or last:2w, or pick them from the new people and date menus next to the search box. Every word you type must now match, so sasha pricing finds the call about pricing with Sasha. Results say why they matched, for example with Sasha Petrov, 14 Sep. The calendar event's title is kept with the meeting so title: finds a call by what the calendar called it even after a rename
+
 ### 2026-10-02 - v2.10.0
 
 - new: (macOS and iOS) separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on Apple silicon instead of Deepgram's speaker detection. In our tests on recorded meetings it got the speaker right for 6 to 20% more of the talking time, and it does best in a room with several people on one mic. Audio still goes to Deepgram for the words. The model ships inside the app, which is why this update is about 190 MB bigger. Off by default while it is in beta
