@@ -1626,6 +1626,7 @@ struct IntegrationsSettingsView: View {
                     .foregroundStyle(.secondary)
                 if attioExportEnabled {
                     Toggle("Auto-sync calendar meetings to Attio", isOn: $appState.autoAttioSync)
+                    DeliveryStatusRow(kind: .attio, outbox: appState.deliveryOutbox)
                         .disabled(!appState.isGoogleCalendarConnected)
                     Text(appState.isGoogleCalendarConnected
                          ? "Automatically match attendee domains to Attio records and send meeting data after saving."
@@ -1645,6 +1646,7 @@ struct IntegrationsSettingsView: View {
                     .foregroundStyle(.secondary)
                 if twentyExportEnabled {
                     Toggle("Auto-sync calendar meetings to Twenty", isOn: $appState.autoTwentySync)
+                    DeliveryStatusRow(kind: .twenty, outbox: appState.deliveryOutbox)
                         .disabled(!appState.isGoogleCalendarConnected)
                     Text(appState.isGoogleCalendarConnected
                          ? "Automatically match attendee domains to Twenty companies and send meeting data after saving."
@@ -1673,7 +1675,8 @@ struct IntegrationsSettingsView: View {
                             .foregroundStyle(ColorPalette.Accent.green)
                     }
                 }
-                Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint. The payload includes the full transcript and attendee names, so it is only ever sent over https.")
+                Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint. The payload includes the full transcript and attendee names, so it is only ever sent over https. A delivery that fails is retried for up to a day; each request carries an X-Miniti-Delivery-Id header so your receiver can ignore repeats.")
+                DeliveryStatusRow(kind: .webhook, outbox: appState.deliveryOutbox)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1988,5 +1991,35 @@ struct MicrophoneDevicePicker: View {
             lines.append("Recording from \(name).")
         }
         return lines.joined(separator: " ")
+    }
+}
+
+/// Delivery health for one outbox kind: what is waiting, what failed, retry and discard.
+struct DeliveryStatusRow: View {
+    @EnvironmentObject var appState: AppState
+    @ObservedObject private var outbox: DeliveryOutbox
+    let kind: DeliveryOutbox.Kind
+
+    init(kind: DeliveryOutbox.Kind, outbox: DeliveryOutbox) {
+        self.kind = kind
+        self._outbox = ObservedObject(wrappedValue: outbox)
+    }
+
+    var body: some View {
+        if let line = outbox.statusLine(for: kind) {
+            HStack(spacing: 10) {
+                Label(line, systemImage: outbox.failed(kind).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(outbox.failed(kind).isEmpty ? Color.secondary : ColorPalette.Status.error)
+                    .lineLimit(2)
+                Spacer()
+                Button("Retry now") { outbox.retryNow(kind) }
+                    .controlSize(.small)
+                if !outbox.failed(kind).isEmpty {
+                    Button("Discard failed") { outbox.discardFailed(kind) }
+                        .controlSize(.small)
+                }
+            }
+        }
     }
 }

@@ -3045,3 +3045,17 @@ final class SalesDetectionTests: XCTestCase {
         XCTAssertEqual(matches, ["decision maker", "annual plan"])
     }
 }
+
+// MARK: - Live insights backoff (2.11.0)
+
+final class LiveInsightsBackoffTests: XCTestCase {
+    func testBackoffDoublesFromFifteenSecondsToAFiveMinuteCap() {
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 0), 0)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 1), 15)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 2), 30)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 3), 60)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 5), 240)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 6), 300)
+        XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 40), 300, "never grows past five minutes")
+    }
+}

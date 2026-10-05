@@ -425,6 +425,45 @@ enum WebhookService {
 
     // MARK: - Send
 
+    /// Encode a payload for the outbox. Sorted keys keep retries byte-identical.
+    static func encode(_ payload: MeetingPayload) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(payload)
+    }
+
+    /// One delivery attempt for the outbox. Receivers can dedupe retries on
+    /// `X-Miniti-Delivery-Id`; the attempt number is informational.
+    static func deliver(body: Data, to webhookURL: String, deliveryID: UUID, attempt: Int, event: String) async -> DeliveryOutbox.Outcome {
+        let validation = validate(webhookURL)
+        guard let url = validation.url else {
+            return .reject(reason: "URL rejected (\(validation))")
+        }
+        let endpoint = redactedEndpoint(webhookURL)
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(deliveryID.uuidString, forHTTPHeaderField: "X-Miniti-Delivery-Id")
+        request.setValue(String(attempt), forHTTPHeaderField: "X-Miniti-Attempt")
+        request.timeoutInterval = 15
+        request.httpBody = body
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            let status = (response as? HTTPURLResponse)?.statusCode
+            let outcome = DeliveryOutbox.outcome(status: status, error: nil)
+            switch outcome {
+            case .delivered: DebugLogger.shared.log(.app, "Webhook sent (\(status ?? 0)): \(event)")
+            default: DebugLogger.shared.log(.app, "Webhook non-2xx (\(status ?? 0)): \(event) → \(endpoint)")
+            }
+            return outcome
+        } catch {
+            let reason = (error as? URLError).map { "URLError \($0.code.rawValue)" } ?? String(describing: type(of: error))
+            DebugLogger.shared.log(.app, "Webhook FAILED: \(reason) → \(endpoint)")
+            return DeliveryOutbox.outcome(status: nil, error: error)
+        }
+    }
+
+    /// Legacy fire-and-forget path, kept for callers outside the outbox (none in the apps).
     static func send(payload: MeetingPayload, to webhookURL: String) {
         let validation = validate(webhookURL)
         guard let url = validation.url else {

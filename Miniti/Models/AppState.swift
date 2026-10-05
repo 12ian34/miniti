@@ -851,6 +851,33 @@ final class AppState: ObservableObject {
         maximumInterval: 180
     )
     private let warmupInsightsRetryInterval: TimeInterval = 30
+    /// Server or network failures back live insights off instead of retrying on the next
+    /// 5 s tick: one phone sent 784 failing requests during the 2026-10-03 OpenAI outage.
+    private var liveInsightsFailureStreak = 0
+    private var liveInsightsBackoffUntil: Date?
+
+    /// 15 s after the first failure, doubling to a 5 min cap.
+    nonisolated static func liveInsightsBackoff(afterFailures streak: Int) -> TimeInterval {
+        guard streak > 0 else { return 0 }
+        return min(300, 15 * pow(2, Double(streak - 1)))
+    }
+
+    private var isLiveInsightsBackedOff: Bool {
+        guard let until = liveInsightsBackoffUntil else { return false }
+        return Date() < until
+    }
+
+    private func registerLiveInsightsFailure() {
+        liveInsightsFailureStreak += 1
+        let delay = Self.liveInsightsBackoff(afterFailures: liveInsightsFailureStreak)
+        liveInsightsBackoffUntil = Date().addingTimeInterval(delay)
+        DebugLogger.shared.log(.app, "Live insights backoff: \(Int(delay))s after \(liveInsightsFailureStreak) failure(s)")
+    }
+
+    private func registerLiveInsightsSuccess() {
+        liveInsightsFailureStreak = 0
+        liveInsightsBackoffUntil = nil
+    }
     private let meddpiccCadenceStagger: TimeInterval = 15
     private let questionsCadenceStagger: TimeInterval = 22
     private let templateCadenceStagger: TimeInterval = 30
@@ -1329,6 +1356,9 @@ final class AppState: ObservableObject {
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
+    /// Webhooks and automatic CRM sends go through here: persisted, retried with backoff,
+    /// visible in Settings (roadmap P1.2, 2.11.0).
+    let deliveryOutbox = DeliveryOutbox()
     #if os(macOS)
     /// UID of the microphone to record from; empty means the system default. Set from the
     /// home mic menu or Settings → Recording. See `AudioCaptureService.preferredInputDeviceUID`.
@@ -1995,6 +2025,7 @@ final class AppState: ObservableObject {
     private func setupServices() {
         audioCaptureService = AudioCaptureService()
         deepgramService = DeepgramService()
+        registerDeliverySenders()
         #if os(macOS)
         audioCaptureService?.preferredInputDeviceUID = preferredInputDeviceUID
         audioCaptureService?.$inputDevices.receive(on: DispatchQueue.main)
@@ -3701,6 +3732,7 @@ final class AppState: ObservableObject {
         let shouldTrigger = (standardWarmup || meddpiccWarmup || questionsWarmup || templateWarmup)
             && finalCount > lastInsightSegmentCount
             && warmupRetryReady
+            && !isLiveInsightsBackedOff
         if shouldTrigger {
             lastInsightSegmentCount = finalCount
             lastWarmupInsightsAttemptAt = now
@@ -3743,6 +3775,7 @@ final class AppState: ObservableObject {
             while !Task.isCancelled, isRecording {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled, isRecording else { break }
+                if isLiveInsightsBackedOff { continue }
                 let liveSegmentsSnapshot = liveSegments
                 let finalCount = liveSegmentsSnapshot.count
                 var finalizedSegmentsCache: [LiveSegment]?
@@ -3941,6 +3974,7 @@ final class AppState: ObservableObject {
                     usedIncrementalPayload: standardResult.usedIncrementalPayload
                 )
                 standardSuccessCount += 1
+                registerLiveInsightsSuccess()
             } else {
                 DebugLogger.shared.log(.app, "Standard insights degraded — not advancing cursor")
             }
@@ -4064,6 +4098,7 @@ final class AppState: ObservableObject {
                 applyInsights(templateResult.insights, segmentCount: segmentCount, mode: .template)
                 lastTemplateSegmentCount = segmentCount
                 templateSuccessCount += 1
+                registerLiveInsightsSuccess()
                 DebugLogger.shared.log(.app, "Live template applied: template=\(template.id), sections=\(liveTemplateSections.count), segmentCount=\(segmentCount)")
             } else {
                 DebugLogger.shared.log(.app, "Template insights degraded — not advancing cursor")
@@ -4115,6 +4150,7 @@ final class AppState: ObservableObject {
                     usedIncrementalPayload: meddpiccResult.usedIncrementalPayload
                 )
                 meddpiccSuccessCount += 1
+                registerLiveInsightsSuccess()
                 let meddpiccFieldCount = [
                     liveMetrics, liveEconomicBuyer, liveDecisionCriteria, liveDecisionProcess,
                     livePaperProcess, liveIdentifiedPain, liveChampion, liveCompetition
@@ -4168,6 +4204,7 @@ final class AppState: ObservableObject {
                     usedIncrementalPayload: questionsResult.usedIncrementalPayload
                 )
                 questionsSuccessCount += 1
+                registerLiveInsightsSuccess()
                 DebugLogger.shared.log(.app, "Live questions applied: count=\(liveQuestions.count), segmentCount=\(segmentCount)")
             } else {
                 DebugLogger.shared.log(.app, "Questions insights degraded — not advancing cursor")
@@ -4506,7 +4543,7 @@ final class AppState: ObservableObject {
             }
             #endif
             if !webhookURL.isEmpty {
-                WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+                enqueueWebhook(WebhookService.payloadFromMeeting(meeting))
             }
         }
     }
@@ -5363,6 +5400,7 @@ final class AppState: ObservableObject {
                 )
             }
         } catch {
+            registerLiveInsightsFailure()
             DebugLogger.shared.log(.app, "Live insights FAILED (\(mode.rawValue)): \(error.localizedDescription)")
             enqueueDiagnosticEvent(
                 "insights_live_failed",
@@ -5834,6 +5872,7 @@ final class AppState: ObservableObject {
         lastAppliedMeddpiccSeq = -1
         lastAppliedQuestionsSeq = -1
         standardSuccessCount = 0
+        registerLiveInsightsSuccess()
         meddpiccSuccessCount = 0
         questionsSuccessCount = 0
         templateSuccessCount = 0
@@ -6254,7 +6293,7 @@ final class AppState: ObservableObject {
                 calendarEventId: meeting.calendarEventId,
                 attendees: meeting.attendees
             )
-            WebhookService.send(payload: payload, to: webhookURL)
+            enqueueWebhook(payload)
         }
 
         // Auto-sync to configured CRMs using calendar attendee domains.
@@ -6359,6 +6398,7 @@ final class AppState: ObservableObject {
     /// `modelContext.delete(_:)`.
     func noteMeetingDeleted(_ meeting: Meeting) {
         deletedMeetingIDs.insert(meeting.id)
+        deliveryOutbox.removeAll(forMeeting: meeting.id)
         finalizingInsightMeetingIDs.remove(meeting.id)
         pendingMeetingSaves.removeValue(forKey: meeting.id)
         pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
@@ -6554,7 +6594,7 @@ final class AppState: ObservableObject {
         // Fire webhook with updated meeting data
         if !webhookURL.isEmpty {
             let payload = WebhookService.payloadFromMeeting(meeting)
-            WebhookService.send(payload: payload, to: webhookURL)
+            enqueueWebhook(payload)
         }
     }
 
@@ -6700,7 +6740,7 @@ final class AppState: ObservableObject {
         #endif
         if !webhookURL.isEmpty {
             let payload = WebhookService.payloadFromMeeting(meeting)
-            WebhookService.send(payload: payload, to: webhookURL)
+            enqueueWebhook(payload)
         }
         return .saved(rewroteEarlierMentions: true)
     }
@@ -6757,7 +6797,7 @@ final class AppState: ObservableObject {
         #endif
 
         if !webhookURL.isEmpty {
-            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+            enqueueWebhook(WebhookService.payloadFromMeeting(meeting))
         }
 
         DebugLogger.shared.log(.app, "Transcript trim applied: meeting=\(meeting.id), revision=\(meeting.transcriptRevision)")
@@ -6799,7 +6839,7 @@ final class AppState: ObservableObject {
         #endif
 
         if !webhookURL.isEmpty {
-            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+            enqueueWebhook(WebhookService.payloadFromMeeting(meeting))
         }
 
         DebugLogger.shared.log(.app, "Transcript trim undone: meeting=\(meeting.id), revision=\(meeting.transcriptRevision)")
@@ -8537,7 +8577,7 @@ final class AppState: ObservableObject {
         #endif
 
         if !webhookURL.isEmpty, currentMeeting?.id != meetingIDAtRequest {
-            WebhookService.send(payload: WebhookService.payloadFromMeeting(meeting), to: webhookURL)
+            enqueueWebhook(WebhookService.payloadFromMeeting(meeting))
         }
     }
     
@@ -9523,10 +9563,10 @@ final class AppState: ObservableObject {
 
     /// How early a call may connect and still count as this event (back-to-back calls,
     /// early joiners), and how long after the scheduled minute to keep waiting.
-    static let autoStartCallEarlyWindow: TimeInterval = 5 * 60
-    static let autoStartCallLateWindow: TimeInterval = 10 * 60
-    static let autoStartCountdownLead: TimeInterval = 16
-    static let autoStartLateStartGrace: TimeInterval = 120
+    nonisolated static let autoStartCallEarlyWindow: TimeInterval = 5 * 60
+    nonisolated static let autoStartCallLateWindow: TimeInterval = 10 * 60
+    nonisolated static let autoStartCountdownLead: TimeInterval = 16
+    nonisolated static let autoStartLateStartGrace: TimeInterval = 120
 
     nonisolated static func autoStartDecision(
         eventStart: Date,
@@ -9908,88 +9948,113 @@ final class AppState: ObservableObject {
         rescheduleMeetingReminders()
     }
     
+    /// Automatic CRM sends are queued, not fired: the outbox retries them after a network
+    /// failure and Settings shows what is waiting or failed.
     func autoSyncToAttio(meeting: Meeting) {
         guard autoAttioSync, googleCalendarEnabled, isGoogleCalendarConnected else { return }
-        let attendees = meeting.attendees
-        let externalDomains = Set(attendees.filter { !$0.isSelf }.map(\.domain).filter { !$0.isEmpty })
-        guard !externalDomains.isEmpty else { return }
-        guard let service = minitiAPIService else { return }
-        
-        let payload = AttioMeetingPayload.from(meeting: meeting)
-        let domainsCopy = externalDomains
-        
-        Task.detached {
-            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-            do {
-                var allMatches: [MinitiAPIService.AttioSearchRecord] = []
-                for domain in domainsCopy {
-                    let results = try await service.attioSearch(
-                        deviceId: deviceId, query: domain, objects: ["companies", "people"]
-                    )
-                    allMatches.append(contentsOf: results)
-                }
-                
-                guard allMatches.count == 1 else {
-                    DebugLogger.shared.log(.app, "Auto Attio sync: \(allMatches.count) matches for domains \(domainsCopy) — skipping (need exactly 1)")
-                    return
-                }
-                
-                let match = allMatches[0]
-                _ = try await service.attioSendMeeting(
-                    deviceId: deviceId,
-                    meetingPayload: payload,
-                    targetObject: match.objectSlug,
-                    targetRecordID: match.idPayload.recordID,
-                    createTasksFromActionItems: false
-                )
-                DebugLogger.shared.log(.app, "Auto Attio sync: sent to \(match.objectSlug) \(match.recordText)")
-            } catch {
-                DebugLogger.shared.log(.app, "Auto Attio sync failed: \(error.localizedDescription)")
-            }
-        }
+        guard !Self.externalAttendeeDomains(of: meeting).isEmpty else { return }
+        deliveryOutbox.enqueueCRM(.attio, meetingID: meeting.id)
     }
 
     func autoSyncToTwenty(meeting: Meeting) {
         guard autoTwentySync, googleCalendarEnabled, isGoogleCalendarConnected else { return }
-        let externalDomains = Set(meeting.attendees.filter { !$0.isSelf }.map(\.domain).filter { !$0.isEmpty })
-        guard !externalDomains.isEmpty, let service = minitiAPIService else { return }
+        guard !Self.externalAttendeeDomains(of: meeting).isEmpty else { return }
+        deliveryOutbox.enqueueCRM(.twenty, meetingID: meeting.id)
+    }
 
-        let payload = AttioMeetingPayload.from(meeting: meeting)
-        let domainsCopy = externalDomains
-        Task.detached {
-            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-            do {
-                var allMatches: [MinitiAPIService.AttioSearchRecord] = []
-                for domain in domainsCopy {
-                    let results = try await service.twentySearch(
-                        deviceId: deviceId,
-                        query: domain,
-                        objects: ["companies"]
-                    )
-                    allMatches.append(contentsOf: results)
-                }
-                let uniqueMatches = Dictionary(
-                    grouping: allMatches,
-                    by: { "\($0.objectSlug):\($0.idPayload.recordID)" }
-                ).compactMap(\.value.first)
-                guard uniqueMatches.count == 1, let match = uniqueMatches.first else {
-                    DebugLogger.shared.log(
-                        .app,
-                        "Auto Twenty sync: \(uniqueMatches.count) matches for domains \(domainsCopy) — skipping (need exactly 1)"
-                    )
-                    return
-                }
-                _ = try await service.twentySendMeeting(
-                    deviceId: deviceId,
-                    meetingPayload: payload,
-                    targetObject: match.objectSlug,
-                    targetRecordID: match.idPayload.recordID,
-                    createTasksFromActionItems: false
-                )
-                DebugLogger.shared.log(.app, "Auto Twenty sync: sent to \(match.objectSlug) \(match.recordText)")
-            } catch {
-                DebugLogger.shared.log(.app, "Auto Twenty sync failed: \(error.localizedDescription)")
+    nonisolated static func externalAttendeeDomains(of meeting: Meeting) -> Set<String> {
+        Set(meeting.attendees.filter { !$0.isSelf }.map(\.domain).filter { !$0.isEmpty })
+    }
+
+    /// Queue a webhook body for the outbox. Encoding failures are logged, never thrown at
+    /// the save path.
+    func enqueueWebhook(_ payload: WebhookService.MeetingPayload) {
+        guard !webhookURL.isEmpty else { return }
+        guard let meetingID = UUID(uuidString: payload.meeting.id) else { return }
+        do {
+            let body = try WebhookService.encode(payload)
+            deliveryOutbox.enqueueWebhook(meetingID: meetingID, event: payload.event, body: body, destination: webhookURL)
+        } catch {
+            DebugLogger.shared.log(.app, "Webhook encode FAILED: \(type(of: error))", level: .warning)
+        }
+    }
+
+    private func savedMeeting(id: UUID) -> Meeting? {
+        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == id })
+        return fetchMeetings(.exportAll, descriptor: descriptor)?.first
+    }
+
+    /// Map an API error to an outbox outcome: transport and server trouble retry, anything
+    /// the backend refuses for good does not.
+    nonisolated static func deliveryOutcome(for error: Error) -> DeliveryOutbox.Outcome {
+        if let service = error as? MinitiAPIService.ServiceError {
+            switch service {
+            case .networkError, .rateLimited, .serverError, .invalidResponse:
+                return .retry(reason: String(describing: service).split(separator: "(").first.map(String.init) ?? "service error")
+            default:
+                return .reject(reason: String(describing: service).split(separator: "(").first.map(String.init) ?? "service error")
             }
+        }
+        return DeliveryOutbox.outcome(status: nil, error: error)
+    }
+
+    private func registerDeliverySenders() {
+        deliveryOutbox.register(.webhook) { [weak self] item in
+            guard let self else { return .reject(reason: "app gone") }
+            guard let body = item.body, let destination = item.destination else { return .reject(reason: "missing body") }
+            // The destination may have changed since the item was queued; a cleared URL
+            // means the person no longer wants webhooks.
+            let current = self.webhookURL
+            if current.isEmpty { return .reject(reason: "webhook removed") }
+            if self.isMeetingDeleted(item.meetingID) { return .reject(reason: "meeting deleted") }
+            return await WebhookService.deliver(body: body, to: current, deliveryID: item.id, attempt: item.attempts + 1, event: item.event)
+        }
+        deliveryOutbox.register(.attio) { [weak self] item in
+            guard let self else { return .reject(reason: "app gone") }
+            return await self.sendCRM(.attio, meetingID: item.meetingID)
+        }
+        deliveryOutbox.register(.twenty) { [weak self] item in
+            guard let self else { return .reject(reason: "app gone") }
+            return await self.sendCRM(.twenty, meetingID: item.meetingID)
+        }
+    }
+
+    private func sendCRM(_ kind: DeliveryOutbox.Kind, meetingID: UUID) async -> DeliveryOutbox.Outcome {
+        guard let service = minitiAPIService else { return .retry(reason: "service unavailable") }
+        guard let meeting = savedMeeting(id: meetingID) else { return .reject(reason: "meeting not found") }
+        let domains = Self.externalAttendeeDomains(of: meeting)
+        guard !domains.isEmpty else { return .skip(reason: "no external attendees") }
+        let payload = AttioMeetingPayload.from(meeting: meeting)
+        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
+        do {
+            var matches: [MinitiAPIService.AttioSearchRecord] = []
+            for domain in domains {
+                let results = kind == .attio
+                    ? try await service.attioSearch(deviceId: deviceId, query: domain, objects: ["companies", "people"])
+                    : try await service.twentySearch(deviceId: deviceId, query: domain, objects: ["companies"])
+                matches.append(contentsOf: results)
+            }
+            let unique = Dictionary(grouping: matches, by: { "\($0.objectSlug):\($0.idPayload.recordID)" }).compactMap(\.value.first)
+            guard unique.count == 1, let match = unique.first else {
+                DebugLogger.shared.log(.app, "Auto \(kind.label) sync: \(unique.count) matches for domains \(domains) — skipping (need exactly 1)")
+                return .skip(reason: "\(unique.count) matches, need exactly 1")
+            }
+            if kind == .attio {
+                _ = try await service.attioSendMeeting(
+                    deviceId: deviceId, meetingPayload: payload, targetObject: match.objectSlug,
+                    targetRecordID: match.idPayload.recordID, createTasksFromActionItems: false
+                )
+            } else {
+                _ = try await service.twentySendMeeting(
+                    deviceId: deviceId, meetingPayload: payload, targetObject: match.objectSlug,
+                    targetRecordID: match.idPayload.recordID, createTasksFromActionItems: false
+                )
+            }
+            DebugLogger.shared.log(.app, "Auto \(kind.label) sync: sent to \(match.objectSlug) \(match.recordText)")
+            return .delivered
+        } catch {
+            DebugLogger.shared.log(.app, "Auto \(kind.label) sync failed: \(error.localizedDescription)")
+            return Self.deliveryOutcome(for: error)
         }
     }
     

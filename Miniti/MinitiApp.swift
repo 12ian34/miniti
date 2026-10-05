@@ -292,13 +292,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
 }
 
 private struct MainWindowIdentifierInstaller: NSViewRepresentable {
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         NSView(frame: .zero)
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            nsView.window?.identifier = AppDelegate.mainWindowIdentifier
+            guard let window = nsView.window else { return }
+            window.identifier = AppDelegate.mainWindowIdentifier
+            context.coordinator.install(on: window)
+        }
+    }
+
+    /// Nothing on Home is "selected" when the window opens. AppKit hands key focus to the
+    /// first control in the key-view loop whenever the window becomes key, which SwiftUI
+    /// draws as a highlighted button or field; making one control non-focusable only moved
+    /// the highlight to the next one (recurring complaint, last 2026-10-05). Clearing the
+    /// first responder on the first key activations fixes it for every control at once;
+    /// clicking or tabbing afterwards focuses normally.
+    final class Coordinator {
+        private var observer: NSObjectProtocol?
+        private var clearsRemaining = 3
+        private weak var window: NSWindow?
+
+        func install(on window: NSWindow) {
+            guard self.window !== window else { return }
+            self.window = window
+            window.initialFirstResponder = nil
+            window.makeFirstResponder(nil)
+            if let observer { NotificationCenter.default.removeObserver(observer) }
+            observer = NotificationCenter.default.addObserver(
+                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+            ) { [weak self] _ in
+                guard let self, self.clearsRemaining > 0 else { return }
+                self.clearsRemaining -= 1
+                DispatchQueue.main.async { [weak window] in
+                    window?.makeFirstResponder(nil)
+                }
+            }
+        }
+
+        deinit {
+            if let observer { NotificationCenter.default.removeObserver(observer) }
         }
     }
 }
@@ -398,10 +435,13 @@ struct MinitiApp: App {
                 Task {
                     _ = await appState.saveCurrentMeetingAndWait()
                 }
-            } else if newPhase == .active && appState.appMode == .managed {
-                Task {
-                    await appState.refreshUsage()
-                    await appState.retryPendingSessionEndReports()
+            } else if newPhase == .active {
+                appState.deliveryOutbox.kick()
+                if appState.appMode == .managed {
+                    Task {
+                        await appState.refreshUsage()
+                        await appState.retryPendingSessionEndReports()
+                    }
                 }
             }
         }

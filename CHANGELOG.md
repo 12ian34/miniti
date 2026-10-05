@@ -21,6 +21,9 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - improvement: (macOS) auto-start now waits for the call. A calendar meeting with a Zoom, Meet, Teams or Slack link starts recording when the call connects, up to 5 minutes early or 10 minutes late, instead of at the scheduled minute. If nobody joins within 10 minutes, miniti asks once whether to record anyway instead of recording an empty room. Meetings without a link still show the 15-second countdown at their start time
 - improvement: (macOS) export all meetings no longer leaves duplicates. miniti remembers the file each meeting was saved as, so a meeting that was renamed since its last export replaces its old file instead of sitting next to it
 - fix: (macOS) if your markdown export folder goes missing, miniti now says so instead of silently saving nothing. Home shows a card with a choose folder button, Settings, Data shows the last export or the error, and the Export All button reports how many failed. Before, a deleted or moved folder lost every meeting from then on
+- improvement: (macOS and iOS) webhooks and automatic Attio and Twenty sends no longer get lost when the network is down. miniti keeps them in a queue, retries for up to a day with growing gaps, and Settings shows what is waiting or failed with retry and discard buttons. Every webhook request carries an X-Miniti-Delivery-Id header so your receiver can ignore a repeat
+- improvement: (macOS and iOS) when the AI service is down, live summaries back off instead of retrying every few seconds. The wait doubles from 15 seconds to 5 minutes and resets on the first success
+- fix: (macOS) nothing on Home is highlighted when the app opens. The settings button, and whichever control replaced it after earlier fixes, no longer starts out selected
 
 ### 2026-10-02 - v2.10.0
 

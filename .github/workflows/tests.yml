@@ -1,0 +1,109 @@
+name: tests
+
+on:
+  push:
+    branches: [main, ci]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+
+jobs:
+  macos:
+    name: macOS tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the Nemotron model (fetched by the build phase, 190 MB)
+        uses: actions/cache@v4
+        with:
+          path: Miniti/Resources/NemotronDiarizer
+          key: nemotron-${{ hashFiles('scripts/fetch-nemotron-model.sh') }}
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('Miniti.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Run MinitiTests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Miniti.xcodeproj \
+            -scheme Miniti \
+            -destination 'platform=macOS' \
+            -derivedDataPath DerivedData \
+            -only-testing:MinitiTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            2>&1 | tee macos-tests.log | grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true
+          grep -qE 'Executed [0-9]+ tests, with [0-9]+ test[s]? skipped and 0 failures|Executed [0-9]+ tests, with 0 failures' macos-tests.log
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-tests-log
+          path: macos-tests.log
+
+  ios:
+    name: iOS tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache the Nemotron model (fetched by the build phase, 190 MB)
+        uses: actions/cache@v4
+        with:
+          path: Miniti/Resources/NemotronDiarizer
+          key: nemotron-${{ hashFiles('scripts/fetch-nemotron-model.sh') }}
+
+      - name: Cache Swift packages
+        uses: actions/cache@v4
+        with:
+          path: DerivedData/SourcePackages
+          key: spm-${{ runner.os }}-${{ hashFiles('Miniti.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+
+      - name: Pick a simulator
+        id: sim
+        run: |
+          xcrun simctl list devices available
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys
+          d=json.load(sys.stdin)["devices"]
+          cands=[dev for rt,devs in d.items() if "iOS" in rt for dev in devs if dev["name"].startswith("iPhone")]
+          cands.sort(key=lambda x: x["name"])
+          print(cands[-1]["udid"] if cands else "")')
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          test -n "$UDID"
+
+      - name: Run MinitiMobileTests
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -project Miniti.xcodeproj \
+            -scheme MinitiMobile \
+            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+            -derivedDataPath DerivedData \
+            -only-testing:MinitiMobileTests \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+            2>&1 | tee ios-tests.log | grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true
+          grep -qE 'Executed [0-9]+ tests, with [0-9]+ test[s]? skipped and 0 failures|Executed [0-9]+ tests, with 0 failures' ios-tests.log
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-tests-log
+          path: ios-tests.log

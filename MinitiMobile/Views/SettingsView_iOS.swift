@@ -780,7 +780,8 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(ColorPalette.Accent.green)
                         }
                     }
-                    Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint. The payload includes the full transcript and attendee names, so it is only ever sent over https.")
+                    Text("POST meeting data as JSON when a meeting is saved or insights are updated. Works with Zapier, Make, n8n, or any webhook endpoint. The payload includes the full transcript and attendee names, so it is only ever sent over https. A delivery that fails is retried for up to a day; each request carries an X-Miniti-Delivery-Id header so your receiver can ignore repeats.")
+                    DeliveryStatusRow_iOS(outbox: appState.deliveryOutbox)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1466,5 +1467,27 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
+    }
+}
+
+/// Webhook delivery health on iOS: waiting and failed counts with retry and discard.
+struct DeliveryStatusRow_iOS: View {
+    @ObservedObject var outbox: DeliveryOutbox
+
+    var body: some View {
+        if let line = outbox.statusLine(for: .webhook) {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(line, systemImage: outbox.failed(.webhook).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(outbox.failed(.webhook).isEmpty ? Color.secondary : ColorPalette.Status.error)
+                HStack(spacing: 12) {
+                    Button("Retry now") { outbox.retryNow(.webhook) }
+                    if !outbox.failed(.webhook).isEmpty {
+                        Button("Discard failed") { outbox.discardFailed(.webhook) }
+                    }
+                }
+                .font(.caption)
+            }
+        }
     }
 }

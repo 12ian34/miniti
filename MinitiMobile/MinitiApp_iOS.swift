@@ -145,6 +145,7 @@ struct MinitiMobileApp: App {
                     saveLease.end()
                 }
             } else if newPhase == .active {
+                appState.deliveryOutbox.kick()
                 appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
                 if appState.appMode == .managed {
                     Task {

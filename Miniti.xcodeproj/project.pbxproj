@@ -21,11 +21,13 @@
 		D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000080 /* MeetingHandoffTests.swift */; };
 		D20000000000000000000094 /* MeetingSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000093 /* MeetingSearchTests.swift */; };
+		D2000000000000000000009A /* DeliveryOutboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000099 /* DeliveryOutboxTests.swift */; };
 		D20000000000000000000071 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
 		D20000000000000000000072 /* JevClassifierTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000070 /* JevClassifierTests.swift */; };
 		D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		D20000000000000000000082 /* MeetingHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000080 /* MeetingHandoffTests.swift */; };
 		D20000000000000000000095 /* MeetingSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000093 /* MeetingSearchTests.swift */; };
+		D2000000000000000000009B /* DeliveryOutboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000099 /* DeliveryOutboxTests.swift */; };
 		3C2BEFA52F9981830058C8BE /* UpdateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C2BEFA42F9981830058C8BE /* UpdateService.swift */; };
 		A10000010000000000000001 /* MinitiApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000001 /* MinitiApp.swift */; };
 		A10000010000000000000002 /* MainWindow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000002 /* MainWindow.swift */; };
@@ -35,6 +37,7 @@
 		A10000010000000000000007 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000007 /* SettingsView.swift */; };
 		A10000010000000000000008 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		D20000000000000000000091 /* MeetingSearchQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000090 /* MeetingSearchQuery.swift */; };
+		D20000000000000000000097 /* DeliveryOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000096 /* DeliveryOutbox.swift */; };
 		A10000010000000000000009 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		A10000010000000000000010 /* AudioCaptureService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000010 /* AudioCaptureService.swift */; };
 		A10000010000000000000011 /* DeepgramService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000011 /* DeepgramService.swift */; };
@@ -46,7 +49,7 @@
 		A10000010000000000000017 /* MinitiAPIService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000019 /* MinitiAPIService.swift */; };
 		A10000010000000000000018 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000020 /* OnboardingView.swift */; };
 		A10000010000000000000019 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
-		A10000010000000000000020 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
+		A10000010000000000000020 /* LimitWarningBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitWarningBanner.swift */; };
 		A10000010000000000000023 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
 		AB0000010000000000000003 /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000001 /* DebugLogger.swift */; };
 		AB0000010000000000000004 /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB0000010000000000000002 /* DebugLogView.swift */; };
@@ -85,6 +88,7 @@
 		B70000010000000000000002 /* LiveTranscriptTextPaneMac.swift in Sources */ = {isa = PBXBuildFile; fileRef = B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */; };
 		C10000010000000000000001 /* Meeting.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000008 /* Meeting.swift */; };
 		D20000000000000000000092 /* MeetingSearchQuery.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000090 /* MeetingSearchQuery.swift */; };
+		D20000000000000000000098 /* DeliveryOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000096 /* DeliveryOutbox.swift */; };
 		C10000010000000000000002 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000009 /* AppState.swift */; };
 		C10000010000000000000003 /* ColorPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000023 /* ColorPalette.swift */; };
 		C10000010000000000000004 /* DeepgramService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000011 /* DeepgramService.swift */; };
@@ -96,7 +100,7 @@
 		C10000010000000000000010 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000005 /* InsightsView.swift */; };
 		C10000010000000000000011 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000020 /* OnboardingView.swift */; };
 		C10000010000000000000012 /* UsageBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000021 /* UsageBanner.swift */; };
-		C10000010000000000000013 /* LimitReachedView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitReachedView.swift */; };
+		C10000010000000000000013 /* LimitWarningBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000010000000000000022 /* LimitWarningBanner.swift */; };
 		C10000010000000000000014 /* MinitiApp_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000001 /* MinitiApp_iOS.swift */; };
 		C10000010000000000000015 /* AudioCaptureService_iOS.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000002 /* AudioCaptureService_iOS.swift */; };
 		C10000010000000000000016 /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20000010000000000000003 /* MainTabView.swift */; };
@@ -203,6 +207,7 @@
 		A20000010000000000000007 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20000010000000000000008 /* Meeting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Meeting.swift; sourceTree = "<group>"; };
 		D20000000000000000000090 /* MeetingSearchQuery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSearchQuery.swift; sourceTree = "<group>"; };
+		D20000000000000000000096 /* DeliveryOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryOutbox.swift; sourceTree = "<group>"; };
 		A20000010000000000000009 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
 		A20000010000000000000010 /* AudioCaptureService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioCaptureService.swift; sourceTree = "<group>"; };
 		A20000010000000000000011 /* DeepgramService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepgramService.swift; sourceTree = "<group>"; };
@@ -216,7 +221,7 @@
 		A20000010000000000000019 /* MinitiAPIService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiAPIService.swift; sourceTree = "<group>"; };
 		A20000010000000000000020 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		A20000010000000000000021 /* UsageBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UsageBanner.swift; sourceTree = "<group>"; };
-		A20000010000000000000022 /* LimitReachedView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitReachedView.swift; sourceTree = "<group>"; };
+		A20000010000000000000022 /* LimitWarningBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitWarningBanner.swift; sourceTree = "<group>"; };
 		A20000010000000000000023 /* ColorPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorPalette.swift; sourceTree = "<group>"; };
 		A30000010000000000000001 /* miniti.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = miniti.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB0000010000000000000001 /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
@@ -281,6 +286,7 @@
 		D20000000000000000000020 /* OnDeviceDiarizationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000080 /* MeetingHandoffTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingHandoffTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000093 /* MeetingSearchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSearchTests.swift; sourceTree = "<group>"; };
+		D20000000000000000000099 /* DeliveryOutboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeliveryOutboxTests.swift; sourceTree = "<group>"; };
 		D20000000000000000000070 /* JevClassifierTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JevClassifierTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000022 /* TemplateSettingsViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateSettingsViews.swift; sourceTree = "<group>"; };
 		D10000000000000000000025 /* CustomInsightTemplateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplateTests.swift; sourceTree = "<group>"; };
@@ -387,7 +393,7 @@
 				A20000010000000000000007 /* SettingsView.swift */,
 				A20000010000000000000020 /* OnboardingView.swift */,
 				A20000010000000000000021 /* UsageBanner.swift */,
-				A20000010000000000000022 /* LimitReachedView.swift */,
+				A20000010000000000000022 /* LimitWarningBanner.swift */,
 				AC0000010000000000000001 /* TermsAcceptanceView.swift */,
 				AE0000010000000000000001 /* ForceUpdateView.swift */,
 				AE0000010000000000000051 /* ManagedAccountViews.swift */,
@@ -425,6 +431,7 @@
 				A20000010000000000000018 /* DeviceIdentifier.swift */,
 				A20000010000000000000019 /* MinitiAPIService.swift */,
 				AD0000010000000000000001 /* WebhookService.swift */,
+				D20000000000000000000096 /* DeliveryOutbox.swift */,
 				AD0000010000000000000011 /* DocsMCPService.swift */,
 				B80000010000000000000001 /* GranolaCSVImporter.swift */,
 				CA0000010000000000000002 /* CallActivityMonitor.swift */,
@@ -490,6 +497,7 @@
 				D20000000000000000000020 /* OnDeviceDiarizationTests.swift */,
 				D20000000000000000000080 /* MeetingHandoffTests.swift */,
 				D20000000000000000000093 /* MeetingSearchTests.swift */,
+				D20000000000000000000099 /* DeliveryOutboxTests.swift */,
 				D20000000000000000000070 /* JevClassifierTests.swift */,
 				D1000000000000000000001C /* MeetingJourneyTests.swift */,
 				D10000000000000000000019 /* CalendarEventDecodingTests.swift */,
@@ -785,6 +793,7 @@
 				A10000010000000000000007 /* SettingsView.swift in Sources */,
 				A10000010000000000000008 /* Meeting.swift in Sources */,
 				D20000000000000000000091 /* MeetingSearchQuery.swift in Sources */,
+				D20000000000000000000097 /* DeliveryOutbox.swift in Sources */,
 				A10000010000000000000009 /* AppState.swift in Sources */,
 				A10000010000000000000010 /* AudioCaptureService.swift in Sources */,
 				A10000010000000000000011 /* DeepgramService.swift in Sources */,
@@ -795,7 +804,7 @@
 				A10000010000000000000017 /* MinitiAPIService.swift in Sources */,
 				A10000010000000000000018 /* OnboardingView.swift in Sources */,
 				A10000010000000000000019 /* UsageBanner.swift in Sources */,
-				A10000010000000000000020 /* LimitReachedView.swift in Sources */,
+				A10000010000000000000020 /* LimitWarningBanner.swift in Sources */,
 				A10000010000000000000023 /* ColorPalette.swift in Sources */,
 				AB0000010000000000000003 /* DebugLogger.swift in Sources */,
 				AB0000010000000000000004 /* DebugLogView.swift in Sources */,
@@ -825,6 +834,7 @@
 				D10000000000000000000003 /* PersistentStore.swift in Sources */,
 				C10000010000000000000001 /* Meeting.swift in Sources */,
 				D20000000000000000000092 /* MeetingSearchQuery.swift in Sources */,
+				D20000000000000000000098 /* DeliveryOutbox.swift in Sources */,
 				AE0000010000000000000013 /* ScreenshotMode.swift in Sources */,
 				AE0000010000000000000023 /* InsightTemplates.swift in Sources */,
 				AE0000010000000000000033 /* ClientAuth.swift in Sources */,
@@ -842,7 +852,7 @@
 				D20000000000000000000062 /* AcknowledgementsView.swift in Sources */,
 				C10000010000000000000011 /* OnboardingView.swift in Sources */,
 				C10000010000000000000012 /* UsageBanner.swift in Sources */,
-				C10000010000000000000013 /* LimitReachedView.swift in Sources */,
+				C10000010000000000000013 /* LimitWarningBanner.swift in Sources */,
 				E10000010000000000000001 /* RecordingActivityAttributes.swift in Sources */,
 				C10000010000000000000014 /* MinitiApp_iOS.swift in Sources */,
 				C10000010000000000000015 /* AudioCaptureService_iOS.swift in Sources */,
@@ -880,6 +890,7 @@
 				D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */,
 				D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */,
 				D20000000000000000000094 /* MeetingSearchTests.swift in Sources */,
+				D2000000000000000000009A /* DeliveryOutboxTests.swift in Sources */,
 				D20000000000000000000071 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001D /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001A /* CalendarEventDecodingTests.swift in Sources */,
@@ -909,6 +920,7 @@
 				D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */,
 				D20000000000000000000082 /* MeetingHandoffTests.swift in Sources */,
 				D20000000000000000000095 /* MeetingSearchTests.swift in Sources */,
+				D2000000000000000000009B /* DeliveryOutboxTests.swift in Sources */,
 				D20000000000000000000072 /* JevClassifierTests.swift in Sources */,
 				D1000000000000000000001E /* MeetingJourneyTests.swift in Sources */,
 				D1000000000000000000001B /* CalendarEventDecodingTests.swift in Sources */,
