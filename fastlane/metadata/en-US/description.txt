@@ -34,7 +34,6 @@ BUILT FOR REPEAT USE
 PRICING
 - Free: 500 transcription minutes per month
 - Pro: 5,000 transcription minutes per month for $4.99/month
-- BYOK: connect your own Deepgram and OpenAI keys for unlimited usage from miniti at no additional app fee
 
 SUBSCRIPTION INFO
 If you choose Pro, payment is charged to your Apple ID account at confirmation of purchase. The subscription renews automatically unless canceled at least 24 hours before the end of the current period. You can manage or cancel from your App Store account settings.

@@ -24,6 +24,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - improvement: (macOS and iOS) webhooks and automatic Attio and Twenty sends no longer get lost when the network is down. miniti keeps them in a queue, retries for up to a day with growing gaps, and Settings shows what is waiting or failed with retry and discard buttons. Every webhook request carries an X-Miniti-Delivery-Id header so your receiver can ignore a repeat
 - improvement: (macOS and iOS) when the AI service is down, live summaries back off instead of retrying every few seconds. The wait doubles from 15 seconds to 5 minutes and resets on the first success
 - fix: (macOS) nothing on Home is highlighted when the app opens. The settings button, and whichever control replaced it after earlier fixes, no longer starts out selected
+- improvement: (iOS) setup now offers the miniti plan only. Using your own Deepgram and OpenAI accounts is still available in Settings, Account & Plan, worded as what it is: your audio and text go to your own accounts
 
 ### 2026-10-02 - v2.10.0
 

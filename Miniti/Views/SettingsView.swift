@@ -251,7 +251,7 @@ struct AccountSettingsView: View {
             Section("Mode") {
                 Picker("API Mode", selection: $appState.appModeRaw) {
                     Text(appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
-                    Text("Bring Your Own Keys (unlimited)").tag(AppMode.byok.rawValue)
+                    Text("My own Deepgram and OpenAI accounts").tag(AppMode.byok.rawValue)
                 }
                 .id("account.apiMode")
                 .pickerStyle(.radioGroup)
@@ -810,7 +810,7 @@ struct AISettingsView: View {
             .id("ai.models")
 
             Section("Provider Mode") {
-                LabeledContent("Current mode", value: appState.appMode == .byok ? "Bring Your Own Keys" : "Managed by Miniti")
+                LabeledContent("Current mode", value: appState.appMode == .byok ? "My own accounts" : "Managed by Miniti")
                 Text(appState.appMode == .byok
                      ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, CRM, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
                      : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")

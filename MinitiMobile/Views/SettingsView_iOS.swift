@@ -411,7 +411,7 @@ private struct SettingsDetailView_iOS: View {
                                 : (appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)")
                         )
                         .tag(AppMode.managed.rawValue)
-                        Text("Bring Your Own Keys").tag(AppMode.byok.rawValue)
+                        Text("My own Deepgram and OpenAI accounts").tag(AppMode.byok.rawValue)
                     }
                     .id("account.apiMode")
                     .onChange(of: appState.appModeRaw) { _, newValue in
@@ -426,7 +426,7 @@ private struct SettingsDetailView_iOS: View {
                             : (appState.isPro
                                ? "Pro subscription active. \(Int(appState.displayMinutesLimit)) minutes per month."
                                : "500 free minutes per month via Miniti's backend."))
-                         : "Use your own Deepgram & OpenAI API keys. No limits.")
+                         : "Audio and text go straight to your own Deepgram and OpenAI accounts, billed by them.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -507,7 +507,7 @@ private struct SettingsDetailView_iOS: View {
                 .id("ai.models")
 
                 Section("Provider Mode") {
-                    LabeledContent("Current mode", value: appState.appMode == .byok ? "Bring Your Own Keys" : "Managed by Miniti")
+                    LabeledContent("Current mode", value: appState.appMode == .byok ? "My own accounts" : "Managed by Miniti")
                     Text(appState.appMode == .byok
                          ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
                          : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")

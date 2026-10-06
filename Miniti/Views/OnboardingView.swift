@@ -57,16 +57,20 @@ struct OnboardingView: View {
                 Task { await appState.refreshUsage() }
             }
 
+            #if os(macOS)
+            // App Review (2.10.0, guideline 3.1.1) reads a key-based tier beside the
+            // subscription as an unlock mechanism. On iOS the option lives in Settings only.
             OnboardingChoice(
                 icon: "key.fill",
-                title: "Use my own API keys",
-                detail: "Unlimited use billed directly by Deepgram and OpenAI. Add keys in Settings after setup.",
+                title: "Use my own Deepgram and OpenAI accounts",
+                detail: "Audio and text go straight to your own accounts. Add your credentials in Settings after setup.",
                 accent: ColorPalette.Accent.blue,
                 isPrimary: false
             ) {
                 appState.appModeRaw = AppMode.byok.rawValue
                 withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
             }
+            #endif
 
             Button("Already use Miniti on another device? Restore with your recovery key") {
                 showRestoreSheet = true
@@ -75,7 +79,7 @@ struct OnboardingView: View {
             .font(.footnote)
             .foregroundStyle(ColorPalette.Accent.green)
 
-            Text("You can switch modes later in Settings.")
+            Text("You can change this later in Settings.")
                 .font(.footnote)
                 .foregroundStyle(ColorPalette.Text.muted)
         }
