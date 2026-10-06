@@ -9980,8 +9980,8 @@ final class AppState: ObservableObject {
     }
 
     private func savedMeeting(id: UUID) -> Meeting? {
-        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == id })
-        return fetchMeetings(.exportAll, descriptor: descriptor)?.first
+        // A predicate here trips Swift 6's KeyPath sendability check; the store is small.
+        return fetchMeetings(.exportAll)?.first { $0.id == id }
     }
 
     /// Map an API error to an outbox outcome: transport and server trouble retry, anything
@@ -10001,7 +10001,7 @@ final class AppState: ObservableObject {
     private func registerDeliverySenders() {
         deliveryOutbox.register(.webhook) { [weak self] item in
             guard let self else { return .reject(reason: "app gone") }
-            guard let body = item.body, let destination = item.destination else { return .reject(reason: "missing body") }
+            guard let body = item.body, item.destination != nil else { return .reject(reason: "missing body") }
             // The destination may have changed since the item was queued; a cleared URL
             // means the person no longer wants webhooks.
             let current = self.webhookURL

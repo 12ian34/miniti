@@ -892,6 +892,7 @@ struct TerminalSidebar: View {
     @State private var collapsedStatusPulse = false
     @State private var searchFocusGeneration = 0
     @FocusState private var searchFieldFocused: Bool
+    @State private var sidebarAppearedAt = Date()
     @State private var isPeopleMenuPresented = false
     @State private var isDateMenuPresented = false
 
@@ -1214,9 +1215,17 @@ struct TerminalSidebar: View {
                         cancelPendingSearchFocus()
                     }
                     .onChange(of: searchFieldFocused) { _, focused in
+                        // AppKit can hand the field key focus right after the window opens.
+                        // That is not a person starting a search: drop it instead of
+                        // switching search mode on (2026-10-06 field report).
+                        if focused, !isSearchActive, Date().timeIntervalSince(sidebarAppearedAt) < 1.5 {
+                            searchFieldFocused = false
+                            return
+                        }
                         onSearchFocusChange(focused)
                         if focused { isSearchActive = true }
                     }
+                    .onAppear { sidebarAppearedAt = Date() }
                     .onDisappear {
                         searchFocusGeneration += 1
                         if searchFieldFocused {

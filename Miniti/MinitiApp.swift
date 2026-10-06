@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import SwiftData
 import AppKit
 import UserNotifications
@@ -309,33 +310,30 @@ private struct MainWindowIdentifierInstaller: NSViewRepresentable {
     /// Nothing on Home is "selected" when the window opens. AppKit hands key focus to the
     /// first control in the key-view loop whenever the window becomes key, which SwiftUI
     /// draws as a highlighted button or field; making one control non-focusable only moved
-    /// the highlight to the next one (recurring complaint, last 2026-10-05). Clearing the
-    /// first responder on the first key activations fixes it for every control at once;
-    /// clicking or tabbing afterwards focuses normally.
+    /// the highlight to the next one (recurring complaint, last 2026-10-06, when it landed
+    /// on the meeting search field and switched search mode on). Turn the automatic key-view
+    /// loop off and clear the first responder on the first activations; clicking or tabbing
+    /// afterwards focuses normally.
+    @MainActor
     final class Coordinator {
-        private var observer: NSObjectProtocol?
+        private var cancellable: AnyCancellable?
         private var clearsRemaining = 3
         private weak var window: NSWindow?
 
         func install(on window: NSWindow) {
             guard self.window !== window else { return }
             self.window = window
+            window.autorecalculatesKeyViewLoop = false
             window.initialFirstResponder = nil
             window.makeFirstResponder(nil)
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
-            ) { [weak self] _ in
-                guard let self, self.clearsRemaining > 0 else { return }
-                self.clearsRemaining -= 1
-                DispatchQueue.main.async { [weak window] in
-                    window?.makeFirstResponder(nil)
+            cancellable = NotificationCenter.default
+                .publisher(for: NSWindow.didBecomeKeyNotification, object: window)
+                .receive(on: RunLoop.main)
+                .sink { [weak self] _ in
+                    guard let self, self.clearsRemaining > 0 else { return }
+                    self.clearsRemaining -= 1
+                    self.window?.makeFirstResponder(nil)
                 }
-            }
-        }
-
-        deinit {
-            if let observer { NotificationCenter.default.removeObserver(observer) }
         }
     }
 }
