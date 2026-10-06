@@ -1,15 +1,9 @@
 NEW
 
-- Separate speakers on your device. Settings, Recording, "Separate speakers on this device (beta)" runs NVIDIA's Nemotron speaker model on your iPhone instead of Deepgram's speaker detection. In our tests it got the speaker right for 6 to 20% more of the talking time, and it does best with several people in a room. Audio still goes to Deepgram for the words. The model ships inside the app, so this update is about 190 MB bigger. Off by default while it is in beta.
-- Faster speaker naming and sales detection, in beta for managed accounts. Settings, AI, "Faster speaker naming and sales detection" matches speakers to your calendar attendees and spots sales conversations in under a second. Off by default.
-- Calendar events with no guests and no meeting link are not meetings any more, so a personal block never auto-starts a recording. Change it in Settings, Calendar, Meeting filters.
+- Search meetings by person, title, and date. Type with:sam, title:budget, on:14 sep, after:1 sep or last:2w, or pick them from the new filter sheet. Every word you type must now match, so "sasha pricing" finds the call about pricing with Sasha. Results say why they matched.
 
 IMPROVED
 
-- A meeting started from a calendar event keeps the event's title instead of being renamed from the conversation, so a 1:1 stays filed under the person's name.
-- Settings, About lists the open-source software and the speaker model miniti ships with, and their licences.
-
-FIXED
-
-- Google Calendar no longer shows as disconnected after a restart.
-- The "has this meeting ended?" question now appears in a noisy room, stays up until someone speaks, and comes 2 minutes after a calendar meeting's end time.
+- Webhooks no longer get lost when the network is down. miniti keeps them in a queue, retries for up to a day, and Settings shows what is waiting or failed with retry and discard buttons.
+- When the AI service is down, live summaries back off instead of retrying every few seconds.
+- Setup now offers the miniti plan only. Using your own Deepgram and OpenAI accounts is still available in Settings, Account & Plan.
