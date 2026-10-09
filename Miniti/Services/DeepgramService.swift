@@ -568,6 +568,15 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// True until the first audio packet of the current socket, which pins socket time 0
     /// onto the diarizer clock.
     nonisolated(unsafe) private var _socketAudioStartPending = false
+    /// On-device recogniser for the current session, or nil when a Deepgram socket transcribes.
+    /// Read on the audio thread (`sendAudio`); while set there is no socket task, so audio
+    /// cannot reach Deepgram.
+    nonisolated(unsafe) private var _localSession: OnDeviceTranscriptionService.Session?
+    /// Capture topology for the local session, readable on the audio thread.
+    nonisolated(unsafe) private var _localMultichannel = false
+    nonisolated(unsafe) private var _localMonoSource: TranscriptSource = .microphone
+    /// True while the current session transcribes on this device.
+    @Published private(set) var isTranscribingOnDevice = false
     
     @Published var transcriptUpdate: TranscriptUpdate?
     /// Wall-clock time of the last `SpeechStarted` event from Deepgram's own voice
@@ -863,10 +872,71 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         receiveMessages(generation: connectionGeneration)
     }
     
+    /// Transcribe on this device: same per-session state as `connect`, but audio goes to
+    /// `session` instead of a socket and its words come back through the same processing
+    /// path. Nothing here needs a credential.
+    func connectLocal(
+        session: OnDeviceTranscriptionService.Session,
+        language: String,
+        multichannel: Bool = false,
+        monoSource: TranscriptSource = .microphone,
+        preserveSpeakerIdentities: Bool = false,
+        onDeviceSpeakerTimeline: OnDeviceSpeakerTimeline? = nil
+    ) {
+        if webSocketTask != nil || _localSession != nil {
+            disconnect()
+        }
+        DebugLogger.shared.log(
+            .deepgram,
+            "Transcribing on device: language=\(language), sources=\(session.sources.map(\.rawValue).sorted()), multichannel=\(multichannel), speakerTimeline=\(onDeviceSpeakerTimeline != nil)"
+        )
+        connectionState = .connecting
+        speakerHistory = [:]
+        confirmedSpeakerIDs = []
+        pendingSpeakerEvidence = [:]
+        lastCommittedSpeakerBySource = [:]
+        isMultichannel = multichannel
+        self.monoSource = monoSource
+        speakerIdentityState.beginConnection(preservingIdentities: preserveSpeakerIdentities)
+        speakerIdentityState.setStableProviderSources(onDeviceSpeakerTimeline?.sources ?? [])
+        _onDeviceTimeline = onDeviceSpeakerTimeline
+        _socketAudioStartPending = onDeviceSpeakerTimeline != nil
+        resetSessionCounters()
+        error = nil
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
+        _localMultichannel = multichannel
+        _localMonoSource = monoSource
+        _localSession = session
+        isTranscribingOnDevice = true
+        session.activate { [weak self] event in
+            Task { @MainActor in
+                self?.handleLocalEvent(event, generation: generation)
+            }
+        }
+        isConnected = true
+        _sendConnected = true
+        connectionState = .connected
+    }
+
     /// Gracefully disconnect: stop sending audio, send CloseStream, wait for final transcripts, then tear down.
     func gracefulDisconnect() async {
         _sendConnected = false
         let finalCountBefore = finalTranscriptCount
+
+        if let session = _localSession {
+            // Let the recognisers decode their tails and flush the last utterance through the
+            // sink, then give the main-actor hop a moment to land before the generation moves.
+            await session.finish()
+            let deadline = Date().addingTimeInterval(0.8)
+            while Date() < deadline {
+                try? await Task.sleep(for: .milliseconds(50))
+                if finalTranscriptCount > finalCountBefore { break }
+            }
+            DebugLogger.shared.log(.deepgram, "On-device transcription session finished: \(session.summary)")
+            disconnect()
+            return
+        }
 
         // Send Deepgram CloseStream message to signal end of audio stream
         if let task = webSocketTask {
@@ -899,6 +969,11 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         _sendConnected = false
         _sendTask = nil
         _socketAudioStartPending = false
+        if let session = _localSession {
+            _localSession = nil
+            session.abandon()
+        }
+        isTranscribingOnDevice = false
         // Keep `_onDeviceTimeline` until the next connect: in-flight parses for this
         // socket still need it, and a reconnect within the meeting replaces it anyway.
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -1017,7 +1092,18 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     nonisolated func sendAudio(_ data: Data) {
         // Use nonisolated refs to avoid creating a Task { @MainActor } per audio
         // buffer (~4/sec). URLSessionWebSocketTask.send is thread-safe.
-        guard _sendConnected, let task = _sendTask else { return }
+        guard _sendConnected else { return }
+        if let session = _localSession {
+            if _socketAudioStartPending {
+                _socketAudioStartPending = false
+                _onDeviceTimeline?.markSocketStart()
+            }
+            audioPacketsSent += 1
+            audioBytesSent += data.count
+            session.ingest(data, multichannel: _localMultichannel, monoSource: _localMonoSource)
+            return
+        }
+        guard let task = _sendTask else { return }
         if _socketAudioStartPending {
             _socketAudioStartPending = false
             _onDeviceTimeline?.markSocketStart()
@@ -1043,7 +1129,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         }
     }
     
-    private struct ProcessedTranscript: Sendable {
+    struct ProcessedTranscript: Sendable {
         let update: TranscriptUpdate
         let segments: [SpeakerSegment]
         let segmentationState: SegmentationState
@@ -1059,7 +1145,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var onDeviceSummary: String? = nil
     }
 
-    private enum BackgroundParseResult: Sendable {
+    enum BackgroundParseResult: Sendable {
         case transcript(ProcessedTranscript)
         case speechStarted
         case ignored
@@ -1167,7 +1253,41 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             }
             return .warning(error.localizedDescription)
         }
+        return processTranscriptResponse(
+            response,
+            isMultichannel: isMultichannel,
+            monoSource: monoSource,
+            segmentationState: segmentationState,
+            identityState: identityState,
+            speakerTimeline: speakerTimeline
+        )
+    }
 
+    /// Test seam for the JSON entry point (speech-started short circuit, decode failures).
+    nonisolated static func processTranscriptJSONForTesting(
+        _ json: String,
+        segmentationState: SegmentationState
+    ) -> BackgroundParseResult {
+        processTranscriptJSON(
+            json,
+            isMultichannel: false,
+            monoSource: .microphone,
+            segmentationState: segmentationState,
+            identityState: SpeakerIdentityState(),
+            speakerTimeline: nil
+        )
+    }
+
+    /// The shared body behind Deepgram JSON and on-device responses: speaker mapping (from
+    /// the on-device timeline when it covers the source), app speaker IDs, and segmentation.
+    nonisolated static func processTranscriptResponse(
+        _ response: DeepgramResponse,
+        isMultichannel: Bool,
+        monoSource: TranscriptSource,
+        segmentationState: SegmentationState,
+        identityState: SpeakerIdentityState,
+        speakerTimeline: OnDeviceSpeakerTimeline? = nil
+    ) -> BackgroundParseResult {
         guard let alternative = response.channel?.alternatives.first else { return .ignored }
         let deepgramIsFinal = response.isFinal ?? false
         let speechFinal = response.speechFinal ?? false
@@ -1256,6 +1376,79 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             wasMultichannel: isMultichannel,
             onDeviceSummary: onDeviceSlotCounts.isEmpty ? nil : "slots=\(onDeviceSlotCounts.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value)" }) borrowed=\(onDeviceBorrowed)/\(words.count) horizon=\(String(format: "%.1f", speakerTimeline?.processedSeconds(source: source) ?? 0))s fed=\(String(format: "%.1f", speakerTimeline?.fedSeconds(source: source) ?? 0))s lastWord=\(String(format: "%.1f", alternative.words.last?.end ?? 0))s mature=\(speakerTimeline?.matureSlots(source: source) ?? [])"
         ))
+    }
+
+    /// One utterance (interim or final) from the on-device recogniser, shaped like a Deepgram
+    /// response and run through the same off-main processing as a socket message.
+    private func handleLocalEvent(_ event: OnDeviceTranscriptionService.Session.Event, generation: UInt64) {
+        guard generation == connectionGeneration else { return }
+        wsMessageCount += 1
+        logHeartbeatIfNeeded()
+        if !event.words.isEmpty { lastSpeechStartedAt = CFAbsoluteTimeGetCurrent() }
+        let response = Self.makeLocalResponse(event, isMultichannel: isMultichannel)
+        let state = SegmentationState(
+            confirmedSpeakerIDs: confirmedSpeakerIDs,
+            pendingSpeakerEvidence: pendingSpeakerEvidence,
+            lastCommittedSpeakerBySource: lastCommittedSpeakerBySource,
+            micSpeakerPromotionPolicy: micSpeakerPromotionPolicy,
+            onDeviceSources: _onDeviceTimeline?.sources ?? []
+        )
+        let multichannel = isMultichannel
+        let mono = monoSource
+        let identity = speakerIdentityState
+        let timeline = _onDeviceTimeline
+        Task { @MainActor [weak self] in
+            let parsed = await Task.detached(priority: .userInitiated) {
+                Self.processTranscriptResponse(
+                    response,
+                    isMultichannel: multichannel,
+                    monoSource: mono,
+                    segmentationState: state,
+                    identityState: identity,
+                    speakerTimeline: timeline
+                )
+            }.value
+            guard let self, generation == self.connectionGeneration else { return }
+            self.applyBackgroundParseResult(parsed)
+        }
+    }
+
+    /// Deepgram-shaped response for a local utterance: no provider speaker (the on-device
+    /// timeline supplies one when it covers the source, otherwise speaker 0 per source) and
+    /// `channel_index` by source in dual capture.
+    nonisolated static func makeLocalResponse(
+        _ event: OnDeviceTranscriptionService.Session.Event,
+        isMultichannel: Bool
+    ) -> DeepgramResponse {
+        let words = event.words.map { word in
+            DeepgramResponse.Word(
+                word: LocalUtteranceAssembler.plainWord(word.text),
+                punctuatedWord: word.text,
+                start: word.start,
+                end: word.end,
+                confidence: 1.0,
+                speaker: nil,
+                speakerConfidence: nil
+            )
+        }
+        let transcript = event.words.map(\.text).joined(separator: " ")
+        let channelIndex: [Int]? = isMultichannel
+            ? [event.source == .system ? systemChannelIndex : micChannelIndex, 2]
+            : nil
+        let start = words.first?.start ?? 0
+        let end = words.last?.end ?? start
+        return DeepgramResponse(
+            type: "Results",
+            channel: DeepgramResponse.Channel(alternatives: [
+                DeepgramResponse.Alternative(transcript: transcript, confidence: 1.0, words: words)
+            ]),
+            channelIndex: channelIndex,
+            isFinal: event.isFinal,
+            speechFinal: event.isFinal,
+            start: start,
+            duration: max(0, end - start),
+            fromFinalize: false
+        )
     }
 
     private func applyBackgroundParseResult(_ result: BackgroundParseResult) {
@@ -1600,15 +1793,45 @@ struct DeepgramResponse: Codable, Sendable {
         case duration
         case fromFinalize = "from_finalize"
     }
+
+    init(
+        type: String?,
+        channel: Channel?,
+        channelIndex: [Int]?,
+        isFinal: Bool?,
+        speechFinal: Bool?,
+        start: Double?,
+        duration: Double?,
+        fromFinalize: Bool?
+    ) {
+        self.type = type
+        self.channel = channel
+        self.channelIndex = channelIndex
+        self.isFinal = isFinal
+        self.speechFinal = speechFinal
+        self.start = start
+        self.duration = duration
+        self.fromFinalize = fromFinalize
+    }
     
     struct Channel: Codable, Sendable {
         let alternatives: [Alternative]
+
+        init(alternatives: [Alternative]) {
+            self.alternatives = alternatives
+        }
     }
     
     struct Alternative: Codable, Sendable {
         let transcript: String
         let confidence: Double
         let words: [Word]
+
+        init(transcript: String, confidence: Double, words: [Word]) {
+            self.transcript = transcript
+            self.confidence = confidence
+            self.words = words
+        }
         
         // Make words optional with default empty array
         init(from decoder: Decoder) throws {
@@ -1642,6 +1865,24 @@ struct DeepgramResponse: Codable, Sendable {
             case confidence
             case speaker
             case speakerConfidence = "speaker_confidence"
+        }
+
+        init(
+            word: String,
+            punctuatedWord: String?,
+            start: Double,
+            end: Double,
+            confidence: Double,
+            speaker: Int?,
+            speakerConfidence: Double?
+        ) {
+            self.word = word
+            self.punctuatedWord = punctuatedWord
+            self.start = start
+            self.end = end
+            self.confidence = confidence
+            self.speaker = speaker
+            self.speakerConfidence = speakerConfidence
         }
         
         init(from decoder: Decoder) throws {

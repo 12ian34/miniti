@@ -2604,7 +2604,7 @@ struct TerminalHeader: View {
                     }
                 }
 
-                if appState.isRecording {
+                if appState.isRecording, !appState.privateModeEnabled {
                     InvestigationButton()
                     ZonedOutButton()
                 }
@@ -2700,7 +2700,7 @@ struct TerminalHeader: View {
                 HStack(spacing: 6) {
                     Image(systemName: "calendar.badge.clock")
                         .font(.system(size: 10, weight: .semibold))
-                    Text("meeting time ended — will stop when silent")
+                    Text("meeting time ended, stops when silent")
                         .font(.system(size: 10, weight: .medium, design: .default))
                 }
                 .foregroundStyle(ColorPalette.Accent.amber)
@@ -3060,7 +3060,7 @@ private struct ManagedStatusInline: View {
                 .padding(.vertical, 6)
         } else if let usage = appState.usageInfo {
             Button {
-                appState.selectedSettingsTab = "account"
+                appState.selectedSettingsTab = SettingsDestination.account.rawValue
                 openSettings()
             } label: {
                 HStack(spacing: 6) {

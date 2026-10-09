@@ -18,6 +18,8 @@ final class MeetingHandoffTests: XCTestCase {
         "appMode", "deepgramApiKey", "acceptedTermsVersion", "hasAcceptedTerms",
         "captureMicrophone", "captureSystemAudio", "smartMeetingsEnabled",
         "autoExportMarkdown", "webhookURL",
+        // The host install may run the on-device engines; these tests exercise the Deepgram path.
+        "onDeviceTranscription", "onDeviceTranscriptionCloudFallback", "onDeviceSpeakerSeparation",
     ]
     private var savedDefaults: [String: Any] = [:]
 
@@ -25,6 +27,10 @@ final class MeetingHandoffTests: XCTestCase {
         // The test host is the real app, so AppStorage writes land in its defaults.
         for key in Self.touchedDefaults {
             if let value = UserDefaults.standard.object(forKey: key) { savedDefaults[key] = value }
+        }
+        // Off before the state exists, so its launch refresh loads no model.
+        for key in ["onDeviceTranscription", "onDeviceTranscriptionCloudFallback", "onDeviceSpeakerSeparation"] {
+            UserDefaults.standard.set(false, forKey: key)
         }
         state = AppState()
         state.appMode = .byok

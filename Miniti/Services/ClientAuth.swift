@@ -469,13 +469,13 @@ enum ClientAuthError: LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .notEnrolled: return "Managed mode needs an account on this device. Create or restore a recovery key in Settings → Account & Plan."
+        case .notEnrolled: return "Managed mode needs an account on this device. Create or restore a recovery key in Settings → Account."
         case .alreadyEnrolled: return "This device already has an account."
         case .invalidRecoveryKey: return "That doesn't look like a recovery key. It starts with M1 and has eight groups of four characters."
         case .recoveryKeyUnknown: return "Recovery key not recognized."
         case .deviceAlreadyEnrolled: return "This device is already enrolled in another account. Sign it out first."
         case .subscriptionConflict: return "This device has its own Pro subscription and that account already has one on the same platform. Cancel one of them first."
-        case .deviceCapReached(let cap): return "This account already has \(cap) devices. Remove one in Settings → Account & Plan on another device."
+        case .deviceCapReached(let cap): return "This account already has \(cap) devices. Remove one in Settings → Account on another device."
         case .notEligibleForMigration: return "This device is not eligible for automatic migration."
         case .revoked: return "This device was signed out of its account. Restore with your recovery key to continue."
         case .unavailable: return "Device authorization is temporarily unavailable. Try again shortly."

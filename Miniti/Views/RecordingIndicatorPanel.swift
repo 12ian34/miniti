@@ -564,6 +564,13 @@ private struct RecordingIndicatorView: View {
                         .monospacedDigit()
                         .foregroundStyle(ColorPalette.Text.primary)
                 }
+                if prompt == nil, nudge == nil, appState.privateModeEnabled {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .accessibilityLabel("Private mode")
+                        .help(PrivateModeCopy.title)
+                }
                 if prompt == nil,
                    let appName = presence.callAppName,
                    presence.graceRemainingSeconds == nil {

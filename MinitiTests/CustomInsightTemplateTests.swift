@@ -214,3 +214,35 @@ final class CustomInsightTemplateTests: XCTestCase {
         XCTAssertTrue(SettingsSearchCatalog.availableItems(on: .iOS, appMode: .managed).contains { $0.id == "templates.custom" })
     }
 }
+
+final class InsightTemplateDraftPayloadTests: XCTestCase {
+    func testNormalizedDraftClampsLengthsDropsUntitledAndDuplicateSectionsAndCapsAtEight() throws {
+        var sections: [[String: String]] = [
+            ["title": "wins", "guidance": String(repeating: "g", count: 400)],
+            ["title": "Wins", "guidance": "duplicate by case"],
+            ["title": "", "guidance": "untitled"],
+        ]
+        for index in 0..<10 { sections.append(["title": "s\(index)", "guidance": ""]) }
+        let json: [String: Any] = [
+            "name": String(repeating: "x", count: 80),
+            "summary": String(repeating: "y", count: 200),
+            "sections": sections,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let draft = try JSONDecoder().decode(InsightTemplateDraftPayload.self, from: data).normalizedDraft
+        XCTAssertEqual(draft.name.count, InsightTemplate.maxNameLength)
+        XCTAssertEqual(draft.summary.count, InsightTemplate.maxSummaryLength)
+        XCTAssertEqual(draft.sections.count, InsightTemplate.maxSections)
+        XCTAssertEqual(draft.sections[0].title, "wins")
+        XCTAssertEqual(draft.sections[0].guidance.count, InsightTemplate.maxGuidanceLength)
+        XCTAssertEqual(draft.sections[1].title, "s0")
+        XCTAssertTrue(draft.isValid, draft.problems.joined(separator: ", "))
+    }
+
+    func testEmptyPayloadStillGivesAnEditableDraft() throws {
+        let draft = try JSONDecoder().decode(InsightTemplateDraftPayload.self, from: Data("{}".utf8)).normalizedDraft
+        XCTAssertEqual(draft.name, "")
+        XCTAssertEqual(draft.sections.count, 1)
+        XCTAssertFalse(draft.isValid)
+    }
+}

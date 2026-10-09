@@ -18,7 +18,8 @@ enum Acknowledgements {
     static var entries: [Entry] {
         var list: [Entry] = [
             Entry(id: "nemotron", title: "NVIDIA Nemotron-3-Diarization", summary: "Speaker model that runs on your device. OpenMDW License 1.1.", file: "Nemotron-3-Diarization-NOTICE.txt"),
-            Entry(id: "openmdw", title: "OpenMDW License 1.1", summary: "The agreement the speaker model is provided under.", file: "OpenMDW-1.1.txt"),
+            Entry(id: "nemotron-asr", title: "NVIDIA Nemotron-3.5-ASR-Streaming", summary: "Speech-to-text model downloaded on request to transcribe on your device. OpenMDW License 1.1.", file: "Nemotron-3.5-ASR-NOTICE.txt"),
+            Entry(id: "openmdw", title: "OpenMDW License 1.1", summary: "The agreement both NVIDIA models are provided under.", file: "OpenMDW-1.1.txt"),
             Entry(id: "fluidaudio", title: "FluidAudio", summary: "Runs the speaker model with Core ML. Apache License 2.0.", file: "FluidAudio-LICENSE.txt"),
             Entry(id: "fluidaudio-vbx", title: "FluidAudio component: VBx", summary: "Apache License 2.0.", file: "FluidAudio-vbx-LICENSE.txt"),
             Entry(id: "fluidaudio-fastcluster", title: "FluidAudio component: fastcluster", summary: "BSD-style licence.", file: "FluidAudio-fastcluster-LICENSE.txt"),

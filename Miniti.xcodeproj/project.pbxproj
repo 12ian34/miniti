@@ -18,6 +18,12 @@
 		D20000000000000000000004 /* FluidAudio in Frameworks */ = {isa = PBXBuildFile; productRef = D20000000000000000000005 /* FluidAudio */; };
 		D20000000000000000000011 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
 		D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000010 /* OnDeviceDiarizationService.swift */; };
+		D200000000000000000000A1 /* OnDeviceTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A0 /* OnDeviceTranscriptionService.swift */; };
+		D200000000000000000000A2 /* OnDeviceTranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A0 /* OnDeviceTranscriptionService.swift */; };
+		D200000000000000000000A4 /* OnDeviceTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A3 /* OnDeviceTranscriptionTests.swift */; };
+		D200000000000000000000A7 /* TestRunSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A6 /* TestRunSetup.swift */; };
+		D200000000000000000000A8 /* TestRunSetup.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A6 /* TestRunSetup.swift */; };
+		D200000000000000000000A5 /* OnDeviceTranscriptionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D200000000000000000000A3 /* OnDeviceTranscriptionTests.swift */; };
 		D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000020 /* OnDeviceDiarizationTests.swift */; };
 		D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000080 /* MeetingHandoffTests.swift */; };
 		D20000000000000000000094 /* MeetingSearchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D20000000000000000000093 /* MeetingSearchTests.swift */; };
@@ -280,6 +286,9 @@
 		D1000000000000000000001C /* MeetingJourneyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingJourneyTests.swift; sourceTree = "<group>"; };
 		D1000000000000000000001F /* CustomInsightTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CustomInsightTemplates.swift; sourceTree = "<group>"; };
 		D20000000000000000000010 /* OnDeviceDiarizationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceDiarizationService.swift; sourceTree = "<group>"; };
+		D200000000000000000000A0 /* OnDeviceTranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceTranscriptionService.swift; sourceTree = "<group>"; };
+		D200000000000000000000A3 /* OnDeviceTranscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnDeviceTranscriptionTests.swift; sourceTree = "<group>"; };
+		D200000000000000000000A6 /* TestRunSetup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestRunSetup.swift; sourceTree = "<group>"; };
 		D20000000000000000000030 /* NemotronDiarizer */ = {isa = PBXFileReference; lastKnownFileType = folder; path = NemotronDiarizer; sourceTree = "<group>"; };
 		D20000000000000000000050 /* Acknowledgements */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Acknowledgements; sourceTree = "<group>"; };
 		D20000000000000000000060 /* AcknowledgementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgementsView.swift; sourceTree = "<group>"; };
@@ -420,6 +429,7 @@
 			children = (
 				D1000000000000000000001F /* CustomInsightTemplates.swift */,
 				D20000000000000000000010 /* OnDeviceDiarizationService.swift */,
+				D200000000000000000000A0 /* OnDeviceTranscriptionService.swift */,
 				D10000000000000000000001 /* PersistentStore.swift */,
 				AE0000010000000000000021 /* InsightTemplates.swift */,
 				AE0000010000000000000031 /* ClientAuth.swift */,
@@ -495,6 +505,8 @@
 			children = (
 				D10000000000000000000025 /* CustomInsightTemplateTests.swift */,
 				D20000000000000000000020 /* OnDeviceDiarizationTests.swift */,
+				D200000000000000000000A3 /* OnDeviceTranscriptionTests.swift */,
+				D200000000000000000000A6 /* TestRunSetup.swift */,
 				D20000000000000000000080 /* MeetingHandoffTests.swift */,
 				D20000000000000000000093 /* MeetingSearchTests.swift */,
 				D20000000000000000000099 /* DeliveryOutboxTests.swift */,
@@ -774,6 +786,7 @@
 				D10000000000000000000023 /* TemplateSettingsViews.swift in Sources */,
 				D10000000000000000000020 /* CustomInsightTemplates.swift in Sources */,
 				D20000000000000000000011 /* OnDeviceDiarizationService.swift in Sources */,
+				D200000000000000000000A1 /* OnDeviceTranscriptionService.swift in Sources */,
 				D1000000000000000000000E /* PersistenceIssueBanner.swift in Sources */,
 				D1000000000000000000000B /* AppState+Persistence.swift in Sources */,
 				D10000000000000000000005 /* StoreRecoveryView.swift in Sources */,
@@ -828,6 +841,7 @@
 				D10000000000000000000024 /* TemplateSettingsViews.swift in Sources */,
 				D10000000000000000000021 /* CustomInsightTemplates.swift in Sources */,
 				D20000000000000000000012 /* OnDeviceDiarizationService.swift in Sources */,
+				D200000000000000000000A2 /* OnDeviceTranscriptionService.swift in Sources */,
 				D1000000000000000000000F /* PersistenceIssueBanner.swift in Sources */,
 				D1000000000000000000000C /* AppState+Persistence.swift in Sources */,
 				D10000000000000000000006 /* StoreRecoveryView.swift in Sources */,
@@ -888,6 +902,8 @@
 			files = (
 				D10000000000000000000026 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000021 /* OnDeviceDiarizationTests.swift in Sources */,
+				D200000000000000000000A4 /* OnDeviceTranscriptionTests.swift in Sources */,
+				D200000000000000000000A7 /* TestRunSetup.swift in Sources */,
 				D20000000000000000000081 /* MeetingHandoffTests.swift in Sources */,
 				D20000000000000000000094 /* MeetingSearchTests.swift in Sources */,
 				D2000000000000000000009A /* DeliveryOutboxTests.swift in Sources */,
@@ -918,6 +934,8 @@
 			files = (
 				D10000000000000000000027 /* CustomInsightTemplateTests.swift in Sources */,
 				D20000000000000000000022 /* OnDeviceDiarizationTests.swift in Sources */,
+				D200000000000000000000A5 /* OnDeviceTranscriptionTests.swift in Sources */,
+				D200000000000000000000A8 /* TestRunSetup.swift in Sources */,
 				D20000000000000000000082 /* MeetingHandoffTests.swift in Sources */,
 				D20000000000000000000095 /* MeetingSearchTests.swift in Sources */,
 				D2000000000000000000009B /* DeliveryOutboxTests.swift in Sources */,
@@ -1096,7 +1114,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1114,7 +1132,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1132,7 +1150,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1150,7 +1168,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1166,7 +1184,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -1184,7 +1202,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1205,7 +1223,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -1223,7 +1241,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1242,7 +1260,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1253,7 +1271,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1269,7 +1287,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1280,7 +1298,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 2.11.0;
+				MARKETING_VERSION = 2.12.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1297,8 +1315,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1315,8 +1334,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
@@ -1333,8 +1353,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
@@ -1354,8 +1375,9 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 125;
+				CURRENT_PROJECT_VERSION = 126;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;

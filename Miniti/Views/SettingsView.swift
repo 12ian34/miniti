@@ -56,32 +56,12 @@ struct SettingsView: View {
 
             List(selection: $selectedDestination) {
                 if searchText.isEmpty {
-                    Section("Settings") {
-                        destinationRow(.general)
-                        destinationRow(.recording)
-                        destinationRow(.language)
-                        destinationRow(.ai)
-                        destinationRow(.templates)
-                        destinationRow(.notifications)
-                    }
-
-                    Section("Account") {
-                        destinationRow(.account)
-                    }
-
-                    Section("Connections") {
-                        destinationRow(.calendar)
-                        destinationRow(.crm)
-                        destinationRow(.webhooks)
-                        destinationRow(.docsMCP)
-                    }
-
-                    Section("Files") {
-                        destinationRow(.dataExport)
-                    }
-
-                    Section("Support") {
-                        destinationRow(.privacySupport)
+                    ForEach(SettingsGroup.allCases) { group in
+                        Section(group.title) {
+                            ForEach(group.destinations.filter { SettingsDestination.available(on: .macOS).contains($0) }) { destination in
+                                destinationRow(destination)
+                            }
+                        }
                     }
                 } else if searchResults.isEmpty {
                     ContentUnavailableView.search(text: searchText)
@@ -167,8 +147,8 @@ struct SettingsView: View {
             AccountSettingsView()
         case .recording:
             AudioSettingsView()
-        case .language:
-            LanguageSettingsView()
+        case .transcription:
+            TranscriptionSettingsView()
         case .ai:
             AISettingsView()
         case .templates:
@@ -181,11 +161,13 @@ struct SettingsView: View {
             IntegrationsSettingsView(content: .crm)
         case .webhooks:
             IntegrationsSettingsView(content: .webhooks)
-        case .docsMCP:
+        case .playbook:
             IntegrationsSettingsView(content: .docsMCP)
-        case .dataExport:
+        case .data:
             IntegrationsSettingsView(content: .dataExport)
-        case .privacySupport:
+        case .privacy:
+            PrivacySettingsView()
+        case .about:
             AboutSettingsView()
         }
     }
@@ -276,7 +258,7 @@ struct AccountSettingsView: View {
                         HStack {
                             Text("Plan")
                             Spacer()
-                            Text("Pro — \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
+                            Text("Pro, \(Int(appState.usageInfo?.minutesLimit ?? 5000)) min/month")
                                 .foregroundStyle(Color(hex: "A78BFA"))
                                 .fontWeight(.medium)
                         }
@@ -295,11 +277,11 @@ struct AccountSettingsView: View {
                         HStack {
                             Text("Plan")
                             Spacer()
-                            Text("Free — 500 min/month")
+                            Text("Free, 500 min/month")
                                 .foregroundStyle(.secondary)
                         }
                         
-                        Button("Upgrade to Pro ($5/month — 5,000 min)") {
+                        Button("Upgrade to Pro ($5/month, 5,000 min)") {
                             Task { await appState.openSubscribePage() }
                         }
                     }
@@ -407,7 +389,7 @@ struct AccountSettingsView: View {
     }
 }
 
-struct LanguageSettingsView: View {
+struct TranscriptionSettingsView: View {
     @EnvironmentObject var appState: AppState
     @State private var fillers: [String] = []
     @State private var newFiller = ""
@@ -426,13 +408,15 @@ struct LanguageSettingsView: View {
     
     var body: some View {
         Form {
+            TranscriptionModelsSection()
+
             Section("Default Language") {
                 Picker("Language", selection: $appState.defaultLanguage) {
                     ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
                         Text(lang.displayName).tag(lang.rawValue)
                     }
                 }
-                .id("language.default")
+                .id("transcription.default")
                 .onChange(of: appState.defaultLanguage) { _, newLang in
                     fillers = TrainingFillerPreferences.currentFillers(for: newLang)
                     validationMessage = nil
@@ -502,7 +486,7 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .id("language.dictionary")
+            .id("transcription.dictionary")
 
             Section("Corrections") {
                 Text("Heard → corrected. Applied live for the rest of the meeting, and on the next Deepgram connect.")
@@ -543,7 +527,7 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .id("language.corrections")
+            .id("transcription.corrections")
             
             Section("Filler Detection") {
                 Text("These words and phrases are tracked in Coaching across live and saved meetings.")
@@ -597,7 +581,7 @@ struct LanguageSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .id("language.fillers")
+            .id("transcription.fillers")
             
             Section("Actions") {
                 Button("Reset to defaults") {
@@ -617,7 +601,7 @@ struct LanguageSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .settingsSearchScrolling(for: .language)
+        .settingsSearchScrolling(for: .transcription)
         .onAppear {
             fillers = TrainingFillerPreferences.currentFillers(for: appState.defaultLanguage)
             dictionaryTerms = PersonalDictionaryPreferences.currentTerms()
@@ -774,11 +758,22 @@ struct AISettingsView: View {
 
     var body: some View {
         Form {
+            Section("Speaker names") {
+                SpeakerNamesPicker()
+            }
+            .id("ai.speakerNames")
+
             Section("Models") {
                 HStack {
                     Text("Transcription")
                     Spacer()
-                    Text("Deepgram Nova-3")
+                    Text(appState.onDeviceTranscriptionEnabled ? "This Mac (Nemotron 3.5)" : "Deepgram Nova-3")
+                        .foregroundStyle(.secondary)
+                }
+                HStack {
+                    Text("Speakers")
+                    Spacer()
+                    Text(appState.onDeviceSpeakerSeparationEnabled ? "This Mac (Nemotron 3)" : "Deepgram")
                         .foregroundStyle(.secondary)
                 }
 
@@ -799,21 +794,17 @@ struct AISettingsView: View {
                     .multilineTextAlignment(.trailing)
                 }
 
-                if appState.appMode == .managed {
-                    Toggle("Faster speaker naming and sales detection (beta)", isOn: $appState.jevClassifierEnabled)
-                        .id("ai.jevClassifier")
-                    Text("Uses TypeSafe's Jev model to match speakers to calendar attendees and to spot sales conversations in under a second, instead of GPT and a word list. Sends short recent transcript windows to TypeSafe through miniti's servers. GPT still writes names it cannot match and every summary. Off by default while it is in beta.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("Change the transcription and speaker models under Transcription. Summaries use the provider chosen under Account.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .id("ai.models")
 
             Section("Provider Mode") {
                 LabeledContent("Current mode", value: appState.appMode == .byok ? "My own accounts" : "Managed by Miniti")
                 Text(appState.appMode == .byok
-                     ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, CRM, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
-                     : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
+                     ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account. Calendar, CRM, webhooks, Playbook, and Smart meetings remain available in BYOK mode."
+                     : "miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -921,7 +912,7 @@ struct APISettingsView: View {
                                     .font(.caption.bold())
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("1. Create a free account at deepgram.com")
-                                    Text("2. Go to Settings → API Keys")
+                                    Text("2. Go to Settings → Account")
                                     Text("3. Click \"Create a New API Key\"")
                                     Text("4. Copy and paste it here")
                                 }
@@ -1044,7 +1035,7 @@ struct APISettingsView: View {
                                 }
                                 .padding(.top, 2)
                                 
-                                Text("Optional — only needed for AI insights.")
+                                Text("Optional. Only needed for AI insights.")
                                     .font(.caption2)
                                     .foregroundStyle(.tertiary)
                             }
@@ -1203,26 +1194,10 @@ struct AudioSettingsView: View {
                     Text("15 minutes").tag(15)
                 }
                 .id("recording.autoStop")
-                Text("Advanced fallback: stops recording after prolonged silence. Intended for in-person meetings and unsupported call apps — supported calls end automatically when the call ends.")
+                Text("Advanced fallback: stops recording after prolonged silence. Intended for in-person meetings and unsupported call apps. Supported calls end automatically when the call ends.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
-                    .id("recording.autoNameSpeakers")
-                Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Toggle("Separate speakers on this Mac (beta)", isOn: $appState.onDeviceSpeakerSeparationEnabled)
-                    .id("recording.onDeviceSpeakers")
-                    .disabled(!OnDeviceDiarizationService.isHardwareSupported)
-                    .onChange(of: appState.onDeviceSpeakerSeparationEnabled) { _, _ in
-                        appState.refreshOnDeviceDiarizationAvailability()
-                    }
-                OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
-                Text("Runs NVIDIA's Nemotron speaker model on this Mac to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. The model ships inside miniti, so nothing is downloaded. Applies to new recordings.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -1387,8 +1362,8 @@ enum IntegrationsSettingsContent: Equatable {
         case .calendar: return .calendar
         case .crm: return .crm
         case .webhooks: return .webhooks
-        case .docsMCP: return .docsMCP
-        case .dataExport: return .dataExport
+        case .docsMCP: return .playbook
+        case .dataExport: return .data
         }
     }
 }
@@ -1542,7 +1517,7 @@ struct IntegrationsSettingsView: View {
             Section("Calendar & Meeting Automation") {
                 Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
                     .id("integrations.smartMeetings")
-                Text("Detects calls from apps like Zoom, Teams, Meet and Slack, keeps recordings separated, and finishes when a call ends — after a visible, cancellable countdown. Works with or without Google Calendar.")
+                Text("Detects calls from apps like Zoom, Teams, Meet and Slack, keeps recordings separated, and finishes when a call ends, after a visible, cancellable countdown. Works with or without Google Calendar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
@@ -1630,7 +1605,7 @@ struct IntegrationsSettingsView: View {
                         .disabled(!appState.isGoogleCalendarConnected)
                     Text(appState.isGoogleCalendarConnected
                          ? "Automatically match attendee domains to Attio records and send meeting data after saving."
-                         : "Connect Google Calendar under Calendar & Meetings to enable automatic Attio sync.")
+                         : "Connect Google Calendar under Calendar to enable automatic Attio sync.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1650,7 +1625,7 @@ struct IntegrationsSettingsView: View {
                         .disabled(!appState.isGoogleCalendarConnected)
                     Text(appState.isGoogleCalendarConnected
                          ? "Automatically match attendee domains to Twenty companies and send meeting data after saving."
-                         : "Connect Google Calendar under Calendar & Meetings to enable automatic Twenty sync.")
+                         : "Connect Google Calendar under Calendar to enable automatic Twenty sync.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1684,7 +1659,7 @@ struct IntegrationsSettingsView: View {
 
             if content == .docsMCP {
             DocsMCPSettingsSection()
-                .id("integrations.docsMCP")
+                .id("playbook.server")
             }
         }
         .formStyle(.grouped)
@@ -1775,7 +1750,7 @@ private struct DocsMCPSettingsSection: View {
     @State private var testSucceeded = false
 
     var body: some View {
-        Section("Docs MCP") {
+        Section("Playbook") {
             TextField("Docs MCP URL", text: $appState.docsMCPURL)
                 .textFieldStyle(.roundedBorder)
             if !appState.docsMCPURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1784,7 +1759,7 @@ private struct DocsMCPSettingsSection: View {
                         .font(.caption)
                         .foregroundStyle(ColorPalette.Accent.green)
                 } else {
-                    Label("invalid URL — https only, no localhost/private hosts", systemImage: "exclamationmark.triangle.fill")
+                    Label("invalid URL: https only, no localhost/private hosts", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(ColorPalette.Status.error)
                 }
@@ -1827,15 +1802,18 @@ private struct DocsMCPSettingsSection: View {
     }
 }
 
-struct AboutSettingsView: View {
+struct PrivacySettingsView: View {
+    @EnvironmentObject private var appState: AppState
     @AppStorage("shareDiagnostics") private var shareDiagnostics: Bool = true
-    @State private var versionTapCount = 0
-    @State private var lastVersionTap: Date?
-    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Form {
             Section("Privacy") {
+                PrivateModeToggle()
+            }
+            .id("privacy.privateMode")
+
+            Section("Diagnostics") {
                 Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                     .id("privacy.diagnostics")
                 Text("On by default in managed mode. Sends structured reliability events (errors, reconnects, health states) so problems can be fixed. Never includes transcript or audio content. Nothing is sent in bring-your-own-keys mode.")
@@ -1843,6 +1821,31 @@ struct AboutSettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            Section("Models on this device") {
+                HStack {
+                    Text("Speaker model")
+                    Spacer()
+                    Text("ships inside miniti, about 190 MB")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                OnDeviceTranscriptionModelsRow(service: appState.onDeviceTranscription, isEnabled: appState.onDeviceTranscriptionEnabled)
+            }
+            .id("privacy.models")
+        }
+        .formStyle(.grouped)
+        .padding()
+        .settingsSearchScrolling(for: .privacy)
+    }
+}
+
+struct AboutSettingsView: View {
+    @State private var versionTapCount = 0
+    @State private var lastVersionTap: Date?
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Form {
             Section("About") {
                 HStack {
                     Text("Version")
@@ -1853,9 +1856,9 @@ struct AboutSettingsView: View {
                             handleVersionTap()
                         }
                 }
-                .id("privacy.version")
+                .id("about.version")
                 AcknowledgementsSection()
-                .id("privacy.acknowledgements")
+                .id("about.acknowledgements")
                 Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
                         Text("Website")
@@ -1874,7 +1877,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .id("privacy.docs")
+                .id("about.docs")
                 Link(destination: URL(string: "https://miniti.app/roadmap")!) {
                     HStack {
                         Text("Roadmap")
@@ -1902,7 +1905,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .id("privacy.support")
+                .id("about.support")
                 Link(destination: URL(string: "https://miniti.app/privacy")!) {
                     HStack {
                         Text("Privacy")
@@ -1912,7 +1915,7 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .id("privacy.legal")
+                .id("about.legal")
                 Link(destination: URL(string: "https://miniti.app/terms")!) {
                     HStack {
                         Text("Terms")
@@ -1926,7 +1929,7 @@ struct AboutSettingsView: View {
         }
         .formStyle(.grouped)
         .padding()
-        .settingsSearchScrolling(for: .privacySupport)
+        .settingsSearchScrolling(for: .about)
     }
 
     private func handleVersionTap() {
@@ -1955,6 +1958,166 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
 
     var body: some View {
         Text(service.statusDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// One switch for the whole private bundle. The individual toggles under Recording and AI stay
+/// for people who want a mix; this flips them all and restores them on the way back.
+private struct PrivateModeToggle: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Toggle(PrivateModeCopy.title, isOn: Binding(
+            get: { appState.privateModeEnabled },
+            set: { appState.setPrivateMode($0) }
+        ))
+        .id("privacy.privateMode")
+        .disabled(!appState.privateModeAvailable)
+        if appState.privateModeAvailable {
+            Text(PrivateModeCopy.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if appState.privateModeEnabled {
+                OnDeviceTranscriptionStatusText(service: appState.onDeviceTranscription)
+                Text(PrivateModeCopy.languagesNote)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Text(PrivateModeCopy.unavailable)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+private struct OnDeviceTranscriptionStatusText: View {
+    @ObservedObject var service: OnDeviceTranscriptionService
+
+    var body: some View {
+        Text(service.statusDescription)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+    }
+}
+
+/// The downloaded speech model: size on disk and a remove button, enabled only while the
+/// model is not in use so an active download or session is never pulled from under it.
+private struct OnDeviceTranscriptionModelsRow: View {
+    @ObservedObject var service: OnDeviceTranscriptionService
+    let isEnabled: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Speech model")
+            Spacer()
+            if service.downloadedBytes > 0 {
+                Text(ByteCountFormatter.string(fromByteCount: service.downloadedBytes, countStyle: .file))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Remove") { service.removeDownloadedModels() }
+                    .disabled(isEnabled)
+                    .help(isEnabled ? "Turn transcription on this Mac off first." : "Delete the downloaded files.")
+            } else {
+                Text("not downloaded")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// The two model pickers at the top of Transcription: the same two words everywhere, with the
+/// model name in the caption. Greyed out while private mode forces them.
+private struct TranscriptionModelsSection: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Section("Models") {
+            Picker("Transcription", selection: Binding(
+                get: { appState.onDeviceTranscriptionEnabled },
+                set: { appState.onDeviceTranscriptionEnabled = $0; appState.refreshOnDeviceTranscriptionAvailability() }
+            )) {
+                Text("Deepgram").tag(false)
+                Text("This Mac").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .id("transcription.model")
+            .disabled(appState.privateModeEnabled || !OnDeviceTranscriptionService.isHardwareSupported)
+            if appState.onDeviceTranscriptionEnabled {
+                OnDeviceTranscriptionStatusText(service: appState.onDeviceTranscription)
+            }
+            Text(OnDeviceTranscriptionCopy.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if appState.onDeviceTranscriptionEnabled, !appState.privateModeEnabled {
+                Toggle("Use Deepgram for a meeting if the model is not ready", isOn: $appState.onDeviceTranscriptionCloudFallback)
+                    .id("transcription.fallback")
+                Text("Off: a recording started while the model is missing or still downloading is refused with a message instead of sending audio to Deepgram. A meeting that started on this Mac never switches to Deepgram.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Picker("Speakers", selection: Binding(
+                get: { appState.onDeviceSpeakerSeparationEnabled },
+                set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }
+            )) {
+                Text("Deepgram").tag(false)
+                Text("This Mac").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .id("transcription.speakers")
+            .disabled(appState.privateModeEnabled || !OnDeviceDiarizationService.isHardwareSupported)
+            if appState.onDeviceSpeakerSeparationEnabled {
+                OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
+            }
+            Text("Who spoke when. This Mac runs NVIDIA's Nemotron speaker model, which ships inside miniti, and did better than Deepgram in our tests, most of all in a room with several people on one mic. Applies to new recordings.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            if appState.privateModeEnabled {
+                Label("Set by private mode. Change it under Privacy.", systemImage: "lock.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// Off, GPT, or Jev (managed only, beta). One control for what used to be two toggles in two tabs.
+private struct SpeakerNamesPicker: View {
+    @EnvironmentObject private var appState: AppState
+
+    private enum Choice: String, CaseIterable { case off, gpt, jev }
+
+    private var choice: Binding<Choice> {
+        Binding(
+            get: {
+                guard appState.autoInferSpeakerNames else { return .off }
+                return appState.jevClassifierEnabled && appState.appMode == .managed ? .jev : .gpt
+            },
+            set: { value in
+                appState.autoInferSpeakerNames = value != .off
+                appState.jevClassifierEnabled = value == .jev
+            }
+        )
+    }
+
+    var body: some View {
+        Picker("Speaker names", selection: choice) {
+            Text("Off").tag(Choice.off)
+            Text("GPT").tag(Choice.gpt)
+            if appState.appMode == .managed {
+                Text("Jev").tag(Choice.jev)
+            }
+        }
+        .pickerStyle(.segmented)
+        .disabled(appState.privateModeEnabled)
+        Text(appState.privateModeEnabled
+             ? "Off while private mode is on."
+             : "Names speakers from the conversation, using calendar attendees as hints when connected. GPT reads the transcript. Jev, TypeSafe's classifier, matches attendees in under a second and also spots sales conversations; it sends short recent windows to TypeSafe through miniti's servers. Managed accounts only. Speakers stay \"You\" and \"Speaker N\" until a name is confident.")
             .font(.caption)
             .foregroundStyle(.secondary)
     }

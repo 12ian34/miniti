@@ -940,19 +940,12 @@ struct SettingsCommands: Commands {
 
             Divider()
 
-            Button("General") { open("general") }
-            Button("Account & Plan") { open("account") }
-            Button("Recording & Audio") { open("recording") }
-            Button("Language") { open("language") }
-            Button("AI & Models") { open("ai") }
-            Button("Notifications") { open("notifications") }
-            Divider()
-            Button("Calendar & Meetings") { open("calendar") }
-            Button("CRM") { open("crm") }
-            Button("Webhooks") { open("webhooks") }
-            Button("Docs MCP") { open("docsMCP") }
-            Button("Data & Export") { open("dataExport") }
-            Button("Privacy & Support") { open("privacySupport") }
+            ForEach(SettingsGroup.allCases) { group in
+                ForEach(group.destinations) { destination in
+                    Button(destination.title) { open(destination.rawValue) }
+                }
+                if group != SettingsGroup.allCases.last { Divider() }
+            }
         }
     }
 

@@ -38,7 +38,7 @@ struct MeetingView_iOS: View {
         case .transcript:
             return appState.transcriptAsMarkdown()
         case .insights:
-            var md = "# \(appState.currentMeeting?.displayTitle ?? "Meeting") — Insights\n\n"
+            var md = "# \(appState.currentMeeting?.displayTitle ?? "Meeting") insights\n\n"
             if !appState.liveSummary.isEmpty { md += "## Summary\n\n\(appState.liveSummary)\n\n" }
             if !appState.liveDiscussionFlow.isEmpty {
                 md += "## Discussion Flow\n\n"
@@ -332,8 +332,10 @@ struct MeetingView_iOS: View {
                 }
             } else {
                 HStack(spacing: MinitiDesignSystem.Spacing.standard) {
-                    investigationButton
-                    zonedOutButton
+                    if !appState.privateModeEnabled {
+                        investigationButton
+                        zonedOutButton
+                    }
                     stopButton
                 }
             }
@@ -850,7 +852,7 @@ struct ReadyStateView_iOS: View {
                                         .scaleEffect(0.8)
                                     Text("purchasing...")
                                 } else {
-                                    Text("Upgrade to Pro — $4.99/month")
+                                    Text("Upgrade to Pro, $4.99/month")
                                 }
                             }
                             .font(.system(size: 12, weight: .semibold, design: .default))
@@ -1016,9 +1018,15 @@ struct InsightsModeTabs_iOS: View {
         template ?? appState.liveTemplate
     }
 
+    /// The specialist on the tab: the selected one, else the one chosen earlier in this
+    /// meeting (one tap brings it back), else "More".
+    private var shownSpecialist: InsightsMode? {
+        selection.isSpecialist ? selection : appState.rememberedSpecialistMode
+    }
+
     private var specialistLabel: String {
-        guard selection.isSpecialist else { return "More" }
-        return selection == .template ? activeTemplate.shortName : selection.displayName
+        guard let shownSpecialist else { return "More" }
+        return shownSpecialist == .template ? activeTemplate.shortName : shownSpecialist.displayName
     }
 
     private func selectTemplate(_ id: String) {
@@ -1037,7 +1045,9 @@ struct InsightsModeTabs_iOS: View {
                         coreModeButton(mode)
                     }
 
-                    specialistMenu
+                    if !appState.privateModeEnabled {
+                        specialistMenu
+                    }
                 }
             }
 
@@ -1069,23 +1079,57 @@ struct InsightsModeTabs_iOS: View {
     }
 
     private var specialistMenu: some View {
-        Menu {
-            Section("Specialist views") {
-                specialistButton(.meddpicc)
+        Group {
+            if !selection.isSpecialist, let remembered = appState.rememberedSpecialistMode {
+                Menu {
+                    specialistMenuContent
+                } label: {
+                    specialistTabLabel
+                } primaryAction: {
+                    onSelect(remembered)
+                }
+            } else {
+                Menu {
+                    specialistMenuContent
+                } label: {
+                    specialistTabLabel
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+        .accessibilityLabel(selection.isSpecialist ? "Specialist view: \(selection == .template ? activeTemplate.name : selection.displayName), selected" : (appState.rememberedSpecialistMode.map { "Back to \($0 == .template ? activeTemplate.name : $0.displayName)" } ?? "More insight views"))
+        .accessibilityHint("Choose Sales, a template, or Playbook")
+    }
 
-                InsightTemplateMenu(
-                    activeTemplateID: selection == .template ? activeTemplate.id : nil,
-                    onSelect: selectTemplate
-                )
+    private var specialistTabLabel: some View {
+        MinitiTabLabel(
+            title: specialistLabel,
+            isSelected: selection.isSpecialist,
+            height: 44,
+            fillsAvailableWidth: true
+        )
+    }
 
-                if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
-                    specialistButton(.docs)
-                } else {
-                    Button {
-                        appState.showSettings = true
-                    } label: {
-                        Label("Set Up Playbook…", systemImage: "gearshape")
-                    }
+    @ViewBuilder
+    private var specialistMenuContent: some View {
+            // Notes views, flat: Sales is a template with its own plumbing, so it heads the list.
+            specialistButton(.meddpicc)
+            InsightTemplateMenu(
+                activeTemplateID: selection == .template ? activeTemplate.id : nil,
+                onSelect: selectTemplate
+            )
+
+            Divider()
+            // Playbook is a different kind of view: answers from connected docs, not notes.
+            if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
+                specialistButton(.docs)
+            } else {
+                Button {
+                    appState.selectedSettingsTab = SettingsDestination.playbook.rawValue
+                    appState.showSettings = true
+                } label: {
+                    Label("Set Up Playbook…", systemImage: "gearshape")
                 }
             }
 
@@ -1116,18 +1160,18 @@ struct InsightsModeTabs_iOS: View {
                     }
                 }
             }
-        } label: {
-            MinitiTabLabel(
-                title: specialistLabel,
-                isSelected: selection.isSpecialist,
-                height: 44,
-                fillsAvailableWidth: true
-            )
-        }
-        .frame(maxWidth: .infinity)
-        .contentShape(Rectangle())
-        .accessibilityLabel(selection.isSpecialist ? "Specialist view: \(selection == .template ? activeTemplate.name : selection.displayName), selected" : "More insight views")
-        .accessibilityHint("Choose Sales, a template, or Playbook")
+
+            Divider()
+            InsightTemplateMenu(
+                activeTemplateID: nil,
+                onSelect: selectTemplate
+            ).manageButton
+            Button {
+                appState.selectedSettingsTab = SettingsDestination.templates.rawValue
+                appState.showSettings = true
+            } label: {
+                Label("Insight settings…", systemImage: "gearshape")
+            }
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {
@@ -1135,7 +1179,7 @@ struct InsightsModeTabs_iOS: View {
             onSelect(mode)
         } label: {
             Label {
-                Text("\(mode.displayName) — \(mode.description)")
+                Text(mode.displayName)
             } icon: {
                 Image(systemName: mode == selection ? "checkmark.circle.fill" : mode.systemImage)
             }

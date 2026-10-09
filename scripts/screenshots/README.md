@@ -20,6 +20,8 @@ or all of it in one go with `scripts/screenshots/all.sh`. Afterwards, look at ev
 before shipping it: a green run proves the app rendered a scene, not that the scene is
 the one you want on the store.
 
+`-MinitiScreenshotSettingsTab <destination>` (for example `transcription`, `privacy`) renders the plain `settings` scene on any Settings tab, which is the quickest way to eyeball a tab after a settings change.
+
 ## Smoke gate
 
 `scripts/screenshots/smoke.sh [ios|mac|all]` is the launch-and-render check from roadmap

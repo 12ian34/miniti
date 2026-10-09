@@ -1,9 +1,12 @@
 NEW
 
-- Search meetings by person, title, and date. Type with:sam, title:budget, on:14 sep, after:1 sep or last:2w, or pick them from the new filter sheet. Every word you type must now match, so "sasha pricing" finds the call about pricing with Sasha. Results say why they matched.
+- Describe a template and miniti writes it. Settings, Templates, New template. Type one line, press Draft it, then edit.
 
 IMPROVED
 
-- Webhooks no longer get lost when the network is down. miniti keeps them in a queue, retries for up to a day, and Settings shows what is waiting or failed with retry and discard buttons.
-- When the AI service is down, live summaries back off instead of retrying every few seconds.
-- Setup now offers the miniti plan only. Using your own Deepgram and OpenAI accounts is still available in Settings, Account & Plan.
+- Settings has a new shape. Five groups, one word per tab. Recording is your hardware, Transcription is language and the speaker model, AI is summaries and speaker names, Privacy and About are separate.
+- The More tab in insights remembers your pick. Choose Interview once and it comes back with one tap. The menu is one short list of names.
+
+FIXED
+
+- No more em dashes anywhere in the app.

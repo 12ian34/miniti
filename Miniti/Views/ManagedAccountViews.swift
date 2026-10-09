@@ -39,7 +39,7 @@ struct RecoveryKeySheet: View {
             .toggleStyle(.checkbox)
             #endif
 
-            Text("You can reveal or rotate it later in Settings → Account & Plan.")
+            Text("You can reveal or rotate it later in Settings → Account.")
                 .font(.system(size: 11))
                 .foregroundStyle(ColorPalette.Text.dim)
 
@@ -385,7 +385,7 @@ struct ManagedAccountSettingsSection: View {
         HStack {
             Text("Account")
             Spacer()
-            Text(status.accountID.map { String($0.prefix(12)) + "…" } ?? "—")
+            Text(status.accountID.map { String($0.prefix(12)) + "…" } ?? "none")
                 .foregroundStyle(.secondary)
                 .font(.system(.caption, design: .monospaced))
         }

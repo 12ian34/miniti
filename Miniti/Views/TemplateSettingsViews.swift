@@ -202,6 +202,9 @@ struct InsightTemplateEditorSheet: View {
     let onSave: (InsightTemplate) -> Void
 
     @State private var draft: InsightTemplateDraft
+    @State private var prompt = ""
+    @State private var isDrafting = false
+    @State private var draftError: String?
     @State private var previewMeetingID: UUID?
     @State private var previewMeetings: [Meeting] = []
     @State private var previewSections: [(title: String, value: String)] = []
@@ -219,19 +222,55 @@ struct InsightTemplateEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                Section("Describe it") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        TextField(
+                            "",
+                            text: $prompt,
+                            prompt: Text("example: weekly 1:1 with a direct report. wins, blockers, feedback, growth, actions"),
+                            axis: .vertical
+                        )
+                        .labelsHidden()
+                        .lineLimit(2...5)
+                        .onSubmit { Task { await runDraft() } }
+                        HStack(spacing: 10) {
+                            Button {
+                                Task { await runDraft() }
+                            } label: {
+                                if isDrafting {
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.small)
+                                        Text("drafting…")
+                                    }
+                                } else {
+                                    Label(hasContent ? "Draft again" : "Draft it", systemImage: "sparkles")
+                                }
+                            }
+                            .disabled(isDrafting || prompt.trimmingCharacters(in: .whitespacesAndNewlines).count < 3)
+                            Text("miniti writes the name, summary and sections. Edit anything after.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if let draftError {
+                            Text(draftError)
+                                .font(.caption)
+                                .foregroundStyle(ColorPalette.Status.error)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+
                 Section("Template") {
-                    TextField("Name (example: Customer QBR)", text: $draft.name)
-                    counter(draft.name.count, InsightTemplate.maxNameLength)
-                    TextField("One line on what it is for", text: $draft.summary)
-                    counter(draft.summary.count, InsightTemplate.maxSummaryLength)
+                    labeledField("Name", text: $draft.name, prompt: "example: Customer QBR", max: InsightTemplate.maxNameLength)
+                    labeledField("Summary", text: $draft.summary, prompt: "one line on what it is for", max: InsightTemplate.maxSummaryLength)
                 }
 
                 Section("Sections") {
                     Text("Each section has a title and one line telling the AI what belongs in it. Sections are filled only from what was actually said.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    ForEach($draft.sections) { $section in
-                        sectionEditor($section)
+                    ForEach(Array($draft.sections.enumerated()), id: \.element.id) { index, $section in
+                        sectionEditor($section, index: index)
                     }
                     Button {
                         draft.sections.append(.init())
@@ -311,38 +350,87 @@ struct InsightTemplateEditorSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 620, idealWidth: 680, minHeight: 560, idealHeight: 680)
+        .frame(minWidth: 620, idealWidth: 680, minHeight: 600, idealHeight: 720)
         #endif
         .onAppear(perform: loadPreviewMeetings)
     }
 
+    /// Anything typed or drafted so far, so the draft button can say "again".
+    private var hasContent: Bool {
+        !draft.name.trimmingCharacters(in: .whitespaces).isEmpty
+            || draft.sections.contains { !$0.title.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
+    /// Label above, field below, left-aligned, with the counter only once the text is long.
+    private func labeledField(_ label: String, text: Binding<String>, prompt: String, max: Int, vertical: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                counter(text.wrappedValue.count, max)
+            }
+            if vertical {
+                TextField("", text: text, prompt: Text(prompt), axis: .vertical)
+                    .labelsHidden()
+                    .lineLimit(2...4)
+            } else {
+                TextField("", text: text, prompt: Text(prompt))
+                    .labelsHidden()
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
     @ViewBuilder
-    private func sectionEditor(_ section: Binding<InsightTemplateDraft.Section>) -> some View {
+    private func sectionEditor(_ section: Binding<InsightTemplateDraft.Section>, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                TextField("Section title", text: section.title)
-                counter(section.wrappedValue.title.count, InsightTemplate.maxTitleLength)
+                Text("Section \(index + 1)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
                 Button {
                     draft.sections.removeAll { $0.id == section.wrappedValue.id }
                 } label: {
                     Image(systemName: "minus.circle")
                 }
                 .buttonStyle(.borderless)
-                .accessibilityLabel("Remove section")
+                .accessibilityLabel("Remove section \(index + 1)")
                 .disabled(draft.sections.count == 1)
             }
-            TextField("What belongs here (example: money mentioned, approved, or missing)", text: section.guidance, axis: .vertical)
-                .lineLimit(2...4)
-            counter(section.wrappedValue.guidance.count, InsightTemplate.maxGuidanceLength)
+            labeledField("Title", text: section.title, prompt: "example: next steps", max: InsightTemplate.maxTitleLength)
+            labeledField("What belongs here", text: section.guidance, prompt: "example: what was agreed to happen next, by whom, and by when", max: InsightTemplate.maxGuidanceLength, vertical: true)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 4)
     }
 
+    private func runDraft() async {
+        let description = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard description.count >= 3, !isDrafting else { return }
+        isDrafting = true
+        draftError = nil
+        defer { isDrafting = false }
+        do {
+            let drafted = try await appState.draftInsightTemplate(from: description)
+            draft = drafted
+            previewSections = []
+            previewMessage = nil
+        } catch {
+            draftError = "couldn't draft the template: \(error.localizedDescription.lowercased())"
+        }
+    }
+
+    /// Shown only once the text is close to or over its limit, so a short entry is not
+    /// decorated with numbers.
+    @ViewBuilder
     private func counter(_ count: Int, _ max: Int) -> some View {
-        Text("\(count)/\(max)")
-            .font(.caption2)
-            .foregroundStyle(count > max ? AnyShapeStyle(ColorPalette.Status.error) : AnyShapeStyle(.tertiary))
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        if count > max * 3 / 4 {
+            Text("\(count)/\(max)")
+                .font(.caption2)
+                .foregroundStyle(count > max ? AnyShapeStyle(ColorPalette.Status.error) : AnyShapeStyle(.tertiary))
+        }
     }
 
     private func loadPreviewMeetings() {

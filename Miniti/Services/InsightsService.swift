@@ -2088,6 +2088,53 @@ final class InsightsService: Sendable {
         )
     }
 
+    /// Draft a custom insight template (name, summary, sections) from a one-line description.
+    /// The prompt is the managed backend's (`miniti-api/lib/insights.ts`, `generateTemplateDraft`)
+    /// copied verbatim; change both together.
+    func draftInsightTemplate(
+        description: String,
+        model: OpenAIModel = .gpt5Mini,
+        apiKey: String,
+        language: String = "en"
+    ) async throws -> InsightTemplateDraft {
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 3 else { throw InsightsError.emptyTranscript }
+        let languageName = TranscriptionLanguage(rawValue: language)?.englishName ?? "English"
+        let systemPrompt = "You design meeting-notes templates for miniti, a meeting assistant. A template is a name, a one-line summary, and 2 to 8 sections. Each section has a short title and one line of guidance telling the AI what belongs there. Sections are filled only from what was actually said in a meeting, so guidance must describe observable content (what was stated, agreed, asked, reported), never judgments or scores. Return only JSON."
+        let userPrompt = """
+        Design a meeting-notes template from this description:
+        \(String(trimmed.prefix(1_000)))
+
+        Rules:
+        - Return ONLY one valid JSON object. No markdown, no prose, no code fences.
+        - "name": at most \(InsightTemplate.maxNameLength) characters, a short noun phrase (example: "Customer QBR").
+        - "summary": at most \(InsightTemplate.maxSummaryLength) characters, one plain sentence on what the template is for.
+        - "sections": 2 to \(InsightTemplate.maxSections) items in the order they should appear. Each "title" is at most \(InsightTemplate.maxTitleLength) characters, lowercase unless it is a proper noun or acronym, and distinct from the others. Each "guidance" is at most \(InsightTemplate.maxGuidanceLength) characters and says what belongs in that section, phrased so it can be filled only from what was said.
+        - Write in \(languageName). Plain words, no em dashes.
+
+        Respond in JSON with exactly these keys:
+        {
+            "name": "...",
+            "summary": "...",
+            "sections": [{"title": "...", "guidance": "..."}]
+        }
+        """
+        let requestBody = OpenAIRequest(
+            model: model.rawValue,
+            messages: [
+                Message(role: "system", content: systemPrompt),
+                Message(role: "user", content: userPrompt)
+            ],
+            maxCompletionTokens: 2_000,
+            responseFormat: ResponseFormat(type: "json_object")
+        )
+        let jsonData = try await postOpenAIJSON(requestBody, apiKey: apiKey, label: "template draft")
+        let decoded = try JSONDecoder().decode(InsightTemplateDraftPayload.self, from: jsonData)
+        let draft = decoded.normalizedDraft
+        guard !draft.name.isEmpty, !draft.sections.isEmpty else { throw InsightsError.noContent }
+        return draft
+    }
+
     /// Generate full insights at end of meeting
     func generateInsights(transcript: String, model: OpenAIModel = .gpt5Mini, apiKey: String, language: String = "en") async throws -> MeetingInsights {
         guard !transcript.isEmpty else {

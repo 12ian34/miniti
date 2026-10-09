@@ -1,0 +1,8 @@
+Nemotron-3.5-ASR-Streaming-0.6B
+Copyright (c) NVIDIA Corporation. Licensed under the OpenMDW License Agreement, version 1.1.
+https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b
+
+miniti downloads this model on request (Settings, Recording, "Transcribe on this Mac") to turn speech into text on your device. The downloaded files are the Core ML conversion published by FluidInference at
+https://huggingface.co/FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML, also under OpenMDW-1.1. The conversion keeps NVIDIA's weights and changes only the export format (int8 Core ML, chunked streaming encoder) and the vocabulary pruning of the latin-script variant.
+
+The model is not shipped inside the app; it is fetched from that repository into miniti's own container when you turn the setting on, and removed from Settings. The full agreement is reproduced under "OpenMDW License 1.1" in this list.

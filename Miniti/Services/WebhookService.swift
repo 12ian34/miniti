@@ -407,9 +407,9 @@ enum WebhookService {
     static func validationMessage(for urlString: String) -> String? {
         switch validate(urlString) {
         case .valid, .empty: return nil
-        case .malformed: return "invalid URL — must start with https:// and include a host"
-        case .plaintextTransport: return "must use https:// — meeting data is only sent over an encrypted connection (http:// works for localhost only)"
-        case .unsupportedScheme: return "unsupported scheme — must start with https://"
+        case .malformed: return "invalid URL: must start with https:// and include a host"
+        case .plaintextTransport: return "must use https://. meeting data is only sent over an encrypted connection (http:// works for localhost only)"
+        case .unsupportedScheme: return "unsupported scheme: must start with https://"
         }
     }
 

@@ -1058,6 +1058,7 @@ struct TerminalSidebar: View {
             VStack(alignment: .leading, spacing: 4) {
                 if let meeting = appState.currentMeeting {
                     SidebarSessionItem(
+                        isPrivate: appState.privateModeEnabled,
                         title: meeting.displayTitle,
                         isRecording: appState.isRecording,
                         isSelected: selectedMeetingID == nil && !showTraining
@@ -1653,6 +1654,7 @@ struct SidebarIconItem: View {
 }
 
 struct SidebarSessionItem: View {
+    var isPrivate: Bool = false
     let title: String
     let isRecording: Bool
     let isSelected: Bool
@@ -1672,7 +1674,7 @@ struct SidebarSessionItem: View {
                         .frame(width: 6, height: 6)
                         .shadow(color: statusColor.opacity(0.6), radius: isRecording ? 4 : 2)
                     
-                    Text(isRecording ? "recording" : "session")
+                    Text(isRecording ? (isPrivate ? "recording, private" : "recording") : "session")
                         .font(.system(size: 10, weight: .semibold, design: .default))
                         .foregroundStyle(statusColor)
                     
@@ -2102,7 +2104,7 @@ struct MeetingDetailView: View {
     
     private var insightsContent: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
+            if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs && !appState.privateModeEnabled {
                 HStack(spacing: 8) {
                     Button {
                         Task {

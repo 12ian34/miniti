@@ -15,9 +15,31 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(SettingsDestination.fromLegacyID("apikeys"), .account)
         XCTAssertEqual(SettingsDestination.fromLegacyID("audio"), .recording)
         XCTAssertEqual(SettingsDestination.fromLegacyID("integrations"), .calendar)
-        XCTAssertEqual(SettingsDestination.fromLegacyID("mcp"), .docsMCP)
-        XCTAssertEqual(SettingsDestination.fromLegacyID("about"), .privacySupport)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("mcp"), .playbook)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("docsMCP"), .playbook)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("language"), .transcription)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("dataExport"), .data)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("privacySupport"), .privacy)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("about"), .about)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("privacy"), .privacy)
         XCTAssertEqual(SettingsDestination.fromLegacyID("unknown"), .general)
+    }
+
+    func testEveryDestinationSitsInExactlyOneGroupAndCatalogIdsFollowTheirTab() {
+        let grouped = SettingsGroup.allCases.flatMap(\.destinations)
+        XCTAssertEqual(grouped.count, SettingsDestination.allCases.count)
+        XCTAssertEqual(Set(grouped), Set(SettingsDestination.allCases))
+        XCTAssertEqual(SettingsGroup.privacy.destinations, [.privacy])
+        XCTAssertEqual(SettingsGroup.support.destinations, [.about])
+        for item in SettingsSearchCatalog.items {
+            // Legacy "integrations." ids are allowed for calendar, CRM and webhook rows; every other
+            // id starts with its tab so a search hit can never scroll the wrong screen.
+            if item.id.hasPrefix("integrations.") {
+                XCTAssertTrue([.calendar, .crm, .webhooks].contains(item.destination), item.id)
+            } else {
+                XCTAssertTrue(item.id.hasPrefix(item.destination.rawValue + "."), "\(item.id) is filed under \(item.destination.rawValue)")
+            }
+        }
     }
 
     func testSettingsSearchCatalogFiltersByQueryPlatformAndMode() throws {
@@ -33,7 +55,7 @@ final class AppStateComputationTests: XCTestCase {
 
         let byokOnlyIDs = Set(macBYOK.map(\.id)).subtracting(macManaged.map(\.id))
         XCTAssertEqual(byokOnlyIDs, ["account.deepgramKey", "account.openAIKey"])
-        XCTAssertTrue(Set(macManaged.map(\.destination)).isSuperset(of: [.ai, .calendar, .crm, .webhooks, .docsMCP]))
+        XCTAssertTrue(Set(macManaged.map(\.destination)).isSuperset(of: [.ai, .calendar, .crm, .webhooks, .playbook, .transcription, .privacy, .about]))
 
         let smartMeeting = try XCTUnwrap(macManaged.first(where: { $0.id == "integrations.smartMeetings" }))
         XCTAssertTrue(smartMeeting.matches("meeting handoff"))
@@ -194,6 +216,15 @@ final class AppStateComputationTests: XCTestCase {
 
         defaults.removeObject(forKey: "docsMCPURL")
         defaults.removeObject(forKey: "playbookInsightsEnabled")
+        let previousTemplateValue = defaults.object(forKey: "templateInsightsEnabled")
+        defaults.removeObject(forKey: "templateInsightsEnabled")
+        defer {
+            if let previousTemplateValue {
+                defaults.set(previousTemplateValue, forKey: "templateInsightsEnabled")
+            } else {
+                defaults.removeObject(forKey: "templateInsightsEnabled")
+            }
+        }
         let state = AppState()
         state.setInsightModeEnabled(.meddpicc, enabled: false)
 
@@ -1183,7 +1214,39 @@ final class AppStateComputationTests: XCTestCase {
         let state = AppState()
         state.appMode = .byok
         state.deepgramApiKey = ""
+        // The host install may have on-device transcription on, which needs no key.
+        let previous = UserDefaults.standard.object(forKey: "onDeviceTranscription")
+        state.onDeviceTranscriptionEnabled = false
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: "onDeviceTranscription") } else { UserDefaults.standard.removeObject(forKey: "onDeviceTranscription") }
+        }
         XCTAssertFalse(state.canStartRecording)
+    }
+
+    @MainActor
+    func testCanStartRecordingByokWithoutKeyWhenOnDeviceTranscriptionIsOnButNotReady() {
+        let state = AppState()
+        state.appMode = .byok
+        state.deepgramApiKey = ""
+        let previous = UserDefaults.standard.object(forKey: "onDeviceTranscription")
+        defer {
+            if let previous { UserDefaults.standard.set(previous, forKey: "onDeviceTranscription") } else { UserDefaults.standard.removeObject(forKey: "onDeviceTranscription") }
+        }
+        state.onDeviceTranscriptionEnabled = true
+        // No model loaded or on disk in a fresh service: the key is still required, and a start
+        // would be refused rather than quietly sent to Deepgram.
+        if !state.onDeviceTranscription.isReady(forLanguageCode: "en"),
+           !OnDeviceTranscriptionService.isDownloaded(languageCode: "en") {
+            XCTAssertFalse(state.willTranscribeOnDevice)
+            XCTAssertFalse(state.canStartRecording)
+            XCTAssertTrue(state.onDeviceTranscriptionBlocksStart)
+            state.onDeviceTranscriptionCloudFallback = true
+            XCTAssertFalse(state.onDeviceTranscriptionBlocksStart)
+            state.onDeviceTranscriptionCloudFallback = false
+        }
+        state.meetingLanguage = "el"
+        XCTAssertFalse(state.willTranscribeOnDevice, "Greek stays on Deepgram")
+        XCTAssertFalse(state.onDeviceTranscriptionBlocksStart, "a cloud-only language never blocks a start")
     }
 
     @MainActor
@@ -2272,7 +2335,7 @@ final class AppStateComputationTests: XCTestCase {
     // MARK: - Auto-stop reason copy
 
     func testAutoStopReasonLabelsDistinguishSilenceFromStall() {
-        XCTAssertEqual(AppState.AutoStopReason.silence.label, "auto-stopped — no speech detected")
+        XCTAssertEqual(AppState.AutoStopReason.silence.label, "auto-stopped, no speech detected")
         XCTAssertNotEqual(
             AppState.AutoStopReason.stalledPipeline.label,
             AppState.AutoStopReason.silence.label

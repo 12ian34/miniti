@@ -267,7 +267,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     
     // Insights
     KeyboardShortcut(keys: "⌘⇧I", description: "Generate insights", category: "Insights"),
-    KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out — catch me up", category: "Insights"),
+    KeyboardShortcut(keys: "⌘⇧Z", description: "Zoned out, catch me up", category: "Insights"),
     KeyboardShortcut(keys: "⌘⇧D", description: "Correct selected transcript word", category: "Recording"),
     
     // App

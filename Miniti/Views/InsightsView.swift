@@ -58,9 +58,15 @@ struct InsightsModeTabs: View {
         template ?? appState.liveTemplate
     }
 
+    /// The specialist to show on the tab: the selected one, else the one chosen earlier in
+    /// this meeting (one click brings it back), else "More".
+    private var shownSpecialist: InsightsMode? {
+        selectedSpecialist ?? appState.rememberedSpecialistMode
+    }
+
     private var specialistLabel: String {
-        guard let selectedSpecialist else { return "More" }
-        return selectedSpecialist == .template ? activeTemplate.shortName : selectedSpecialist.displayName
+        guard let shownSpecialist else { return "More" }
+        return shownSpecialist == .template ? activeTemplate.shortName : shownSpecialist.displayName
     }
 
     private func selectTemplate(_ id: String) {
@@ -79,12 +85,14 @@ struct InsightsModeTabs: View {
                         modeButton(mode)
                     }
 
-                    Rectangle()
-                        .fill(ColorPalette.Border.primary)
-                        .frame(width: 1, height: 18)
-                        .padding(.horizontal, MinitiDesignSystem.Spacing.compact)
+                    if !appState.privateModeEnabled {
+                        Rectangle()
+                            .fill(ColorPalette.Border.primary)
+                            .frame(width: 1, height: 18)
+                            .padding(.horizontal, MinitiDesignSystem.Spacing.compact)
 
-                    specialistMenu
+                        specialistMenu
+                    }
                 }
             }
 
@@ -107,24 +115,56 @@ struct InsightsModeTabs: View {
     }
 
     private var specialistMenu: some View {
-        Menu {
-            Section("Specialist views") {
-                specialistButton(.meddpicc)
+        Group {
+            if selectedSpecialist == nil, let remembered = appState.rememberedSpecialistMode {
+                // One click returns to the specialist chosen earlier; the indicator opens the menu.
+                Menu {
+                    specialistMenuContent
+                } label: {
+                    specialistTabLabel
+                } primaryAction: {
+                    appState.switchInsightsMode(to: remembered)
+                }
+            } else {
+                Menu {
+                    specialistMenuContent
+                } label: {
+                    specialistTabLabel
+                }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Specialist insight views")
+        .accessibilityLabel(selectedSpecialist.map { "Specialist view: \($0 == .template ? activeTemplate.name : $0.displayName), selected" } ?? (appState.rememberedSpecialistMode.map { "Back to \($0 == .template ? activeTemplate.name : $0.displayName)" } ?? "More insight views"))
+    }
 
-                InsightTemplateMenu(
-                    activeTemplateID: appState.insightsMode == .template ? activeTemplate.id : nil,
-                    onSelect: selectTemplate
-                )
+    private var specialistTabLabel: some View {
+        MinitiTabLabel(
+            title: specialistLabel,
+            isSelected: selectedSpecialist != nil
+        )
+    }
 
-                if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
-                    specialistButton(.docs)
-                } else {
-                    Button {
-                        appState.selectedSettingsTab = "docsMCP"
-                        openSettings()
-                    } label: {
-                        Label("Set Up Playbook…", systemImage: "gearshape")
-                    }
+    @ViewBuilder
+    private var specialistMenuContent: some View {
+            // Notes views, flat: Sales is a template with its own plumbing, so it heads the list.
+            specialistButton(.meddpicc)
+            InsightTemplateMenu(
+                activeTemplateID: appState.insightsMode == .template ? activeTemplate.id : nil,
+                onSelect: selectTemplate
+            )
+
+            Divider()
+            // Playbook is a different kind of view: answers from connected docs, not notes.
+            if appState.validatedDocsMCPURL != nil || appState.playbookInsightsEnabled {
+                specialistButton(.docs)
+            } else {
+                Button {
+                    appState.selectedSettingsTab = SettingsDestination.playbook.rawValue
+                    openSettings()
+                } label: {
+                    Label("Set Up Playbook…", systemImage: "gearshape")
                 }
             }
 
@@ -156,16 +196,18 @@ struct InsightsModeTabs: View {
                     }
                 }
             }
-        } label: {
-            MinitiTabLabel(
-                title: specialistLabel,
-                isSelected: selectedSpecialist != nil
-            )
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Specialist insight views")
-        .accessibilityLabel(selectedSpecialist.map { "Specialist view: \($0 == .template ? activeTemplate.name : $0.displayName), selected" } ?? "More insight views")
+
+            Divider()
+            InsightTemplateMenu(
+                activeTemplateID: nil,
+                onSelect: selectTemplate
+            ).manageButton
+            Button {
+                appState.selectedSettingsTab = SettingsDestination.templates.rawValue
+                openSettings()
+            } label: {
+                Label("Insight settings…", systemImage: "gearshape")
+            }
     }
 
     private func specialistButton(_ mode: InsightsMode) -> some View {
@@ -173,7 +215,7 @@ struct InsightsModeTabs: View {
             appState.switchInsightsMode(to: mode)
         } label: {
             Label {
-                Text("\(mode.displayName) — \(mode.description)")
+                Text(mode.displayName)
             } icon: {
                 Image(systemName: appState.insightsMode == mode ? "checkmark.circle.fill" : mode.systemImage)
             }
@@ -181,6 +223,26 @@ struct InsightsModeTabs: View {
     }
 }
 #endif
+
+// MARK: - Private mode
+
+/// What the insights pane shows in private mode instead of cloud-generated content.
+struct PrivateModeInsightsNotice: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(PrivateModeCopy.title, systemImage: "lock.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(ColorPalette.Text.primary)
+            Text(PrivateModeCopy.insightsNotice)
+                .font(.system(size: 12))
+                .foregroundStyle(ColorPalette.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(MinitiDesignSystem.Spacing.standard)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .combine)
+    }
+}
 
 // MARK: - Live Insights Content
 
@@ -194,7 +256,9 @@ struct LiveInsightsContent: View {
         #else
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                if appState.insightsMode == .training {
+                if appState.privateModeEnabled, appState.insightsMode != .training {
+                    PrivateModeInsightsNotice()
+                } else if appState.insightsMode == .training {
                     if let metrics = appState.trainingMetrics {
                         TrainingContent(metrics: metrics)
                     } else {
@@ -313,7 +377,9 @@ private struct LiveInsightsContent_iOSPlain: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 16) {
-                if appState.insightsMode == .training {
+                if appState.privateModeEnabled, appState.insightsMode != .training {
+                    PrivateModeInsightsNotice()
+                } else if appState.insightsMode == .training {
                     if let metrics = appState.trainingMetrics {
                         LiveTrainingContent_iOSPlain(metrics: metrics)
                     } else {
@@ -856,13 +922,13 @@ struct DocsEmptyState: View {
                     .foregroundStyle(Color(hex: "8B949E"))
                 #if os(macOS)
                 Button {
-                    appState.selectedSettingsTab = "docsMCP"
+                    appState.selectedSettingsTab = SettingsDestination.playbook.rawValue
                     openSettings()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "gearshape")
                             .font(.system(size: 9, weight: .semibold))
-                        Text("open Settings → Docs MCP")
+                        Text("open Settings → Playbook")
                             .font(.system(size: 10, weight: .semibold, design: .default))
                     }
                     .foregroundStyle(Color(hex: "D4D4D8"))
@@ -874,7 +940,7 @@ struct DocsEmptyState: View {
                 .buttonStyle(.plain)
                 .padding(.top, 2)
                 #else
-                Text("Settings → Docs MCP")
+                Text("Settings → Playbook")
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
                     .multilineTextAlignment(.center)
@@ -1066,7 +1132,7 @@ private struct DocTopicRow: View {
                     DocAnswerBody(card: card)
                         .padding(.leading, 20)
                 }
-                Text(topic.errorMessage ?? "Docs service is busy — tap to try again.")
+                Text(topic.errorMessage ?? "Docs service is busy. Tap to try again.")
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "D29922"))
                     .padding(.leading, 20)
@@ -1278,8 +1344,8 @@ struct MEDDPICCContent: View {
 
 // MARK: - Templates specialist view (shared)
 
-/// The "Templates" entry in the specialist menu: the built-in templates, then the person's
-/// own, with the active one checked, and a way into Settings → Templates. Used on both
+/// The template rows of the specialist menu: the built-in templates, then the person's own,
+/// with the active one checked, plus the footer link into Settings → Templates. Used on both
 /// platforms so the menus stay identical.
 struct InsightTemplateMenu: View {
     @EnvironmentObject private var appState: AppState
@@ -1294,7 +1360,7 @@ struct InsightTemplateMenu: View {
             onSelect(template.id)
         } label: {
             Label {
-                Text(template.summary.isEmpty ? template.name : "\(template.name) — \(template.summary)")
+                Text(template.name)
             } icon: {
                 Image(systemName: template.id == activeTemplateID ? "checkmark.circle.fill" : template.systemImage)
             }
@@ -1311,29 +1377,26 @@ struct InsightTemplateMenu: View {
         #endif
     }
 
+    /// The templates, flat: built-in first, then the person's own. Sales sits above these in
+    /// the specialist menu because it is the same kind of view with its own plumbing.
     var body: some View {
-        Menu {
-            ForEach(InsightTemplate.builtIn) { template in
+        ForEach(InsightTemplate.builtIn) { template in
+            templateButton(template)
+        }
+        if !appState.customInsightTemplates.isEmpty {
+            Divider()
+            ForEach(appState.customInsightTemplates) { template in
                 templateButton(template)
             }
-            if !appState.customInsightTemplates.isEmpty {
-                Divider()
-                ForEach(appState.customInsightTemplates) { template in
-                    templateButton(template)
-                }
-            }
-            Divider()
-            Button {
-                openTemplateSettings()
-            } label: {
-                Label("manage templates…", systemImage: "slider.horizontal.3")
-            }
+        }
+    }
+
+    /// The link into Settings → Templates, placed at the foot of the specialist menu.
+    var manageButton: some View {
+        Button {
+            openTemplateSettings()
         } label: {
-            Label {
-                Text("Templates — \(InsightsMode.template.description)")
-            } icon: {
-                Image(systemName: activeTemplateID != nil ? "checkmark.circle.fill" : InsightsMode.template.systemImage)
-            }
+            Label("manage templates…", systemImage: "slider.horizontal.3")
         }
     }
 }
@@ -2035,7 +2098,7 @@ extension TerminalSectionInfo {
             "6+/min can make delivery feel less confident or less crisp.",
             "Context matters: brainstorming and interviews usually spike filler usage."
         ],
-        settingsNote: "You can add or edit your own filler words in Settings → Language."
+        settingsNote: "You can add or edit your own filler words in Settings → Transcription."
     )
     
     static let talkRatio = TerminalSectionInfo(
@@ -3313,7 +3376,7 @@ struct TrainingStatsOverview: View {
     }
 
     private func formatPercentageNumber(_ value: Double?) -> String {
-        guard let value else { return "—" }
+        guard let value else { return "n/a" }
         return "\(Int((value * 100).rounded()))"
     }
 

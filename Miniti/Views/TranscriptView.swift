@@ -1439,7 +1439,7 @@ struct RenameSpeakerView: View {
                 }
 
                 if !isSelf && hasOtherSelves {
-                    Text("diarization sometimes splits one person across IDs — mark each one.")
+                    Text("diarization sometimes splits one person across IDs. mark each one.")
                         .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
                 }

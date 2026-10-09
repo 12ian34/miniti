@@ -357,7 +357,7 @@ struct MeetingDetail_iOS: View {
 
     private func transcriptMarkdown() -> String {
         guard !meeting.segments.isEmpty else { return "(no transcript)" }
-        var md = "# \(meeting.displayTitle) — Transcript\n\n"
+        var md = "# \(meeting.displayTitle) transcript\n\n"
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
         var currentKey: String? = nil
         let names = meeting.speakerNames
@@ -376,7 +376,7 @@ struct MeetingDetail_iOS: View {
     }
 
     private func insightsMarkdown() -> String {
-        var md = "# \(meeting.displayTitle) — Insights\n\n"
+        var md = "# \(meeting.displayTitle) insights\n\n"
         md += "_\(meeting.startTime.formatted(date: .long, time: .shortened))_\n\n"
         if let summary = meeting.summaryText, !summary.isEmpty { md += "## Summary\n\n\(summary)\n\n" }
         if !meeting.discussionFlow.isEmpty {
@@ -637,7 +637,7 @@ struct MeetingDetail_iOS: View {
                     }
                 )
                 
-                if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs {
+                if !meeting.segments.isEmpty && appState.insightsMode != .training && appState.insightsMode != .docs && !appState.privateModeEnabled {
                     historicalInsightsGenerateButton
                 }
                 

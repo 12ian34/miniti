@@ -889,7 +889,7 @@ struct TranscriptTrimView: View {
                 applyPendingTrim()
             }
         } message: {
-            Text("this will clear summary, sales, questions, and playbook insights. regenerate insights after trimming. undo restores transcript text only — it does not restore the old insights.")
+            Text("this will clear summary, sales, questions, and playbook insights. regenerate insights after trimming. undo restores transcript text only. it does not restore the old insights.")
         }
         #if os(macOS)
         .popover(

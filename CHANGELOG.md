@@ -15,6 +15,15 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-10-09 - v2.12.0
+
+- improvement: (macOS and iOS) Settings has a new shape. Five groups, one word per tab, one question per tab. Recording is your hardware. Transcription is language and the speech models. AI is summaries and speaker names. Privacy is the off switch. About is help. Deepgram or This Mac is one picker, not three toggles in three places
+- new: (macOS) private mode. One switch in Settings, Privacy. Your meeting stays on your Mac: transcription and speakers run here and nothing goes to miniti, Deepgram, OpenAI or TypeSafe. You lose summaries, questions, Sales, templates, catch-up, speaker names, Playbook and investigations. Coaching, history, search, export and calendar still work. Needs Apple silicon
+- new: (macOS) transcribe on your Mac. Turn it on in Settings, Recording. Audio never leaves your Mac for the words. One 590 MB download. Works in English, Spanish, French, German, Portuguese and Italian, with Dutch and Russian in testing. Uses no minutes on the miniti plan. Live text lands about a second later than Deepgram. Off by default
+- new: (macOS and iOS) describe a template and miniti writes it. Settings, Templates, New template. Type one line, press Draft it, then edit
+- improvement: (macOS and iOS) the More tab in insights remembers your pick. Choose Interview once and it comes back with one click. The menu is one short list of names
+- fix: (macOS and iOS) no more em dashes anywhere in the app
+
 ### 2026-10-09 - v2.11.0
 
 - new: (macOS and iOS) search meetings by person, title, and date. Type with:sam, title:budget, on:14 sep, after:1 sep or last:2w, or pick them from the new people and date menus next to the search box. Every word you type must now match, so sasha pricing finds the call about pricing with Sasha. Results say why they matched, for example with Sasha Petrov, 14 Sep. The calendar event's title is kept with the meeting so title: finds a call by what the calendar called it even after a rename

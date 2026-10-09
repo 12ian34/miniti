@@ -105,6 +105,12 @@ enum ScreenshotScene: String, CaseIterable {
 enum ScreenshotMode {
     static let sceneDefaultsKey = "MinitiScreenshotScene"
     static let settleDefaultsKey = "MinitiScreenshotSettleSeconds"
+    /// `-MinitiScreenshotSettingsTab <destination>` renders the plain `settings` scene on any tab,
+    /// for checking the Settings window without wiring a scene per tab.
+    static var settingsTabOverride: String? {
+        let value = UserDefaults.standard.string(forKey: "MinitiScreenshotSettingsTab")?.trimmingCharacters(in: .whitespaces) ?? ""
+        return value.isEmpty ? nil : value
+    }
     static let macWindowSize = CGSize(width: 1440, height: 900)
 
     /// Seconds to wait after the window is sized before the macOS capture (launch
@@ -170,7 +176,7 @@ enum ScreenshotMode {
             "mainWindow.sidebarCollapsed": false,
             "mainWindow.historyCollapsed": false,
             "mainWindow.insightsCollapsed": false,
-            "selectedSettingsDestination": scene == .settingsAccount ? "account" : scene == .settingsTemplates ? "templates" : "general",
+            "selectedSettingsDestination": Self.settingsTabOverride ?? (scene == .settingsAccount ? "account" : scene == .settingsTemplates ? "templates" : "general"),
             CustomInsightTemplates.storageKey: ScreenshotFixtures.customTemplateData,
             "deepgramApiKey": "",
             "openaiApiKey": "",
@@ -257,6 +263,9 @@ enum ScreenshotMode {
             #if os(iOS)
             appState.showSettings = true
             #endif
+        }
+        if scene == .settings, let tab = Self.settingsTabOverride {
+            appState.selectedSettingsTab = SettingsDestination.fromLegacyID(tab).rawValue
         }
         if scene == .settingsAccount {
             // Scroll the Account & Plan form to the managed-account section.

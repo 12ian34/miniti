@@ -33,11 +33,15 @@ struct SettingsView_iOS: View {
         NavigationStack {
             List {
                 if searchText.isEmpty {
-                    ForEach(SettingsDestination.available(on: .iOS)) { destination in
-                        NavigationLink {
-                            SettingsDetailView_iOS(category: destination)
-                        } label: {
-                            destinationLabel(destination)
+                    ForEach(SettingsGroup.allCases) { group in
+                        Section(group.title) {
+                            ForEach(group.destinations.filter { SettingsDestination.available(on: .iOS).contains($0) }) { destination in
+                                NavigationLink {
+                                    SettingsDetailView_iOS(category: destination)
+                                } label: {
+                                    destinationLabel(destination)
+                                }
+                            }
                         }
                     }
                 } else if searchResults.isEmpty {
@@ -64,9 +68,13 @@ struct SettingsView_iOS: View {
         NavigationSplitView {
             List(selection: $selectedDestination) {
                 if searchText.isEmpty {
-                    ForEach(SettingsDestination.available(on: .iOS)) { destination in
-                        Label(destination.title, systemImage: destination.systemImage)
-                            .tag(destination)
+                    ForEach(SettingsGroup.allCases) { group in
+                        Section(group.title) {
+                            ForEach(group.destinations.filter { SettingsDestination.available(on: .iOS).contains($0) }) { destination in
+                                Label(destination.title, systemImage: destination.systemImage)
+                                    .tag(destination)
+                            }
+                        }
                     }
                 } else if searchResults.isEmpty {
                     ContentUnavailableView.search(text: searchText)
@@ -201,14 +209,33 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
-                if category == .language {
+                if category == .transcription {
+                Section("Models") {
+                    Picker("Speakers", selection: Binding(
+                        get: { appState.onDeviceSpeakerSeparationEnabled },
+                        set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }
+                    )) {
+                        Text("Deepgram").tag(false)
+                        Text("This device").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .id("transcription.speakers")
+                    .disabled(!OnDeviceDiarizationService.isHardwareSupported)
+                    if appState.onDeviceSpeakerSeparationEnabled {
+                        OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
+                    }
+                    Text("Who spoke when. This device runs NVIDIA's Nemotron speaker model, which ships inside miniti. Audio still goes to Deepgram for the words. Applies to new recordings.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Language") {
                     Picker("Default Language", selection: $appState.defaultLanguage) {
                         ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
                             Text(lang.displayName).tag(lang.rawValue)
                         }
                     }
-                    .id("language.default")
+                    .id("transcription.default")
                     
                     Text("Transcription, insights, and coaching filler detection all adapt to this language. Can be overridden per meeting.")
                         .font(.caption)
@@ -223,7 +250,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .id("language.fillers")
+                    .id("transcription.fillers")
 
                     NavigationLink(destination: PersonalDictionaryDetail_iOS()) {
                         HStack {
@@ -234,7 +261,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .id("language.dictionary")
+                    .id("transcription.dictionary")
                 }
                 }
                 
@@ -252,11 +279,11 @@ private struct SettingsDetailView_iOS: View {
                                 Text("Checking…")
                                     .foregroundStyle(.secondary)
                             } else if appState.isPro {
-                                Text("Pro — \(Int(appState.displayMinutesLimit)) min/month")
+                                Text("Pro, \(Int(appState.displayMinutesLimit)) min/month")
                                     .foregroundStyle(.purple)
                                     .fontWeight(.medium)
                             } else {
-                                Text("Free — 500 min/month")
+                                Text("Free, 500 min/month")
                                     .foregroundStyle(.secondary)
                             }
                         }
@@ -299,7 +326,7 @@ private struct SettingsDetailView_iOS: View {
                                         Text("Purchasing…")
                                     }
                                 } else {
-                                    Text("Upgrade to Pro — $4.99/month")
+                                    Text("Upgrade to Pro, $4.99/month")
                                 }
                             }
                         }
@@ -471,11 +498,22 @@ private struct SettingsDetailView_iOS: View {
                 
                 // Models (read-only)
                 if category == .ai {
+                Section("Speaker names") {
+                    SpeakerNamesPicker_iOS()
+                }
+                .id("ai.speakerNames")
+
                 Section("Models") {
                     HStack {
                         Text("Transcription")
                         Spacer()
-                        Text("Nova-3")
+                        Text("Deepgram Nova-3")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Speakers")
+                        Spacer()
+                        Text(appState.onDeviceSpeakerSeparationEnabled ? "This device (Nemotron 3)" : "Deepgram")
                             .foregroundStyle(.secondary)
                     }
 
@@ -496,21 +534,17 @@ private struct SettingsDetailView_iOS: View {
                         .multilineTextAlignment(.trailing)
                     }
 
-                    if appState.appMode == .managed {
-                        Toggle("Faster speaker naming and sales detection (beta)", isOn: $appState.jevClassifierEnabled)
-                            .id("ai.jevClassifier")
-                        Text("Uses TypeSafe's Jev model to match speakers to calendar attendees and to spot sales conversations in under a second, instead of GPT and a word list. Sends short recent transcript windows to TypeSafe through miniti's servers. GPT still writes names it cannot match and every summary. Off by default while it is in beta.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+                    Text("Change the speaker model under Transcription. Summaries use the provider chosen under Account.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .id("ai.models")
 
                 Section("Provider Mode") {
                     LabeledContent("Current mode", value: appState.appMode == .byok ? "My own accounts" : "Managed by Miniti")
                     Text(appState.appMode == .byok
-                         ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account & Plan. Calendar, webhooks, Docs MCP, and Smart meetings remain available in BYOK mode."
-                         : "Miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
+                         ? "Transcription and insights use the Deepgram and OpenAI keys saved under Account. Calendar, webhooks, Playbook, and Smart meetings remain available in BYOK mode."
+                         : "miniti supplies the transcription and insight providers for your plan. Integration and meeting-automation settings work the same way as in BYOK mode.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -553,22 +587,6 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Toggle("Auto-name speakers from transcript", isOn: $appState.autoInferSpeakerNames)
-                        .id("recording.autoNameSpeakers")
-                    Text("Detects real names from the conversation and labels each speaker accordingly in the live and saved transcripts. When Google Calendar is connected, attendee names are used as hints. Remains \"You\"/\"Speaker N\" until a name is confident.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Toggle("Separate speakers on this device (beta)", isOn: $appState.onDeviceSpeakerSeparationEnabled)
-                        .id("recording.onDeviceSpeakers")
-                        .disabled(!OnDeviceDiarizationService.isHardwareSupported)
-                        .onChange(of: appState.onDeviceSpeakerSeparationEnabled) { _, _ in
-                            appState.refreshOnDeviceDiarizationAvailability()
-                        }
-                    OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
-                    Text("Runs NVIDIA's Nemotron speaker model on this device to tell speakers apart, instead of Deepgram's. Audio still goes to Deepgram for the words. The model ships inside miniti, so nothing is downloaded. Applies to new recordings.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("Live Activity") {
@@ -635,7 +653,7 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
-                if category == .dataExport {
+                if category == .data {
                 Section("Import from Granola") {
                     Link(destination: GranolaCSVImporter.exportURL) {
                         HStack {
@@ -787,12 +805,18 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
-                if category == .docsMCP {
+                if category == .playbook {
                 DocsMCPSettingsSection_iOS()
-                    .id("integrations.docsMCP")
+                    .id("playbook.server")
                 }
 
-                if category == .privacySupport {
+                if category == .privacy {
+                Section("Privacy") {
+                    Text("Private mode, where a meeting never leaves the device, is on the Mac app for now.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .id("privacy.privateMode")
                 Section("Diagnostics") {
                     Toggle("Share Diagnostics", isOn: $shareDiagnostics)
                         .id("privacy.diagnostics")
@@ -800,8 +824,9 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                
-                // About
+                }
+
+                if category == .about {
                 Section("About") {
                     HStack {
                         Text("Version")
@@ -812,9 +837,9 @@ private struct SettingsDetailView_iOS: View {
                                 handleVersionTap()
                             }
                     }
-                    .id("privacy.version")
+                    .id("about.version")
                     AcknowledgementsSection()
-                    .id("privacy.acknowledgements")
+                    .id("about.acknowledgements")
                     Text("Pro is an auto-renewable subscription. Cancel anytime in Apple ID subscriptions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -836,7 +861,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .id("privacy.docs")
+                    .id("about.docs")
                     Link(destination: URL(string: "https://miniti.app/roadmap")!) {
                         HStack {
                             Text("Roadmap")
@@ -864,7 +889,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .id("privacy.support")
+                    .id("about.support")
                     Link(destination: URL(string: "https://miniti.app/privacy")!) {
                         HStack {
                             Text("Privacy")
@@ -874,7 +899,7 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .id("privacy.legal")
+                    .id("about.legal")
                     Link(destination: URL(string: "https://miniti.app/terms")!) {
                         HStack {
                             Text("Terms")
@@ -1392,7 +1417,7 @@ private struct DocsMCPSettingsSection_iOS: View {
     @State private var testSucceeded = false
 
     var body: some View {
-        Section("Docs MCP") {
+        Section("Playbook") {
             TextField("Docs MCP URL", text: $appState.docsMCPURL)
                 .keyboardType(.URL)
                 .textInputAutocapitalization(.never)
@@ -1403,7 +1428,7 @@ private struct DocsMCPSettingsSection_iOS: View {
                         .font(.caption)
                         .foregroundStyle(ColorPalette.Accent.green)
                 } else {
-                    Label("invalid URL — https only, no localhost/private hosts", systemImage: "exclamationmark.triangle.fill")
+                    Label("invalid URL: https only, no localhost/private hosts", systemImage: "exclamationmark.triangle.fill")
                         .font(.caption)
                         .foregroundStyle(ColorPalette.Status.error)
                 }
@@ -1489,5 +1514,40 @@ struct DeliveryStatusRow_iOS: View {
                 .font(.caption)
             }
         }
+    }
+}
+
+
+/// Off, GPT, or Jev (managed only, beta). One control for what used to be two toggles in two tabs.
+private struct SpeakerNamesPicker_iOS: View {
+    @EnvironmentObject private var appState: AppState
+
+    private enum Choice: String, CaseIterable { case off, gpt, jev }
+
+    private var choice: Binding<Choice> {
+        Binding(
+            get: {
+                guard appState.autoInferSpeakerNames else { return .off }
+                return appState.jevClassifierEnabled && appState.appMode == .managed ? .jev : .gpt
+            },
+            set: { value in
+                appState.autoInferSpeakerNames = value != .off
+                appState.jevClassifierEnabled = value == .jev
+            }
+        )
+    }
+
+    var body: some View {
+        Picker("Speaker names", selection: choice) {
+            Text("Off").tag(Choice.off)
+            Text("GPT").tag(Choice.gpt)
+            if appState.appMode == .managed {
+                Text("Jev").tag(Choice.jev)
+            }
+        }
+        .pickerStyle(.segmented)
+        Text("Names speakers from the conversation, using calendar attendees as hints when connected. GPT reads the transcript. Jev, TypeSafe's classifier, matches attendees in under a second and also spots sales conversations; it sends short recent windows to TypeSafe through miniti's servers. Managed accounts only. Speakers stay \"You\" and \"Speaker N\" until a name is confident.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }

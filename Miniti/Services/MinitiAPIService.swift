@@ -1123,7 +1123,7 @@ final class MinitiAPIService: @unchecked Sendable {
             case .notEnrolled:
                 return "Miniti is still setting up this device. Check your connection and try again."
             case .authRevoked:
-                return "This device was signed out of its Miniti account. Restore it with your recovery key in Settings → Account & Plan."
+                return "This device was signed out of its Miniti account. Restore it with your recovery key in Settings → Account."
             case .limitReached(let used, _):
                 return "Monthly limit reached (\(Int(used)) min used)."
             case .deviceDisabled:
@@ -1554,6 +1554,39 @@ final class MinitiAPIService: @unchecked Sendable {
             "API investigation response: duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt)), answerChars=\(decoded.answer.count), sources=\(decoded.sources.count)"
         )
         return decoded
+    }
+
+    /// Managed-mode template drafting. Posts to /api/insights with mode="template_draft" and
+    /// decodes `{ "template": { name, summary, sections } }`.
+    func draftInsightTemplate(
+        deviceId: String,
+        description: String,
+        model: String,
+        language: String = "en"
+    ) async throws -> InsightTemplateDraft {
+        struct Envelope: Decodable {
+            let template: InsightTemplateDraftPayload
+        }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The backend's shared parser needs at least 10 transcript characters; pad short
+        // descriptions there while `description` carries the real text.
+        let transcript = trimmed.count >= 10 ? trimmed : trimmed.padding(toLength: 10, withPad: " ", startingAt: 0)
+        let body: [String: Any] = [
+            "transcript": transcript,
+            "description": trimmed,
+            "mode": "template_draft",
+            "model": model,
+            "language": language
+        ]
+        let request = makeRequest(path: "/insights", method: "POST", deviceId: deviceId, body: body)
+        DebugLogger.shared.log(.app, "API template draft request: chars=\(trimmed.count), language=\(language)")
+        let (data, response) = try await send(request)
+        try validateResponse(response, data: data)
+        let decoded = try decode(Envelope.self, from: data, endpoint: "/insights template_draft")
+        let draft = decoded.template.normalizedDraft
+        DebugLogger.shared.log(.app, "API template draft response: duration=\(String(format: "%.2fs", CFAbsoluteTimeGetCurrent() - startedAt)), sections=\(draft.sections.count)")
+        return draft
     }
 
     /// Managed-mode speaker name inference. Posts to /api/insights with mode="speaker_names".

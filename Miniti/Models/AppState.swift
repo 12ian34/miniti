@@ -126,56 +126,96 @@ enum AppMode: String {
     case managed   // Miniti's backend — 500 min/month free
 }
 
+/// The sidebar groups: the four things a person comes to Settings for.
+enum SettingsGroup: String, CaseIterable, Identifiable {
+    case setup
+    case meetings
+    case connections
+    case privacy
+    case support
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .setup: return "Setup"
+        case .meetings: return "Meetings"
+        case .connections: return "Connections"
+        case .privacy: return "Privacy"
+        case .support: return "Support"
+        }
+    }
+
+    var destinations: [SettingsDestination] {
+        SettingsDestination.allCases.filter { $0.group == self }
+    }
+}
+
+/// One tab per question, single-word titles. Recording is hardware, Transcription is speech to
+/// text, AI is everything after the transcript, Privacy is the off switch, About is support.
 enum SettingsDestination: String, CaseIterable, Identifiable {
     case general
     case account
     case recording
-    case language
+    case transcription
     case ai
     case templates
     case notifications
     case calendar
     case crm
     case webhooks
-    case docsMCP
-    case dataExport
-    case privacySupport
+    case playbook
+    case data
+    case privacy
+    case about
 
     var id: String { rawValue }
+
+    var group: SettingsGroup {
+        switch self {
+        case .general, .account: return .setup
+        case .recording, .transcription, .ai, .templates, .notifications: return .meetings
+        case .calendar, .crm, .webhooks, .playbook, .data: return .connections
+        case .privacy: return .privacy
+        case .about: return .support
+        }
+    }
 
     var title: String {
         switch self {
         case .general: return "General"
-        case .account: return "Account & Plan"
-        case .recording: return "Recording & Audio"
-        case .language: return "Language"
-        case .ai: return "AI & Models"
+        case .account: return "Account"
+        case .recording: return "Recording"
+        case .transcription: return "Transcription"
+        case .ai: return "AI"
         case .templates: return "Templates"
         case .notifications: return "Notifications"
-        case .calendar: return "Calendar & Meetings"
+        case .calendar: return "Calendar"
         case .crm: return "CRM"
         case .webhooks: return "Webhooks"
-        case .docsMCP: return "Docs MCP"
-        case .dataExport: return "Data & Export"
-        case .privacySupport: return "Privacy & Support"
+        case .playbook: return "Playbook"
+        case .data: return "Data"
+        case .privacy: return "Privacy"
+        case .about: return "About"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .general: return "Startup and appearance"
-        case .account: return "Subscription, usage, API mode, and keys"
-        case .recording: return "Audio sources, permissions, and recording behavior"
-        case .language: return "Transcription language and vocabulary"
-        case .ai: return "Transcription and insight models"
-        case .templates: return "Built-in and your own insight templates"
-        case .notifications: return "Meeting reminders and coaching nudges"
-        case .calendar: return "Google Calendar and meeting automation"
-        case .crm: return "Attio and Twenty connections"
-        case .webhooks: return "Send meeting data to other tools"
-        case .docsMCP: return "Ground Playbook answers in your documentation"
-        case .dataExport: return "Import meetings and export your data"
-        case .privacySupport: return "Diagnostics, app information, and help"
+        case .general: return "Startup, appearance and shortcuts"
+        case .account: return "Plan, usage, your own keys and this device"
+        case .recording: return "Microphone, system audio, permissions and auto-stop"
+        case .transcription: return "Language, models, dictionary and fillers"
+        case .ai: return "Summaries, speaker names and investigations"
+        case .templates: return "Built-in and your own templates"
+        case .notifications: return "Nudges, reminders and meeting decisions"
+        case .calendar: return "Google Calendar, filters and auto start"
+        case .crm: return "Attio and Twenty"
+        case .webhooks: return "Endpoint and delivery queue"
+        case .playbook: return "Your docs server for grounded answers"
+        case .data: return "Granola import and markdown export"
+        case .privacy: return "Private mode, diagnostics and models on this device"
+        case .about: return "Version, updates, help and licences"
         }
     }
 
@@ -184,33 +224,34 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .general: return "gearshape"
         case .account: return "person.crop.circle"
         case .recording: return "waveform"
-        case .language: return "character.book.closed"
+        case .transcription: return "text.quote"
         case .ai: return "sparkles"
         case .templates: return "list.bullet.rectangle"
         case .notifications: return "bell"
         case .calendar: return "calendar"
         case .crm: return "person.2"
         case .webhooks: return "arrow.triangle.branch"
-        case .docsMCP: return "books.vertical"
-        case .dataExport: return "tray.and.arrow.down"
-        case .privacySupport: return "hand.raised"
+        case .playbook: return "books.vertical"
+        case .data: return "tray.and.arrow.down"
+        case .privacy: return "lock"
+        case .about: return "info.circle"
         }
     }
 
+    /// Every id a deep link, a persisted selection, or an older build may use.
     static func fromLegacyID(_ id: String) -> SettingsDestination {
+        if let exact = SettingsDestination(rawValue: id) { return exact }
         switch id {
-        case "account", "apikeys": return .account
-        case "audio", "recording": return .recording
-        case "language": return .language
-        case "ai", "models": return .ai
-        case "templates": return .templates
-        case "notifications": return .notifications
-        case "integrations", "calendar": return .calendar
-        case "crm": return .crm
-        case "webhook", "webhooks": return .webhooks
-        case "mcp", "docsMCP": return .docsMCP
-        case "data", "dataExport": return .dataExport
-        case "about", "privacySupport": return .privacySupport
+        case "apikeys": return .account
+        case "audio": return .recording
+        case "language": return .transcription
+        case "models": return .ai
+        case "integrations": return .calendar
+        case "webhook": return .webhooks
+        case "mcp", "docsMCP", "docs": return .playbook
+        case "dataExport", "export": return .data
+        case "privacySupport": return .privacy
+        case "support": return .about
         default: return .general
         }
     }
@@ -290,17 +331,21 @@ enum SettingsSearchCatalog {
         .init("recording.microphoneDevice", "Microphone", section: "Audio Sources", destination: .recording, keywords: ["input device", "airpods", "usb mic", "which mic", "default input"], platforms: [.macOS]),
         .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
-        .init("recording.autoNameSpeakers", "Auto-name Speakers", section: "Recording", destination: .recording, keywords: ["diarization", "speaker names"]),
-        .init("recording.onDeviceSpeakers", "On-device Speaker Separation", section: "Recording", destination: .recording, keywords: ["diarization", "nemotron", "beta", "privacy", "speakers", "local"]),
-        .init("ai.jevClassifier", "Faster Speaker Naming and Sales Detection", section: "Models", destination: .ai, keywords: ["typesafe", "jev", "classifier", "beta", "speaker names", "sales"]),
+        .init("ai.speakerNames", "Speaker Names", section: "Speaker names", destination: .ai, keywords: ["jev", "typesafe", "gpt", "auto-name", "diarization", "speaker names"]),
+        .init("transcription.speakers", "Speakers", section: "Models", destination: .transcription, keywords: ["diarization", "nemotron", "privacy", "speakers", "local"]),
+        .init("transcription.model", "Transcription", section: "Models", destination: .transcription, keywords: ["deepgram", "this mac", "on-device", "local", "nemotron", "private"]),
+        .init("transcription.fallback", "Use Deepgram if the model is not ready", section: "Models", destination: .transcription, keywords: ["fallback", "on-device", "local"]),
+        .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
+        .init("privacy.models", "Models on This Device", section: "Models on this device", destination: .privacy, keywords: ["download", "remove", "nemotron", "disk"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
         .init("templates.list", "Templates", section: "Templates", destination: .templates, keywords: ["BANT", "SPIN", "interview", "stand-up", "1:1", "check-in", "specialist view", "sections"]),
         .init("templates.custom", "Your Templates", section: "Templates", destination: .templates, keywords: ["custom", "new template", "edit", "import", "export", "duplicate", "preview"]),
 
-        .init("language.default", "Default Language", section: "Language", destination: .language, keywords: ["transcription language"]),
-        .init("language.dictionary", "Personal Dictionary", section: "Language", destination: .language, keywords: ["vocabulary", "names", "acronyms", "correction", "replace"]),
-        .init("language.fillers", "Filler Detection", section: "Language", destination: .language, keywords: ["um", "uh", "coaching"]),
+        .init("transcription.default", "Default Language", section: "Language", destination: .transcription, keywords: ["transcription language"]),
+        .init("transcription.dictionary", "Personal Dictionary", section: "Dictionary", destination: .transcription, keywords: ["vocabulary", "names", "acronyms", "correction", "replace"]),
+        .init("transcription.corrections", "Corrections", section: "Dictionary", destination: .transcription, keywords: ["heard", "replace", "misheard", "fix"]),
+        .init("transcription.fillers", "Filler Detection", section: "Fillers", destination: .transcription, keywords: ["um", "uh", "coaching"]),
         .init("ai.models", "AI Models", section: "Models", destination: .ai, keywords: ["Nova-3", "GPT", "Deepgram", "OpenAI", "BYOK", "managed"]),
         .init("ai.investigations", "OpenAI Investigations", section: "Meeting Investigations", destination: .ai, keywords: ["research", "web", "codebase", "folder", "investigate"]),
 
@@ -318,23 +363,23 @@ enum SettingsSearchCatalog {
         .init("integrations.attio", "Attio CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
         .init("integrations.twenty", "Twenty CRM", section: "CRM Connections", destination: .crm, keywords: ["sync", "companies"], platforms: [.macOS]),
         .init("integrations.webhook", "Webhook URL", section: "Webhooks", destination: .webhooks, keywords: ["Zapier", "Make", "n8n", "POST"]),
-        .init("integrations.docsMCP", "Docs MCP", section: "Connection", destination: .docsMCP, keywords: ["playbook", "documentation", "server"]),
+        .init("playbook.server", "Docs Server", section: "Playbook", destination: .playbook, keywords: ["playbook", "documentation", "server"]),
 
-        .init("data.granola", "Import from Granola", section: "Import", destination: .dataExport, keywords: ["CSV", "meetings"]),
-        .init("data.markdownFolder", "Markdown Export Folder", section: "Markdown Export", destination: .dataExport, keywords: ["Obsidian", "files"], platforms: [.macOS]),
-        .init("data.autoExport", "Auto-export Meetings as Markdown", section: "Markdown Export", destination: .dataExport, keywords: ["Obsidian", "AGENTS.md"], platforms: [.macOS]),
-        .init("data.exportAll", "Export All Meetings", section: "Markdown Export", destination: .dataExport, keywords: ["backup", "markdown"], platforms: [.macOS]),
+        .init("data.granola", "Import from Granola", section: "Import", destination: .data, keywords: ["CSV", "meetings"]),
+        .init("data.markdownFolder", "Markdown Export Folder", section: "Markdown Export", destination: .data, keywords: ["Obsidian", "files"], platforms: [.macOS]),
+        .init("data.autoExport", "Auto-export Meetings as Markdown", section: "Markdown Export", destination: .data, keywords: ["Obsidian", "AGENTS.md"], platforms: [.macOS]),
+        .init("data.exportAll", "Export All Meetings", section: "Markdown Export", destination: .data, keywords: ["backup", "markdown"], platforms: [.macOS]),
 
         .init("account.recoveryKey", "Recovery Key", section: "Account", destination: .account, keywords: ["account", "restore", "backup", "another device", "sign in"]),
         .init("account.devices", "Devices on This Account", section: "Account", destination: .account, keywords: ["remove device", "sign out", "linked"]),
         .init("account.delete", "Delete Account", section: "Account", destination: .account, keywords: ["erase", "remove account", "privacy"]),
 
-        .init("privacy.diagnostics", "Share Diagnostics", section: "Privacy", destination: .privacySupport, keywords: ["reliability", "errors", "telemetry"]),
-        .init("privacy.version", "Version", section: "About", destination: .privacySupport, keywords: ["build", "update"]),
-        .init("privacy.acknowledgements", "Acknowledgements", section: "About", destination: .privacySupport, keywords: ["licenses", "licences", "open source", "nemotron", "fluidaudio", "sparkle", "credits"]),
-        .init("privacy.docs", "Miniti Docs", section: "Help", destination: .privacySupport, keywords: ["documentation", "learn"]),
-        .init("privacy.support", "Support", section: "Help", destination: .privacySupport, keywords: ["help", "contact"]),
-        .init("privacy.legal", "Privacy & Terms", section: "About", destination: .privacySupport, keywords: ["policy", "legal"])
+        .init("privacy.diagnostics", "Share Diagnostics", section: "Diagnostics", destination: .privacy, keywords: ["reliability", "errors", "telemetry"]),
+        .init("about.version", "Version", section: "About", destination: .about, keywords: ["build", "update"]),
+        .init("about.acknowledgements", "Acknowledgements", section: "About", destination: .about, keywords: ["licenses", "licences", "open source", "nemotron", "fluidaudio", "sparkle", "credits"]),
+        .init("about.docs", "miniti Docs", section: "Help", destination: .about, keywords: ["documentation", "learn"]),
+        .init("about.support", "Support", section: "Help", destination: .about, keywords: ["help", "contact"]),
+        .init("about.legal", "Privacy & Terms", section: "About", destination: .about, keywords: ["policy", "legal"])
     ]
 
     static func availableItems(on platform: SettingsPlatform, appMode: AppMode) -> [SettingsSearchItem] {
@@ -428,9 +473,9 @@ final class AppState: ObservableObject {
 
         var label: String {
             switch self {
-            case .silence: return "auto-stopped — no speech detected"
-            case .stalledPipeline: return "auto-stopped — live transcription stopped responding"
-            case .callEnded: return "ended automatically — call ended"
+            case .silence: return "auto-stopped, no speech detected"
+            case .stalledPipeline: return "auto-stopped, live transcription stopped responding"
+            case .callEnded: return "ended automatically, call ended"
             }
         }
 
@@ -666,7 +711,13 @@ final class AppState: ObservableObject {
     }
     
     // MARK: - Insights Mode
-    @Published var insightsMode: InsightsMode = .standard
+    @Published var insightsMode: InsightsMode = .standard {
+        didSet { if insightsMode.isSpecialist { rememberedSpecialistMode = insightsMode } }
+    }
+    /// The specialist view (Sales, a template, Playbook) chosen for this meeting. The "More"
+    /// tab shows and reopens it with one click after a switch to Summary, Questions, or
+    /// Coaching; picking another specialist replaces it. Cleared with the meeting.
+    @Published private(set) var rememberedSpecialistMode: InsightsMode?
     @Published var trainingMetrics: TrainingMetrics?
     
     // MARK: - Live Notes
@@ -1118,6 +1169,26 @@ final class AppState: ObservableObject {
         ).templateSections
     }
 
+    /// Draft a template from a description: managed through `/api/insights`, BYOK straight to
+    /// OpenAI. The editor shows the result for editing; nothing is saved here.
+    func draftInsightTemplate(from description: String) async throws -> InsightTemplateDraft {
+        let model = OpenAIModel.gpt5Mini
+        if appMode == .managed, let minitiAPIService {
+            return try await minitiAPIService.draftInsightTemplate(
+                deviceId: DeviceIdentifier.getOrCreateDeviceId(),
+                description: description,
+                model: model.rawValue,
+                language: meetingLanguage
+            )
+        }
+        guard let insightsService, !openaiApiKey.isEmpty else {
+            throw MinitiAPIService.ServiceError.serverError("add an OpenAI key in Settings → Account to draft templates")
+        }
+        return try await insightsService.draftInsightTemplate(
+            description: description, model: model, apiKey: openaiApiKey, language: meetingLanguage
+        )
+    }
+
     var hasLiveTemplateContent: Bool {
         !liveTemplate.orderedSections(from: liveTemplateSections).isEmpty
     }
@@ -1158,6 +1229,9 @@ final class AppState: ObservableObject {
 
         if !enabled, insightsMode == mode {
             insightsMode = .standard
+        }
+        if !enabled, rememberedSpecialistMode == mode {
+            rememberedSpecialistMode = nil
         }
     }
 
@@ -1251,9 +1325,10 @@ final class AppState: ObservableObject {
         guard !isFinalizingMeeting else { return false }
         switch appMode {
         case .byok:
-            return !deepgramApiKey.isEmpty
+            return !deepgramApiKey.isEmpty || willTranscribeOnDevice
         case .managed:
-            return !isDeviceDisabled && !isLimitReached
+            // A private meeting uses no minutes and asks the backend for nothing.
+            return !isDeviceDisabled && (!isLimitReached || privateModeEnabled)
         }
     }
     
@@ -1356,6 +1431,103 @@ final class AppState: ObservableObject {
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
+    /// Transcribe with the on-device Nemotron 3.5 recogniser instead of Deepgram. Default off
+    /// (beta, 2.12.0). When the model for the meeting language is loaded, new sessions feed
+    /// audio to it and open no Deepgram socket; managed mode then reports no minutes.
+    @AppStorage("onDeviceTranscription") var onDeviceTranscriptionEnabled: Bool = false
+    /// With the setting on but the model missing or still downloading when a recording
+    /// starts: off (default) refuses the start with a message, on uses Deepgram for that
+    /// meeting. Never consulted mid-meeting, so a local session can never silently upload.
+    @AppStorage("onDeviceTranscriptionCloudFallback") var onDeviceTranscriptionCloudFallback: Bool = false
+    /// On-device transcription (Nemotron 3.5 via FluidAudio). Always constructed; does nothing
+    /// until `onDeviceTranscriptionEnabled` prepares a model family.
+    let onDeviceTranscription = OnDeviceTranscriptionService()
+    /// True while the current recording session transcribes on this device. Decided once per
+    /// start; watchdog restarts within the meeting keep the same engine.
+    @Published private(set) var sessionTranscribesOnDevice = false
+    /// Private mode (2.12.0, macOS): transcription and speakers on this Mac, every cloud AI
+    /// feature off (summaries, questions, Sales, templates, catch-up, speaker names, Jev,
+    /// Playbook, investigations). One switch; `setPrivateMode` flips the underlying settings and
+    /// restores them when it is turned off. Nothing about a meeting leaves the Mac while it is on.
+    @AppStorage("privateMode") var privateModeEnabled: Bool = false
+
+    /// The settings private mode overrides, kept so turning it off puts them back.
+    struct PrivateModeRestore: Codable, Equatable {
+        var onDeviceTranscription: Bool
+        var onDeviceSpeakerSeparation: Bool
+        var onDeviceTranscriptionCloudFallback: Bool
+        var salesInsights: Bool
+        var templateInsights: Bool
+        var playbookInsights: Bool
+        var autoInferSpeakerNames: Bool
+        var notifyOnSalesDetection: Bool
+        var jevClassifier: Bool
+    }
+    static let privateModeRestoreKey = "privateMode.restore"
+
+    /// Private mode needs the on-device engines, so it is macOS on Apple silicon for now.
+    var privateModeAvailable: Bool {
+        #if os(macOS)
+        return OnDeviceTranscriptionService.isHardwareSupported
+        #else
+        return false
+        #endif
+    }
+
+    /// Turn private mode on (snapshot the current choices, force the local ones, switch every
+    /// cloud AI feature off) or off (restore the snapshot). Idempotent.
+    func setPrivateMode(_ on: Bool, defaults: UserDefaults = .standard) {
+        if on {
+            guard privateModeAvailable else { return }
+            if !privateModeEnabled {
+                let snapshot = PrivateModeRestore(
+                    onDeviceTranscription: onDeviceTranscriptionEnabled,
+                    onDeviceSpeakerSeparation: onDeviceSpeakerSeparationEnabled,
+                    onDeviceTranscriptionCloudFallback: onDeviceTranscriptionCloudFallback,
+                    salesInsights: salesInsightsEnabled,
+                    templateInsights: templateInsightsEnabled,
+                    playbookInsights: playbookInsightsEnabled,
+                    autoInferSpeakerNames: autoInferSpeakerNames,
+                    notifyOnSalesDetection: notifyOnSalesDetection,
+                    jevClassifier: jevClassifierEnabled
+                )
+                if let data = try? JSONEncoder().encode(snapshot) { defaults.set(data, forKey: Self.privateModeRestoreKey) }
+            }
+            privateModeEnabled = true
+            onDeviceTranscriptionEnabled = true
+            onDeviceSpeakerSeparationEnabled = true
+            onDeviceTranscriptionCloudFallback = false
+            salesInsightsEnabled = false
+            templateInsightsEnabled = false
+            playbookInsightsEnabled = false
+            autoInferSpeakerNames = false
+            notifyOnSalesDetection = false
+            jevClassifierEnabled = false
+            if insightsMode.isSpecialist { insightsMode = .standard }
+            rememberedSpecialistMode = nil
+            investigationSuggestion = nil
+            DebugLogger.shared.log(.app, "Private mode on")
+        } else {
+            guard privateModeEnabled else { return }
+            privateModeEnabled = false
+            if let data = defaults.data(forKey: Self.privateModeRestoreKey),
+               let snapshot = try? JSONDecoder().decode(PrivateModeRestore.self, from: data) {
+                onDeviceTranscriptionEnabled = snapshot.onDeviceTranscription
+                onDeviceSpeakerSeparationEnabled = snapshot.onDeviceSpeakerSeparation
+                onDeviceTranscriptionCloudFallback = snapshot.onDeviceTranscriptionCloudFallback
+                salesInsightsEnabled = snapshot.salesInsights
+                templateInsightsEnabled = snapshot.templateInsights
+                playbookInsightsEnabled = snapshot.playbookInsights
+                autoInferSpeakerNames = snapshot.autoInferSpeakerNames
+                notifyOnSalesDetection = snapshot.notifyOnSalesDetection
+                jevClassifierEnabled = snapshot.jevClassifier
+                defaults.removeObject(forKey: Self.privateModeRestoreKey)
+            }
+            DebugLogger.shared.log(.app, "Private mode off")
+        }
+        refreshOnDeviceTranscriptionAvailability()
+        refreshOnDeviceDiarizationAvailability()
+    }
     /// Webhooks and automatic CRM sends go through here: persisted, retried with backoff,
     /// visible in Settings (roadmap P1.2, 2.11.0).
     let deliveryOutbox = DeliveryOutbox()
@@ -2036,6 +2208,13 @@ final class AppState: ObservableObject {
             .sink { [weak self] in self?.isUsingFallbackInputDevice = $0 }.store(in: &cancellables)
         #endif
         refreshOnDeviceDiarizationAvailability()
+        refreshOnDeviceTranscriptionAvailability()
+        $meetingLanguage
+            .removeDuplicates()
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refreshOnDeviceTranscriptionAvailability() }
+            .store(in: &cancellables)
         insightsService = InsightsService()
         minitiAPIService = MinitiAPIService()
         #if os(iOS)
@@ -2283,18 +2462,19 @@ final class AppState: ObservableObject {
                 let useMultichannel = false
                 let monoSource: TranscriptSource = .microphone
                 #endif
-                let configured = await self.configureDeepgramCredentialForConnect()
-                guard configured else {
-                    DebugLogger.shared.log(.app, "Deepgram reconnect skipped attempt \(idx + 1): credential unavailable")
-                    continue
+                if !self.sessionTranscribesOnDevice {
+                    let configured = await self.configureDeepgramCredentialForConnect()
+                    guard configured else {
+                        DebugLogger.shared.log(.app, "Deepgram reconnect skipped attempt \(idx + 1): credential unavailable")
+                        continue
+                    }
+                } else {
+                    self.onDeviceTranscription.noteSessionEnded()
                 }
                 // A new Deepgram socket resets word timestamps to zero. Anchor that new clock at
                 // the active meeting duration so post-reconnect segments remain chronological.
                 self.deepgramTimelineOffset = self.preciseCurrentRecordingDuration
-                deepgramService.connect(
-                    language: self.meetingLanguage,
-                    personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
-                    sessionKeyterms: self.deepgramSessionKeyterms(),
+                await self.connectTranscription(
                     multichannel: useMultichannel,
                     monoSource: monoSource,
                     preserveSpeakerIdentities: true,
@@ -2897,7 +3077,7 @@ final class AppState: ObservableObject {
         let title = app.confidence == .browser
             ? "Browser call ended"
             : "\(app.displayName) call ended"
-        let body = "Finishing in \(Int(Self.endingGraceDuration))s — Keep recording to continue."
+        let body = "Finishing in \(Int(Self.endingGraceDuration))s. Keep recording to continue."
         // Hoisted out of the @Sendable closure: these are main-actor-isolated statics.
         let category = Self.smartMeetingNotificationCategory + ".call-grace"
         let identifier = Self.endingGraceNotificationIdentifier
@@ -3775,7 +3955,7 @@ final class AppState: ObservableObject {
             while !Task.isCancelled, isRecording {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 guard !Task.isCancelled, isRecording else { break }
-                if isLiveInsightsBackedOff { continue }
+                if isLiveInsightsBackedOff || privateModeEnabled { continue }
                 let liveSegmentsSnapshot = liveSegments
                 let finalCount = liveSegmentsSnapshot.count
                 var finalizedSegmentsCache: [LiveSegment]?
@@ -4251,8 +4431,9 @@ final class AppState: ObservableObject {
 
     /// Refresh the docs-topic list for the current live/stopped meeting.
     func refreshDocsTopics() async {
+        guard !privateModeEnabled else { return }
         guard validatedDocsMCPURL != nil else {
-            docsLookupError = "Add a docs MCP URL in Settings → Docs MCP."
+            docsLookupError = "Add a docs server in Settings → Playbook."
             return
         }
         guard let transcript = currentDocsTranscript(), transcript.count >= docsMinTranscriptChars else { return }
@@ -4273,8 +4454,9 @@ final class AppState: ObservableObject {
 
     /// Refresh the docs-topic list for a saved history meeting.
     func refreshDocsTopics(for meeting: Meeting) async {
+        guard !privateModeEnabled else { return }
         guard validatedDocsMCPURL != nil else {
-            docsLookupError = "Add a docs MCP URL in Settings → Docs MCP."
+            docsLookupError = "Add a docs server in Settings → Playbook."
             return
         }
         let meetingID = meeting.id
@@ -4343,7 +4525,7 @@ final class AppState: ObservableObject {
     /// live and history lookup paths.
     private func resolveDocCard(topic: String, transcript: String, language: String) async -> DocCardOutcome {
         guard let mcpURL = validatedDocsMCPURL else {
-            return .failure("Add a docs MCP URL in Settings → Docs MCP.")
+            return .failure("Add a docs server in Settings → Playbook.")
         }
         do {
             if appMode == .managed, let minitiAPIService {
@@ -4361,7 +4543,7 @@ final class AppState: ObservableObject {
                     language: language
                 )
                 if response.meta?.degraded == true {
-                    return .transient("Docs service is busy — tap to try again.")
+                    return .transient("Docs service is busy. Tap to try again.")
                 }
                 if let card = response.docs.first(where: { !$0.citations.isEmpty }) {
                     return .answered(card)
@@ -4394,10 +4576,10 @@ final class AppState: ObservableObject {
             // Timeouts (MCP or backend) are transient — present them as retryable
             // "busy", not a hard error.
             if let mcpError = error as? DocsMCPService.MCPError, case .timeout = mcpError {
-                return .transient("Docs lookup timed out — tap to try again.")
+                return .transient("Docs lookup timed out. Tap to try again.")
             }
             if let serviceError = error as? MinitiAPIService.ServiceError, case .rateLimited = serviceError {
-                return .transient("Docs service is busy — tap to try again.")
+                return .transient("Docs service is busy. Tap to try again.")
             }
             DebugLogger.shared.log(.app, "Docs topic lookup FAILED: \(error.localizedDescription)")
             enqueueDiagnosticEvent(
@@ -4743,7 +4925,7 @@ final class AppState: ObservableObject {
         segmentCount: Int,
         meetingID: UUID
     ) async {
-        guard autoInferSpeakerNames else { return }
+        guard autoInferSpeakerNames, !privateModeEnabled else { return }
         guard !isGeneratingSpeakerNames else { return }
         guard currentMeeting?.id == meetingID else { return }
         let transcript = transcriptTextWithSpeakerIDs(from: finalSegments)
@@ -5092,6 +5274,121 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Load or drop the on-device transcription model family for the meeting language to match
+    /// the setting. Called at launch, when the setting changes, and when the language changes.
+    /// Never touches an active session.
+    func refreshOnDeviceTranscriptionAvailability() {
+        guard !ScreenshotMode.isActive else { return }
+        if onDeviceTranscriptionEnabled, OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) != .cloudOnly {
+            onDeviceTranscription.prepare(languageCode: meetingLanguage)
+        } else if !onDeviceTranscriptionEnabled {
+            onDeviceTranscription.unload()
+        }
+    }
+
+    /// Whether a recording started now would transcribe on this device: setting on, Apple
+    /// silicon, the meeting language is not cloud-only, and its model family is loaded or
+    /// already on disk and loading (a few seconds after launch; the start waits for it).
+    var willTranscribeOnDevice: Bool {
+        guard onDeviceTranscriptionEnabled,
+              OnDeviceTranscriptionService.isHardwareSupported,
+              OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) != .cloudOnly else { return false }
+        if onDeviceTranscription.isReady(forLanguageCode: meetingLanguage) { return true }
+        return onDeviceTranscription.isPreparing(forLanguageCode: meetingLanguage)
+            && OnDeviceTranscriptionService.isDownloaded(languageCode: meetingLanguage)
+    }
+
+    /// The setting is on for a language it handles, the model is not ready, and the user has
+    /// not allowed Deepgram for that case: starting must be refused, visibly.
+    var onDeviceTranscriptionBlocksStart: Bool {
+        if privateModeEnabled, OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) == .cloudOnly {
+            return true  // private mode never opens a Deepgram socket, so this language cannot record
+        }
+        return onDeviceTranscriptionEnabled
+            && OnDeviceTranscriptionService.isHardwareSupported
+            && OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) != .cloudOnly
+            && !willTranscribeOnDevice
+            && !onDeviceTranscriptionCloudFallback
+    }
+
+    /// The message a refused start shows, which depends on why.
+    var onDeviceTranscriptionRefusalMessage: String {
+        if privateModeEnabled, OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) == .cloudOnly,
+           let language = TranscriptionLanguage(rawValue: meetingLanguage) {
+            return "Private mode cannot transcribe \(language.englishName) on this Mac yet. Pick another language or turn private mode off."
+        }
+        return Self.onDeviceTranscriptionNotReadyMessage
+    }
+
+    /// How long a start waits for a model that is on disk and still loading.
+    static let onDeviceTranscriptionLoadTimeout: TimeInterval = 30
+
+    static let onDeviceTranscriptionNotReadyMessage = "The on-device transcription model is not ready. Wait for the download in Settings, Transcription, or allow Deepgram for this meeting there."
+
+    /// Capture sources this platform transcribes on device.
+    private var onDeviceTranscriptionSources: Set<TranscriptSource> {
+        #if os(macOS)
+        return [.microphone, .system]
+        #else
+        return [.microphone]
+        #endif
+    }
+
+    /// Open the transcription engine for a session: the on-device recogniser when this
+    /// session was started that way (and it can still start), otherwise the Deepgram socket.
+    /// Both paths share every downstream contract (`TranscriptUpdate`, segments, identities).
+    private func connectTranscription(
+        multichannel: Bool,
+        monoSource: TranscriptSource,
+        preserveSpeakerIdentities: Bool,
+        onDeviceSpeakerTimeline: OnDeviceSpeakerTimeline?
+    ) async {
+        guard let deepgramService else { return }
+        if sessionTranscribesOnDevice {
+            if !onDeviceTranscription.isReady(forLanguageCode: meetingLanguage) {
+                let ready = await onDeviceTranscription.waitUntilReady(
+                    forLanguageCode: meetingLanguage, timeout: Self.onDeviceTranscriptionLoadTimeout
+                )
+                DebugLogger.shared.log(.app, "On-device transcription model load awaited: ready=\(ready)")
+            }
+            let sources: Set<TranscriptSource> = multichannel ? [.microphone, .system] : [monoSource]
+            let vocabulary = PersonalDictionaryPreferences.deepgramKeyterms(
+                personalTerms: PersonalDictionaryPreferences.currentTerms(),
+                sessionTerms: deepgramSessionKeyterms()
+            )
+            if let session = await onDeviceTranscription.beginSession(
+                sources: sources.intersection(onDeviceTranscriptionSources),
+                languageCode: meetingLanguage,
+                vocabulary: vocabulary
+            ) {
+                deepgramService.connectLocal(
+                    session: session,
+                    language: meetingLanguage,
+                    multichannel: multichannel,
+                    monoSource: monoSource,
+                    preserveSpeakerIdentities: preserveSpeakerIdentities,
+                    onDeviceSpeakerTimeline: onDeviceSpeakerTimeline
+                )
+                return
+            }
+            // The local engine could not (re)start. Never fall back to the cloud inside a
+            // session the user started as local: surface it and leave transcription stopped.
+            DebugLogger.shared.log(.app, "On-device transcription session could not start; transcription stopped for this meeting")
+            recordingErrorMessage = "On-device transcription stopped. The recording continues without a transcript."
+            enqueueDiagnosticEvent("on_device_transcription_unavailable", category: .deepgram, level: .error)
+            return
+        }
+        deepgramService.connect(
+            language: meetingLanguage,
+            personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
+            sessionKeyterms: deepgramSessionKeyterms(),
+            multichannel: multichannel,
+            monoSource: monoSource,
+            preserveSpeakerIdentities: preserveSpeakerIdentities,
+            onDeviceSpeakerTimeline: onDeviceSpeakerTimeline
+        )
+    }
+
     /// Start an on-device diarization session for the sources this recording captures, or
     /// nil (Deepgram diarizes) when the setting is off or the models are not ready.
     private func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource) -> OnDeviceSpeakerTimeline? {
@@ -5140,7 +5437,7 @@ final class AppState: ObservableObject {
 
     /// Re-fetch the catch-up while the sheet is already open.
     func refreshZonedOutCatchUp() {
-        guard isRecording, currentMeeting != nil else { return }
+        guard isRecording, currentMeeting != nil, !privateModeEnabled else { return }
         activeCatchUpTask?.cancel()
         activeCatchUpTask = Task { @MainActor [weak self] in
             await self?.fetchZonedOutCatchUp(userInitiated: true)
@@ -5181,7 +5478,7 @@ final class AppState: ObservableObject {
             .sorted { $0.timestamp < $1.timestamp }
 
         guard !finalSegments.isEmpty else {
-            zonedOutCatchUpError = "not enough speech captured yet — try again in a few seconds"
+            zonedOutCatchUpError = "not enough speech captured yet. try again in a few seconds"
             return
         }
 
@@ -5191,7 +5488,7 @@ final class AppState: ObservableObject {
         let fullTranscript = transcriptText(from: finalSegments)
 
         guard !recentTranscript.isEmpty else {
-            zonedOutCatchUpError = "not enough speech captured yet — try again in a few seconds"
+            zonedOutCatchUpError = "not enough speech captured yet. try again in a few seconds"
             return
         }
 
@@ -5243,7 +5540,7 @@ final class AppState: ObservableObject {
 
             if result.isEmpty {
                 zonedOutCatchUp = nil
-                zonedOutCatchUpError = "catch-up not available yet — keep recording for a bit and try again"
+                zonedOutCatchUpError = "catch-up not available yet. keep recording for a bit and try again"
             } else {
                 zonedOutCatchUp = result
                 zonedOutCatchUpError = nil
@@ -5266,9 +5563,9 @@ final class AppState: ObservableObject {
                 details: ["error": error.localizedDescription]
             )
             if zonedOutCatchUp == nil {
-                zonedOutCatchUpError = "couldn't generate catch-up — \(error.localizedDescription.lowercased())"
+                zonedOutCatchUpError = "couldn't generate catch-up: \(error.localizedDescription.lowercased())"
             } else {
-                zonedOutCatchUpError = "couldn't refresh catch-up — showing the last one"
+                zonedOutCatchUpError = "couldn't refresh catch-up. showing the last one"
             }
             isGeneratingCatchUp = false
         }
@@ -5985,7 +6282,7 @@ final class AppState: ObservableObject {
         
         switch appMode {
         case .byok:
-            guard !deepgramApiKey.isEmpty else {
+            guard !deepgramApiKey.isEmpty || willTranscribeOnDevice else {
                 showSettings = true
                 return false
             }
@@ -6197,7 +6494,7 @@ final class AppState: ObservableObject {
         guard hasAcceptedTerms else { return false }
         switch appMode {
         case .byok:
-            guard !deepgramApiKey.isEmpty else {
+            guard !deepgramApiKey.isEmpty || willTranscribeOnDevice else {
                 showSettings = true
                 return false
             }
@@ -6307,6 +6604,7 @@ final class AppState: ObservableObject {
         
         // Reset insights mode to standard for fresh start
         insightsMode = .standard
+        rememberedSpecialistMode = nil
         selectedCalendarEvent = nil
     }
 
@@ -6390,6 +6688,7 @@ final class AppState: ObservableObject {
         
         clearCurrentSession()
         insightsMode = .standard
+        rememberedSpecialistMode = nil
     }
 
     /// Record that a saved meeting is about to be deleted from history. Insight, docs, and save
@@ -6418,7 +6717,7 @@ final class AppState: ObservableObject {
     
     /// Generate only the currently selected insight view for a saved meeting.
     func generateInsightsForMeeting(_ meeting: Meeting) async {
-        if insightsMode == .training {
+        if insightsMode == .training || privateModeEnabled {
             return
         }
         if insightsMode == .docs {
@@ -6632,7 +6931,7 @@ final class AppState: ObservableObject {
             case .invalid:
                 return "that is the same word. type the spelling you want, capitals included"
             case .full:
-                return "your dictionary already has \(PersonalDictionaryPreferences.maxCorrections) corrections. remove one in Settings → Language"
+                return "your dictionary already has \(PersonalDictionaryPreferences.maxCorrections) corrections. remove one in Settings → Transcription"
             case .saveFailed:
                 return "correction didn't save. try again"
             case .saved(let rewrote):
@@ -7117,7 +7416,7 @@ final class AppState: ObservableObject {
     /// Fill the live template as soon as it is chosen, rather than waiting for the next
     /// cadence tick, when there is enough transcript to fill from.
     private func requestTemplateFillIfNeeded() {
-        guard isRecording, templateInsightsEnabled, !isGeneratingTemplateInsights else { return }
+        guard isRecording, templateInsightsEnabled, !isGeneratingTemplateInsights, !privateModeEnabled else { return }
         guard !hasLiveTemplateContent else { return }
         let finalSegments = liveSegments
             .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -7639,16 +7938,26 @@ final class AppState: ObservableObject {
             return
         }
         
-        DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio))")
+        DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio), onDevice=\(willTranscribeOnDevice))")
         recordingErrorMessage = nil
         finalizationStatusText = ""
         isStartingMeeting = false
         isResumingRecording = false
         currentMeeting?.endTime = nil
+
+        // The engine is chosen once per session. A local session never switches to the cloud
+        // mid-meeting, and a start the user asked to keep local is refused rather than uploaded.
+        if onDeviceTranscriptionBlocksStart {
+            DebugLogger.shared.log(.app, "startRecording refused: on-device transcription model not ready and cloud fallback off")
+            recordingErrorMessage = onDeviceTranscriptionRefusalMessage
+            return
+        }
+        sessionTranscribesOnDevice = willTranscribeOnDevice
         
         // In managed mode, if the JWT is missing/expired (e.g. resuming after stop),
-        // request a fresh /api/session before connecting to Deepgram.
-        if appMode == .managed && !hasFreshManagedDeepgramCredential {
+        // request a fresh /api/session before connecting to Deepgram. A local session needs
+        // no Deepgram credential and must not open a metered session.
+        if appMode == .managed && !hasFreshManagedDeepgramCredential && !sessionTranscribesOnDevice {
             isResumingRecording = true
             Task { await startManagedRecording() }
             return
@@ -7722,21 +8031,34 @@ final class AppState: ObservableObject {
             deepgramService.seedRestoredSpeakerIdentities(Set(liveSegments.map(\.speaker)))
         }
         let onDeviceTimeline = beginOnDeviceDiarizationSession(multichannel: useMultichannel, monoSource: monoSource)
-        deepgramService.connect(
-            language: meetingLanguage,
-            personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
-            sessionKeyterms: deepgramSessionKeyterms(),
-            multichannel: useMultichannel,
-            monoSource: monoSource,
-            preserveSpeakerIdentities: isResumedSession,
-            onDeviceSpeakerTimeline: onDeviceTimeline
-        )
+
+        // The Deepgram socket opens synchronously here, exactly as before; only a local session
+        // needs to await its model handles, and that happens just ahead of capture start.
+        if !sessionTranscribesOnDevice {
+            deepgramService.connect(
+                language: meetingLanguage,
+                personalDictionaryTerms: PersonalDictionaryPreferences.currentTerms(),
+                sessionKeyterms: deepgramSessionKeyterms(),
+                multichannel: useMultichannel,
+                monoSource: monoSource,
+                preserveSpeakerIdentities: isResumedSession,
+                onDeviceSpeakerTimeline: onDeviceTimeline
+            )
+        }
 
         // Configure audio capture
         audioCaptureService.onAudioBuffer = makeAudioBufferHandler(multichannel: useMultichannel, monoSource: monoSource)
         
         // Start capturing
         Task {
+            if sessionTranscribesOnDevice {
+                await connectTranscription(
+                    multichannel: useMultichannel,
+                    monoSource: monoSource,
+                    preserveSpeakerIdentities: isResumedSession,
+                    onDeviceSpeakerTimeline: onDeviceTimeline
+                )
+            }
             do {
                 try await audioCaptureService.startCapture(
                     microphone: captureMicrophone,
@@ -7791,6 +8113,24 @@ final class AppState: ObservableObject {
                 ?? "Miniti could not set up this device for managed mode. Check your connection and try again."
             isStartingMeeting = false
             isResumingRecording = false
+            return
+        }
+
+        if onDeviceTranscriptionBlocksStart {
+            DebugLogger.shared.log(.app, "startManagedRecording refused: on-device transcription model not ready and cloud fallback off")
+            recordingErrorMessage = onDeviceTranscriptionRefusalMessage
+            isStartingMeeting = false
+            isResumingRecording = false
+            return
+        }
+        if willTranscribeOnDevice {
+            // No Deepgram JWT and no metered session: the audio stays on this device and the
+            // backend only sees insight requests. Pending end reports from earlier cloud
+            // sessions still flush.
+            recordingErrorMessage = nil
+            managedSessionStartRecordedDuration = nil
+            await flushPendingSessionEndReports(trigger: "session started")
+            startRecording()
             return
         }
 
@@ -7980,10 +8320,17 @@ final class AppState: ObservableObject {
         
         audioCaptureService?.stopCapture()
         onDeviceDiarization.endSession()
+        let stoppedOnDevice = sessionTranscribesOnDevice
+        sessionTranscribesOnDevice = false
+        if stoppedOnDevice {
+            DebugLogger.shared.log(.app, "stopRecording: session transcribed on device, no managed minutes to report")
+        }
         Task { await flushClientEvents(trigger: "stop recording") }
 
-        // Report usage to backend in managed mode
-        if appMode == .managed, let sessionId = currentSessionId {
+        // Report usage to backend in managed mode. A local session opened no managed session;
+        // a session id still pending from an earlier cloud meeting must not be re-reported
+        // with this meeting's duration.
+        if appMode == .managed, !stoppedOnDevice, let sessionId = currentSessionId {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
             let sessionStart = managedSessionStartRecordedDuration ?? 0
             let sessionDuration = max(0, recordingDuration - sessionStart)
@@ -8024,6 +8371,7 @@ final class AppState: ObservableObject {
                 finalizationStatusText = "Finishing transcript…"
                 Task {
                     await deepgramService?.gracefulDisconnect()
+                    onDeviceTranscription.noteSessionEnded()
                     guard currentMeeting?.id == meetingIDAtStop,
                           !isMeetingDeleted(meetingIDAtStop) else {
                         // The meeting was discarded/deleted mid-finalization. clearCurrentSession
@@ -8096,12 +8444,14 @@ final class AppState: ObservableObject {
                 }
             } else {
                 deepgramService?.disconnect()
+                onDeviceTranscription.noteSessionEnded()
                 saveCurrentMeetingIfNeeded()
                 finalizationStatusText = "Saved automatically"
                 completeMeetingFinalization()
             }
         } else {
             deepgramService?.disconnect()
+            onDeviceTranscription.noteSessionEnded()
             completeMeetingFinalization()
         }
     }
@@ -8313,6 +8663,10 @@ final class AppState: ObservableObject {
         includeSales: Bool,
         template: InsightTemplate? = nil
     ) async {
+        guard !privateModeEnabled else {
+            DebugLogger.shared.log(.app, "Final insights skipped: private mode")
+            return
+        }
         let meetingIDAtRequest = meeting.id
         let transcriptRevisionAtRequest = meeting.transcriptRevision
         let requestAppMode = appMode
@@ -8582,7 +8936,7 @@ final class AppState: ObservableObject {
     }
     
     func generateInsights() async {
-        guard let meeting = currentMeeting else { return }
+        guard let meeting = currentMeeting, !privateModeEnabled else { return }
 
         if insightsMode == .training {
             recomputeTrainingMetrics()
@@ -11032,7 +11386,7 @@ final class AppState: ObservableObject {
                 let year = parts[0], month = parts[1], day = parts[2]
                 let dateStr = "\(year)-\(month)-\(day)"
                 let titlePart = parts.count > 4 ? String(parts[4]).replacingOccurrences(of: "-", with: " ") : name
-                index += "- [\(file)](\(file)) — \(dateStr) — \(titlePart)\n"
+                index += "- [\(file)](\(file)), \(dateStr), \(titlePart)\n"
             } else {
                 index += "- [\(file)](\(file))\n"
             }
@@ -11428,7 +11782,7 @@ final class AppState: ObservableObject {
             identifier: "miniti.nudge.sales.\(UUID().uuidString)",
             kind: .salesDetected,
             title: "sales conversation?",
-            body: "this sounds like a sales call — enable live Sales (MEDDPICC) analysis for this meeting?"
+            body: "this sounds like a sales call. enable live Sales (MEDDPICC) analysis for this meeting?"
         )
         guard delivered else { return }
         salesDetectionNudgeFired = true
@@ -11604,7 +11958,7 @@ final class AppState: ObservableObject {
     // MARK: - User-triggered investigations
 
     var canInvestigateCurrentConversation: Bool {
-        !liveSegments.isEmpty
+        !liveSegments.isEmpty && !privateModeEnabled
     }
 
     #if os(macOS)
@@ -11711,7 +12065,7 @@ final class AppState: ObservableObject {
         #if os(macOS)
         if scope == .codebase {
             guard !investigationCodebaseBookmark.isEmpty else {
-                investigationError = "choose a codebase folder in Settings → AI & Models first"
+                investigationError = "choose a codebase folder in Settings → AI first"
                 isGeneratingInvestigation = false
                 return
             }
@@ -11735,7 +12089,7 @@ final class AppState: ObservableObject {
                 }
             } catch {
                 guard investigationRequestID == requestID, !Task.isCancelled else { return }
-                investigationError = "couldn't read the selected codebase — choose it again in Settings"
+                investigationError = "couldn't read the selected codebase. choose it again in Settings"
                 isGeneratingInvestigation = false
                 return
             }
@@ -11752,7 +12106,7 @@ final class AppState: ObservableObject {
             let result: InvestigationResult
             if appMode == .managed {
                 guard let minitiAPIService else {
-                    investigationError = "Miniti's OpenAI service isn't available — try again"
+                    investigationError = "miniti's OpenAI service isn't available. try again"
                     isGeneratingInvestigation = false
                     return
                 }
@@ -11791,7 +12145,7 @@ final class AppState: ObservableObject {
                 return
             }
             if result.isEmpty {
-                investigationError = "OpenAI returned no investigation result — try again"
+                investigationError = "OpenAI returned no investigation result. try again"
             } else {
                 investigationResult = result
             }
@@ -11802,7 +12156,7 @@ final class AppState: ObservableObject {
                 isGeneratingInvestigation = false
                 return
             }
-            investigationError = "couldn't investigate — \(error.localizedDescription.lowercased())"
+            investigationError = "couldn't investigate: \(error.localizedDescription.lowercased())"
             enqueueDiagnosticEvent(
                 "insights_investigation_failed",
                 category: .insights,
@@ -11816,7 +12170,7 @@ final class AppState: ObservableObject {
     }
 
     private func evaluateInvestigationSuggestion() {
-        guard isRecording,
+        guard isRecording, !privateModeEnabled,
               let lastFinal = liveSegments.last,
               lastFinal.id != lastInvestigationEvaluatedFinalSegmentID else { return }
         lastInvestigationEvaluatedFinalSegmentID = lastFinal.id
@@ -12159,7 +12513,7 @@ final class AppState: ObservableObject {
             identifier: "miniti.nudge.monologue.\(UUID().uuidString)",
             kind: .monologue,
             title: "heads up",
-            body: "you've been talking for a while — consider pausing to check in."
+            body: "you've been talking for a while. consider pausing to check in."
         )
         lastMonologueNudgeAt = Date()
         monologueNudgedForRun = true

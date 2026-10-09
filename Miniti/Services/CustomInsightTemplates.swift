@@ -129,6 +129,37 @@ struct InsightTemplateDraft: Equatable {
     }
 }
 
+/// What the drafting model returns (managed `/api/insights` mode `template_draft` wraps it in
+/// `template`; BYOK gets it as the chat completion body). Normalised to the editor's limits
+/// the same way the backend does.
+struct InsightTemplateDraftPayload: Decodable {
+    struct Section: Decodable {
+        let title: String?
+        let guidance: String?
+    }
+
+    let name: String?
+    let summary: String?
+    let sections: [Section]?
+
+    var normalizedDraft: InsightTemplateDraft {
+        let name = String((self.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(InsightTemplate.maxNameLength))
+        let summary = String((self.summary ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(InsightTemplate.maxSummaryLength))
+        var seen = Set<String>()
+        var sections: [InsightTemplateDraft.Section] = []
+        for item in self.sections ?? [] {
+            let title = String((item.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(InsightTemplate.maxTitleLength))
+            guard !title.isEmpty else { continue }
+            let key = CustomInsightTemplates.baseSectionKey(for: title)
+            guard seen.insert(key).inserted else { continue }
+            let guidance = String((item.guidance ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(InsightTemplate.maxGuidanceLength))
+            sections.append(.init(title: title, guidance: guidance))
+            if sections.count >= InsightTemplate.maxSections { break }
+        }
+        return InsightTemplateDraft(name: name, summary: summary, sections: sections.isEmpty ? [.init()] : sections)
+    }
+}
+
 // MARK: - Store, keys, import/export
 
 enum CustomInsightTemplates {
