@@ -1,17 +1,6 @@
 # Changelog
 
-Public-facing changelog. End-user documentation lives at `https://miniti.app/docs`; the hosted changelog lives at `https://miniti.app/changelog`.
-
-## Style
-
-- Write entries as human-readable descriptions for a public audience. No code references, function names, file paths, or implementation details. Write what changed from the user's perspective — e.g. "Fix saved meetings showing wrong speaker name" not "Fix `TranscriptSegment.speakerLabel` for `micSpeakerID`".
-- Never modify older changelog entries after they are written unless the user explicitly requests a historical correction. Add other corrections, clarifications, or reversals only as a new entry at the top.
-- The entry at the top of this file is the source of truth; `fastlane/metadata/en-US/release_notes.txt` and `en-GB/release_notes.txt` are mirrored from it at release time.
-- While a release is still being prepared, its top entry may use `### Unreleased - vX.Y.Z`. Replace `Unreleased` with the ship date only when the release is actually going out.
-- Release headers contain only the date and version. Put platform availability in the relevant bullets, never in a parenthetical status suffix.
-- One flat bullet list per release, prefixed `new:`, `improvement:`, or `fix:`. No sub-headers such as "New features" or "Experience improvements"; the prefixes already say that.
-- The product name is always lowercase: miniti, never Miniti, including at the start of a sentence.
-- Voice (Ian's, see `../gtm/enablement/ian-tone-of-voice.md`): short plain sentences that assume an intelligent reader. Lead each bullet with the thing itself, then one line on what it does for you. Specific numbers over "several" or "many". Simple verbs (is, has, does) over "enables", "enhances", "leverages". No em dashes, no "not X, it's Y" framing, no bold, no exclamation marks, no filler ("we're excited to"). Full stops between sentences inside a bullet; no full stop at the end of a bullet.
+Public-facing changelog. End-user documentation lives at `https://miniti.app/docs`; the hosted changelog lives at `https://miniti.app/changelog`. Entries are tagged `(macOS)`, `(iOS)`, `(macOS and iOS)`, or `(Linux)` and prefixed `new:`, `improvement:`, or `fix:`.
 
 ## Releases
 
