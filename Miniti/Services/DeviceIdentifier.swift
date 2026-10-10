@@ -114,6 +114,27 @@ enum DeviceIdentifier {
         return existing
     }
     
+    /// Replace the device identity with a fresh UUID. Only for the case where the server
+    /// already holds an installation under the current id with a key this device does not
+    /// have (`device_already_enrolled` on create). Persisted the same way as a first id, so
+    /// the old backend records (usage, calendar, CRM, enrollment) are simply left behind.
+    static func rotate() -> String {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        let previous = cachedDeviceId ?? sessionOnlyDeviceId ?? "none"
+        let newId = UUID().uuidString
+        if saveToKeychain(newId) {
+            clearFallbackFromDefaults()
+        } else {
+            saveToDefaultsFallback(newId)
+            DebugLogger.shared.log(.app, "Persisted rotated device ID in UserDefaults because keychain save failed")
+        }
+        sessionOnlyDeviceId = nil
+        cachedDeviceId = newId
+        DebugLogger.shared.log(.app, "device_id_rotated from=\(previous.prefix(8))... to=\(newId.prefix(8))...")
+        return newId
+    }
+    
     // MARK: - Keychain Operations
     
     private static func getFromKeychain() -> KeychainReadResult {

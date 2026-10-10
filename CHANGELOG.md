@@ -4,6 +4,11 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-10-10 - v2.12.1
+
+- fix: (macOS and iOS) a phone restored from a backup could get a 401 on every recording and could not sign out. miniti kept a half-finished account on the device and signed with a key the server had never seen. It now sets the device up again on first launch. If you had an account before, move the device back to it with its recovery key in Settings, Account
+- fix: (macOS and iOS) sign out always clears the device, even when the server no longer accepts its key
+
 ### 2026-10-09 - v2.12.0
 
 - improvement: (macOS and iOS) Settings has a new shape. Five groups, one word per tab, one question per tab. Recording is your hardware. Transcription is language and the speech models. AI is summaries and speaker names. Privacy is the off switch. About is help. Deepgram or This Mac is one picker, not three toggles in three places

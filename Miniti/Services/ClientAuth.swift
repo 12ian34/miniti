@@ -493,7 +493,11 @@ enum ClientAuthError: LocalizedError, Equatable {
 /// token grants talk to `/api/auth/*` directly (no bearer); `MinitiAPIService` asks this
 /// object for a fresh access token and a request proof per authenticated call.
 final class ClientAuthManager: @unchecked Sendable {
-    static let shared = ClientAuthManager(store: KeychainClientAuthStore())
+    static let shared = ClientAuthManager(
+        store: KeychainClientAuthStore(),
+        deviceLabelProvider: { AppState.managedDeviceLabel },
+        deviceIDRotator: { DeviceIdentifier.rotate() }
+    )
 
     /// Refresh the access token when within this many seconds of expiry.
     static let accessRefreshMargin: Int64 = 60
@@ -509,30 +513,49 @@ final class ClientAuthManager: @unchecked Sendable {
     private let session: URLSession
     let baseURL: String
     let deviceIDProvider: @Sendable () -> String
+    /// Label sent when the installation is re-bound to its account (see `rebindInstallation`),
+    /// so the server keeps a readable device name instead of clearing it.
+    let deviceLabelProvider: @Sendable () -> String?
+    /// Mints and persists a new device id (see `createAccount`). `nil` means the install
+    /// cannot change identity; the conflict is then surfaced instead.
+    let deviceIDRotator: (@Sendable () -> String)?
 
     init(
         store: ClientAuthCredentialStore,
         baseURL: String = MinitiAPIService.baseURL,
         session: URLSession = .shared,
-        deviceIDProvider: @escaping @Sendable () -> String = { DeviceIdentifier.getOrCreateDeviceId() }
+        deviceIDProvider: @escaping @Sendable () -> String = { DeviceIdentifier.getOrCreateDeviceId() },
+        deviceLabelProvider: @escaping @Sendable () -> String? = { nil },
+        deviceIDRotator: (@Sendable () -> String)? = nil
     ) {
         self.store = store
         self.baseURL = baseURL
         self.session = session
         self.deviceIDProvider = deviceIDProvider
+        self.deviceLabelProvider = deviceLabelProvider
+        self.deviceIDRotator = deviceIDRotator
         self.credentials = store.load()
     }
 
     // MARK: State
 
+    /// True only for credentials the server has confirmed. A draft (key and recovery key
+    /// written before the enrollment request, no account yet) is not an enrollment: treating
+    /// it as one made every token grant sign with a key the server never saw, and the device
+    /// answered `invalid_proof` until it was wiped (2026-10-10).
     var isEnrolled: Bool {
         lock.lock(); defer { lock.unlock() }
-        return credentials != nil
+        guard let credentials else { return false }
+        return !Self.isDraft(credentials)
+    }
+
+    private static func isDraft(_ credentials: ClientAuthCredentials) -> Bool {
+        credentials.accountID.isEmpty && credentials.accessToken == nil
     }
 
     var status: ClientAuthStatus {
         lock.lock(); defer { lock.unlock() }
-        guard let credentials else { return .notEnrolled }
+        guard let credentials, !Self.isDraft(credentials) else { return .notEnrolled }
         return ClientAuthStatus(
             isEnrolled: true,
             accountID: credentials.accountID.isEmpty ? nil : credentials.accountID,
@@ -547,7 +570,8 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Formatted recovery key for an explicit reveal.
     func revealRecoveryKey() -> String? {
         lock.lock(); defer { lock.unlock() }
-        return credentials.map { ClientAuthCrypto.formatRecoveryKey($0.recoveryKey) }
+        guard let credentials, !Self.isDraft(credentials) else { return nil }
+        return ClientAuthCrypto.formatRecoveryKey(credentials.recoveryKey)
     }
 
     func markRecoveryKeyAcknowledged() {
@@ -748,7 +772,21 @@ final class ClientAuthManager: @unchecked Sendable {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
         writeDraft(key: key, recoveryKey: recoveryKey, path: .create)
-        let tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
+        let tokens: TokenResponse
+        do {
+            tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
+        } catch ClientAuthError.deviceAlreadyEnrolled {
+            // The server already has an active installation under this device id with a key
+            // this Keychain does not hold: a phone restored from a backup keeps the device id
+            // item but not the device-only credentials. No request from here can prove the
+            // old account, so this install takes a new identity. Usage, calendar and CRM
+            // connections were keyed by the old id; a person who kept the recovery key can
+            // move the device back with it (2026-10-10).
+            guard let deviceIDRotator else { throw ClientAuthError.deviceAlreadyEnrolled }
+            let rotated = deviceIDRotator()
+            DebugLogger.shared.log(.app, "Device auth: device id already enrolled with another key; rotated to \(rotated.prefix(8))... and creating a fresh account")
+            tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
+        }
         try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .create, acknowledged: acknowledged)
         DebugLogger.shared.log(.app, "Device auth: account created")
         return ClientAuthCrypto.formatRecoveryKey(recoveryKey)
@@ -852,10 +890,10 @@ final class ClientAuthManager: @unchecked Sendable {
                 do {
                     tokens = try await grantRefresh(refreshToken)
                 } catch ClientAuthError.server(_, let status) where status == 401 {
-                    tokens = try await grantChallenge()
+                    tokens = try await grantChallengeOrRebind()
                 }
             } else {
-                tokens = try await grantChallenge()
+                tokens = try await grantChallengeOrRebind()
             }
             update { credentials in
                 credentials.accessToken = tokens.accessToken
@@ -884,6 +922,34 @@ final class ClientAuthManager: @unchecked Sendable {
             "grant_type": "challenge", "device_id": deviceIDProvider(),
             "challenge_id": challenge.challengeId, "proof": proof,
         ])
+    }
+
+    /// A challenge grant the server answers with `invalid_proof` means the key it holds for
+    /// this device id is not the one in this Keychain (a backup restored onto a device that
+    /// kept its device UUID, or a second install carrying the same UUID). Nothing else the
+    /// app does can recover from that: sign-out and every write need a token first, and a
+    /// restore is refused while credentials exist. The stored recovery key proves the account,
+    /// so re-bind the installation to the current key through the restore route, which the
+    /// backend accepts for the same account without using a device slot (2026-10-10).
+    private func grantChallengeOrRebind() async throws -> TokenResponse {
+        do {
+            return try await grantChallenge()
+        } catch ClientAuthError.server(let code, let status) where status == 401 && code == "invalid_proof" {
+            DebugLogger.shared.log(.app, "Device auth: server rejected this installation's key; re-binding with the stored recovery key")
+            return try await rebindInstallation()
+        }
+    }
+
+    private func rebindInstallation() async throws -> TokenResponse {
+        let key = try installationKey()
+        let recoveryKey: String = try {
+            lock.lock(); defer { lock.unlock() }
+            guard let credentials else { throw ClientAuthError.notEnrolled }
+            return credentials.recoveryKey
+        }()
+        let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: deviceLabelProvider())
+        DebugLogger.shared.log(.app, "Device auth: installation re-bound to its account")
+        return tokens
     }
 
     /// `X-Request-Proof` for an authenticated write.
@@ -1000,6 +1066,13 @@ final class ClientAuthManager: @unchecked Sendable {
             let _: Empty = try await authorizedJSON("POST", "/auth/revoke", body: [:])
         } catch ClientAuthError.revoked {
             // Already gone server-side; local clear below is all that matters.
+        } catch ClientAuthError.server(_, let status) where status == 401 {
+            // The server no longer accepts this installation's key and the re-bind did not
+            // help either. Signing out is how the person escapes that state, so it must not
+            // itself depend on a token.
+        } catch ClientAuthError.deviceAlreadyEnrolled, ClientAuthError.recoveryKeyUnknown {
+            // The re-bind was refused because the device id now belongs to another account
+            // or the stored recovery key no longer resolves: forget it locally.
         }
         clearLocal()
     }

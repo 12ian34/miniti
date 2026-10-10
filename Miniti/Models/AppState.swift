@@ -10622,7 +10622,10 @@ final class AppState: ObservableObject {
             managedEnrollmentError = nil
             DebugLogger.shared.log(.app, "Managed enrollment: migrated existing device (trigger=\(trigger))")
             enqueueDiagnosticEvent("client_auth_migrated", category: .app, level: .info)
-        } catch ClientAuthError.notEligibleForMigration {
+        } catch ClientAuthError.notEligibleForMigration, ClientAuthError.deviceAlreadyEnrolled {
+            // Not eligible: no pre-cutoff device record. Already enrolled: the server holds an
+            // installation under this device id with a key this Keychain does not have (a
+            // restored backup); createAccount takes a fresh device id in that case.
             do {
                 try await manager.createAccount(label: label)
                 managedEnrollmentError = nil

@@ -236,6 +236,245 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(store.load()?.refreshToken, "mrt_y")
     }
 
+    private func requestBody(_ request: URLRequest) -> [String: Any] {
+        let data = request.httpBody ?? request.httpBodyStream.map { stream -> Data in
+            stream.open(); defer { stream.close() }
+            var data = Data(); var buffer = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable { let n = stream.read(&buffer, maxLength: buffer.count); if n <= 0 { break }; data.append(buffer, count: n) }
+            return data
+        } ?? Data()
+        return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+    }
+
+    private func expiredCredentials() -> ClientAuthCredentials {
+        var stored = credentials()
+        stored.accessExpiresAt = Int64(Date().timeIntervalSince1970) - 10
+        return stored
+    }
+
+    /// The server holds a different key for this device id (a backup restored onto a device
+    /// that kept its UUID). The challenge grant answers `invalid_proof`; the manager re-binds
+    /// through the restore route with the stored recovery key and the current key, and keeps
+    /// everything else it knew.
+    func testTokenRefreshRebindsWhenServerRejectsTheKey() async throws {
+        let stored = expiredCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let storedKey = try XCTUnwrap(InstallationKey(stored: stored.installationKey))
+        let manager = ClientAuthManager(
+            store: store,
+            baseURL: "https://api.test/api",
+            session: stubbedSession(),
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" },
+            deviceLabelProvider: { "Test device" }
+        )
+        nonisolated(unsafe) var paths: [String] = []
+        nonisolated(unsafe) var challengePurposes: [String] = []
+        StubURLProtocol.handler = { [self] request in
+            let path = request.url?.path ?? ""
+            paths.append(path)
+            let body = requestBody(request)
+            switch path {
+            case "/api/auth/token":
+                if body["grant_type"] as? String == "refresh" {
+                    return (401, Data(#"{"error":"invalid_refresh_token","message":"Refresh token rejected"}"#.utf8))
+                }
+                return (401, Data(#"{"error":"invalid_proof","message":"Proof of possession failed"}"#.utf8))
+            case "/api/auth/challenge":
+                challengePurposes.append(body["purpose"] as? String ?? "")
+                return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            case "/api/auth/account/restore":
+                XCTAssertEqual(body["recovery_key"] as? String, stored.recoveryKey, "the stored recovery key proves the account")
+                XCTAssertEqual(body["label"] as? String, "Test device")
+                XCTAssertNotNil(body["proof"] as? String)
+                let jwk = body["public_key_jwk"] as? [String: String] ?? [:]
+                XCTAssertEqual(jwk, storedKey.publicJWK, "the current key is re-bound, not a fresh one")
+                XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"), "restore is a public route")
+                let reply = """
+                {"token_type":"Bearer","access_token":"tok2","expires_in":3600,"refresh_token":"mrt_y","refresh_expires_in":7776000,"account_id":"acct_test","device_id":"550e8400-e29b-41d4-a716-446655440000","device_cap":5}
+                """
+                return (200, Data(reply.utf8))
+            default:
+                XCTFail("unexpected request \(path)")
+                return (500, Data())
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        let token = try await manager.accessToken()
+        XCTAssertEqual(token, "tok2")
+        XCTAssertEqual(paths, ["/api/auth/token", "/api/auth/challenge", "/api/auth/token", "/api/auth/challenge", "/api/auth/account/restore"])
+        XCTAssertEqual(challengePurposes, ["token", "enroll"])
+        let after = try XCTUnwrap(store.load())
+        XCTAssertEqual(after.refreshToken, "mrt_y")
+        XCTAssertEqual(after.accountID, "acct_test")
+        XCTAssertEqual(after.recoveryKey, stored.recoveryKey)
+        XCTAssertEqual(after.installationKey, stored.installationKey, "re-binding never rotates the key")
+        XCTAssertEqual(after.enrollmentPath, stored.enrollmentPath, "the enrollment path is history, not membership")
+        XCTAssertTrue(manager.isEnrolled)
+
+        // The new token is cached; a second call touches nothing.
+        paths = []
+        let cached = try await manager.accessToken()
+        XCTAssertEqual(cached, "tok2")
+        XCTAssertEqual(paths, [])
+    }
+
+    /// When the re-bind is refused too, the device is stuck unless sign-out works without a
+    /// token. It clears local credentials and does not throw.
+    func testSignOutClearsLocallyWhenTheKeyIsRejectedAndRebindRefused() async throws {
+        let store = InMemoryClientAuthStore(expiredCredentials())
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            case "/api/auth/account/restore": return (409, Data(#"{"error":"device_already_enrolled","message":"x"}"#.utf8))
+            default: return (401, Data(#"{"error":"invalid_proof","message":"Proof of possession failed"}"#.utf8))
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        try await manager.signOut()
+        XCTAssertFalse(manager.isEnrolled)
+        XCTAssertNil(store.load())
+    }
+
+    /// A network failure during sign-out keeps the credentials: the person can retry.
+    func testSignOutKeepsCredentialsOnNetworkFailure() async {
+        let store = InMemoryClientAuthStore(credentials())
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"client_auth_unavailable","message":"x"}"#.utf8)) }
+        defer { StubURLProtocol.handler = nil }
+        do {
+            try await manager.signOut()
+            XCTFail("expected unavailable")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .unavailable)
+        }
+        XCTAssertTrue(manager.isEnrolled)
+    }
+
+    /// A create that the server refuses leaves a draft behind (so a lost response cannot lose
+    /// the recovery key). The draft is not an enrollment: nothing signs with its key, status is
+    /// `.notEnrolled`, the key is not shown, and the next create resumes the same draft.
+    func testDraftAfterRefusedCreateIsNotAnEnrollment() async throws {
+        let store = InMemoryClientAuthStore()
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            default: return (503, Data(#"{"error":"client_auth_unavailable","message":"x"}"#.utf8))
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        do {
+            _ = try await manager.createAccount()
+            XCTFail("expected unavailable")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .unavailable)
+        }
+        let draft = try XCTUnwrap(store.load(), "the draft survives for the retry")
+        XCTAssertEqual(draft.accountID, "")
+        XCTAssertFalse(manager.isEnrolled)
+        XCTAssertEqual(manager.status, .notEnrolled)
+        XCTAssertNil(manager.revealRecoveryKey())
+
+        StubURLProtocol.lastRequest = nil
+        do {
+            _ = try await manager.accessToken()
+            XCTFail("expected notEnrolled")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .notEnrolled)
+        }
+        XCTAssertNil(StubURLProtocol.lastRequest, "a draft never signs a token grant")
+
+        // The retry resumes the draft's key and recovery key rather than minting new ones.
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c2","nonce":"n2","expires_in":120}"#.utf8))
+            case "/api/auth/account/create":
+                let body = self.requestBody(request)
+                XCTAssertEqual(body["recovery_key"] as? String, draft.recoveryKey)
+                let reply = """
+                {"token_type":"Bearer","access_token":"tok","expires_in":3600,"refresh_token":"mrt_a","refresh_expires_in":7776000,"account_id":"acct_new","device_id":"550e8400-e29b-41d4-a716-446655440000","device_cap":5}
+                """
+                return (200, Data(reply.utf8))
+            default: return (500, Data())
+            }
+        }
+        let shown = try await manager.createAccount()
+        XCTAssertEqual(shown, ClientAuthCrypto.formatRecoveryKey(draft.recoveryKey))
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(store.load()?.installationKey, draft.installationKey)
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+    }
+
+    /// The server already holds an installation under this device id with a key this device
+    /// does not have (a restored backup). The install takes a fresh device id and creates its
+    /// account under it, once.
+    func testCreateRotatesTheDeviceIDWhenTheServerAlreadyHasThisOne() async throws {
+        let store = InMemoryClientAuthStore()
+        nonisolated(unsafe) var deviceID = "550e8400-e29b-41d4-a716-446655440000"
+        nonisolated(unsafe) var rotations = 0
+        let manager = ClientAuthManager(
+            store: store,
+            baseURL: "https://api.test/api",
+            session: stubbedSession(),
+            deviceIDProvider: { deviceID },
+            deviceIDRotator: {
+                rotations += 1
+                deviceID = "11111111-2222-4333-8444-555555555555"
+                return deviceID
+            }
+        )
+        nonisolated(unsafe) var createIDs: [String] = []
+        StubURLProtocol.handler = { [self] request in
+            let body = requestBody(request)
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            case "/api/auth/account/create":
+                let id = body["device_id"] as? String ?? ""
+                createIDs.append(id)
+                if id == "550e8400-e29b-41d4-a716-446655440000" {
+                    return (409, Data(#"{"error":"device_already_enrolled","message":"x"}"#.utf8))
+                }
+                let reply = """
+                {"token_type":"Bearer","access_token":"tok","expires_in":3600,"refresh_token":"mrt_a","refresh_expires_in":7776000,"account_id":"acct_fresh","device_id":"\(id)","device_cap":5}
+                """
+                return (200, Data(reply.utf8))
+            default: return (500, Data())
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+
+        _ = try await manager.createAccount()
+        XCTAssertEqual(rotations, 1)
+        XCTAssertEqual(createIDs, ["550e8400-e29b-41d4-a716-446655440000", "11111111-2222-4333-8444-555555555555"])
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(manager.status.accountID, "acct_fresh")
+        XCTAssertEqual(manager.status.enrollmentPath, "create")
+    }
+
+    /// Without a rotator (tests, or an install that must keep its identity) the conflict is
+    /// surfaced as-is and nothing is written beyond the draft.
+    func testCreateSurfacesTheConflictWhenTheDeviceIDCannotChange() async {
+        let store = InMemoryClientAuthStore()
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            default: return (409, Data(#"{"error":"device_already_enrolled","message":"x"}"#.utf8))
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        do {
+            _ = try await manager.createAccount()
+            XCTFail("expected deviceAlreadyEnrolled")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .deviceAlreadyEnrolled)
+        }
+        XCTAssertFalse(manager.isEnrolled)
+    }
+
     func testAttachRejectsBadKeysLocallyAndMapsServerConflicts() async {
         let store = InMemoryClientAuthStore(credentials())
         let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "d" })
