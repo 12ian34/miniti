@@ -63,8 +63,12 @@ Since 2.10.0 the DMG is about 170 MB (bundled Nemotron model). Netlify functions
 
 ```sh
 git tag vX.Y.Z
-gh release create vX.Y.Z miniti.dmg#miniti-X.Y.Z.dmg --title "miniti X.Y.Z for macOS" --notes "macOS X.Y.Z (build N). Notarized Developer ID DMG. Changelog: https://miniti.app/changelog"
+cp miniti.dmg miniti-X.Y.Z.dmg
+gh release create vX.Y.Z miniti-X.Y.Z.dmg --title "miniti X.Y.Z for macOS" --notes "macOS X.Y.Z (build N). Notarized Developer ID DMG. Changelog: https://miniti.app/changelog"
+rm miniti-X.Y.Z.dmg
 ```
+
+The asset keeps the local filename, so copy the DMG to `miniti-X.Y.Z.dmg` first. `gh`'s `file#label` form only changes the display label and leaves the download URL at `/miniti.dmg` (2.12.1 shipped that way for a minute and had to be re-uploaded with `gh release delete-asset` + `gh release upload`). The URL can return 404 for about a minute after upload while GitHub's CDN catches up; `release-info.sh` retries are enough.
 
 The enclosure URL for the appcast is `https://github.com/12ian34/miniti/releases/download/vX.Y.Z/miniti-X.Y.Z.dmg`. Add the version to `EXTERNAL_DMG_URLS` and bump `LATEST_DMG_VERSION` on the website. Never attach a Mac DMG to the miniti-linux releases.
 
