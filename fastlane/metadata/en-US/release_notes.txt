@@ -1,3 +1,8 @@
-FIXED
+NEW
+- Cloud. One switch in Settings, Cloud. Your meetings go to miniti's servers and come back on every device on your account. Record on the Mac, open it on the phone a minute later. Edits, speaker names, pins and deletes follow. Pro only, off by default.
+- Sign in with email. Add an email in Settings, Cloud and miniti sends you a link. It signs you in on the web and on a new device without typing the recovery key.
+- Your meetings in your own tools. Settings, Cloud makes tokens for the API and connects Claude, ChatGPT, Claude Code and Cursor to your meetings through MCP. Read only.
+- Keep a meeting off the cloud from the history list. Meetings recorded in private mode stay off it on their own.
 
-- The microphone meter in setup now moves for a normal speaking voice. Before, it only moved for a shout, so a working mic looked dead.
+IMPROVED
+- Deleting a meeting with cloud on deletes it on every device.

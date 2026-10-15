@@ -1578,13 +1578,25 @@ struct SidebarHistoryItem: View {
                 isHovering = hovering
             }
         }
+        .contextMenu {
+            Button(meeting.isPinned ? "Unpin meeting" : "Pin meeting", action: onTogglePin)
+            if appState.cloudSyncEnabled && meeting.endTime != nil {
+                Button(meeting.syncExcluded ? "Put on the cloud" : "Keep off the cloud") {
+                    appState.setMeetingExcludedFromCloud(meeting, excluded: !meeting.syncExcluded)
+                }
+            }
+            Divider()
+            Button("Delete meeting", role: .destructive) { showDeleteConfirm = true }
+        }
         .alert("Delete Meeting", isPresented: $showDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
                 onDelete()
             }
         } message: {
-            Text("Are you sure you want to delete \"\(titleText)\"? This cannot be undone.")
+            Text(appState.cloudSyncEnabled && meeting.cloudRevision > 0
+                 ? "Are you sure you want to delete \"\(titleText)\"? It is removed from the cloud and your other devices too. This cannot be undone."
+                 : "Are you sure you want to delete \"\(titleText)\"? This cannot be undone.")
         }
     }
     

@@ -12,7 +12,7 @@ extension Notification.Name {
     static let minitiCorrectSelectedTranscriptWord = Notification.Name("minitiCorrectSelectedTranscriptWord")
     /// Posted after meetings are inserted outside the main window's own flows
     /// (e.g. Granola CSV import in Settings) so the history sidebar refreshes.
-    static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
+    // `minitiMeetingsImported` lives in AppState+Persistence.swift (shared with iOS since 3.0.0).
 }
 
 @MainActor
@@ -435,6 +435,7 @@ struct MinitiApp: App {
                 }
             } else if newPhase == .active {
                 appState.deliveryOutbox.kick()
+                appState.kickCloudSync(reason: "activate")
                 if appState.appMode == .managed {
                     Task {
                         await appState.refreshUsage()

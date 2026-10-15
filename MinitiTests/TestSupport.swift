@@ -81,7 +81,7 @@ enum TestSupport {
     /// The in-memory SwiftData container every persistence-adjacent test used to build by hand.
     static func makeInMemoryContainer() throws -> ModelContainer {
         try ModelContainer(
-            for: Meeting.self, TranscriptSegment.self,
+            for: Meeting.self, TranscriptSegment.self, MeetingTombstone.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
         )
     }

@@ -191,6 +191,7 @@ enum PersistentStore {
     static let schema = Schema([
         Meeting.self,
         TranscriptSegment.self,
+        MeetingTombstone.self,
     ])
 
     /// Default on-disk location SwiftData uses for the unnamed configuration.

@@ -146,6 +146,7 @@ struct MinitiMobileApp: App {
                 }
             } else if newPhase == .active {
                 appState.deliveryOutbox.kick()
+                appState.kickCloudSync(reason: "activate")
                 appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
                 if appState.appMode == .managed {
                     Task {

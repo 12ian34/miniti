@@ -83,6 +83,28 @@ final class Meeting {
     // Diagnostic metadata only — never user-facing, never required to load, trim,
     // export, search, or regenerate insights. Nil (all legacy meetings) = unknown.
     var inferredEnvironmentRaw: String?
+
+    // Cloud sync bookkeeping (3.0.0). All optional or defaulted so existing stores
+    // lightweight-migrate; none of it is read while cloud sync is off.
+    /// When the meeting last changed on any device, the last-writer-wins key on the wire.
+    /// Set by the sync engine when it notices a fingerprint change, or from the server.
+    var updatedAt: Date?
+    /// When this device last agreed with the cloud copy.
+    var syncedAt: Date?
+    /// Server revision of the cloud copy this device last saw; 0 = never synced.
+    var cloudRevision: Int = 0
+    /// Fingerprint of the content the cloud copy holds (what was last pushed or pulled).
+    var syncFingerprint: String?
+    /// Fingerprint the engine last observed locally; a difference from `syncFingerprint`
+    /// means the meeting is dirty.
+    var localFingerprint: String?
+    /// Never upload this meeting. Set for meetings recorded under private mode and by the
+    /// per-meeting "Keep off the cloud" action.
+    var syncExcluded: Bool = false
+    /// `skipped_too_large` or nil. Shown in Settings → Cloud.
+    var syncStateRaw: String?
+    /// Fields from another client (Linux) this build does not model, echoed back untouched.
+    var syncExtraJSON: String?
     
     init(
         id: UUID = UUID(),

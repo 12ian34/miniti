@@ -571,6 +571,8 @@ final class ClientAuthManager: @unchecked Sendable {
     func revealRecoveryKey() -> String? {
         lock.lock(); defer { lock.unlock() }
         guard let credentials, !Self.isDraft(credentials) else { return nil }
+        // A device that joined by email has no key of its own until it rotates one.
+        if credentials.recoveryKey.isEmpty { return "" }
         return ClientAuthCrypto.formatRecoveryKey(credentials.recoveryKey)
     }
 
@@ -712,18 +714,95 @@ final class ClientAuthManager: @unchecked Sendable {
         try await postPublic("/auth/challenge", body: ["device_id": deviceIDProvider(), "purpose": purpose])
     }
 
-    private func enroll(path: String, key: InstallationKey, recoveryKey: String, label: String?) async throws -> TokenResponse {
+    private func enroll(path: String, key: InstallationKey, recoveryKey: String?, loginLinkID: String? = nil, label: String?) async throws -> TokenResponse {
         let challenge = try await challenge(purpose: "enroll")
         let proof = try key.challengeProof(nonce: challenge.nonce, purpose: "enroll", deviceID: deviceIDProvider(), now: now())
         var body: [String: Any] = [
             "device_id": deviceIDProvider(),
-            "recovery_key": recoveryKey,
             "public_key_jwk": key.publicJWK,
             "challenge_id": challenge.challengeId,
             "proof": proof,
         ]
+        if let recoveryKey { body["recovery_key"] = recoveryKey }
+        if let loginLinkID { body["login_link_id"] = loginLinkID }
         if let label { body["label"] = label }
         return try await postPublic(path, body: body)
+    }
+
+    // MARK: Sign-in by email (3.0.0)
+
+    /// Where an email sign-in stands. `expired` also covers refused and already used.
+    enum EmailSignInStatus: String, Decodable { case pending, approved, expired }
+
+    /// Ask for an approval link to be sent to the account's email (`POST /api/auth/email/start`).
+    /// Always answers with a link id, even for an unknown email, so nothing is revealed.
+    func startEmailSignIn(email: String) async throws -> String {
+        struct Started: Decodable { let linkId: String; enum CodingKeys: String, CodingKey { case linkId = "link_id" } }
+        let started: Started = try await postPublic("/auth/email/start", body: [
+            "email": email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            "device_id": deviceIDProvider(),
+            "platform": Self.platformName,
+        ])
+        return started.linkId
+    }
+
+    static var platformName: String {
+        #if os(iOS)
+        return "ios"
+        #else
+        return "macos"
+        #endif
+    }
+
+    /// Poll the link (`GET /api/auth/email/status`).
+    func emailSignInStatus(linkID: String) async throws -> EmailSignInStatus {
+        struct Status: Decodable { let status: EmailSignInStatus }
+        guard let url = URL(string: "\(baseURL)/auth/email/status?link_id=\(linkID)") else { throw ClientAuthError.network("bad URL") }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 20
+        identityHeaders(&request)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw ClientAuthError.network(error.localizedDescription)
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200...299).contains(status) else { throw mapError(status: status, data: data) }
+        do {
+            return try JSONDecoder().decode(Status.self, from: data).status
+        } catch {
+            throw ClientAuthError.network("could not decode email status")
+        }
+    }
+
+    /// Join the account that approved `loginLinkID` from an already enrolled device
+    /// (`POST /api/auth/account/attach` with the link instead of a recovery key). The device
+    /// ends up without a recovery key of its own; Settings offers to rotate one.
+    func attachToAccount(loginLinkID: String) async throws -> Bool {
+        guard isEnrolled else { throw ClientAuthError.notEnrolled }
+        let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["login_link_id": loginLinkID])
+        update { credentials in
+            credentials.recoveryKey = ""
+            credentials.accessToken = response.accessToken
+            credentials.accessExpiresAt = now() + (response.expiresIn ?? 3600)
+            if let refresh = response.refreshToken { credentials.refreshToken = refresh }
+            if let cap = response.deviceCap { credentials.deviceCap = cap }
+            if let account = response.accountId { credentials.accountID = account }
+            credentials.recoveryKeyAcknowledged = true
+        }
+        DebugLogger.shared.log(.app, "Device auth: installation \(response.moved == true ? "moved to another account by email" : "already on that account")")
+        return response.moved ?? true
+    }
+
+    /// Enroll an unenrolled device into the account that approved `loginLinkID`.
+    func restoreAccount(loginLinkID: String, label: String? = nil) async throws {
+        if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        let key = InstallationKey.generate()
+        let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: nil, loginLinkID: loginLinkID, label: label)
+        try storeEnrollment(key: key, recoveryKey: "", tokens: tokens, path: .restore, acknowledged: true)
+        DebugLogger.shared.log(.app, "Device auth: account restored by email")
     }
 
     private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool) throws {

@@ -41,7 +41,7 @@ final class MinitiAPIService: @unchecked Sendable {
 
     /// Build a URLRequest with the identity headers. Authorization (device-bound bearer
     /// token + request proof) is attached by `send(_:)`; nothing secret is embedded here.
-    private func makeRequest(
+    func makeRequest(
         path: String,
         method: String = "GET",
         deviceId: String,
@@ -69,7 +69,7 @@ final class MinitiAPIService: @unchecked Sendable {
     /// writes, one silent retry after an expired token, and local sign-out when the server
     /// says this installation was revoked. `requiresAuth: false` lets public metadata
     /// (`/version`) go out without an account.
-    private func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
+    func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
         var request = original
         if auth.isEnrolled {
             do {

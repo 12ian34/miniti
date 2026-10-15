@@ -178,6 +178,13 @@ struct HistoryView_iOS: View {
                             } label: {
                                 Label(meeting.isPinned ? "Unpin meeting" : "Pin meeting", systemImage: meeting.isPinned ? "pin.slash" : "pin")
                             }
+                            if appState.cloudSyncEnabled && meeting.endTime != nil {
+                                Button {
+                                    appState.setMeetingExcludedFromCloud(meeting, excluded: !meeting.syncExcluded)
+                                } label: {
+                                    Label(meeting.syncExcluded ? "Put on the cloud" : "Keep off the cloud", systemImage: meeting.syncExcluded ? "icloud" : "icloud.slash")
+                                }
+                            }
                         }
                     }
                     .onDelete { offsets in

@@ -167,6 +167,8 @@ struct SettingsView: View {
             IntegrationsSettingsView(content: .dataExport)
         case .privacy:
             PrivacySettingsView()
+        case .cloud:
+            CloudSettingsView()
         case .about:
             AboutSettingsView()
         }

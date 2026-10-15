@@ -310,6 +310,8 @@ struct ManagedAccountSettingsSection: View {
     @State private var copied = false
     @State private var isPresentingRestore = false
     @State private var isPresentingMove = false
+    @State private var isPresentingEmailJoin = false
+    @State private var isPresentingEmailRestore = false
     @State private var isConfirmingReveal = false
     @State private var isConfirmingRotate = false
     @State private var isConfirmingSignOut = false
@@ -339,6 +341,16 @@ struct ManagedAccountSettingsSection: View {
         }
         .sheet(isPresented: $isPresentingMove) {
             RestoreRecoveryKeySheet(mode: .move, onRestored: { notice = "This device is now on the other account." })
+                .environmentObject(appState)
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $isPresentingEmailJoin) {
+            EmailSignInSheet(mode: .move, onJoined: { notice = "This device is now on the other account." })
+                .environmentObject(appState)
+                .preferredColorScheme(.dark)
+        }
+        .sheet(isPresented: $isPresentingEmailRestore) {
+            EmailSignInSheet(mode: .restore)
                 .environmentObject(appState)
                 .preferredColorScheme(.dark)
         }
@@ -393,7 +405,10 @@ struct ManagedAccountSettingsSection: View {
         HStack {
             Text("Recovery key")
             Spacer()
-            if revealedKey != nil {
+            if appState.managedDeviceHasNoRecoveryKey {
+                Button("Create one") { isConfirmingRotate = true }
+                    .disabled(isBusy)
+            } else if revealedKey != nil {
                 Button("Hide") { revealedKey = nil; copied = false }
             } else {
                 Button("Reveal") { isConfirmingReveal = true }
@@ -402,7 +417,12 @@ struct ManagedAccountSettingsSection: View {
                     .disabled(isBusy)
             }
         }
-        if let revealedKey {
+        if appState.managedDeviceHasNoRecoveryKey {
+            Text("This device joined by email, so it holds no recovery key. Reveal it on another device, or create a new one here (the old one stops working).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        if let revealedKey, !revealedKey.isEmpty {
             RecoveryKeyDisplay(recoveryKey: revealedKey, copied: $copied)
                 .padding(.vertical, 4)
         }
@@ -443,10 +463,14 @@ struct ManagedAccountSettingsSection: View {
                 .foregroundStyle(.secondary)
         }
 
-        Button("Move this device to another account…") { isPresentingMove = true }
-            .disabled(isBusy)
-            .id("account.move")
-        Text("Bought Pro on another Mac? Move this device onto that account and it shares the plan.")
+        HStack {
+            Button("Move this device to another account…") { isPresentingMove = true }
+                .disabled(isBusy)
+            Button("Join by email…") { isPresentingEmailJoin = true }
+                .disabled(isBusy)
+        }
+        .id("account.move")
+        Text("Bought Pro on another Mac? Move this device onto that account and it shares the plan. Join by email sends a link to the account's email instead of typing the key.")
             .font(.caption)
             .foregroundStyle(.secondary)
 
@@ -482,6 +506,7 @@ struct ManagedAccountSettingsSection: View {
                     Task { await appState.ensureManagedEnrollment(trigger: "settings") }
                 }
                 Button("Restore with recovery key…") { isPresentingRestore = true }
+                Button("Sign in with email…") { isPresentingEmailRestore = true }
             }
         }
     }
@@ -728,5 +753,122 @@ struct CalendarMeetingFiltersSection: View {
     private func refreshPreviewIfLoaded() {
         guard previewRows != nil, !isLoadingPreview else { return }
         loadPreview()
+    }
+}
+
+
+// MARK: Sign in by email (3.0.0)
+
+/// Join an account from its email: miniti sends an approval link to that address, the holder
+/// approves it in the browser, and this device joins without anyone typing the recovery key.
+struct EmailSignInSheet: View {
+    enum Mode { case restore, move }
+
+    @EnvironmentObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var email = ""
+    @State private var linkID: String?
+    @State private var isWorking = false
+    @State private var error: String?
+    @State private var pollTask: Task<Void, Never>?
+    var mode: Mode = .restore
+    var onJoined: (() -> Void)? = nil
+
+    private var canSend: Bool { !isWorking && linkID == nil && email.contains("@") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(mode == .move ? "Join another account by email" : "Sign in with email")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(ColorPalette.Text.primary)
+            Text(mode == .move
+                 ? "Enter the email on the account to join. miniti sends it a link; open it anywhere and press Approve. This device keeps its meetings, usage and connections and joins that account."
+                 : "Enter the email on your account. miniti sends it a link; open it anywhere and press Approve, and this device joins the account.")
+                .font(.system(size: 12))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("Email", text: $email)
+                .textFieldStyle(.roundedBorder)
+                .disabled(linkID != nil)
+                #if os(iOS)
+                .keyboardType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                #endif
+            if linkID != nil {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        #if os(macOS)
+                        .controlSize(.small)
+                        #endif
+                    Text("Waiting for you to approve the link. It works for 15 minutes.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            }
+            if let error {
+                Text(error)
+                    .font(.system(size: 12))
+                    .foregroundStyle(ColorPalette.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { pollTask?.cancel(); dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Send link") { send() }
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canSend)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 380, idealWidth: 440)
+        .onDisappear { pollTask?.cancel() }
+    }
+
+    private func send() {
+        isWorking = true
+        error = nil
+        Task { @MainActor in
+            guard let id = await appState.startEmailSignIn(email: email) else {
+                error = appState.managedEnrollmentError ?? "Could not send the link."
+                isWorking = false
+                return
+            }
+            linkID = id
+            isWorking = false
+            poll(id)
+        }
+    }
+
+    private func poll(_ id: String) {
+        pollTask = Task { @MainActor in
+            for _ in 0..<300 {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                if Task.isCancelled { return }
+                guard let status = await appState.emailSignInStatus(linkID: id) else { continue }
+                switch status {
+                case .pending:
+                    continue
+                case .expired:
+                    error = "The link expired or was refused. Send a new one."
+                    linkID = nil
+                    return
+                case .approved:
+                    isWorking = true
+                    if await appState.joinAccount(approvedLinkID: id) {
+                        onJoined?()
+                        dismiss()
+                    } else {
+                        error = appState.managedEnrollmentError ?? "Could not join the account."
+                        linkID = nil
+                    }
+                    isWorking = false
+                    return
+                }
+            }
+            error = "The link expired. Send a new one."
+            linkID = nil
+        }
     }
 }

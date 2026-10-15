@@ -23,6 +23,7 @@ enum PersistenceOperation: String, CaseIterable {
     case historyLoad = "history_load"
     case interruptedMeetingCheck = "interrupted_meeting_check"
     case exportAll = "export_all"
+    case cloudSync = "cloud_sync"
 
     /// Lowercase noun for the banner: "<label> didn't save".
     var userLabel: String {
@@ -47,6 +48,7 @@ enum PersistenceOperation: String, CaseIterable {
         case .historyLoad: return "history"
         case .interruptedMeetingCheck: return "interrupted meeting check"
         case .exportAll: return "export"
+        case .cloudSync: return "cloud sync"
         }
     }
 
@@ -129,6 +131,7 @@ extension AppState {
         do {
             try persistenceSaveHandler(context)
             clearPersistenceIssue(for: operation)
+            if operation != .cloudSync { cloudSync.noteLocalChange() }
             return true
         } catch {
             revert?()
@@ -202,4 +205,11 @@ extension AppState {
     func retryPersistence() {
         persistenceRetryAction?()
     }
+}
+
+extension Notification.Name {
+    /// Posted when meetings were inserted or changed outside the main window's own flows
+    /// (Granola CSV import in Settings, cloud sync) so the macOS history sidebar refreshes.
+    /// iOS history is a `@Query` and updates on its own.
+    static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
 }

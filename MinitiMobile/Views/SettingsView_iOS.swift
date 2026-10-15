@@ -826,6 +826,10 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
+                if category == .cloud {
+                    CloudSettingsSections(engine: appState.cloudSync)
+                }
+
                 if category == .about {
                 Section("About") {
                     HStack {

@@ -132,6 +132,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case meetings
     case connections
     case privacy
+    case cloud
     case support
 
     var id: String { rawValue }
@@ -142,6 +143,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
         case .meetings: return "Meetings"
         case .connections: return "Connections"
         case .privacy: return "Privacy"
+        case .cloud: return "Cloud"
         case .support: return "Support"
         }
     }
@@ -167,6 +169,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case playbook
     case data
     case privacy
+    case cloud
     case about
 
     var id: String { rawValue }
@@ -177,6 +180,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .recording, .transcription, .ai, .templates, .notifications: return .meetings
         case .calendar, .crm, .webhooks, .playbook, .data: return .connections
         case .privacy: return .privacy
+        case .cloud: return .cloud
         case .about: return .support
         }
     }
@@ -196,6 +200,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .playbook: return "Playbook"
         case .data: return "Data"
         case .privacy: return "Privacy"
+        case .cloud: return "Cloud"
         case .about: return "About"
         }
     }
@@ -215,6 +220,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .playbook: return "Your docs server for grounded answers"
         case .data: return "Granola import and markdown export"
         case .privacy: return "Private mode, diagnostics and models on this device"
+        case .cloud: return "Your meetings on every device, and your tools"
         case .about: return "Version, updates, help and licences"
         }
     }
@@ -234,6 +240,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .playbook: return "books.vertical"
         case .data: return "tray.and.arrow.down"
         case .privacy: return "lock"
+        case .cloud: return "cloud"
         case .about: return "info.circle"
         }
     }
@@ -278,6 +285,8 @@ struct SettingsSearchItem: Identifiable, Hashable {
     let keywords: [String]
     let platforms: Set<SettingsPlatform>
     let requiresBYOK: Bool
+    /// Rows the BYOK Settings screen does not render (Cloud needs an account).
+    let requiresManaged: Bool
 
     init(
         _ id: String,
@@ -286,7 +295,8 @@ struct SettingsSearchItem: Identifiable, Hashable {
         destination: SettingsDestination,
         keywords: [String] = [],
         platforms: Set<SettingsPlatform> = [.macOS, .iOS],
-        requiresBYOK: Bool = false
+        requiresBYOK: Bool = false,
+        requiresManaged: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -295,12 +305,13 @@ struct SettingsSearchItem: Identifiable, Hashable {
         self.keywords = keywords
         self.platforms = platforms
         self.requiresBYOK = requiresBYOK
+        self.requiresManaged = requiresManaged
     }
 
     var breadcrumb: String { "\(destination.title) › \(section)" }
 
     func isAvailable(on platform: SettingsPlatform, appMode: AppMode) -> Bool {
-        platforms.contains(platform) && (!requiresBYOK || appMode == .byok)
+        platforms.contains(platform) && (!requiresBYOK || appMode == .byok) && (!requiresManaged || appMode == .managed)
     }
 
     func matches(_ query: String) -> Bool {
@@ -335,6 +346,13 @@ enum SettingsSearchCatalog {
         .init("transcription.speakers", "Speakers", section: "Models", destination: .transcription, keywords: ["diarization", "nemotron", "privacy", "speakers", "local"]),
         .init("transcription.model", "Transcription", section: "Models", destination: .transcription, keywords: ["deepgram", "this mac", "on-device", "local", "nemotron", "private"]),
         .init("transcription.fallback", "Use Deepgram if the model is not ready", section: "Models", destination: .transcription, keywords: ["fallback", "on-device", "local"]),
+        .init("cloud.sync", "Keep a copy of your meetings on miniti's servers", section: "Cloud", destination: .cloud, keywords: ["sync", "cloud", "devices", "backup", "iPhone", "Mac", "copy"]),
+        .init("cloud.status", "Cloud status", section: "Cloud", destination: .cloud, keywords: ["last synced", "size", "sync now", "skipped"], requiresManaged: true),
+        .init("cloud.signin", "Web sign-in", section: "Web sign-in", destination: .cloud, keywords: ["email", "magic link", "sign in", "login", "web"], requiresManaged: true),
+        .init("cloud.connected", "Connected apps", section: "Web sign-in", destination: .cloud, keywords: ["Claude", "ChatGPT", "OAuth", "disconnect", "connector"], requiresManaged: true),
+        .init("cloud.tokens", "API access", section: "API access", destination: .cloud, keywords: ["token", "API", "MCP", "Claude Code", "Cursor", "REST", "key"], requiresManaged: true),
+        .init("cloud.delete", "Delete cloud copy", section: "Cloud", destination: .cloud, keywords: ["remove", "wipe", "server", "delete"], requiresManaged: true),
+
         .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
         .init("privacy.models", "Models on This Device", section: "Models on this device", destination: .privacy, keywords: ["download", "remove", "nemotron", "disk"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
@@ -644,7 +662,9 @@ final class AppState: ObservableObject {
     }
     
     // MARK: - Session Management
-    var modelContext: ModelContext?
+    var modelContext: ModelContext? {
+        didSet { if modelContext != nil { configureCloudSyncIfNeeded() } }
+    }
     @Published var hasUnsavedSession = false
     let audioLevels = AudioLevelsState()
     let transcriptRuntime = TranscriptRuntimeState()
@@ -957,7 +977,7 @@ final class AppState: ObservableObject {
     /// Type-safe app mode. Changing this is a pure routing toggle — doesn't reset anything.
     var appMode: AppMode {
         get { AppMode(rawValue: appModeRaw) ?? .managed }
-        set { appModeRaw = newValue.rawValue }
+        set { appModeRaw = newValue.rawValue; refreshCloudSyncState() }
     }
     
     // MARK: - Markdown Auto-Export (macOS only)
@@ -982,12 +1002,14 @@ final class AppState: ObservableObject {
     @Published var requiresForceUpdate = false
     
     // MARK: - Managed Mode State
-    @Published var usageInfo: MinitiAPIService.UsageInfo?
+    @Published var usageInfo: MinitiAPIService.UsageInfo? {
+        didSet { refreshCloudSyncState() }
+    }
     // Device-bound authorization (managed mode). The account is an anonymous recovery key;
     // see Miniti/Services/ClientAuth.swift. Screenshot mode fakes an enrolled state.
     @Published var clientAuthStatus: ClientAuthStatus = ClientAuthManager.shared.status
-    @Published private(set) var isEnrollingManagedDevice = false
-    @Published private(set) var managedEnrollmentError: String?
+    @Published var isEnrollingManagedDevice = false
+    @Published var managedEnrollmentError: String?
     /// Show the "save your recovery key" nudge: enrolled, key never acknowledged, not snoozed this launch.
     @Published private(set) var showRecoveryKeyNotice = false
     @Published private(set) var managedDevices: [ClientAuthDevice] = []
@@ -1462,6 +1484,8 @@ final class AppState: ObservableObject {
         var autoInferSpeakerNames: Bool
         var notifyOnSalesDetection: Bool
         var jevClassifier: Bool
+        /// Added in 3.0.0; nil in snapshots written by 2.12.x.
+        var cloudSync: Bool?
     }
     static let privateModeRestoreKey = "privateMode.restore"
 
@@ -1489,7 +1513,8 @@ final class AppState: ObservableObject {
                     playbookInsights: playbookInsightsEnabled,
                     autoInferSpeakerNames: autoInferSpeakerNames,
                     notifyOnSalesDetection: notifyOnSalesDetection,
-                    jevClassifier: jevClassifierEnabled
+                    jevClassifier: jevClassifierEnabled,
+                    cloudSync: cloudSyncEnabled
                 )
                 if let data = try? JSONEncoder().encode(snapshot) { defaults.set(data, forKey: Self.privateModeRestoreKey) }
             }
@@ -1503,6 +1528,7 @@ final class AppState: ObservableObject {
             autoInferSpeakerNames = false
             notifyOnSalesDetection = false
             jevClassifierEnabled = false
+            cloudSyncEnabled = false
             if insightsMode.isSpecialist { insightsMode = .standard }
             rememberedSpecialistMode = nil
             investigationSuggestion = nil
@@ -1521,16 +1547,22 @@ final class AppState: ObservableObject {
                 autoInferSpeakerNames = snapshot.autoInferSpeakerNames
                 notifyOnSalesDetection = snapshot.notifyOnSalesDetection
                 jevClassifierEnabled = snapshot.jevClassifier
+                if let cloud = snapshot.cloudSync { cloudSyncEnabled = cloud }
                 defaults.removeObject(forKey: Self.privateModeRestoreKey)
             }
             DebugLogger.shared.log(.app, "Private mode off")
         }
         refreshOnDeviceTranscriptionAvailability()
         refreshOnDeviceDiarizationAvailability()
+        refreshCloudSyncState()
     }
     /// Webhooks and automatic CRM sends go through here: persisted, retried with backoff,
     /// visible in Settings (roadmap P1.2, 2.11.0).
     let deliveryOutbox = DeliveryOutbox()
+    /// Cloud sync (3.0.0): default off, Pro only, managed accounts only. The engine is always
+    /// constructed; `AppState+CloudSync.swift` decides when it runs and wires it to the store.
+    @AppStorage("cloudSyncEnabled") var cloudSyncEnabled: Bool = false
+    let cloudSync = CloudSyncEngine()
     #if os(macOS)
     /// UID of the microphone to record from; empty means the system default. Set from the
     /// home mic menu or Settings → Recording. See `AudioCaptureService.preferredInputDeviceUID`.
@@ -6309,6 +6341,9 @@ final class AppState: ObservableObject {
             notes: preparedNotes
         )
         meeting.language = meetingLanguage
+        // A meeting recorded under private mode never goes to the cloud, even after private
+        // mode is turned off; the per-meeting action in History can change that later.
+        meeting.syncExcluded = privateModeEnabled
         if let calendarEvent {
             meeting.calendarEventId = calendarEvent.id
             meeting.calendarEventTitle = calendarEvent.title
@@ -6696,11 +6731,22 @@ final class AppState: ObservableObject {
     /// awaits resolve, which would resurrect the row the user just deleted. Call this *before*
     /// `modelContext.delete(_:)`.
     func noteMeetingDeleted(_ meeting: Meeting) {
+        noteMeetingDeleted(meeting, createTombstone: true)
+    }
+
+    /// `createTombstone` false when the cloud already deleted the meeting (the sync engine
+    /// removing a local copy); true for every user delete, so the cloud copy follows.
+    func noteMeetingDeleted(_ meeting: Meeting, createTombstone: Bool) {
         deletedMeetingIDs.insert(meeting.id)
         deliveryOutbox.removeAll(forMeeting: meeting.id)
         finalizingInsightMeetingIDs.remove(meeting.id)
         pendingMeetingSaves.removeValue(forKey: meeting.id)
         pendingMeetingSaveOrder.removeAll { $0 == meeting.id }
+        // While cloud is on, every delete leaves a tombstone, even for a meeting whose first
+        // upload is still in flight (a delete of an id the cloud never saw is a cheap no-op).
+        if createTombstone, meeting.cloudRevision > 0 || cloudSyncEnabled, let modelContext {
+            modelContext.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
+        }
     }
 
     /// Set by `persistenceIssue` writers in the persistence extension; stored here because
@@ -10690,6 +10736,8 @@ final class AppState: ObservableObject {
         managedEnrollmentError = nil
         do {
             _ = try await ClientAuthManager.shared.attachToAccount(recoveryKeyInput: recoveryKey)
+            // The device's meetings now belong to the destination account: upload them there.
+            cloudSync.resetBookkeeping()
             refreshClientAuthStatus()
             await loadManagedDevices()
             if appMode == .managed { await refreshUsage() }
@@ -10761,6 +10809,7 @@ final class AppState: ObservableObject {
         try? await ClientAuthManager.shared.signOut()
         managedDevices = []
         usageInfo = nil
+        cloudSync.resetBookkeeping()
         refreshClientAuthStatus()
     }
 
@@ -10770,6 +10819,7 @@ final class AppState: ObservableObject {
             try await ClientAuthManager.shared.deleteAccount()
             managedDevices = []
             usageInfo = nil
+            cloudSync.resetBookkeeping()
             refreshClientAuthStatus()
             return true
         } catch {
