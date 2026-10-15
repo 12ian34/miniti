@@ -4,6 +4,11 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### 2026-10-15 - v2.12.2
+
+- fix: (macOS) the first recording after you allow system audio could miss the other side of the call. miniti now rebuilds its audio tap if it has heard nothing in the first 10 seconds
+- fix: (macOS and iOS) the microphone meter in setup now moves for a normal speaking voice. Before, it only moved for a shout, so a working mic looked dead
+
 ### 2026-10-10 - v2.12.1
 
 - fix: (macOS and iOS) a phone restored from a backup could get a 401 on every recording and could not sign out. miniti kept a half-finished account on the device and signed with a key the server had never seen. It now sets the device up again on first launch. If you had an account before, move the device back to it with its recovery key in Settings, Account

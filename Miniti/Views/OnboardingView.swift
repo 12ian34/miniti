@@ -100,7 +100,7 @@ struct OnboardingView: View {
                     .font(.headline)
                     .foregroundStyle(ColorPalette.Text.primary)
 
-                Text("Allow microphone access when asked, then speak. The meter should move. On macOS, system-audio permission is requested when your first recording starts.")
+                Text("Allow microphone access when asked, then speak. The meter should move. macOS also asks to record system audio so calls can be transcribed.")
                     .font(.body)
                     .foregroundStyle(ColorPalette.Text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -189,14 +189,28 @@ private struct OnboardingChoice: View {
     }
 }
 
-private struct OnboardingMicrophoneMeter: View {
+struct OnboardingMicrophoneMeter: View {
     @ObservedObject var audioLevels: AudioLevelsState
 
+    /// Raw mic RMS for ordinary speech sits around 0.01 to 0.05, so a linear 0 to 1 bar
+    /// barely moves (2026-10-15 field report: "pressed test, nothing appeared"). Show a
+    /// 50 dB range instead: a quiet room (about 0.003) rests at empty, quiet speech
+    /// reaches a third, normal speech about half, a shout the top.
+    nonisolated static func displayLevel(for rawLevel: Float) -> Double {
+        guard rawLevel.isFinite, rawLevel > 0 else { return 0 }
+        let decibels = 20 * log10(Double(rawLevel))
+        return min(1, max(0, (decibels + 50) / 50))
+    }
+
+    nonisolated static func hasSignal(_ rawLevel: Float) -> Bool {
+        rawLevel.isFinite && rawLevel > AppState.speechMicLevelThreshold
+    }
+
     var body: some View {
-        ProgressView(value: Double(min(max(audioLevels.microphoneLevel, 0), 1)))
+        ProgressView(value: Self.displayLevel(for: audioLevels.microphoneLevel))
             .tint(ColorPalette.Accent.green)
             .accessibilityLabel("Microphone input level")
-            .accessibilityValue(audioLevels.microphoneLevel > 0.01 ? "Signal detected" : "No signal detected")
+            .accessibilityValue(Self.hasSignal(audioLevels.microphoneLevel) ? "Signal detected" : "No signal detected")
     }
 }
 

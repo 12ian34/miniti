@@ -106,6 +106,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastNoSystemInterleaveWarning: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemNonSilentAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemAutoRestartAt: CFAbsoluteTime = 0
+    /// Rebuilds of a tap that has never carried signal this capture (see
+    /// `shouldRebuildSilentFromBirthSystemTap`). Bounded so plain silence stops costing taps.
+    nonisolated(unsafe) private var silentFromBirthRebuilds: Int = 0
     nonisolated(unsafe) private var systemCallbackWatchdogArmedAt: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSilenceCheck: CFAbsoluteTime = 0
     nonisolated(unsafe) private var lastSystemInputRMS: Float = 0
@@ -769,6 +772,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastNoSystemInterleaveWarning = 0
         lastSystemNonSilentAt = lastSystemHeartbeat
         lastSystemAutoRestartAt = 0
+        silentFromBirthRebuilds = 0
         systemCallbackWatchdogArmedAt = lastSystemHeartbeat
         lastSilenceCheck = 0
         sysCallbackCount = 0
@@ -1288,6 +1292,36 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         return timeSinceLastRecovery > micStallRestartCooldown
     }
 
+    nonisolated static let silentFromBirthGap: CFAbsoluteTime = 10
+    nonisolated static let silentFromBirthCooldown: CFAbsoluteTime = 30
+    nonisolated static let maxSilentFromBirthRebuilds = 2
+
+    /// A process tap created while macOS was still showing the system-audio permission
+    /// prompt keeps firing callbacks but never carries audio, even after the user clicks
+    /// Allow; only a fresh tap does. That is every first recording on a new install
+    /// (2026-10-15 field report: a first meeting that transcribed nothing from the call).
+    /// The silent-stall detector needs prior signal, so it never sees this. Rebuild a tap
+    /// that has been alive for `silentFromBirthGap` without a single non-silent callback,
+    /// at most `maxSilentFromBirthRebuilds` times, `silentFromBirthCooldown` apart. Plain
+    /// silence (nothing playing) just costs two cheap rebuilds and nothing audible.
+    nonisolated static func shouldRebuildSilentFromBirthSystemTap(
+        expectsSystemAudio: Bool,
+        isSystemAudioActive: Bool,
+        isRecoveryInProgress: Bool,
+        isSendSuspended: Bool,
+        callbackCount: Int,
+        nonSilentCallbacks: Int,
+        silenceDuration: CFAbsoluteTime,
+        timeSinceLastRestart: CFAbsoluteTime,
+        rebuildsSoFar: Int
+    ) -> Bool {
+        guard expectsSystemAudio, isSystemAudioActive, !isRecoveryInProgress, !isSendSuspended else { return false }
+        guard nonSilentCallbacks == 0, callbackCount >= 60 else { return false }
+        guard rebuildsSoFar < maxSilentFromBirthRebuilds else { return false }
+        guard silenceDuration > silentFromBirthGap else { return false }
+        return timeSinceLastRestart > silentFromBirthCooldown
+    }
+
     private func startMicLivenessWatchdogIfNeeded() {
         micLivenessWatchdogTask?.cancel()
         micLivenessWatchdogTask = nil
@@ -1390,9 +1424,14 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
     }
     
+    /// `isSilentFromBirthRebuild` marks a rebuild of a tap that has never carried audio:
+    /// the tap may simply have nothing to carry yet, so the post-recovery health check is
+    /// skipped (it would escalate ordinary silence into a full mic and system restart)
+    /// and the rebuild is abandoned if signal arrived while it was waiting to run.
     private func recoverSystemTapAfterSilentStall(
         mixWithMic: Bool,
-        silenceDuration: CFAbsoluteTime
+        silenceDuration: CFAbsoluteTime,
+        isSilentFromBirthRebuild: Bool = false
     ) async {
         guard isCapturing, isSystemAudioActive, expectsSystemAudio else { return }
         guard !isRestartingSystemAfterOutputChange else { return }
@@ -1406,6 +1445,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
 
         try? await Task.sleep(nanoseconds: 250_000_000)
         guard isCapturing else { return }
+        if isSilentFromBirthRebuild, sysNonSilentCallbacks > 0 {
+            // The call started while this was queued; a rebuild now would only drop audio.
+            DebugLogger.shared.log(.audio, "System tap started carrying audio before the rebuild, leaving it alone")
+            return
+        }
 
         do {
             resetRingBuffer()
@@ -1416,7 +1460,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             lastSystemNonSilentAt = restartedAt
             lastSystemCallbackAt = restartedAt
             lastSystemAutoRestartAt = restartedAt
-            beginPostRecoveryHealthCheck(reason: "silent-stall recovery")
+            if !isSilentFromBirthRebuild {
+                beginPostRecoveryHealthCheck(reason: "silent-stall recovery")
+            }
             DebugLogger.shared.log(.audio, "System tap recovery complete")
         } catch {
             setSystemAudioActive(false)
@@ -1557,6 +1603,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 try self.startSystemAudioCapture(mixWithMic: mixWithMic)
                 self.setSystemAudioActive(true)
                 self.systemRetryAttempt = 0
+                // The fresh tap starts its own silence clock, so the silent-from-birth
+                // rule does not spend an attempt on it a second after it was created.
+                self.lastSystemNonSilentAt = CFAbsoluteTimeGetCurrent()
                 DebugLogger.shared.log(.audio, "System tap auto-retry succeeded")
             } catch {
                 self.setSystemAudioActive(false)
@@ -2002,6 +2051,30 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                     await self?.recoverSystemTapAfterSilentStall(
                         mixWithMic: mixWithMic,
                         silenceDuration: silenceDuration
+                    )
+                }
+            } else if Self.shouldRebuildSilentFromBirthSystemTap(
+                expectsSystemAudio: expectsSystemAudio,
+                isSystemAudioActive: isSystemAudioActiveForWatchdog,
+                isRecoveryInProgress: isEscalatingFullRestart,
+                isSendSuspended: isSendSuspended,
+                callbackCount: sysCallbackCount,
+                nonSilentCallbacks: sysNonSilentCallbacks,
+                silenceDuration: silenceDuration,
+                timeSinceLastRestart: lastSystemAutoRestartAt > 0 ? now - lastSystemAutoRestartAt : .infinity,
+                rebuildsSoFar: silentFromBirthRebuilds
+            ) {
+                lastSystemAutoRestartAt = now
+                silentFromBirthRebuilds += 1
+                DebugLogger.shared.log(
+                    .audio,
+                    "System tap has never carried audio (silent \(String(format: "%.1f", silenceDuration))s since start, callbacks=\(sysCallbackCount), rebuild \(silentFromBirthRebuilds)/\(Self.maxSilentFromBirthRebuilds)), rebuilding in case it was created during the permission prompt"
+                )
+                Task { @MainActor [weak self] in
+                    await self?.recoverSystemTapAfterSilentStall(
+                        mixWithMic: mixWithMic,
+                        silenceDuration: silenceDuration,
+                        isSilentFromBirthRebuild: true
                     )
                 }
             }

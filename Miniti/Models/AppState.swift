@@ -7900,6 +7900,11 @@ final class AppState: ObservableObject {
                 )
             } catch {
                 DebugLogger.shared.log(.app, "Audio monitoring FAILED: \(error.localizedDescription)")
+                // Nothing is capturing, so the test button must offer to try again rather
+                // than show "Stop microphone test" over a meter that will never move.
+                guard isMonitoring, !isRecording else { return }
+                isMonitoring = false
+                audioLevels.reset()
             }
         }
     }

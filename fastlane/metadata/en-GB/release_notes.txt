@@ -1,4 +1,3 @@
 FIXED
 
-- A phone restored from a backup could get a 401 on every recording and could not sign out. miniti kept a half-finished account on the device and signed with a key the server had never seen. It now sets the device up again on first launch. If you had an account before, move the device back to it with its recovery key in Settings, Account.
-- Sign out always clears the device, even when the server no longer accepts its key.
+- The microphone meter in setup now moves for a normal speaking voice. Before, it only moved for a shout, so a working mic looked dead.

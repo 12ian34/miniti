@@ -192,6 +192,79 @@ final class MeetingHandoffTests: XCTestCase {
             "cooldown after a recovery")
     }
 
+    // MARK: - System tap created during the permission prompt never carries audio
+
+    func testSilentFromBirthTapRuleRebuildsOnlyATapThatNeverCarriedAudio() {
+        func decide(
+            nonSilent: Int = 0, callbacks: Int = 900, silence: CFAbsoluteTime = 11,
+            sinceRestart: CFAbsoluteTime = .infinity, rebuilds: Int = 0,
+            expects: Bool = true, active: Bool = true, recovering: Bool = false, suspended: Bool = false
+        ) -> Bool {
+            AudioCaptureService.shouldRebuildSilentFromBirthSystemTap(
+                expectsSystemAudio: expects, isSystemAudioActive: active, isRecoveryInProgress: recovering,
+                isSendSuspended: suspended, callbackCount: callbacks, nonSilentCallbacks: nonSilent,
+                silenceDuration: silence, timeSinceLastRestart: sinceRestart, rebuildsSoFar: rebuilds)
+        }
+        XCTAssertTrue(decide(), "alive for 10 s, callbacks firing, not one non-silent buffer")
+        XCTAssertFalse(decide(nonSilent: 1), "a tap that carried audio once belongs to the silent-stall detector")
+        XCTAssertFalse(decide(callbacks: 10), "too few callbacks to call the tap alive")
+        XCTAssertFalse(decide(silence: 5), "startup grace")
+        XCTAssertFalse(decide(sinceRestart: 10, rebuilds: 1), "cooldown between the two rebuilds")
+        XCTAssertTrue(decide(sinceRestart: 31, rebuilds: 1), "second attempt after the cooldown")
+        XCTAssertFalse(decide(sinceRestart: 120, rebuilds: 2), "bounded: plain silence stops costing taps")
+        XCTAssertFalse(decide(expects: false, active: false), "mic-only capture has no tap")
+        XCTAssertFalse(decide(active: false), "a tap that failed to start is the retry path's job")
+        XCTAssertFalse(decide(recovering: true), "a full restart already under way")
+        XCTAssertFalse(decide(suspended: true), "ending grace is deliberate silence")
+    }
+
+    func testOnboardingMeterShowsOrdinarySpeechLevels() {
+        XCTAssertEqual(OnboardingMicrophoneMeter.displayLevel(for: 0), 0)
+        XCTAssertEqual(OnboardingMicrophoneMeter.displayLevel(for: 0.002), 0, "a quiet room rests at empty")
+        XCTAssertLessThan(OnboardingMicrophoneMeter.displayLevel(for: 0.005), 0.1, "room noise barely shows")
+        XCTAssertGreaterThan(OnboardingMicrophoneMeter.displayLevel(for: 0.02), 0.25, "quiet speech must visibly move the bar")
+        XCTAssertGreaterThan(OnboardingMicrophoneMeter.displayLevel(for: 0.1), 0.5)
+        XCTAssertEqual(OnboardingMicrophoneMeter.displayLevel(for: 1.5), 1)
+        XCTAssertFalse(OnboardingMicrophoneMeter.hasSignal(0.005))
+        XCTAssertTrue(OnboardingMicrophoneMeter.hasSignal(0.02))
+    }
+
+    /// Real HAL check for the silent-from-birth rebuild: a mic + system capture with nothing
+    /// playing lets the 10 s rule fire, then the tap and its private aggregate device are
+    /// destroyed and recreated. The mic engine must neither restart nor stop delivering.
+    func testSilentFromBirthRebuildLeavesTheMicEngineAlone() async throws {
+        // The logger is a 1000-entry ring; in the full suite it is already full, so
+        // positions shift under us. Start empty and compare by timestamp, not index.
+        DebugLogger.shared.clear()
+        XCTAssertTrue(state.startNewMeeting())
+        await waitUntil { (self.state.audioCaptureService?.micBufferCountForTesting ?? 0) > 5 }
+        let cap = try XCTUnwrap(state.audioCaptureService)
+        guard cap.isSystemAudioActive else { throw XCTSkip("no system audio tap in this test host") }
+        let firedPrefix = "System tap has never carried audio"
+        await waitUntil(16) { DebugLogger.shared.entries.contains { $0.message.hasPrefix(firedPrefix) } }
+        guard let fired = DebugLogger.shared.entries.first(where: { $0.message.hasPrefix(firedPrefix) }) else {
+            dumpLog("silent-from-birth rule did not fire")
+            throw XCTSkip("the tap carried audio (something is playing on this Mac), so the rule did not fire")
+        }
+        await waitUntil(4) { DebugLogger.shared.entries.contains { $0.message == "System tap recovery complete" } }
+        let countAfterRebuild = cap.micBufferCountForTesting
+        try? await Task.sleep(for: .seconds(2))
+
+        XCTAssertTrue(state.isRecording, describePipeline("after rebuild"))
+        XCTAssertTrue(cap.isMicActive, describePipeline("after rebuild"))
+        XCTAssertTrue(cap.isSystemAudioActive, describePipeline("after rebuild"))
+        XCTAssertGreaterThan(cap.micBufferCountForTesting, countAfterRebuild, "mic buffers must keep arriving across the tap rebuild. " + describePipeline("after rebuild"))
+        let afterRebuild = DebugLogger.shared.entries.filter { $0.timestamp >= fired.timestamp }
+        XCTAssertTrue(afterRebuild.contains { $0.message == "System tap recovery complete" }, describePipeline("after rebuild"))
+        let micDisturbed = afterRebuild.filter {
+            $0.message.localizedCaseInsensitiveContains("configuration change")
+                || $0.message.localizedCaseInsensitiveContains("mic restart")
+                || $0.message.localizedCaseInsensitiveContains("engine restart")
+        }
+        XCTAssertTrue(micDisturbed.isEmpty, "rebuilding the tap must not touch the mic engine: \(micDisturbed.map(\.message))")
+        dumpLog("silent-from-birth rebuild")
+    }
+
     /// Real HAL reproduction: moving the default output device to another device object
     /// makes the input-only AVAudioEngine post a configuration change and stop, with the
     /// input device and format unchanged. Before the fix the mic stayed dead (every flag
