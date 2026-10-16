@@ -170,7 +170,7 @@ final class TestCloudHost: CloudSyncHost {
     func cloudFetchMeetings(_ descriptor: FetchDescriptor<Meeting>) -> [Meeting]? { try? context.fetch(descriptor) }
     func cloudFetchTombstones() -> [MeetingTombstone]? { try? context.fetch(FetchDescriptor<MeetingTombstone>()) }
     func cloudDidInsertMeetings(_ meetings: [Meeting]) { inserted += meetings.map(\.id) }
-    func cloudDidChangeMeetings() { changedCount += 1 }
+    func cloudDidChangeMeetings(_ updated: [Meeting]) { changedCount += 1 }
     func cloudTierChanged(isPro: Bool) { tierChanges.append(isPro) }
 
     /// What the app does on a user delete: bookkeeping, tombstone when the cloud knows, delete.
@@ -590,5 +590,66 @@ extension CloudSyncEngineTests {
         let id = transport.seed(doc, updatedAt: clock)
         await tick()
         XCTAssertNil(host.meeting(id))
+    }
+}
+
+
+// MARK: - AppState wiring
+
+@MainActor
+final class CloudSyncAppStateTests: XCTestCase {
+    func testPrivateModeSnapshotsTheSwitchAndPausesTheEngine() throws {
+        let defaults = UserDefaults(suiteName: "CloudSyncAppStateTests-\(UUID().uuidString)")!
+        let state = AppState()
+        state.cloudSyncEnabled = true
+        state.setPrivateMode(true, defaults: defaults)
+        if state.privateModeAvailable {
+            XCTAssertFalse(state.cloudSyncEnabled)
+            XCTAssertEqual(state.cloudPauseReason, .off)
+            state.setPrivateMode(false, defaults: defaults)
+            XCTAssertTrue(state.cloudSyncEnabled, "the switch comes back with the other nine settings")
+        } else {
+            XCTAssertTrue(state.cloudSyncEnabled, "private mode is unavailable here, so nothing changes")
+        }
+        state.cloudSyncEnabled = false
+    }
+
+    func testPauseReasonOrderAndKeepOffTheCloud() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let state = AppState()
+        state.modelContext = context
+        state.cloudSyncEnabled = false
+        XCTAssertEqual(state.cloudPauseReason, .off)
+        state.cloudSyncEnabled = true
+        state.appMode = .byok
+        XCTAssertEqual(state.cloudPauseReason, .notManaged)
+        state.appMode = .managed
+        // The test host shares the Mac's own Keychain, so it may be enrolled; either way the gate
+        // after mode is enrollment, then tier, and never nil without Pro.
+        XCTAssertTrue([.notEnrolled, .notPro].contains(state.cloudPauseReason), "\(String(describing: state.cloudPauseReason))")
+
+        let meeting = Meeting(title: "Synced once", startTime: Date(), endTime: Date())
+        meeting.cloudRevision = 3
+        meeting.syncFingerprint = "abc"
+        context.insert(meeting)
+        try context.save()
+        state.setMeetingExcludedFromCloud(meeting, excluded: true)
+        XCTAssertTrue(meeting.syncExcluded)
+        XCTAssertEqual(meeting.cloudRevision, 0)
+        XCTAssertNil(meeting.syncFingerprint)
+        let tombstones = try context.fetch(FetchDescriptor<MeetingTombstone>())
+        XCTAssertEqual(tombstones.map(\.id), [meeting.id], "the cloud copy is removed through a tombstone")
+        XCTAssertEqual(tombstones.first?.cloudRevision, 3)
+        state.setMeetingExcludedFromCloud(meeting, excluded: false)
+        XCTAssertFalse(meeting.syncExcluded)
+
+        // A user delete of a never-synced meeting leaves a tombstone only while the switch is on.
+        let fresh = Meeting(title: "Never uploaded", startTime: Date(), endTime: Date())
+        context.insert(fresh)
+        try context.save()
+        state.noteMeetingDeleted(fresh)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 2)
+        state.cloudSyncEnabled = false
     }
 }

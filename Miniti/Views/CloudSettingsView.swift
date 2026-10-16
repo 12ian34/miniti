@@ -124,7 +124,6 @@ struct CloudSettingsSections: View {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
             }
             Button("View log") { isShowingLog = true }
-                .disabled(engine.log.isEmpty)
         }
         .id("cloud.status")
         .sheet(isPresented: $isShowingLog) {

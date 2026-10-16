@@ -48,8 +48,9 @@ protocol CloudSyncHost: AnyObject {
     func cloudFetchTombstones() -> [MeetingTombstone]?
     /// Meetings that arrived from another device were inserted (History reload, auto-export).
     func cloudDidInsertMeetings(_ meetings: [Meeting])
-    /// Existing meetings changed or were deleted from the cloud (History reload).
-    func cloudDidChangeMeetings()
+    /// Existing meetings changed or were deleted from the cloud (History reload); `updated`
+    /// lists the ones still present so macOS can refresh their markdown export.
+    func cloudDidChangeMeetings(_ updated: [Meeting])
     /// The server said the account is not Pro (or is again).
     func cloudTierChanged(isPro: Bool)
 }
@@ -80,14 +81,17 @@ final class CloudSyncEngine: ObservableObject {
     @Published private(set) var status: CloudStatus?
     @Published private(set) var skippedMeetingIDs: Set<UUID> = []
     @Published private(set) var lastError: String?
-    /// What moved and why, newest first, for Settings → Cloud → View log. In memory only,
-    /// capped at 300 entries; never holds transcript text.
-    @Published private(set) var log: [CloudSyncLogEntry] = []
+    /// What moved and why, newest first, for Settings → Cloud → View log. Kept in
+    /// UserDefaults across launches (the last 300 entries, titles only, never transcript text).
+    @Published private(set) var log: [CloudSyncLogEntry] = [] {
+        didSet { persistLog() }
+    }
     static let logCapacity = 300
+    static let logKey = "cloudSync.log"
 
-    struct CloudSyncLogEntry: Identifiable, Equatable {
-        enum Kind: String { case uploaded, downloaded, updated, deletedLocally = "deleted here", deletedInCloud = "deleted in cloud", conflict, skipped, paused, error, info }
-        let id = UUID()
+    struct CloudSyncLogEntry: Identifiable, Equatable, Codable {
+        enum Kind: String, Codable { case uploaded, downloaded, updated, deletedLocally = "deleted here", deletedInCloud = "deleted in cloud", conflict, skipped, paused, error, info }
+        var id = UUID()
         let at: Date
         let kind: Kind
         let title: String
@@ -100,6 +104,20 @@ final class CloudSyncEngine: ObservableObject {
     }
 
     func clearLog() { log = [] }
+
+    private var logLoaded = false
+    func loadLogIfNeeded() {
+        guard !logLoaded else { return }
+        logLoaded = true
+        if let data = defaults.data(forKey: Self.logKey), let saved = try? JSONDecoder().decode([CloudSyncLogEntry].self, from: data) {
+            log = saved
+        }
+    }
+
+    private func persistLog() {
+        guard logLoaded else { return }
+        if let data = try? JSONEncoder().encode(Array(log.prefix(Self.logCapacity))) { defaults.set(data, forKey: Self.logKey) }
+    }
 
     weak var host: CloudSyncHost?
     var transport: CloudSyncTransport?
@@ -130,6 +148,7 @@ final class CloudSyncEngine: ObservableObject {
 
     /// Start polling. Safe to call again.
     func start() {
+        loadLogIfNeeded()
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in await self?.sync(reason: "poll") }
@@ -442,7 +461,7 @@ final class CloudSyncEngine: ObservableObject {
             let decoded = state.document.flatMap(MeetingSyncDocument.decode)
             if remoteNewer || retrying, let decoded {
                 applyRemote(decoded, revision: state.revision, to: meeting, host: host)
-                host.cloudDidChangeMeetings()
+                host.cloudDidChangeMeetings([meeting])
             } else if !retrying, let decoded, decoded.transcriptRevision > localTranscriptRevision, let context = host.cloudModelContext {
                 // The other device trimmed or corrected the transcript: take its transcript, keep
                 // this device's newer title, notes and insights, and push the merge.
@@ -450,7 +469,7 @@ final class CloudSyncEngine: ObservableObject {
                     MeetingSyncDocument.applyTranscript(decoded, to: meeting, in: context)
                     meeting.cloudRevision = state.revision
                 }
-                host.cloudDidChangeMeetings()
+                host.cloudDidChangeMeetings([meeting])
                 try await push(meeting, id: id, host: host, transport: transport, retrying: true)
             } else if !retrying {
                 _ = host.cloudCommit { meeting.cloudRevision = state.revision }
@@ -506,6 +525,7 @@ final class CloudSyncEngine: ObservableObject {
         let live = host.liveMeetingID
         let pendingDeletes = Set((host.cloudFetchTombstones() ?? []).map(\.id))
         var inserted: [Meeting] = []
+        var updated: [Meeting] = []
         var changed = false
         _ = host.cloudCommit {
             for change in changes where change.id != live && !host.isMeetingDeleted(change.id) {
@@ -530,6 +550,7 @@ final class CloudSyncEngine: ObservableObject {
                     }
                     self.applyRemote(decoded, revision: change.revision, to: local, host: host, commit: false)
                     self.note(.updated, local.title, "changes from another device")
+                    updated.append(local)
                     changed = true
                 } else if !pendingDeletes.contains(change.id) {
                     let created = MeetingSyncDocument.makeMeeting(decoded, in: context)
@@ -540,7 +561,7 @@ final class CloudSyncEngine: ObservableObject {
             }
         }
         if !inserted.isEmpty { host.cloudDidInsertMeetings(inserted) }
-        if changed { host.cloudDidChangeMeetings() }
+        if changed { host.cloudDidChangeMeetings(updated.filter { $0.modelContext != nil }) }
     }
 
     // MARK: Reconcile
@@ -584,6 +605,7 @@ final class CloudSyncEngine: ObservableObject {
             }
         }
         var inserted: [Meeting] = []
+        var updated: [Meeting] = []
         var changed = false
         var index = 0
         while index < toFetch.count {
@@ -603,6 +625,7 @@ final class CloudSyncEngine: ObservableObject {
                         }
                         self.applyRemote(decoded, revision: state.revision, to: local, host: host, commit: false)
                         self.note(.updated, local.title, "changes from another device")
+                        updated.append(local)
                         changed = true
                     } else {
                         let created = MeetingSyncDocument.makeMeeting(decoded, in: context)
@@ -615,7 +638,7 @@ final class CloudSyncEngine: ObservableObject {
         }
         cursor = max(manifest.latestSeq, 1)
         if !inserted.isEmpty { host.cloudDidInsertMeetings(inserted) }
-        if changed { host.cloudDidChangeMeetings() }
+        if changed { host.cloudDidChangeMeetings(updated.filter { $0.modelContext != nil }) }
     }
 
     // MARK: Helpers
@@ -645,6 +668,6 @@ final class CloudSyncEngine: ObservableObject {
 
     private func deleteLocal(_ meeting: Meeting, host: CloudSyncHost) {
         _ = host.cloudCommit { host.cloudRemoveLocally(meeting) }
-        host.cloudDidChangeMeetings()
+        host.cloudDidChangeMeetings([])
     }
 }

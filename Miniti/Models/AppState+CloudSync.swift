@@ -51,7 +51,15 @@ extension AppState: CloudSyncHost {
         NotificationCenter.default.post(name: .minitiMeetingsImported, object: nil)
     }
 
-    func cloudDidChangeMeetings() {
+    func cloudDidChangeMeetings(_ updated: [Meeting]) {
+        #if os(macOS)
+        // Pulled edits refresh the markdown file the same way an insight update from History does.
+        if autoExportMarkdown {
+            for meeting in updated where !isMeetingDeleted(meeting.id) {
+                exportMeetingAsMarkdownFile(markdown: meeting.fullMeetingAsMarkdown(), meeting: meeting)
+            }
+        }
+        #endif
         NotificationCenter.default.post(name: .minitiMeetingsImported, object: nil)
     }
 
