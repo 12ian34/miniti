@@ -2,6 +2,7 @@ NEW
 - Cloud. One switch in Settings, Cloud. Your meetings go to miniti's servers and come back on every device on your account. Record on the Mac, open it on the phone a minute later. Edits, speaker names, pins and deletes follow. Pro only, off by default.
 - Sign in with email. Add an email in Settings, Cloud and miniti sends you a link. It signs you in on the web and on a new device without typing the recovery key.
 - Your meetings in your own tools. Settings, Cloud makes tokens for the API and connects Claude, ChatGPT, Claude Code and Cursor to your meetings through MCP. Read only.
+- Your account on the web. Sign in at api.miniti.app/signin with your email and see your plan, minutes, devices, connected apps and tokens.
 - Keep a meeting off the cloud from the history list. Meetings recorded in private mode stay off it on their own.
 
 IMPROVED
