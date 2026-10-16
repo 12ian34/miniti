@@ -36,6 +36,7 @@ struct CloudSettingsSections: View {
     @State private var revealedToken: String?
     @State private var copiedToken = false
     @State private var loadedAccount: String?
+    @State private var isShowingLog = false
 
     var body: some View {
         if appState.appMode == .byok {
@@ -122,8 +123,15 @@ struct CloudSettingsSections: View {
             if let notice {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
             }
+            Button("View log") { isShowingLog = true }
+                .disabled(engine.log.isEmpty)
         }
         .id("cloud.status")
+        .sheet(isPresented: $isShowingLog) {
+            CloudSyncLogView(engine: engine)
+                .environmentObject(appState)
+                .preferredColorScheme(.dark)
+        }
         .task(id: appState.clientAuthStatus.accountID) { await loadIfNeeded() }
         .onReceive(NotificationCenter.default.publisher(for: .minitiCloudCallback)) { _ in
             // The browser confirmed the email and handed back to the app: show it without a relaunch.
@@ -532,5 +540,77 @@ struct MCPSetupRows: View {
         #else
         UIPasteboard.general.string = text
         #endif
+    }
+}
+
+
+/// Settings → Cloud → View log: what the engine uploaded, downloaded, changed, deleted or
+/// skipped this session, newest first. Titles only, never transcript text.
+struct CloudSyncLogView: View {
+    @ObservedObject var engine: CloudSyncEngine
+    @Environment(\.dismiss) private var dismiss
+
+    private static let time: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        return f
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Cloud log")
+                    .font(.title3.weight(.semibold))
+                Spacer()
+                Button("Clear") { engine.clearLog() }
+                    .disabled(engine.log.isEmpty)
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            if engine.log.isEmpty {
+                Text("Nothing has moved yet.")
+                    .foregroundStyle(.secondary)
+            } else {
+                List(engine.log) { entry in
+                    HStack(alignment: .top, spacing: 10) {
+                        Text(CloudSyncLogView.time.string(from: entry.at))
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 64, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(entry.kind.rawValue)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(color(for: entry.kind))
+                                Text(entry.title)
+                                    .lineLimit(1)
+                            }
+                            if let detail = entry.detail {
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                .listStyle(.plain)
+            }
+            Text("This session only. Meeting titles, never transcript text.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(20)
+        .frame(minWidth: 460, idealWidth: 560, minHeight: 360, idealHeight: 480)
+    }
+
+    private func color(for kind: CloudSyncEngine.CloudSyncLogEntry.Kind) -> Color {
+        switch kind {
+        case .uploaded, .downloaded, .updated: return ColorPalette.Status.success
+        case .deletedLocally, .deletedInCloud: return ColorPalette.Text.secondary
+        case .conflict, .skipped, .paused: return ColorPalette.Status.warning
+        case .error: return ColorPalette.Status.error
+        case .info: return ColorPalette.Text.secondary
+        }
     }
 }

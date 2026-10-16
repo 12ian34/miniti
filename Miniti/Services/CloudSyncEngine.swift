@@ -80,6 +80,26 @@ final class CloudSyncEngine: ObservableObject {
     @Published private(set) var status: CloudStatus?
     @Published private(set) var skippedMeetingIDs: Set<UUID> = []
     @Published private(set) var lastError: String?
+    /// What moved and why, newest first, for Settings → Cloud → View log. In memory only,
+    /// capped at 300 entries; never holds transcript text.
+    @Published private(set) var log: [CloudSyncLogEntry] = []
+    static let logCapacity = 300
+
+    struct CloudSyncLogEntry: Identifiable, Equatable {
+        enum Kind: String { case uploaded, downloaded, updated, deletedLocally = "deleted here", deletedInCloud = "deleted in cloud", conflict, skipped, paused, error, info }
+        let id = UUID()
+        let at: Date
+        let kind: Kind
+        let title: String
+        let detail: String?
+    }
+
+    func note(_ kind: CloudSyncLogEntry.Kind, _ title: String, _ detail: String? = nil) {
+        log.insert(CloudSyncLogEntry(at: now(), kind: kind, title: title, detail: detail), at: 0)
+        if log.count > Self.logCapacity { log.removeLast(log.count - Self.logCapacity) }
+    }
+
+    func clearLog() { log = [] }
 
     weak var host: CloudSyncHost?
     var transport: CloudSyncTransport?
@@ -272,6 +292,7 @@ final class CloudSyncEngine: ObservableObject {
         } catch {
             phase = .failed("Sync failed")
             lastError = String(describing: type(of: error))
+            note(.error, "Sync failed", String(describing: type(of: error)))
             DebugLogger.shared.log(.app, "Cloud sync FAILED: \(type(of: error))", level: .warning)
         }
     }
@@ -304,6 +325,7 @@ final class CloudSyncEngine: ObservableObject {
             phase = .failed("Sync failed (\(code))")
             lastError = code
         }
+        if case .paused(let reason) = phase { note(.paused, reason.label) } else if case .failed(let text) = phase { note(.error, text) }
         DebugLogger.shared.log(.app, "Cloud sync paused: \(error)", level: .warning)
     }
 
@@ -385,14 +407,17 @@ final class CloudSyncEngine: ObservableObject {
                 meeting.syncStateRaw = nil
             }
             skippedMeetingIDs.remove(id)
+            note(base == 0 ? .uploaded : .updated, meeting.title, base == 0 ? "uploaded" : "changes sent")
         case .tooLarge:
             _ = host.cloudCommit {
                 meeting.syncStateRaw = "skipped_too_large"
                 meeting.syncFingerprint = fingerprint
             }
             skippedMeetingIDs.insert(id)
+            note(.skipped, meeting.title, "too large for the cloud, kept on this device")
         case .externalDuplicate(let existing):
             // Same import on two devices: the cloud copy wins, this local duplicate goes.
+            note(.deletedLocally, meeting.title, "same import already in the cloud, local copy replaced")
             deleteLocal(meeting, host: host)
             let pendingDeletes = Set((host.cloudFetchTombstones() ?? []).map(\.id))
             if let context = host.cloudModelContext, let document = existing.document, let decoded = MeetingSyncDocument.decode(document),
@@ -408,9 +433,11 @@ final class CloudSyncEngine: ObservableObject {
             }
         case .conflict(let state):
             if state.deleted {
+                note(.deletedLocally, meeting.title, "deleted on another device")
                 deleteLocal(meeting, host: host)
                 return
             }
+            if !retrying { note(.conflict, meeting.title, "edited on another device too") }
             let remoteNewer = (state.updatedAt ?? .distantPast) > localUpdatedAt
             let decoded = state.document.flatMap(MeetingSyncDocument.decode)
             if remoteNewer || retrying, let decoded {
@@ -443,6 +470,7 @@ final class CloudSyncEngine: ObservableObject {
             guard tombstone.modelContext != nil else { continue }
             switch result {
             case .ok:
+                note(.deletedInCloud, String(id.uuidString.prefix(8)), "delete sent")
                 _ = host.cloudCommit { context.delete(tombstone) }
             case .conflict(let state):
                 if state.deleted {
@@ -484,6 +512,7 @@ final class CloudSyncEngine: ObservableObject {
                 let local = self.localMeeting(id: change.id, host: host)
                 if change.deleted {
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
+                        self.note(.deletedLocally, local.title, "deleted on another device")
                         host.cloudRemoveLocally(local)
                         changed = true
                     }
@@ -496,13 +525,16 @@ final class CloudSyncEngine: ObservableObject {
                     if dirty, let localUpdated = local.updatedAt, localUpdated > decoded.updatedAt {
                         // Local edit is newer: keep it and push against the new revision.
                         local.cloudRevision = change.revision
+                        self.note(.conflict, local.title, "kept this device's newer edit")
                         continue
                     }
                     self.applyRemote(decoded, revision: change.revision, to: local, host: host, commit: false)
+                    self.note(.updated, local.title, "changes from another device")
                     changed = true
                 } else if !pendingDeletes.contains(change.id) {
                     let created = MeetingSyncDocument.makeMeeting(decoded, in: context)
                     self.markSynced(created, revision: change.revision)
+                    self.note(.downloaded, created.title, "downloaded")
                     inserted.append(created)
                 }
             }
@@ -516,6 +548,7 @@ final class CloudSyncEngine: ObservableObject {
     private func reconcile(host: CloudSyncHost, transport: CloudSyncTransport) async throws {
         guard let context = host.cloudModelContext else { return }
         let manifest = try await transport.manifest()
+        note(.info, "Checked the cloud", "\(manifest.entries.filter { !$0.deleted }.count) meetings there")
         let live = host.liveMeetingID
         let pendingDeletes = Set((host.cloudFetchTombstones() ?? []).map(\.id))
         var byID: [UUID: Meeting] = [:]
@@ -528,6 +561,7 @@ final class CloudSyncEngine: ObservableObject {
                 let local = byID[entry.id]
                 if entry.deleted {
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
+                        self.note(.deletedLocally, local.title, "deleted on another device")
                         host.cloudRemoveLocally(local)
                     }
                     continue
@@ -564,13 +598,16 @@ final class CloudSyncEngine: ObservableObject {
                         let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
                         if dirty, let localUpdated = local.updatedAt, localUpdated > decoded.updatedAt {
                             local.cloudRevision = state.revision
+                            self.note(.conflict, local.title, "kept this device's newer edit")
                             continue
                         }
                         self.applyRemote(decoded, revision: state.revision, to: local, host: host, commit: false)
+                        self.note(.updated, local.title, "changes from another device")
                         changed = true
                     } else {
                         let created = MeetingSyncDocument.makeMeeting(decoded, in: context)
                         self.markSynced(created, revision: state.revision)
+                        self.note(.downloaded, created.title, "downloaded")
                         inserted.append(created)
                     }
                 }
