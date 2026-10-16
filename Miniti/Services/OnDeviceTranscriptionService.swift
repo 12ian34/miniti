@@ -377,7 +377,7 @@ final class OnDeviceTranscriptionService: ObservableObject {
                 let directory = try await StreamingNemotronMultilingualAsrManager.downloadVariant(
                     languageCode: languageHint,
                     chunkMs: chunkMs,
-                    progressHandler: { progress in
+                    progressHandler: { [weak self] progress in
                         let fraction = progress.fractionCompleted
                         Task { @MainActor [weak self] in
                             guard let self, case .preparing = self.status, self.preparingFamily == family else { return }
@@ -491,6 +491,11 @@ final class OnDeviceTranscriptionService: ObservableObject {
         let sources: Set<TranscriptSource>
         private let chunkSeconds: Double
         private let lock = NSLock()
+        /// Synchronous scoped locking; NSLock's lock/unlock pair is not allowed across awaits.
+        private func withLock<T>(_ body: () -> T) -> T {
+            lock.lock(); defer { lock.unlock() }
+            return body()
+        }
         private var continuations: [TranscriptSource: AsyncStream<[Float]>.Continuation] = [:]
         private var workers: [TranscriptSource: Task<Void, Never>] = [:]
         private var managers: [TranscriptSource: StreamingNemotronMultilingualAsrManager]
@@ -546,7 +551,7 @@ final class OnDeviceTranscriptionService: ObservableObject {
                     _ = try await manager.process(samples: samples)
                 } catch {
                     failed = true
-                    lock.lock(); failedSources.insert(source); lock.unlock()
+                    withLock { _ = failedSources.insert(source) }
                     DebugLogger.shared.log(.audio, "On-device transcription stopped for \(source.rawValue): \(error.localizedDescription)")
                     continue
                 }
@@ -589,13 +594,14 @@ final class OnDeviceTranscriptionService: ObservableObject {
         /// Stop accepting audio, let every worker decode its tail, and flush the last words
         /// through the sink. Returns when the workers are done.
         func finish() async {
-            lock.lock()
-            guard !finished else { lock.unlock(); return }
-            finished = true
-            let continuations = self.continuations
-            let workers = self.workers
-            self.continuations = [:]
-            lock.unlock()
+            let pending: (continuations: [TranscriptSource: AsyncStream<[Float]>.Continuation], workers: [TranscriptSource: Task<Void, Never>])? = withLock {
+                guard !finished else { return nil }
+                finished = true
+                let snapshot = (continuations: self.continuations, workers: self.workers)
+                self.continuations = [:]
+                return snapshot
+            }
+            guard let (continuations, workers) = pending else { return }
             for continuation in continuations.values { continuation.finish() }
             for worker in workers.values { await worker.value }
         }

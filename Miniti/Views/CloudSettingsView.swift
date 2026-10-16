@@ -229,10 +229,10 @@ struct CloudSettingsSections: View {
                 Button("New token") { createToken() }
                     .disabled(isBusy || newTokenName.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            Text("Tokens read your meetings through the REST API and the MCP server. Claude Code: claude mcp add --transport http miniti https://api.miniti.app/api/mcp --header \"Authorization: Bearer <token>\". Claude.ai and ChatGPT connectors use web sign-in instead.")
+            Text("Tokens read your meetings through the REST API and the MCP server. Claude.ai and ChatGPT connectors use web sign-in instead of a token.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+            MCPSetupRows(token: revealedToken)
         }
         .id("cloud.tokens")
     }
@@ -419,8 +419,118 @@ struct CloudEnableSheet: View {
         .padding(24)
         .frame(minWidth: 380, idealWidth: 440)
         .onAppear {
-            let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.endTime != nil && $0.syncExcluded == false })
-            meetingCount = appState.cloudFetchMeetings(descriptor)?.count
+            meetingCount = appState.cloudFetchMeetings(FetchDescriptor<Meeting>())?.filter { $0.endTime != nil && !$0.syncExcluded }.count
         }
+    }
+}
+
+
+/// Ready-to-paste MCP setup for the tools people actually use. While a freshly created token
+/// is on screen the snippets carry it; afterwards they carry a placeholder, because the token
+/// is shown once.
+struct MCPSetupRows: View {
+    let token: String?
+    @State private var copiedTool: MCPTool?
+
+    enum MCPTool: String, CaseIterable, Identifiable {
+        case claudeCode = "Claude Code"
+        case claudeDesktop = "Claude Desktop, Cursor, Windsurf"
+        case codex = "Codex"
+        case geminiCLI = "Gemini CLI"
+        case curl = "curl, Grok Bot, scripts"
+        case hosted = "Claude.ai, ChatGPT"
+        var id: String { rawValue }
+    }
+
+    static let serverURL = "https://api.miniti.app/api/mcp"
+    static let restURL = "https://api.miniti.app/api/v1"
+
+    static func snippet(for tool: MCPTool, token: String?) -> String {
+        let t = token ?? "<token>"
+        switch tool {
+        case .claudeCode:
+            return "claude mcp add --transport http miniti \(serverURL) --header \"Authorization: Bearer \(t)\""
+        case .claudeDesktop:
+            return """
+            {
+              "mcpServers": {
+                "miniti": {
+                  "url": "\(serverURL)",
+                  "headers": { "Authorization": "Bearer \(t)" }
+                }
+              }
+            }
+            """
+        case .codex:
+            return """
+            [mcp_servers.miniti]
+            url = "\(serverURL)"
+            http_headers = { Authorization = "Bearer \(t)" }
+            """
+        case .geminiCLI:
+            return """
+            {
+              "mcpServers": {
+                "miniti": {
+                  "httpUrl": "\(serverURL)",
+                  "headers": { "Authorization": "Bearer \(t)" }
+                }
+              }
+            }
+            """
+        case .curl:
+            return "curl \(restURL)/meetings -H \"Authorization: Bearer \(t)\""
+        case .hosted:
+            return serverURL
+        }
+    }
+
+    static func hint(for tool: MCPTool) -> String {
+        switch tool {
+        case .claudeCode: return "Run in a terminal."
+        case .claudeDesktop: return "Add to the app's MCP settings file: claude_desktop_config.json, .cursor/mcp.json, or mcp_config.json."
+        case .codex: return "Add to ~/.codex/config.toml."
+        case .geminiCLI: return "Add to ~/.gemini/settings.json."
+        case .curl: return "Lists your meetings as JSON. Also /meetings/{id}, /meetings/{id}/transcript?format=markdown, /action-items."
+        case .hosted: return "Add this URL as a custom connector. It signs you in with your email, no token needed."
+        }
+    }
+
+    var body: some View {
+        ForEach(MCPTool.allCases) { tool in
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text(tool.rawValue)
+                    Spacer()
+                    Button(copiedTool == tool ? "Copied" : "Copy") {
+                        MCPSetupRows.copy(MCPSetupRows.snippet(for: tool, token: token))
+                        copiedTool = tool
+                    }
+                }
+                Text(MCPSetupRows.hint(for: tool))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(MCPSetupRows.snippet(for: tool, token: token))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(nil)
+            }
+            .padding(.vertical, 2)
+        }
+        if token == nil {
+            Text("Make a token and copy a snippet while it is on screen; the token is filled in for you.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    static func copy(_ text: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #else
+        UIPasteboard.general.string = text
+        #endif
     }
 }

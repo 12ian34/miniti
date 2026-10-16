@@ -25,12 +25,13 @@ enum MeetingSyncDocument {
 
     // MARK: Dates
 
-    static let formatter: ISO8601DateFormatter = {
+    // ISO8601DateFormatter is thread-safe; the compiler cannot see that.
+    nonisolated(unsafe) static let formatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return f
     }()
-    private static let plainFormatter: ISO8601DateFormatter = {
+    nonisolated(unsafe) private static let plainFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime]
         return f

@@ -9,7 +9,7 @@ import XCTest
 
 /// A server in memory with the same rules as `/api/sync/*`: revision CAS, tombstones, the
 /// trim guard, external-id uniqueness, a change feed with a retained window.
-final class FakeCloudTransport: CloudSyncTransport {
+final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     struct Row {
         var revision: Int
         var deleted: Bool
@@ -77,8 +77,9 @@ final class FakeCloudTransport: CloudSyncTransport {
         return ids.compactMap { id in rows[id].map { state(id, $0) } }
     }
 
-    func putMeeting(id: UUID, baseRevision: Int, document: [String: Any]) async throws -> CloudPutResult {
+    func putMeeting(id: UUID, baseRevision: Int, document data: Data) async throws -> CloudPutResult {
         calls.append("put"); try throwIfArmed()
+        let document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         if tier != "pro" { throw CloudSyncError.proRequired }
         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
         let updatedAt = MeetingSyncDocument.date(document["updated_at"]) ?? Date()

@@ -11,6 +11,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - new: (macOS and iOS) your meetings in your own tools. Settings, Cloud makes tokens for the API and connects Claude, ChatGPT, Claude Code and Cursor to your meetings through MCP. Read only
 - new: (macOS and iOS) keep a meeting off the cloud. Right-click a meeting in history. Meetings recorded in private mode stay off it on their own
 - improvement: (macOS and iOS) deleting a meeting with cloud on deletes it on every device
+- improvement: (macOS and iOS) minutes now count per account, not per device. Two devices on one plan share one allowance and show the same number
 
 ### 2026-10-15 - v2.12.2
 

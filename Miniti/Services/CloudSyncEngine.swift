@@ -310,8 +310,8 @@ final class CloudSyncEngine: ObservableObject {
     // MARK: Scan
 
     private func finishedMeetings(_ host: CloudSyncHost) -> [Meeting] {
-        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.endTime != nil && $0.syncExcluded == false })
-        return host.cloudFetchMeetings(descriptor) ?? []
+        // No `#Predicate`: it trips Swift 6's KeyPath sendability check and the store is small.
+        (host.cloudFetchMeetings(FetchDescriptor<Meeting>()) ?? []).filter { $0.endTime != nil && !$0.syncExcluded }
     }
 
     /// Update `localFingerprint` and `updatedAt` for every meeting whose content moved since
@@ -363,7 +363,7 @@ final class CloudSyncEngine: ObservableObject {
 
     private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool) async throws {
         let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
-        let document = MeetingSyncDocument.encode(meeting, segments: meeting.segments)
+        let document = try MeetingSyncDocument.encodeData(meeting, segments: meeting.segments)
         let base = meeting.cloudRevision
         let localUpdatedAt = meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting)
         let localTranscriptRevision = meeting.transcriptRevision
@@ -584,8 +584,7 @@ final class CloudSyncEngine: ObservableObject {
     // MARK: Helpers
 
     private func localMeeting(id: UUID, host: CloudSyncHost) -> Meeting? {
-        let descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == id })
-        return host.cloudFetchMeetings(descriptor)?.first
+        host.cloudFetchMeetings(FetchDescriptor<Meeting>())?.first { $0.id == id }
     }
 
     private func markSynced(_ meeting: Meeting, revision: Int) {

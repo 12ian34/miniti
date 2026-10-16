@@ -126,12 +126,14 @@ enum CloudSyncError: Error, Equatable {
     case server(code: String, status: Int)
 }
 
-protocol CloudSyncTransport: AnyObject {
+/// Sendable so the main-actor engine can call it across isolation; `MinitiAPIService` is
+/// `@unchecked Sendable` and the test fake is too. Documents travel as encoded JSON data.
+protocol CloudSyncTransport: AnyObject, Sendable {
     func manifest() async throws -> CloudManifest
     func changes(since: Int, limit: Int) async throws -> CloudChangesPage
     func fetchMeeting(id: UUID) async throws -> CloudMeetingState?
     func fetchMeetings(ids: [UUID]) async throws -> [CloudMeetingState]
-    func putMeeting(id: UUID, baseRevision: Int, document: [String: Any]) async throws -> CloudPutResult
+    func putMeeting(id: UUID, baseRevision: Int, document: Data) async throws -> CloudPutResult
     func deleteMeeting(id: UUID, baseRevision: Int) async throws -> CloudDeleteResult
     func status() async throws -> CloudStatus
     func deleteCloudCopy() async throws
@@ -235,8 +237,10 @@ extension MinitiAPIService: CloudSyncTransport {
         return ((json["meetings"] as? [[String: Any]]) ?? []).compactMap { CloudMeetingState(json: $0, fallbackID: nil) }
     }
 
-    func putMeeting(id: UUID, baseRevision: Int, document: [String: Any]) async throws -> CloudPutResult {
-        let body = try JSONSerialization.data(withJSONObject: ["base_revision": baseRevision, "document": document], options: [.sortedKeys])
+    func putMeeting(id: UUID, baseRevision: Int, document: Data) async throws -> CloudPutResult {
+        var body = Data("{\"base_revision\":\(baseRevision),\"document\":".utf8)
+        body.append(document)
+        body.append(Data("}".utf8))
         let (status, json) = try await cloudCall(cloudRequest(path: "/sync/meetings/\(id.uuidString.lowercased())", method: "PUT", body: body))
         switch status {
         case 200..<300:

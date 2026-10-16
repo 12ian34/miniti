@@ -1804,7 +1804,7 @@ final class AppState: ObservableObject {
     /// quiet-prompt audio gap while transcription is healthy, so room noise cannot keep
     /// the "has this meeting ended?" question from ever appearing (2026-09-25).
     private var lastSpeechDetectedAt: CFAbsoluteTime = 0
-    static let speechMicLevelThreshold: Float = 0.008
+    nonisolated static let speechMicLevelThreshold: Float = 0.008
     static let speechSystemLevelThreshold: Float = 0.006
     private var deepgramReconnectTask: Task<Void, Never>?
     private var deepgramReconnectGeneration = 0

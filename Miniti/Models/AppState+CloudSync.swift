@@ -100,7 +100,7 @@ extension AppState: CloudSyncHost {
     /// lets the next sync upload the meeting.
     func setMeetingExcludedFromCloud(_ meeting: Meeting, excluded: Bool) {
         guard !isMeetingDeleted(meeting.id), let modelContext else { return }
-        commit(.cloudSync) {
+        commit(.cloudSync, mutate: {
             meeting.syncExcluded = excluded
             if excluded, meeting.cloudRevision > 0 {
                 modelContext.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
@@ -109,7 +109,7 @@ extension AppState: CloudSyncHost {
                 meeting.syncedAt = nil
             }
             if !excluded { meeting.syncFingerprint = nil }
-        }
+        })
         cloudSync.noteLocalChange()
     }
 

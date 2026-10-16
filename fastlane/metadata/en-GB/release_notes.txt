@@ -6,3 +6,4 @@ NEW
 
 IMPROVED
 - Deleting a meeting with cloud on deletes it on every device.
+- Minutes now count per account, not per device. Two devices on one plan share one allowance and show the same number.
