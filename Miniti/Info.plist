@@ -38,6 +38,30 @@
 				<string>miniti-google</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.miniti.cloud</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>miniti-twenty</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.miniti.cloud</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>miniti-attio</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.miniti.cloud</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>miniti-cloud</string>
+			</array>
+		</dict>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>129</string>

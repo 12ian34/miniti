@@ -132,7 +132,6 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
     case meetings
     case connections
     case privacy
-    case cloud
     case support
 
     var id: String { rawValue }
@@ -143,7 +142,6 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
         case .meetings: return "Meetings"
         case .connections: return "Connections"
         case .privacy: return "Privacy"
-        case .cloud: return "Cloud"
         case .support: return "Support"
         }
     }
@@ -158,6 +156,7 @@ enum SettingsGroup: String, CaseIterable, Identifiable {
 enum SettingsDestination: String, CaseIterable, Identifiable {
     case general
     case account
+    case cloud
     case recording
     case transcription
     case ai
@@ -169,18 +168,16 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case playbook
     case data
     case privacy
-    case cloud
     case about
 
     var id: String { rawValue }
 
     var group: SettingsGroup {
         switch self {
-        case .general, .account: return .setup
+        case .general, .account, .cloud: return .setup
         case .recording, .transcription, .ai, .templates, .notifications: return .meetings
         case .calendar, .crm, .webhooks, .playbook, .data: return .connections
         case .privacy: return .privacy
-        case .cloud: return .cloud
         case .about: return .support
         }
     }

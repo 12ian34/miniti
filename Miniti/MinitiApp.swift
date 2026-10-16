@@ -51,11 +51,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             let scheme = url.scheme?.lowercased() ?? ""
-            guard ["miniti-google", "miniti-attio", "miniti-twenty"].contains(scheme) else { continue }
+            guard ["miniti-google", "miniti-attio", "miniti-twenty", "miniti-cloud"].contains(scheme) else { continue }
             let notificationName: Notification.Name
             switch scheme {
             case "miniti-google": notificationName = .minitiGoogleOAuthCallback
             case "miniti-twenty": notificationName = .minitiTwentyOAuthCallback
+            case "miniti-cloud":
+                notificationName = .minitiCloudCallback
+                NSApp.activate(ignoringOtherApps: true)
             default: notificationName = .minitiAttioOAuthCallback
             }
             NotificationCenter.default.post(

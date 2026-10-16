@@ -125,6 +125,11 @@ struct CloudSettingsSections: View {
         }
         .id("cloud.status")
         .task(id: appState.clientAuthStatus.accountID) { await loadIfNeeded() }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiCloudCallback)) { _ in
+            // The browser confirmed the email and handed back to the app: show it without a relaunch.
+            loadedAccount = nil
+            Task { await loadIfNeeded() }
+        }
     }
 
     private var phaseLabel: String {

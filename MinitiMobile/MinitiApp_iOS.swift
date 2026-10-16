@@ -128,6 +128,8 @@ struct MinitiMobileApp: App {
                     }
                 case "miniti" where url.host?.lowercased() == "meeting":
                     NotificationCenter.default.post(name: .minitiOpenActiveMeeting, object: nil)
+                case "miniti-cloud":
+                    NotificationCenter.default.post(name: .minitiCloudCallback, object: nil, userInfo: ["url": url])
                 default:
                     break
                 }

@@ -212,4 +212,6 @@ extension Notification.Name {
     /// (Granola CSV import in Settings, cloud sync) so the macOS history sidebar refreshes.
     /// iOS history is a `@Query` and updates on its own.
     static let minitiMeetingsImported = Notification.Name("minitiMeetingsImported")
+    /// A `miniti-cloud://` link opened the app (the web confirmed an email); Settings → Cloud reloads.
+    static let minitiCloudCallback = Notification.Name("minitiCloudCallback")
 }

@@ -16,6 +16,14 @@
 		</dict>
 		<dict>
 			<key>CFBundleURLName</key>
+			<string>com.miniti.cloud</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>miniti-cloud</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleURLName</key>
 			<string>com.miniti.mobile.meeting</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
