@@ -4,7 +4,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### Unreleased - v3.0.0
+### 2026-10-16 - v3.0.0
 
 - new: (macOS and iOS) cloud. One switch in Settings, Cloud. Your meetings go to miniti's servers and come back on every device on your account. Record on the Mac, open it on the phone a minute later. Edits, speaker names, pins and deletes follow. Pro only, off by default
 - new: (macOS and iOS) sign in with email. Add an email in Settings, Cloud and miniti sends you a link. It signs you in on the web and on a new device without typing the recovery key
