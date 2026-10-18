@@ -168,12 +168,17 @@ final class WatchImportTests: XCTestCase {
     func testStitchSkipsUnreadablePartsAndCopiesASingleGoodOne() async throws {
         let dir = root.appendingPathComponent("stitch")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let good = dir.appendingPathComponent("good.wav")
-        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
-        let file = try AVAudioFile(forWriting: good, settings: format.settings)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
-        buffer.frameLength = 16_000
-        try file.write(from: buffer)
+        let good = dir.appendingPathComponent("good.caf")
+        let format = try XCTUnwrap(AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true))
+        // Scoped so the file header is finalised before anything reads it.
+        try {
+            let file = try AVAudioFile(forWriting: good, settings: format.settings, commonFormat: .pcmFormatInt16, interleaved: true)
+            let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+            buffer.frameLength = 16_000
+            try file.write(from: buffer)
+        }()
+        let fixtureSeconds = try await AVURLAsset(url: good).load(.duration).seconds
+        XCTAssertGreaterThan(fixtureSeconds, 0.5, "fixture must be readable")
         let bad = dir.appendingPathComponent("bad.m4a")
         try Data(repeating: 0, count: 2_000).write(to: bad)
         let output = dir.appendingPathComponent("joined.m4a")

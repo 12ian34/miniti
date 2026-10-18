@@ -115,3 +115,7 @@ names of customers. Change them there when the product story changes.
 ## Locales
 
 App Store Connect has en-US and en-GB listings. `all.sh` mirrors the rendered en-US frames into `fastlane/screenshots/en-GB` because deliver only replaces the locales it finds files for; a missing locale keeps its old screenshots. `fastlane ios screenshot_sets` lists what is on App Store Connect for the editable version, and `prune:true` deletes sets for display types the repo no longer ships (for example the old 6.5-inch iPhone set).
+
+## Apple Watch (3.1.0)
+
+`scripts/screenshots/capture-watch.sh` installs the watch app from the last iOS simulator build onto the Apple Watch Series 12 (46mm) simulator (416 x 496, the size App Store Connect lists as Apple Watch Series 10) and captures two states through the `-MinitiScreenshotScene record|queue` launch argument: the Record page mid-meeting and the Queue page with three recordings. Output goes to `fastlane/screenshots/en-US/Apple Watch Series 10-0N.png`, which `fastlane ios screenshots` uploads next to the iPhone and iPad sets. No framing step; watch screenshots are submitted as captured.

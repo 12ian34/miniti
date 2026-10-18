@@ -10,7 +10,15 @@ final class WatchRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
     @Published private(set) var level: Float = 0
     @Published private(set) var lastError: String?
 
-    var isRecording: Bool { manifest?.state == .recording }
+    var isRecording: Bool { manifest?.state == .recording || screenshotRecording }
+    private var screenshotRecording = false
+
+    /// Screenshot mode: fixed timer and level, no microphone.
+    func enterScreenshotMode(elapsed: TimeInterval, level: Float, recording: Bool) {
+        screenshotRecording = recording
+        self.elapsed = recording ? elapsed : 0
+        self.level = recording ? level : 0
+    }
 
     /// Fires when a segment file is closed and ready to send: (manifest, segment).
     var onSegmentClosed: ((WatchRecordingManifest, WatchRecordingSegment) -> Void)?

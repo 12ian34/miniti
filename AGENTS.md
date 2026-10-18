@@ -106,6 +106,7 @@ There is no `README.md` in this repo — end-user documentation lives at `https:
 - grouped, pinnable meeting history browser
 - saved transcript trimming with insight regeneration
 - Live Activity on Dynamic Island and Lock Screen (timer + optional live transcript, with tap-through to the active meeting)
+- Apple Watch app (3.1.0, watchOS 10+, embedded in the iOS app): records on the wrist to AAC in 5-minute pieces, moves them to the iPhone over Watch Connectivity while recording, the iPhone joins them and transcribes once through Deepgram prerecorded (managed grant via `/api/session/prerecorded` or BYOK key), saves one meeting with `externalSource "watch"` and runs the usual final insights; History shows "From your watch" rows with Try again and Remove; minutes metered once by audio length; private mode refuses the job; the simulator uses a message-based transfer because it never delivers `transferFile`
 - default-on Smart meetings prompts for likely-ended recordings and safe calendar handoffs (join next / end & start next / end meeting / keep recording / remind), independently switchable from existing auto-start/stop
 - managed account: anonymous recovery key, up to 5 devices, Pro follows the account, move this device to another account
 - outbound webhooks over https only; Share Diagnostics on by default in managed mode

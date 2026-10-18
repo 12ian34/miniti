@@ -2,14 +2,18 @@ import SwiftUI
 
 struct WatchRootView: View {
     @EnvironmentObject private var model: WatchModel
+    @State private var page = 0
 
     var body: some View {
-        TabView {
-            RecordView()
-            QueueView()
+        TabView(selection: $page) {
+            RecordView().tag(0)
+            QueueView().tag(1)
         }
         .tabViewStyle(.verticalPage)
         .background(WatchPalette.background)
+        .onAppear {
+            if model.screenshotScene == "queue" { page = 1 }
+        }
     }
 }
 
@@ -17,7 +21,8 @@ struct RecordView: View {
     @EnvironmentObject private var model: WatchModel
 
     var body: some View {
-        RecordContent(recorder: model.recorder, link: model.link, toggle: model.toggleRecording, permissionDenied: model.permissionDenied)
+        RecordContent(recorder: model.recorder, link: model.link, toggle: model.toggleRecording,
+                      permissionDenied: model.permissionDenied, screenshot: model.screenshotScene != nil)
     }
 }
 
@@ -26,6 +31,7 @@ private struct RecordContent: View {
     @ObservedObject var link: WatchSessionClient
     let toggle: () -> Void
     let permissionDenied: Bool
+    var screenshot = false
 
     var body: some View {
         VStack(spacing: 10) {
@@ -48,6 +54,7 @@ private struct RecordContent: View {
                 .foregroundStyle(WatchPalette.textDim)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(.horizontal, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -55,9 +62,10 @@ private struct RecordContent: View {
     }
 
     private var footer: String {
+        if screenshot { return recorder.isRecording ? "Stays on the watch until your iPhone has it" : "Transcribed on your iPhone after you stop" }
         if permissionDenied { return "Allow the microphone in Settings" }
         if let error = recorder.lastError { return error }
-        if recorder.isRecording { return "Audio stays on the watch until it reaches your iPhone" }
+        if recorder.isRecording { return "Stays on the watch until your iPhone has it" }
         if !link.isCompanionInstalled { return "Install miniti on your iPhone" }
         return "Transcribed on your iPhone after you stop"
     }

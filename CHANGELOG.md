@@ -6,7 +6,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### Unreleased - v3.1.0
 
-- new: (iOS) apple watch. Record a meeting from your wrist. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it
+- new: (iOS) Apple Watch. Record a meeting from your wrist. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it
 
 ### 2026-10-16 - v3.0.0
 

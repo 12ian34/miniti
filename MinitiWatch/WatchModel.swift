@@ -12,7 +12,20 @@ final class WatchModel: ObservableObject {
     private var cancellables: Set<AnyCancellable> = []
     private let store = WatchRecordingStore.shared
 
+    /// `-MinitiScreenshotScene record|queue` renders a fixed state for the App Store screenshots
+    /// (see scripts/screenshots). Nothing is recorded or sent in this mode.
+    let screenshotScene: String? = {
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-MinitiScreenshotScene"), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }()
+
     init() {
+        if let screenshotScene {
+            recorder.enterScreenshotMode(elapsed: 23 * 60 + 41, level: 0.62, recording: screenshotScene == "record")
+            recordings = WatchRecordingManifest.screenshotSamples
+            return
+        }
         recorder.onSegmentClosed = { [weak self] manifest, segment in
             self?.link.send(segment: segment, of: manifest)
             self?.reload()
@@ -29,6 +42,7 @@ final class WatchModel: ObservableObject {
     }
 
     func toggleRecording() {
+        guard screenshotScene == nil else { return }
         if recorder.isRecording {
             recorder.stop()
         } else {
@@ -60,6 +74,9 @@ final class WatchModel: ObservableObject {
     }
 
     func status(for manifest: WatchRecordingManifest) -> String {
+        if screenshotScene != nil {
+            return ["transcribing", "on iPhone", "sending 2/3"][min(2, recordings.firstIndex(where: { $0.id == manifest.id }) ?? 0)]
+        }
         if manifest.state == .recording { return "recording" }
         if let receipt = link.receipts[manifest.id] {
             switch receipt.status {
@@ -105,5 +122,24 @@ final class WatchModel: ObservableObject {
             store.save(manifest)
         }
         link.resendPending()
+    }
+}
+
+extension WatchRecordingManifest {
+    /// Three plausible rows for the Queue screenshot.
+    static var screenshotSamples: [WatchRecordingManifest] {
+        let now = Date()
+        func make(minutesAgo: Double, duration: TimeInterval) -> WatchRecordingManifest {
+            let start = now.addingTimeInterval(-minutesAgo * 60)
+            let count = Int(duration / WatchRecordingProtocol.segmentSeconds) + 1
+            let segments = (0..<count).map { i in
+                WatchRecordingSegment(index: i, offset: Double(i) * WatchRecordingProtocol.segmentSeconds,
+                                      duration: min(WatchRecordingProtocol.segmentSeconds, duration - Double(i) * WatchRecordingProtocol.segmentSeconds),
+                                      byteCount: 1, filename: "segment-\(i).m4a", delivered: true)
+            }
+            return WatchRecordingManifest(id: UUID(), protocolVersion: WatchRecordingProtocol.version, startedAt: start,
+                                          endedAt: start.addingTimeInterval(duration), language: "en", state: .stopped, segments: segments)
+        }
+        return [make(minutesAgo: 4, duration: 31 * 60), make(minutesAgo: 95, duration: 12 * 60 + 30), make(minutesAgo: 180, duration: 48 * 60)]
     }
 }
