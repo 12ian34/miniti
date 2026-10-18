@@ -50,17 +50,19 @@ final class WatchRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         await AVAudioApplication.requestRecordPermission()
     }
 
-    func start(language: String) {
+    func start(language: String) async {
         guard !isRecording else { return }
         lastError = nil
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.record, mode: .default, options: [])
-            try session.setActive(true)
+            // watchOS activates asynchronously; the synchronous call blocks the main thread.
+            try await session.activate(options: [])
         } catch {
             lastError = "Microphone unavailable"
             return
         }
+        guard !isRecording else { return }
         let id = UUID()
         let now = Date()
         manifest = WatchRecordingManifest(

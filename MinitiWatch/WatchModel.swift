@@ -37,7 +37,7 @@ final class WatchModel: ObservableObject {
                     permissionDenied = true
                     return
                 }
-                recorder.start(language: link.language)
+                await recorder.start(language: link.language)
             }
         }
     }
