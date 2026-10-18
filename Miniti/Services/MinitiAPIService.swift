@@ -1281,6 +1281,20 @@ final class MinitiAPIService: @unchecked Sendable {
         
         return try decode(SessionResponse.self, from: data, endpoint: "/session")
     }
+
+    /// A Deepgram grant for transcribing a saved recording (Apple Watch). Same gates as
+    /// `/session`; the backend meters the audio length the client reports on `/session/end`.
+    func requestPrerecordedSession(deviceId: String, language: String, recordingID: String) async throws -> SessionResponse {
+        let request = makeRequest(
+            path: "/session/prerecorded",
+            method: "POST",
+            deviceId: deviceId,
+            body: ["model": "nova-3", "language": language, "recording_id": recordingID]
+        )
+        let (data, response) = try await send(request)
+        try validateResponse(response, data: data)
+        return try decode(SessionResponse.self, from: data, endpoint: "/session/prerecorded")
+    }
     
     /// End a transcription session and report duration. Backend increments usage counter.
     func endSession(deviceId: String, sessionId: String, durationMinutes: Double) async throws -> EndSessionResponse {

@@ -465,6 +465,7 @@ final class Meeting {
     var provenanceDisplayName: String? {
         switch externalSource?.lowercased() {
         case "granola": return "Granola"
+        case "watch": return "Apple Watch"
         case let source?: return source.capitalized
         case nil: return nil
         }

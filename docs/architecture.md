@@ -62,6 +62,19 @@ Separate iOS target in the same Xcode project. Mic-only recording (no system aud
 - **MinitiMobile/Info.plist** – `NSMicrophoneUsageDescription`, `UIBackgroundModes: [audio]`, `NSSupportsLiveActivities: YES`, `UILaunchScreen` (empty dict, required for iOS launch)
 - **MinitiMobile/MinitiMobile.entitlements** – Empty dict (iOS is always sandboxed; macOS sandbox keys like `com.apple.security.app-sandbox` are invalid on iOS and prevent launch)
 
+## Apple Watch (MinitiWatch, 3.1.0)
+
+- **Shared/WatchRecordingProtocol.swift** – the versioned contract between watch and phone, compiled into the watch app and both apps: `WatchRecordingManifest` / `WatchRecordingSegment` (the recording as JSON), `WatchSegmentTransfer` (plist-safe `transferFile` metadata, refused on a version mismatch), `WatchReceipt` (phone to watch: received, transcribing, waiting_for_minutes, ready, failed) and `WatchContext` (phone to watch application context: language, phone name).
+- **MinitiWatch/MinitiWatchApp.swift**, **WatchModel.swift** – entry point and the object the views observe; recovers a manifest left in the recording state at launch.
+- **MinitiWatch/WatchRecorder.swift** – `AVAudioRecorder` AAC mono 16 kHz 32 kbps, 5-minute rotation with the next recorder started before the open one stops, metering, interruption handling.
+- **MinitiWatch/WatchRecordingStore.swift** – Documents/recordings/<id>/ with manifest.json and segment files; files are deleted only on a receipt.
+- **MinitiWatch/WatchSessionClient.swift** – `WCSession` on the watch: queues each closed segment and the final manifest, resends undelivered files on activation, applies receipts.
+- **MinitiWatch/WatchViews.swift**, **WatchPalette.swift** – Record and Queue pages; the palette mirrors `ColorPalette` tokens because the watch target does not compile the app's models.
+- **MinitiMobile/WatchSessionBridge.swift** – `WCSession` on the phone: moves arriving files into Application Support/WatchInbox/<id>/ inside the callback, sends receipts, publishes the transcription language as application context.
+- **MinitiMobile/WatchImportService.swift** – the job ledger (ledger.json) and the one-at-a-time pipeline: join segments, Deepgram prerecorded (managed grant via `/api/session/prerecorded` or BYOK key), settle usage via `AppState.reportPrerecordedSessionEnd`, insert the `Meeting` (`externalSource "watch"`, `externalID` recording id, `PersistenceOperation.watchImport`), then `AppState.generateFinalInsightsAndSave`. Idempotent on the recording id; mid-flight jobs return to the queue on relaunch.
+- **MinitiMobile/WatchTranscriptionClient.swift** – the Deepgram prerecorded request (`diarize`, `utterances`, `smart_format`), the utterance to segment mapping, and the passthrough AAC stitcher.
+- **MinitiMobile/Views/WatchImportViews.swift** – "From your watch" History rows and the Settings, Recording, Apple Watch section.
+
 ## Live Activity Extension (MinitiLiveActivityExtension)
 
 Widget extension embedded in MinitiMobile. Shows recording status on Dynamic Island and Lock Screen.

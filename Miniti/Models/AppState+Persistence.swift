@@ -24,6 +24,7 @@ enum PersistenceOperation: String, CaseIterable {
     case interruptedMeetingCheck = "interrupted_meeting_check"
     case exportAll = "export_all"
     case cloudSync = "cloud_sync"
+    case watchImport = "watch_import"
 
     /// Lowercase noun for the banner: "<label> didn't save".
     var userLabel: String {
@@ -49,6 +50,7 @@ enum PersistenceOperation: String, CaseIterable {
         case .interruptedMeetingCheck: return "interrupted meeting check"
         case .exportAll: return "export"
         case .cloudSync: return "cloud sync"
+        case .watchImport: return "watch recording"
         }
     }
 

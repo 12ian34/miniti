@@ -21,6 +21,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 - **Miniti** — macOS app (`com.miniti.app`)
 - **MinitiMobile** — iOS app (`com.miniti.mobile`)
 - **MinitiLiveActivityExtension** — iOS widget extension (`com.miniti.mobile.live-activity`)
+- **MinitiWatch** — watchOS companion app (`com.miniti.mobile.watchkitapp`, 3.1.0), embedded in MinitiMobile; records to AAC segments and hands them to the phone over Watch Connectivity for Deepgram prerecorded transcription
 - **MinitiTests** / **MinitiMobileTests** — XCTest (same source files, different host app)
 
 ## Where to find things
@@ -38,12 +39,12 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Understand the test layout | [docs/testing.md](docs/testing.md) |
 | See the single prioritized product, engineering, reliability, and platform plan | [docs/roadmap.md](docs/roadmap.md) |
 | Work on the Linux desktop rewrite (separate repo) | [`../miniti-linux`](../miniti-linux) — start at `AGENTS.md` / `PLAN.md` (Tauri 2 + Rust, binary + AUR; not in this tree) |
-| Plan Apple Watch meeting recording | [docs/apple-watch-plan.md](docs/apple-watch-plan.md) (planned 2026-10-18, not built: record offline using the watch microphone, transfer to the paired iPhone, generate notes afterwards) |
 | Review the evidence-validated structural simplification audit | [docs/structural-simplification-audit-2026-08-16.md](docs/structural-simplification-audit-2026-08-16.md) |
 | Revisit local Apple Foundation Models or MLX for insights | [docs/local-ai-research.md](docs/local-ai-research.md) |
 | Change on-device transcription (Nemotron 3.5 streaming via FluidAudio), its language tiers, utterance assembly, or the local session path in `DeepgramService` | [docs/local-transcription-plan.md](docs/local-transcription-plan.md) (built 2026-10-09 for 2.12.0 behind a default-off macOS setting; status table) |
 | Evaluate local transcription engines (Nemotron 3.5 streaming via FluidAudio, Apple SpeechTranscriber, WhisperKit, Gemma 4) | [docs/local-transcription-research.md](docs/local-transcription-research.md) (research and offline engine comparison 2026-10-09: Nemotron live, Parakeet finaliser, Apple for iOS later; nothing built) + [scripts/transcription-poc/RESULTS.md](scripts/transcription-poc/RESULTS.md) |
 | Change the Jev classifier (attendee speaker naming, sales nudge via `/api/classify`), its thresholds, or its fallbacks | [docs/jev-system-one-plan.md](docs/jev-system-one-plan.md) (eval 2026-09-21; slice 1 built 2026-09-25 behind a default-off setting; status table, question versions, jaggedness rules) |
+| Change the Apple Watch app, the watch-to-phone transfer, or the prerecorded import | [docs/apple-watch-plan.md](docs/apple-watch-plan.md) (built 2026-10-18 for 3.1.0; status table, testing steps, decisions) |
 | Change on-device speaker separation (Nemotron-3 via FluidAudio), its Deepgram fallback, or the word-to-speaker mapping | [docs/on-device-diarization-plan.md](docs/on-device-diarization-plan.md) (built 2026-09-25 behind a default-off setting; status table) + [scripts/diarization-poc/RESULTS.md](scripts/diarization-poc/RESULTS.md) (the offline POC behind it) |
 | Change call detection, Smart meetings, auto-start/stop settings, recording indicators, or macOS reopen behavior | [docs/call-lifecycle-and-recording-presence-plan.md](docs/call-lifecycle-and-recording-presence-plan.md) (shipped call-lifecycle regression contract) + [docs/smart-meetings-plan.md](docs/smart-meetings-plan.md) (original silence/calendar regression contract) |
 | Change shared-microphone diarization or automatic in-room/hybrid inference | [docs/automatic-in-room-diarization-plan.md](docs/automatic-in-room-diarization-plan.md) |
@@ -155,7 +156,8 @@ docs/
 Miniti/                            # macOS target source
 MinitiMobile/                      # iOS target source
 MinitiLiveActivity/                # Widget extension source
-Shared/                            # RecordingActivityAttributes (iOS app + extension)
+MinitiWatch/                       # watchOS app source (recorder, store, Watch Connectivity client, views)
+Shared/                            # RecordingActivityAttributes (iOS app + extension), WatchRecordingProtocol (watch + both apps)
 MinitiTests/                       # XCTest sources (shared by both test targets)
 fastlane/                          # Fastlane config + RUNBOOK
 scripts/                           # build-dmg.sh, release-info.sh, dmg-background.png

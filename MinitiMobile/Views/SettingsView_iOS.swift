@@ -651,6 +651,8 @@ private struct SettingsDetailView_iOS: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+
+                WatchSettingsSection()
                 }
 
                 if category == .data {

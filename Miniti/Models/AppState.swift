@@ -8703,7 +8703,7 @@ final class AppState: ObservableObject {
         goHome()
     }
 
-    private func generateFinalInsightsAndSave(
+    func generateFinalInsightsAndSave(
         for meeting: Meeting,
         transcript: String,
         language: String,
@@ -10522,6 +10522,18 @@ final class AppState: ObservableObject {
     /// Retry any managed session-end reports that were queued due transient failures.
     func retryPendingSessionEndReports() async {
         await flushPendingSessionEndReports(trigger: "manual retry")
+    }
+
+    /// Meters a prerecorded (Apple Watch) transcription against the managed account. Uses the
+    /// same report-or-queue path as a live session, so a failed report is retried on activate.
+    func reportPrerecordedSessionEnd(sessionId: String, durationMinutes: Double) async {
+        guard appMode == .managed else { return }
+        let report = PendingSessionEndReport(
+            deviceId: DeviceIdentifier.getOrCreateDeviceId(),
+            sessionId: sessionId,
+            durationMinutes: max(0, durationMinutes)
+        )
+        await reportManagedSessionEnd(report, trigger: "watch import")
     }
     
     // MARK: - Subscription

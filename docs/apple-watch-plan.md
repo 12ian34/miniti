@@ -1,6 +1,37 @@
 # Apple Watch meeting recording
 
-Planned 2026-10-18. Research and repository inspection only; no watch target or implementation exists yet. The user selected **record on the watch, generate the transcript and notes afterwards**. Delivery priority and release version are not assigned. The [roadmap](roadmap.md#p36-apple-watch-recording) owns sequencing and completion tracking.
+Planned 2026-10-18 by one agent, reviewed and revised the same day, built for **3.1.0**. The user selected **record on the watch, generate the transcript and notes afterwards**. The [roadmap](roadmap.md#p36-apple-watch-recording) owns sequencing and completion tracking.
+
+## Status
+
+| Step | Status | Notes |
+|---|---|---|
+| Architecture decisions (2026-10-18 review) | decided | See "Decisions after review" below: direct phone-to-Deepgram upload (no managed job service), five-minute AAC segments that transfer while recording, prerecorded utterances mapped straight to transcript segments, usage settled once by Deepgram's reported duration through a prerecorded session, `externalSource: "watch"` + recording id as the idempotent import key. |
+| Backend: prerecorded session | built 2026-10-18 | `POST /api/session/prerecorded` (grant token, session kind), `POST /api/session/end` accepts a prerecorded session without the wall-clock cap (audio duration, capped at 4 hours), idempotent per session. |
+| Watch target `MinitiWatch` | built 2026-10-18 | SwiftUI watchOS app embedded in `MinitiMobile` ("Embed Watch Content" phase), bundle `com.miniti.mobile.watchkitapp`, watchOS 10, `WKBackgroundModes: audio`, microphone usage string, own asset catalog. Two vertical pages: Record (timer, level, Record/Stop) and Queue (recordings with state, Send again, swipe to discard). Sources in `MinitiWatch/`. |
+| Watch recorder and transfer | built 2026-10-18 | `WatchRecorder` (`AVAudioRecorder`, AAC mono 16 kHz 32 kbps, next recorder prepared before the open one stops, rotation every 5 minutes, interruption stops and marks the manifest interrupted), `WatchRecordingStore` (Documents/recordings/<id>/manifest.json plus segments), `WatchSessionClient` (`transferFile` per segment with `WatchSegmentTransfer` metadata, manifest on Stop, resend of undelivered files on every activation, receipts delete files only after the phone has them, `ready` removes the recording). A manifest still marked recording at launch is finalised as interrupted and sent. |
+| iPhone import | built 2026-10-18 | `WatchSessionBridge` moves each file into Application Support/WatchInbox/<id>/ inside the delivery callback and answers with a receipt; `WatchImportService` keeps a JSON ledger of jobs (receiving, queued, transcribing, waiting for minutes, insights, done, failed), runs one job at a time under a background-task lease, joins the segments into one AAC file without re-encoding (`AVMutableComposition` passthrough) so Deepgram labels speakers once for the whole meeting, uploads to Deepgram prerecorded with `diarize` and `utterances` (managed grant from `/api/session/prerecorded`, or the BYOK key), settles usage through `/api/session/end`, inserts one `Meeting` with `externalSource "watch"` and runs the existing final-insights path. History shows "From your watch" rows with Try again; Settings, Recording shows the watch status. Private mode refuses the job with a message. |
+| Tests | built 2026-10-18 | `MinitiTests/WatchImportTests.swift`: protocol round trips and version refusal (both bundles), manifest JSON, duplicate delivery and manifest completion with ledger reload, unreadable manifest, Deepgram utterance mapping to segments and meeting, empty transcript, listen URL (iOS bundle). Backend: `app/api/session/prerecorded/route.test.ts`. |
+| Real-watch spike | owed to Ian | 5, 30 and 60 minute recordings on a real watch: continuity with wrist down, transfer after reconnect, interruption, battery. The first testable build exists before the spike so the spike exercises the real code. |
+| Docs, changelog, privacy copy | partly done 2026-10-18 | Changelog has the Unreleased 3.1.0 entry; AGENTS, architecture and testing docs updated. Website privacy policy sentence ("audio stored temporarily on your watch and phone until the transcript exists") and the App Store screenshots for the watch are owed at release. |
+
+## Testing the first build (2026-10-18)
+
+1. In Xcode pick the `MinitiWatch` scheme and your paired watch as the destination, then Run. The first run asks the watch for Developer Mode (Settings, Privacy & Security on the watch); accept and run again. The `MinitiMobile` scheme builds and embeds the watch app too, so the phone build you already run carries it.
+2. On the watch: Record, talk for a minute, Stop. The Queue page shows "sending", then "on <iPhone name>", then "transcribing", then "ready" when the phone has saved the meeting and the watch has deleted its copy.
+3. On the phone: History shows a "From your watch" row while the job runs, then the meeting with "Imported from Apple Watch". Settings, Recording, Apple Watch shows whether the watch app is installed.
+4. The spike that matters: a 30 and a 60 minute recording with the wrist down most of the time, the phone out of range for part of it, and a phone call in the middle. Watch for gaps in the transcript at 5 minute boundaries (rotation) and for a recording that never leaves "sending".
+
+## Decisions after review (2026-10-18)
+
+1. **The phone uploads straight to Deepgram's prerecorded API.** No managed job service, no temporary audio on our servers, no callbacks. Managed mode uses the same short-lived Deepgram grant `/api/session` already issues (`POST /api/session/prerecorded`), BYOK uses the key on the phone. Uploads run under a background-task lease and resume on the next launch if the app was suspended; a background `URLSession` is the 3.2 upgrade if 60-minute recordings show the lease is not enough.
+2. **Record in five-minute segments.** An unfinalised container after a crash costs at most five minutes, earlier segments transfer while the meeting is still running so processing starts the moment you stop, and transfers stay small. On the phone the segments are joined into one file without re-encoding before the single Deepgram request, so speaker labels are consistent for the whole meeting and usage is metered once.
+3. **No new parser.** Deepgram prerecorded with `diarize` and `utterances` returns utterances with speaker ids and times; each becomes a `TranscriptSegment` directly, speakers 0..n neutral (nobody is "You" until named), the same way a Granola import works.
+4. **Usage is the duration Deepgram reports**, settled once through `/api/session/end` with a prerecorded session id, capped at 4 hours; minutes are per account since 3.0.0 so no reservation scheme is needed. At the limit the recording waits with "waiting for minutes" and retries after the reset or a plan change; it is never discarded.
+5. **Provenance is the dedupe.** `externalSource: "watch"`, `externalID` = recording id. Re-delivery finds the same job and the same meeting; the cloud's unique index on that pair stops a second device creating a duplicate.
+6. **Language comes from the phone** (the current transcription language, pushed to the watch as application context). The watch cannot choose.
+7. **Out of 3.1.0:** complication, calendar, pause and resume, live transcript on the watch, cellular uploads, independent watch accounts.
+
 
 ## Product decision
 

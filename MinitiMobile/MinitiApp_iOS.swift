@@ -14,6 +14,7 @@ private final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNo
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         AppState.registerSmartMeetingNotificationCategory()
+        WatchSessionBridge.shared.activate()
         return true
     }
 
@@ -116,6 +117,8 @@ struct MinitiMobileApp: App {
             .onAppear {
                 appDelegate.appState = appState
                 appState.notePersistentStore(storeState)
+                WatchImportService.shared.appState = appState
+                WatchImportService.shared.kick()
                 #if DEBUG
                 ScreenshotMode.scheduleIOSReadyMarker()
                 #endif
@@ -149,6 +152,7 @@ struct MinitiMobileApp: App {
             } else if newPhase == .active {
                 appState.deliveryOutbox.kick()
                 appState.kickCloudSync(reason: "activate")
+                WatchImportService.shared.kick()
                 appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
                 if appState.appMode == .managed {
                     Task {

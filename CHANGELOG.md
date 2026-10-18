@@ -4,6 +4,10 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v3.1.0
+
+- new: (iOS) apple watch. Record a meeting from your wrist. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it
+
 ### 2026-10-16 - v3.0.0
 
 - new: (macOS and iOS) cloud. One switch in Settings, Cloud. Your meetings go to miniti's servers and come back on every device on your account. Record on the Mac, open it on the phone a minute later. Edits, speaker names, pins and deletes follow. Pro only, off by default

@@ -1,0 +1,128 @@
+import AVFoundation
+import Foundation
+
+/// Deepgram prerecorded transcription of a saved file, with utterances mapped to transcript segments.
+/// The network call is isolated here so the mapping can be tested with fixtures.
+enum WatchTranscriptionClient {
+    struct Credential: Sendable {
+        /// `Bearer` for a managed grant token, `Token` for a BYOK Deepgram key.
+        let scheme: String
+        let token: String
+    }
+
+    struct Result: Sendable {
+        let segments: [TranscriptSegmentDraft]
+        /// Audio seconds Deepgram metered, from the response metadata.
+        let duration: TimeInterval
+    }
+
+    struct TranscriptSegmentDraft: Equatable, Sendable {
+        let text: String
+        let speaker: Int
+        let timestamp: TimeInterval
+        let confidence: Double
+    }
+
+    enum Failure: LocalizedError {
+        case http(Int, String)
+        case emptyTranscript
+        case tooLarge
+
+        var errorDescription: String? {
+            switch self {
+            case .http(let code, let body): return "Transcription failed (HTTP \(code)): \(body.prefix(140))"
+            case .emptyTranscript: return "No speech was found in the recording"
+            case .tooLarge: return "The recording is too large to transcribe"
+            }
+        }
+    }
+
+    /// Deepgram allows 2 GB; at 32 kbps that is weeks, so this is a sanity bound, not a limit anyone meets.
+    static let maxUploadBytes = 500 * 1024 * 1024
+
+    static func listenURL(language: String) -> URL {
+        var components = URLComponents(string: "https://api.deepgram.com/v1/listen")!
+        components.queryItems = [
+            URLQueryItem(name: "model", value: "nova-3"),
+            URLQueryItem(name: "language", value: language),
+            URLQueryItem(name: "diarize", value: "true"),
+            URLQueryItem(name: "utterances", value: "true"),
+            URLQueryItem(name: "smart_format", value: "true"),
+            URLQueryItem(name: "punctuate", value: "true"),
+        ]
+        return components.url!
+    }
+
+    static func transcribe(fileURL: URL, language: String, credential: Credential) async throws -> Result {
+        let size = (try? FileManager.default.attributesOfItem(atPath: fileURL.path)[.size] as? NSNumber)?.intValue ?? 0
+        guard size <= maxUploadBytes else { throw Failure.tooLarge }
+        var request = URLRequest(url: listenURL(language: language))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 600
+        request.setValue("\(credential.scheme) \(credential.token)", forHTTPHeaderField: "Authorization")
+        request.setValue("audio/mp4", forHTTPHeaderField: "Content-Type")
+        let (data, response) = try await URLSession.shared.upload(for: request, fromFile: fileURL)
+        let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+        guard (200..<300).contains(code) else {
+            throw Failure.http(code, String(data: data, encoding: .utf8) ?? "")
+        }
+        return try parse(data)
+    }
+
+    // MARK: - Response mapping
+
+    struct Response: Decodable {
+        struct Metadata: Decodable { let duration: Double? }
+        struct Utterance: Decodable {
+            let start: Double
+            let end: Double
+            let confidence: Double?
+            let transcript: String
+            let speaker: Int?
+        }
+        struct Results: Decodable { let utterances: [Utterance]? }
+        let metadata: Metadata?
+        let results: Results?
+    }
+
+    static func parse(_ data: Data, offset: TimeInterval = 0) throws -> Result {
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        let utterances = response.results?.utterances ?? []
+        let segments = utterances.compactMap { u -> TranscriptSegmentDraft? in
+            let text = u.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            return TranscriptSegmentDraft(text: text, speaker: u.speaker ?? 0, timestamp: offset + u.start, confidence: u.confidence ?? 1)
+        }
+        guard !segments.isEmpty else { throw Failure.emptyTranscript }
+        return Result(segments: segments, duration: response.metadata?.duration ?? (utterances.last?.end ?? 0))
+    }
+
+    // MARK: - Stitching
+
+    /// Joins the watch's 5-minute AAC files into one without re-encoding, so Deepgram sees a single
+    /// recording and keeps speaker labels consistent across the whole meeting.
+    static func stitch(_ parts: [URL], into output: URL) async throws {
+        if parts.count == 1 {
+            if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
+            try FileManager.default.copyItem(at: parts[0], to: output)
+            return
+        }
+        let composition = AVMutableComposition()
+        guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw Failure.http(0, "composition")
+        }
+        var cursor = CMTime.zero
+        for part in parts {
+            let asset = AVURLAsset(url: part)
+            guard let source = try await asset.loadTracks(withMediaType: .audio).first else { continue }
+            let duration = try await asset.load(.duration)
+            try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: cursor)
+            cursor = CMTimeAdd(cursor, duration)
+        }
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+            throw Failure.http(0, "export")
+        }
+        if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
+        try await export.export(to: output, as: .m4a)
+    }
+}

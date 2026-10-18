@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct HistoryView_iOS: View {
+    @ObservedObject private var watchImports = WatchImportService.shared
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject private var appState: AppState
     @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
@@ -85,7 +86,7 @@ struct HistoryView_iOS: View {
     var body: some View {
         NavigationStack(path: $detailPath) {
             Group {
-                if filteredMeetings.isEmpty {
+                if filteredMeetings.isEmpty && watchImports.activeJobs.isEmpty {
                     emptyState
                 } else {
                     meetingsList
@@ -150,6 +151,7 @@ struct HistoryView_iOS: View {
     
     private var meetingsList: some View {
         List {
+            WatchImportRows()
             ForEach(meetingSections, id: \.title) { section in
                 Section(section.title) {
                     ForEach(section.meetings) { meeting in

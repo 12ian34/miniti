@@ -179,6 +179,24 @@
 		CC22AB953AED1C926F50A4FE /* MeetingSyncDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */; };
 		CC93D31D938C49C98375A6FC /* CloudSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */; };
 		CC2ADF613D67704486A3F647 /* CloudSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */; };
+		W10000010000000000000001 /* MinitiWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000001 /* MinitiWatchApp.swift */; };
+		W10000010000000000000002 /* WatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000002 /* WatchPalette.swift */; };
+		W10000010000000000000003 /* WatchRecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000003 /* WatchRecordingStore.swift */; };
+		W10000010000000000000004 /* WatchRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000004 /* WatchRecorder.swift */; };
+		W10000010000000000000005 /* WatchSessionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000005 /* WatchSessionClient.swift */; };
+		W10000010000000000000006 /* WatchModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000006 /* WatchModel.swift */; };
+		W10000010000000000000007 /* WatchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000007 /* WatchViews.swift */; };
+		W10000010000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000009 /* Assets.xcassets */; };
+		W1000001000000000000000A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
+		W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
+		W1000001000000000000002A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
+		W1000001000000000000000B /* WatchSessionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000B /* WatchSessionBridge.swift */; };
+		W1000001000000000000000C /* WatchTranscriptionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000C /* WatchTranscriptionClient.swift */; };
+		W1000001000000000000000D /* WatchImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000D /* WatchImportService.swift */; };
+		W1000001000000000000000E /* WatchImportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000E /* WatchImportViews.swift */; };
+		W1000001000000000000000F /* WatchImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000F /* WatchImportTests.swift */; };
+		W1000001000000000000001F /* WatchImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000F /* WatchImportTests.swift */; };
+		W10000010000000000000010 /* MinitiWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = W20000010000000000000010 /* MinitiWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -203,6 +221,13 @@
 			remoteGlobalIDString = C60000010000000000000001;
 			remoteInfo = MinitiMobile;
 		};
+		W90000010000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = W60000010000000000000001;
+			remoteInfo = MinitiWatch;
+		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -215,6 +240,17 @@
 				E10000010000000000000005 /* MinitiLiveActivityExtension.appex in Embed Foundation Extensions */,
 			);
 			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		W70000010000000000000003 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				W10000010000000000000010 /* MinitiWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -323,6 +359,22 @@
 		CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSettingsView.swift; sourceTree = "<group>"; };
 		CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MeetingSyncDocumentTests.swift"; sourceTree = "<group>"; };
 		CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CloudSyncEngineTests.swift"; sourceTree = "<group>"; };
+		W20000010000000000000001 /* MinitiWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiWatchApp.swift; sourceTree = "<group>"; };
+		W20000010000000000000002 /* WatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPalette.swift; sourceTree = "<group>"; };
+		W20000010000000000000003 /* WatchRecordingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingStore.swift; sourceTree = "<group>"; };
+		W20000010000000000000004 /* WatchRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecorder.swift; sourceTree = "<group>"; };
+		W20000010000000000000005 /* WatchSessionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionClient.swift; sourceTree = "<group>"; };
+		W20000010000000000000006 /* WatchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchModel.swift; sourceTree = "<group>"; };
+		W20000010000000000000007 /* WatchViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViews.swift; sourceTree = "<group>"; };
+		W20000010000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		W20000010000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		W2000001000000000000000A /* WatchRecordingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingProtocol.swift; sourceTree = "<group>"; };
+		W2000001000000000000000B /* WatchSessionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionBridge.swift; sourceTree = "<group>"; };
+		W2000001000000000000000C /* WatchTranscriptionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTranscriptionClient.swift; sourceTree = "<group>"; };
+		W2000001000000000000000D /* WatchImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportService.swift; sourceTree = "<group>"; };
+		W2000001000000000000000E /* WatchImportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/WatchImportViews.swift; sourceTree = "<group>"; };
+		W2000001000000000000000F /* WatchImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportTests.swift; sourceTree = "<group>"; };
+		W20000010000000000000010 /* MinitiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinitiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -364,6 +416,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		W40000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -375,6 +434,7 @@
 				C50000010000000000000001 /* MinitiMobile */,
 				E50000010000000000000001 /* MinitiLiveActivity */,
 				E50000010000000000000002 /* Shared */,
+				W50000010000000000000001 /* MinitiWatch */,
 				T50000010000000000000001 /* MinitiTests */,
 				A50000010000000000000003 /* Products */,
 			);
@@ -404,6 +464,7 @@
 				E30000010000000000000001 /* MinitiLiveActivityExtension.appex */,
 				T30000010000000000000002 /* MinitiTests.xctest */,
 				U20000010000000000000001 /* MinitiMobileTests.xctest */,
+				W20000010000000000000010 /* MinitiWatch.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -492,6 +553,10 @@
 		C50000010000000000000001 /* MinitiMobile */ = {
 			isa = PBXGroup;
 			children = (
+				W2000001000000000000000B /* WatchSessionBridge.swift */,
+				W2000001000000000000000C /* WatchTranscriptionClient.swift */,
+				W2000001000000000000000D /* WatchImportService.swift */,
+				W2000001000000000000000E /* WatchImportViews.swift */,
 				C20000010000000000000001 /* MinitiApp_iOS.swift */,
 				C20000010000000000000002 /* AudioCaptureService_iOS.swift */,
 				C50000010000000000000002 /* Views */,
@@ -526,6 +591,7 @@
 			isa = PBXGroup;
 			children = (
 				E20000010000000000000001 /* RecordingActivityAttributes.swift */,
+				W2000001000000000000000A /* WatchRecordingProtocol.swift */,
 			);
 			path = Shared;
 			sourceTree = "<group>";
@@ -533,6 +599,7 @@
 		T50000010000000000000001 /* MinitiTests */ = {
 			isa = PBXGroup;
 			children = (
+				W2000001000000000000000F /* WatchImportTests.swift */,
 				CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */,
 				CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */,
 				D10000000000000000000025 /* CustomInsightTemplateTests.swift */,
@@ -562,6 +629,22 @@
 				CA0000010000000000000004 /* CallLifecycleTests.swift */,
 			);
 			path = MinitiTests;
+			sourceTree = "<group>";
+		};
+		W50000010000000000000001 /* MinitiWatch */ = {
+			isa = PBXGroup;
+			children = (
+				W20000010000000000000001 /* MinitiWatchApp.swift */,
+				W20000010000000000000006 /* WatchModel.swift */,
+				W20000010000000000000004 /* WatchRecorder.swift */,
+				W20000010000000000000003 /* WatchRecordingStore.swift */,
+				W20000010000000000000005 /* WatchSessionClient.swift */,
+				W20000010000000000000002 /* WatchPalette.swift */,
+				W20000010000000000000007 /* WatchViews.swift */,
+				W20000010000000000000009 /* Assets.xcassets */,
+				W20000010000000000000008 /* Info.plist */,
+			);
+			path = MinitiWatch;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -594,11 +677,13 @@
 				C40000010000000000000001 /* Frameworks */,
 				C70000010000000000000002 /* Resources */,
 				E70000010000000000000003 /* Embed Foundation Extensions */,
+				W70000010000000000000003 /* Embed Watch Content */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				EA0000010000000000000001 /* PBXTargetDependency */,
+				WA0000010000000000000001 /* PBXTargetDependency */,
 			);
 			name = MinitiMobile;
 			productName = MinitiMobile;
@@ -658,6 +743,23 @@
 			productReference = U20000010000000000000001 /* MinitiMobileTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		W60000010000000000000001 /* MinitiWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = WC0000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiWatch" */;
+			buildPhases = (
+				W70000010000000000000001 /* Sources */,
+				W40000010000000000000001 /* Frameworks */,
+				W70000010000000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MinitiWatch;
+			productName = MinitiWatch;
+			productReference = W20000010000000000000010 /* MinitiWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -685,6 +787,9 @@
 						CreatedOnToolsVersion = 16.0;
 						TestTargetID = C60000010000000000000001;
 					};
+					W60000010000000000000001 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = A80000010000000000000002 /* Build configuration list for PBXProject "Miniti" */;
@@ -709,6 +814,7 @@
 				E60000010000000000000001 /* MinitiLiveActivityExtension */,
 				T60000010000000000000001 /* MinitiTests */,
 				U50000010000000000000001 /* MinitiMobileTests */,
+				W60000010000000000000001 /* MinitiWatch */,
 			);
 		};
 /* End PBXProject section */
@@ -752,6 +858,14 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		W70000010000000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				W10000010000000000000009 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -815,6 +929,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */,
 				CCF3D0C5DD23EFBB03A21C0A /* CloudSettingsView.swift in Sources */,
 				CCDD42A0227AC49BF517F4AB /* AppState+CloudSync.swift in Sources */,
 				CC7C059E805E2A4CE4DF9824 /* CloudSyncEngine.swift in Sources */,
@@ -876,6 +991,11 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W1000001000000000000000B /* WatchSessionBridge.swift in Sources */,
+				W1000001000000000000000C /* WatchTranscriptionClient.swift in Sources */,
+				W1000001000000000000000D /* WatchImportService.swift in Sources */,
+				W1000001000000000000000E /* WatchImportViews.swift in Sources */,
+				W1000001000000000000002A /* WatchRecordingProtocol.swift in Sources */,
 				CCAB18E5DADE6DFC642F009B /* CloudSettingsView.swift in Sources */,
 				CC27061722F7A9211C9FFBDB /* AppState+CloudSync.swift in Sources */,
 				CC4D21FCB569C1AE26FD32ED /* CloudSyncEngine.swift in Sources */,
@@ -944,6 +1064,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W1000001000000000000000F /* WatchImportTests.swift in Sources */,
 				CC93D31D938C49C98375A6FC /* CloudSyncEngineTests.swift in Sources */,
 				CCD5F92AEF942F2D79CEB10D /* MeetingSyncDocumentTests.swift in Sources */,
 				D10000000000000000000026 /* CustomInsightTemplateTests.swift in Sources */,
@@ -978,6 +1099,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W1000001000000000000001F /* WatchImportTests.swift in Sources */,
 				CC2ADF613D67704486A3F647 /* CloudSyncEngineTests.swift in Sources */,
 				CC22AB953AED1C926F50A4FE /* MeetingSyncDocumentTests.swift in Sources */,
 				D10000000000000000000027 /* CustomInsightTemplateTests.swift in Sources */,
@@ -1008,6 +1130,21 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		W70000010000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				W10000010000000000000001 /* MinitiWatchApp.swift in Sources */,
+				W10000010000000000000002 /* WatchPalette.swift in Sources */,
+				W10000010000000000000003 /* WatchRecordingStore.swift in Sources */,
+				W10000010000000000000004 /* WatchRecorder.swift in Sources */,
+				W10000010000000000000005 /* WatchSessionClient.swift in Sources */,
+				W10000010000000000000006 /* WatchModel.swift in Sources */,
+				W10000010000000000000007 /* WatchViews.swift in Sources */,
+				W1000001000000000000000A /* WatchRecordingProtocol.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -1025,6 +1162,11 @@
 			isa = PBXTargetDependency;
 			target = C60000010000000000000001 /* MinitiMobile */;
 			targetProxy = U30000010000000000000001 /* PBXContainerItemProxy */;
+		};
+		WA0000010000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = W60000010000000000000001 /* MinitiWatch */;
+			targetProxy = W90000010000000000000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -1442,6 +1584,63 @@
 			};
 			name = Release;
 		};
+		WB0000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 130;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MinitiWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = miniti;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		WB0000010000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 130;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = MinitiWatch/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = miniti;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 3.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -1495,6 +1694,15 @@
 			buildConfigurations = (
 				U90000010000000000000001 /* Debug */,
 				U90000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		WC0000010000000000000001 /* Build configuration list for PBXNativeTarget "MinitiWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				WB0000010000000000000001 /* Debug */,
+				WB0000010000000000000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
