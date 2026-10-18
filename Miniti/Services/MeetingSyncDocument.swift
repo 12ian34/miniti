@@ -20,7 +20,7 @@ enum MeetingSyncDocument {
         "language", "pinned", "transcript_revision", "transcript_edited_at", "segments", "speaker_names", "speaker_overrides",
         "self_speaker_ids", "summary", "action_items", "key_decisions", "topics", "discussion_flow", "notes", "insights_updated_at",
         "meddpicc", "questions", "doc_topics", "template", "external_source", "external_id", "external_url", "imported_at",
-        "managed_session_id", "calendar_event_id", "attendees", "inferred_environment", "recorded_on",
+        "managed_session_id", "calendar_event_id", "attendees", "inferred_environment", "recorded_on", "speaker_emails",
     ]
 
     // MARK: Dates
@@ -84,6 +84,7 @@ enum MeetingSyncDocument {
             }
         doc["speaker_names"] = meeting.speakerNames
         doc["speaker_overrides"] = Array(meeting.speakerOverrides).sorted()
+        doc["speaker_emails"] = meeting.resolvedSpeakerEmails
         doc["self_speaker_ids"] = Array(meeting.selfSpeakerIDs).sorted()
         doc["summary"] = orNull(meeting.summaryText)
         doc["action_items"] = meeting.actionItems
@@ -198,6 +199,7 @@ enum MeetingSyncDocument {
         meeting.transcriptEditedAt = date(doc["transcript_edited_at"])
         if let names = doc["speaker_names"] as? [String: String] { meeting.speakerNames = names } else { meeting.speakerNames = [:] }
         meeting.speakerOverrides = Set((doc["speaker_overrides"] as? [String]) ?? [])
+        meeting.speakerEmails = (doc["speaker_emails"] as? [String: String]) ?? [:]
         meeting.selfSpeakerIDs = Set(((doc["self_speaker_ids"] as? [NSNumber]) ?? []).map(\.intValue))
         meeting.summaryText = doc["summary"] as? String
         meeting.actionItems = doc["action_items"] as? [String] ?? []
@@ -307,6 +309,7 @@ enum MeetingSyncDocument {
         parts.append(String(meeting.transcriptRevision))
         parts.append(meeting.transcriptEditedAt.map { String($0.timeIntervalSince1970) } ?? "")
         parts.append(canonical(meeting.speakerNamesJSON))
+        parts.append(canonical(meeting.speakerEmailsJSON))
         parts.append(Array(meeting.speakerOverrides).sorted().joined(separator: ","))
         parts.append(Array(meeting.selfSpeakerIDs).sorted().map(String.init).joined(separator: ","))
         parts.append(meeting.summaryText ?? "")

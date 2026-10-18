@@ -499,6 +499,12 @@ struct MeetingDetail_iOS: View {
                 },
                 onCancel: {
                     renamingSpeaker = nil
+                },
+                currentEmail: meeting.speakerEmail(for: key),
+                attendees: meeting.attendees,
+                onPickAttendee: { attendee in
+                    appState.commit(.speakerEdit, in: modelContext, mutate: { meeting.setSpeakerAttendee(id: key, attendee: attendee) })
+                    renamingSpeaker = nil
                 }
             )
             .presentationDetents([.height(360)])

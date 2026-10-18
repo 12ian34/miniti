@@ -426,6 +426,12 @@ struct TranscriptView: View {
             },
             onCancel: {
                 renamingSpeaker = nil
+            },
+            currentEmail: appState.currentMeeting?.speakerEmail(for: key),
+            attendees: appState.currentMeeting?.attendees ?? [],
+            onPickAttendee: { attendee in
+                appState.setLiveSpeakerAttendee(id: speakerID, attendee: attendee)
+                renamingSpeaker = nil
             }
         )
     }
@@ -1339,6 +1345,11 @@ struct RenameSpeakerView: View {
     let onUnmarkAsSelf: () -> Void
     var onMarkAllMicAsSelf: (() -> Void)? = nil
     let onCancel: () -> Void
+    /// The email this speaker resolves to (picked or matched), shown under the name.
+    var currentEmail: String? = nil
+    /// Calendar attendees offered as one-tap names; empty when the meeting has none.
+    var attendees: [MeetingAttendee] = []
+    var onPickAttendee: ((MeetingAttendee) -> Void)? = nil
 
     @State private var draft: String = ""
     @FocusState private var focused: Bool
@@ -1375,9 +1386,43 @@ struct RenameSpeakerView: View {
 
             Text(currentName == nil
                  ? "automatic name will appear when detected."
-                 : "currently: \(currentName!)")
+                 : "currently: \(currentName!)" + (currentEmail.map { " · \($0)" } ?? ""))
                 .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
+                .lineLimit(2)
+
+            if !attendees.isEmpty, let onPickAttendee {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("from the calendar")
+                        .font(.system(size: 10, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                    ForEach(attendees.prefix(8), id: \.email) { attendee in
+                        Button {
+                            onPickAttendee(attendee)
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: currentEmail?.lowercased() == attendee.email.lowercased() ? "checkmark.circle.fill" : "person.crop.circle")
+                                    .font(.system(size: 11))
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(SpeakerAttendeeMatcher.displayName(for: attendee))
+                                        .font(.system(size: 11, weight: .semibold, design: .default))
+                                    Text(attendee.email)
+                                        .font(.system(size: 10, weight: .regular, design: .default))
+                                        .foregroundStyle(Color(hex: "484F58"))
+                                }
+                                Spacer()
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "13151A")))
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
 
             VStack(alignment: .leading, spacing: 4) {
                 Button {

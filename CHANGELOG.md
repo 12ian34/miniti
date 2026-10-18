@@ -4,6 +4,10 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v3.2.0
+
+- new: (macOS and iOS) speakers get their email. When a meeting comes from Google Calendar, a named speaker is matched to the guest list and the email travels with the meeting: in the webhook as speaker_emails, in the markdown export, in the API and MCP. Tap a speaker to see the email, or pick the right guest from the list
+
 ### 2026-10-18 - v3.1.0
 
 - new: (macOS and iOS) Apple Watch app. Record a meeting from your wrist, with the phone in your pocket or at home. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary, on the Mac too with cloud on. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it. Needs watchOS 10

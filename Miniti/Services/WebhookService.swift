@@ -26,6 +26,7 @@ enum WebhookService {
             let template: TemplateData?
             let speakerCount: Int
             let speakerNames: [String: String]?
+            let speakerEmails: [String: String]?
             let transcript: [TranscriptEntry]
             let transcriptEditedAt: String?
             let transcriptRevision: Int?
@@ -42,6 +43,7 @@ enum WebhookService {
                 case discussionFlow = "discussion_flow"
                 case speakerCount = "speaker_count"
                 case speakerNames = "speaker_names"
+                case speakerEmails = "speaker_emails"
                 case transcriptEditedAt = "transcript_edited_at"
                 case transcriptRevision = "transcript_revision"
                 case insightsStale = "insights_stale"
@@ -53,6 +55,8 @@ enum WebhookService {
             let email: String
             let name: String?
             let domain: String
+            /// The transcript speaker id this attendee was matched to, when known.
+            var speaker: String? = nil
         }
 
         struct TranscriptEntry: Encodable {
@@ -225,6 +229,7 @@ enum WebhookService {
         competition: String?,
         speakerCount: Int,
         speakerNames: [String: String] = [:],
+        speakerEmails: [String: String] = [:],
         transcript: [MeetingPayload.TranscriptEntry],
         training: MeetingPayload.TrainingData?,
         questions: [SuggestedQuestion] = [],
@@ -277,6 +282,7 @@ enum WebhookService {
                 template: MeetingPayload.TemplateData(template: template, sections: templateSections),
                 speakerCount: speakerCount,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
+                speakerEmails: speakerEmails.isEmpty ? nil : speakerEmails,
                 transcript: transcript,
                 transcriptEditedAt: nil,
                 transcriptRevision: nil,
@@ -317,8 +323,12 @@ enum WebhookService {
         let durationSec = meeting.endTime?.timeIntervalSince(meeting.startTime) ?? 0
         let training = trainingData(from: TrainingMetrics.compute(from: trainingSegments, duration: durationSec, language: meeting.language, names: speakerNames, selfIDs: selfIDs))
         let meetingAttendees = meeting.attendees
-        let attendeeEntries = meetingAttendees.isEmpty ? nil : meetingAttendees.map {
-            MeetingPayload.AttendeeEntry(email: $0.email, name: $0.displayName, domain: $0.domain)
+        let speakerEmails = meeting.resolvedSpeakerEmails
+        let attendeeEntries = meetingAttendees.isEmpty ? nil : meetingAttendees.map { attendee in
+            MeetingPayload.AttendeeEntry(
+                email: attendee.email, name: attendee.displayName, domain: attendee.domain,
+                speaker: speakerEmails.first(where: { $0.value == attendee.email.lowercased() })?.key
+            )
         }
         return MeetingPayload(
             event: "meeting.updated",
@@ -353,6 +363,7 @@ enum WebhookService {
                 template: MeetingPayload.TemplateData(template: meeting.insightTemplate, sections: meeting.templateSections),
                 speakerCount: speakers.count,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
+                speakerEmails: speakerEmails.isEmpty ? nil : speakerEmails,
                 transcript: transcript,
                 transcriptEditedAt: meeting.transcriptEditedAt.map { fmt.string(from: $0) },
                 transcriptRevision: meeting.hasTranscriptEdits ? meeting.transcriptRevision : nil,

@@ -76,6 +76,10 @@ final class Meeting {
     // Present entries — even if the name is the same as the inference — are excluded
     // from automatic inference merges. JSON-encoded [String] for backward compat.
     var speakerOverridesJSON: String?
+    /// Speaker id to attendee email, only for picks made by hand or received from another device
+    /// (3.2.0). Matches derived from the name and the attendee list are computed on read, see
+    /// `speakerEmail(for:)`, so they follow a rename without bookkeeping.
+    var speakerEmailsJSON: String?
 
     // Legacy single-speaker "self" marker. Kept for SwiftData backward compat with meetings
     // saved before multi-self support landed. New code should read/write `selfSpeakerIDs`.
@@ -281,6 +285,53 @@ final class Meeting {
         !speakerNames.isEmpty
     }
 
+    var speakerEmails: [String: String] {
+        get {
+            guard let json = speakerEmailsJSON, let data = json.data(using: .utf8) else { return [:] }
+            return (try? JSONDecoder().decode([String: String].self, from: data)) ?? [:]
+        }
+        set {
+            let cleaned = newValue.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            if cleaned.isEmpty {
+                speakerEmailsJSON = nil
+                return
+            }
+            if let data = try? JSONEncoder().encode(cleaned), let str = String(data: data, encoding: .utf8) {
+                speakerEmailsJSON = str
+            }
+        }
+    }
+
+    /// The attendee email behind a speaker: an explicit pick first, else the name matched
+    /// against the calendar attendees. Nil when nothing matches cleanly.
+    func speakerEmail(for id: String) -> String? {
+        if let picked = speakerEmails[id] { return picked }
+        guard let name = speakerNames[id] else { return nil }
+        return SpeakerAttendeeMatcher.match(name: name, attendees: attendees)?.email
+    }
+
+    /// Every named speaker that resolves to an email. What exports and the cloud carry.
+    var resolvedSpeakerEmails: [String: String] {
+        var out: [String: String] = [:]
+        for id in Set(speakerNames.keys).union(speakerEmails.keys) {
+            if let email = speakerEmail(for: id) { out[id] = email }
+        }
+        return out
+    }
+
+    /// Names a speaker after a calendar attendee and remembers the email. Nil clears the pick
+    /// (the name stays, and matching by name takes over again).
+    func setSpeakerAttendee(id: String, attendee: MeetingAttendee?) {
+        var emails = speakerEmails
+        if let attendee {
+            setSpeakerName(id: id, name: SpeakerAttendeeMatcher.displayName(for: attendee))
+            emails[id] = attendee.email.lowercased()
+        } else {
+            emails.removeValue(forKey: id)
+        }
+        speakerEmails = emails
+    }
+
     var speakerOverrides: Set<String> {
         get {
             guard let json = speakerOverridesJSON, let data = json.data(using: .utf8) else { return [] }
@@ -314,6 +365,13 @@ final class Meeting {
         }
         speakerNames = names
         speakerOverrides = overrides
+        // A new name invalidates a hand-picked email unless the pick is being re-applied.
+        var emails = speakerEmails
+        if let picked = emails[id], let attendee = attendees.first(where: { $0.email.lowercased() == picked }),
+           SpeakerAttendeeMatcher.normalise(SpeakerAttendeeMatcher.displayName(for: attendee)) == SpeakerAttendeeMatcher.normalise(trimmed) {
+            return
+        }
+        if emails.removeValue(forKey: id) != nil { speakerEmails = emails }
     }
 
     /// The explicit set of speaker IDs marked as the user. Empty = no explicit override;
@@ -757,6 +815,15 @@ final class Meeting {
         md += "_\(startTime.formatted(date: .long, time: .shortened))_\n\n"
         if let provenanceDisplayName {
             md += "_Imported from \(provenanceDisplayName)_\n\n"
+        }
+        let emails = resolvedSpeakerEmails
+        if !emails.isEmpty {
+            let people = emails.keys.sorted { (Int($0) ?? 0) < (Int($1) ?? 0) }
+                .compactMap { id -> String? in
+                    guard let name = speakerNames[id], let email = emails[id] else { return nil }
+                    return "\(name) (\(email))"
+                }
+            if !people.isEmpty { md += "_Speakers: \(people.joined(separator: ", "))_\n\n" }
         }
         md += "---\n\n"
         if !notes.isEmpty {

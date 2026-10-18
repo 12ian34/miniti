@@ -5061,6 +5061,15 @@ final class AppState: ObservableObject {
     /// Set or clear a user-controlled speaker name for the current live meeting.
     /// Pass a non-empty name to set + mark as overridden (inference won't overwrite).
     /// Pass `nil` or whitespace to clear the override so inference can refill.
+    /// Names a live speaker after a calendar attendee and keeps the email with the meeting.
+    func setLiveSpeakerAttendee(id: Int, attendee: MeetingAttendee) {
+        setLiveSpeakerName(id: id, name: SpeakerAttendeeMatcher.displayName(for: attendee))
+        if let meeting = currentMeeting {
+            meeting.setSpeakerAttendee(id: String(id), attendee: attendee)
+            saveCurrentMeetingIfNeeded()
+        }
+    }
+
     func setLiveSpeakerName(id: Int, name: String?) {
         let key = String(id)
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
