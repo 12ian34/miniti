@@ -6,8 +6,8 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### 2026-10-18 - v3.1.0
 
-- new: (macOS and iOS) filter History by device. The filter menu lists where your meetings were recorded, Mac, iPhone, iPad, Apple Watch, or a Granola import, and `from:watch` works in the search box too. Meetings from before this version have no device yet
-- new: (iOS) Apple Watch. Record a meeting from your wrist. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it
+- new: (macOS and iOS) Apple Watch app. Record a meeting from your wrist, with the phone in your pocket or at home. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary, on the Mac too with cloud on. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it. Needs watchOS 10
+- improvement: (macOS and iOS) filter History by device. The filter menu lists where your meetings were recorded, Apple Watch, iPhone, iPad, Mac, or a Granola import, and `from:watch` works in the search box too. Meetings from before this version have no device yet
 
 ### 2026-10-16 - v3.0.0
 
