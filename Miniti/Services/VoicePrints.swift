@@ -262,6 +262,10 @@ final class VoicePrintCollector: @unchecked Sendable {
     private var counts: [String: Int] = [:]
     private var seconds: [String: Double] = [:]
     private var pending = 0
+    /// Diagnostics: frames seen, with a dominant speaker, and exclusive.
+    private var framesSeen = 0
+    private var framesDominant = 0
+    private var framesExclusive = 0
 
     init(embed: @escaping @Sendable ([Float]) async throws -> [Float]) {
         self.embed = embed
@@ -288,6 +292,11 @@ final class VoicePrintCollector: @unchecked Sendable {
         lock.lock()
         guard let buffer = ring[source] else { lock.unlock(); return }
         let start = ringStart[source] ?? 0
+        framesSeen += dominant.count
+        for i in 0..<dominant.count where dominant[i] != OnDeviceSpeakerTimeline.silence {
+            framesDominant += 1
+            if exclusive[i] { framesExclusive += 1 }
+        }
         for i in 0..<dominant.count where dominant[i] != OnDeviceSpeakerTimeline.silence && exclusive[i] {
             let a = (startFrame + i) * frameSamples - start
             let b = a + frameSamples
@@ -345,6 +354,13 @@ final class VoicePrintCollector: @unchecked Sendable {
             if pendingCount == 0 { return }
             try? await Task.sleep(for: .milliseconds(50))
         }
+    }
+
+    /// One line for logs: how much of the audio had a dominant speaker and how much was exclusive.
+    var diagnostics: String {
+        lock.lock(); defer { lock.unlock() }
+        let pooled = pools.mapValues { Double($0.count) / OnDeviceSpeakerTimeline.sampleRate }
+        return "frames seen \(framesSeen), dominant \(framesDominant), exclusive \(framesExclusive); embedded \(seconds.mapValues { Int($0) }); pooled \(pooled.mapValues { Int($0) })"
     }
 
     func snapshot() -> [SlotVoice] {
