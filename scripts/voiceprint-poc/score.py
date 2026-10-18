@@ -59,7 +59,10 @@ def identify(enrolled, probe, threshold):
 
 def meeting_series(session): return session[:-1]
 
-print("## Windows and speed\n")
+print("## Speakers per session (windows of own speech, 6 s each)\n")
+for (s_, m_), d_ in sorted(runs.items()):
+    print(f"- {s_} {m_}: " + ", ".join(f"{k} {len(v)}" for k, v in sorted(by_speaker(d_).items())))
+print("\n## Windows and speed\n")
 print("| session | mic | windows | speakers | ms per window |\n|---|---|---|---|---|")
 for (s, m), d in runs.items():
     ms = [w["ms"] for w in d["windows"]]
@@ -132,6 +135,18 @@ for (s1, m1), d1 in runs.items():
             for t in (0.4, 0.5, 0.6):
                 c, fa, un = identify_avg(enrolled, probe, t, k)
                 print(f"| {s1} {m1} | {s2} {m2} | {k} | {t:.2f} | {100*c:.1f}% | {100*fa:.1f}% | {100*un:.1f}% |")
+
+print("\n## Across sessions with averaged probes: enrol from 30 s in session a (speakers with 24 s or more), identify 30 s means (k=5) in b and c\n")
+print("| enrol | identify | threshold | correct | false accept | unassigned |\n|---|---|---|---|---|---|")
+for (s1, m1), d1 in runs.items():
+    if not s1.endswith("a"): continue
+    enrolled = {kk: enrol(ws, 30) for kk, ws in by_speaker(d1).items() if len(ws) >= 4}
+    for (s2, m2), d2 in sorted(runs.items()):
+        if s2 == s1 or meeting_series(s1) != meeting_series(s2): continue
+        probe = by_speaker(d2)
+        for t in (0.45, 0.5, 0.6):
+            c, fa, un = identify_avg(enrolled, probe, t, 5)
+            print(f"| {s1} {m1} | {s2} {m2} | {t:.2f} | {100*c:.1f}% | {100*fa:.1f}% | {100*un:.1f}% |")
 
 print("\n## Identification across runs: enrol from 20 s in one session, identify 6 s windows elsewhere\n")
 print("| enrol | identify | threshold | correct | false accept |\n|---|---|---|---|---|")
