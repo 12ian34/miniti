@@ -130,7 +130,12 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         let reachable = session.isReachable
-        Task { @MainActor in isReachable = reachable }
+        Task { @MainActor in
+            isReachable = reachable
+            // The phone app just came within reach: anything still waiting goes now. On a
+            // device the queued transfers dedupe; on the simulator this is the only retry.
+            if reachable { resendPending() }
+        }
     }
 
     nonisolated func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
