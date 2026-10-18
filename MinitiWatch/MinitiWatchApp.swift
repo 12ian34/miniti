@@ -9,5 +9,8 @@ struct MinitiWatchApp: App {
             WatchRootView()
                 .environmentObject(model)
         }
+        .backgroundTask(.watchConnectivity) {
+            await model.handleConnectivityWake()
+        }
     }
 }

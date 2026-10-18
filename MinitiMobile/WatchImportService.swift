@@ -14,6 +14,8 @@ struct WatchImportJob: Codable, Identifiable, Equatable {
         case insights
         case done
         case failed
+        /// Removed on the phone. Kept so a resend from the watch is answered and never revived.
+        case dismissed
     }
 
     let id: UUID
@@ -33,7 +35,9 @@ struct WatchImportJob: Codable, Identifiable, Equatable {
         return Set(expectedIndexes).isSubset(of: Set(receivedIndexes))
     }
 
-    var isActive: Bool { status != .done }
+    var isActive: Bool { status != .done && status != .dismissed }
+    /// Nothing is in flight, so the person may remove it.
+    var isRemovable: Bool { status != .transcribing && status != .insights && isActive }
 
     var statusText: String {
         switch status {
@@ -46,6 +50,7 @@ struct WatchImportJob: Codable, Identifiable, Equatable {
         case .insights: return "writing the summary"
         case .done: return "ready"
         case .failed: return message ?? "failed"
+        case .dismissed: return "removed"
         }
     }
 }
@@ -100,10 +105,11 @@ final class WatchImportService: ObservableObject {
             status: .receiving, message: nil, receivedIndexes: [], expectedIndexes: nil,
             durationSeconds: 0, meetingID: nil, updatedAt: Date()
         )
-        if job.status == .done {
-            // The watch resent something we already turned into a meeting: tell it again and drop the file.
+        if job.status == .done || job.status == .dismissed {
+            // The watch resent something already turned into a meeting, or removed here: tell it
+            // the recording is finished so it deletes its copy, and drop the file.
             try? FileManager.default.removeItem(at: url)
-            sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.expectedIndexes ?? [], status: .ready))
+            sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.expectedIndexes ?? job.receivedIndexes, status: .ready))
             return
         }
         if transfer.isManifest {
@@ -129,7 +135,16 @@ final class WatchImportService: ObservableObject {
         }
         job.updatedAt = Date()
         upsert(job)
-        sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.receivedIndexes, status: .received))
+        // A job that already failed or is waiting keeps showing that on the watch; a resent
+        // manifest must not turn "failed" into "on iPhone".
+        let receiptStatus: WatchReceipt.Status
+        switch job.status {
+        case .failed: receiptStatus = .failed
+        case .waitingForMinutes: receiptStatus = .waitingForMinutes
+        case .transcribing, .insights: receiptStatus = .transcribing
+        default: receiptStatus = .received
+        }
+        sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.receivedIndexes, status: receiptStatus, message: job.message))
         kick()
     }
 
@@ -148,10 +163,16 @@ final class WatchImportService: ObservableObject {
         kick()
     }
 
+    /// Removes a job the person gave up on. The entry stays as `dismissed` so a resend from the
+    /// watch is answered with `ready` (the watch then deletes its copy) instead of reviving the job.
     func dismiss(_ id: UUID) {
-        jobs.removeAll { $0.id == id }
+        guard var job = jobs.first(where: { $0.id == id }), job.isRemovable else { return }
+        job.status = .dismissed
+        job.message = nil
+        job.updatedAt = Date()
+        upsert(job)
         try? FileManager.default.removeItem(at: directory(for: id))
-        saveLedger()
+        sendReceipt(WatchReceipt(recordingID: id, receivedIndexes: job.expectedIndexes ?? job.receivedIndexes, status: .ready))
     }
 
     /// Starts the next runnable job if none is running.
@@ -184,10 +205,30 @@ final class WatchImportService: ObservableObject {
             DebugLogger.shared.log(.app, "Watch import failed \(job.id): \(message)")
         }
 
-        // Already a meeting? (A crash between save and ledger write.)
+        /// Nothing was consumed yet and the cause is temporary (network, suspension): back to the
+        /// queue, picked up on the next activation without a tap.
+        func retryLater(_ reason: String) {
+            job.status = .queued
+            job.message = nil
+            job.updatedAt = Date()
+            upsert(job)
+            DebugLogger.shared.log(.app, "Watch import deferred \(job.id): \(reason)")
+        }
+
+        // Already a meeting? (A crash between save and ledger write, or during insights.)
         if let existing = existingMeeting(for: job.id, in: appState) {
-            job.status = .done
             job.meetingID = existing.id
+            let hasInsights = !(existing.summaryText ?? "").isEmpty
+            if !hasInsights, !existing.fullTranscript.isEmpty {
+                job.status = .insights
+                upsert(job)
+                await appState.generateFinalInsightsAndSave(
+                    for: existing, transcript: existing.fullTranscript, language: job.language,
+                    existingTitle: "", includeSales: false
+                )
+            }
+            job.status = .done
+            job.updatedAt = Date()
             upsert(job)
             finishFiles(job)
             return
@@ -197,7 +238,7 @@ final class WatchImportService: ObservableObject {
             return
         }
 
-        // 1. One file.
+        // 1. Every file present.
         let parts = (job.expectedIndexes ?? job.receivedIndexes).map {
             directory(for: job.id).appendingPathComponent(String(format: "segment-%03d.m4a", $0))
         }
@@ -211,15 +252,8 @@ final class WatchImportService: ObservableObject {
         job.message = nil
         upsert(job)
         sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.receivedIndexes, status: .transcribing))
-        let joined = directory(for: job.id).appendingPathComponent("joined.m4a")
-        do {
-            try await WatchTranscriptionClient.stitch(parts, into: joined)
-        } catch {
-            fail("Could not join the audio files: \(error.localizedDescription)")
-            return
-        }
 
-        // 2. Credentials.
+        // 2. Credentials first: a refused grant (limit reached) costs nothing.
         let credential: WatchTranscriptionClient.Credential
         var sessionID: String?
         if appState.appMode == .managed {
@@ -241,6 +275,12 @@ final class WatchImportService: ObservableObject {
                 upsert(job)
                 sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.receivedIndexes, status: .waitingForMinutes))
                 return
+            } catch let error as URLError {
+                retryLater("grant: \(error.localizedDescription)")
+                return
+            } catch MinitiAPIService.ServiceError.networkError(let underlying) {
+                retryLater("grant: \(underlying.localizedDescription)")
+                return
             } catch {
                 fail(error.localizedDescription)
                 return
@@ -254,27 +294,42 @@ final class WatchImportService: ObservableObject {
             credential = .init(scheme: "Token", token: key)
         }
 
-        // 3. Transcribe.
+        // 3. One file, joined without re-encoding. Reused when a previous attempt already made it.
+        let joined = directory(for: job.id).appendingPathComponent("joined.m4a")
+        if !FileManager.default.fileExists(atPath: joined.path) {
+            do {
+                try await WatchTranscriptionClient.stitch(parts, into: joined)
+            } catch {
+                if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
+                fail("Could not read the audio: \(error.localizedDescription)")
+                return
+            }
+        }
+
+        // 4. Transcribe. A dropped connection (or the app being suspended mid-upload) is not a
+        // failure of the recording: it goes back to the queue.
         let result: WatchTranscriptionClient.Result
         do {
             result = try await WatchTranscriptionClient.transcribe(fileURL: joined, language: job.language, credential: credential)
+        } catch let error as URLError {
+            if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
+            retryLater("upload: \(error.localizedDescription)")
+            return
         } catch {
-            if let sessionID {
-                await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0)
-            }
+            if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
             fail(error.localizedDescription)
             return
         }
-        if let sessionID {
-            await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: result.duration / 60)
-        }
 
-        // 4. Save the meeting.
+        // 5. Save the meeting, then settle the minutes: a crash between the two replays into the
+        // "already a meeting" branch above instead of a second Deepgram call.
         guard let context = appState.modelContext else {
             fail("Storage unavailable")
             return
         }
         let meeting = Self.makeMeeting(job: job, result: result)
+        job.meetingID = meeting.id
+        upsert(job)
         let saved = appState.commit(.watchImport, in: context, mutate: { context.insert(meeting) })
         guard saved else {
             fail("The meeting could not be saved")
@@ -285,8 +340,11 @@ final class WatchImportService: ObservableObject {
         job.durationSeconds = result.duration
         job.status = .insights
         upsert(job)
+        if let sessionID {
+            await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: result.duration / 60)
+        }
 
-        // 5. Insights, through the same path a live meeting takes at the end.
+        // 6. Insights, through the same path a live meeting takes at the end.
         await appState.generateFinalInsightsAndSave(
             for: meeting, transcript: meeting.fullTranscript, language: job.language,
             existingTitle: "", includeSales: false
@@ -314,8 +372,15 @@ final class WatchImportService: ObservableObject {
 
     private func existingMeeting(for id: UUID, in appState: AppState) -> Meeting? {
         guard let context = appState.modelContext else { return nil }
-        let all = (try? context.fetch(FetchDescriptor<Meeting>())) ?? []
-        return all.first { $0.externalSource == Self.sourceIdentifier && $0.externalID == id.uuidString }
+        // No `#Predicate`: it trips Swift 6's KeyPath sendability check (see CloudSyncEngine).
+        // Runs once per job, and the ledger carries the meeting id after a save, so this is the
+        // slow path only for a replay after a crash.
+        if let meetingID = jobs.first(where: { $0.id == id })?.meetingID,
+           let match = (try? context.fetch(FetchDescriptor<Meeting>()))?.first(where: { $0.id == meetingID }) {
+            return match
+        }
+        let externalID = id.uuidString
+        return (try? context.fetch(FetchDescriptor<Meeting>()))?.first { $0.externalSource == Self.sourceIdentifier && $0.externalID == externalID }
     }
 
     private func finishFiles(_ job: WatchImportJob) {
@@ -323,7 +388,7 @@ final class WatchImportService: ObservableObject {
         try? FileManager.default.removeItem(at: directory(for: job.id))
         // Finished rows drop off History after a day; the ledger stays small.
         let cutoff = Date().addingTimeInterval(-86_400)
-        jobs.removeAll { $0.status == .done && $0.updatedAt < cutoff }
+        jobs.removeAll { ($0.status == .done || $0.status == .dismissed) && $0.updatedAt < cutoff }
         saveLedger()
     }
 
@@ -375,7 +440,9 @@ final class WatchImportService: ObservableObject {
     }
 }
 
-/// Keeps the app alive long enough to finish an upload after it was woken for a watch file.
+/// Asks iOS for the short background allowance (about 30 s) when the app leaves the foreground
+/// mid-job. It covers a short recording, not a long upload; anything cut off is requeued by the
+/// URLError path above and resumes on the next activation.
 @MainActor
 private final class BackgroundLease {
     #if canImport(UIKit)

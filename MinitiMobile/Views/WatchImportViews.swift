@@ -30,7 +30,7 @@ struct WatchImportRows: View {
                         }
                     }
                     .swipeActions(edge: .trailing) {
-                        if job.status == .failed {
+                        if job.isRemovable {
                             Button(role: .destructive) { imports.dismiss(job.id) } label: {
                                 Label("Remove", systemImage: "trash")
                             }
@@ -48,6 +48,8 @@ struct WatchSettingsSection: View {
     @ObservedObject private var imports = WatchImportService.shared
 
     var body: some View {
+        // Only people with a paired watch see this; nothing changes for everyone else.
+        if bridge.isPaired {
         Section("Apple Watch") {
             LabeledContent("Watch app") {
                 Text(bridge.isWatchAppInstalled ? "Installed" : (bridge.isPaired ? "Not installed" : "No watch paired"))
@@ -61,6 +63,7 @@ struct WatchSettingsSection: View {
             Text("Record a meeting from the watch app. The audio moves to this iPhone when the two are in range, gets transcribed by Deepgram, and shows up in History with a summary. Minutes count the same as a live meeting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
         }
     }
 }

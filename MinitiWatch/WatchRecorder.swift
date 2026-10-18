@@ -95,44 +95,64 @@ final class WatchRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
 
     // MARK: - Segments
 
-    private func startSegment(index: Int, offset: TimeInterval) {
-        guard let current = manifest else { return }
+    /// A recorder with its file created and buffers allocated, so `record()` is immediate.
+    private func prepareRecorder(index: Int) -> (AVAudioRecorder, String)? {
+        guard let current = manifest else { return nil }
         let filename = String(format: "segment-%03d.m4a", index)
         let url = store.segmentURL(recordingID: current.id, filename: filename)
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        do {
-            let next = try AVAudioRecorder(url: url, settings: Self.settings)
-            next.delegate = self
-            next.isMeteringEnabled = true
-            next.prepareToRecord()
-            guard next.record() else {
-                lastError = "Recording could not start"
-                return
-            }
-            recorder = next
-            segmentStartedAt = Date()
-            var updated = current
-            updated.segments.append(WatchRecordingSegment(
-                index: index, offset: offset, duration: 0, byteCount: 0, filename: filename
-            ))
-            manifest = updated
-            store.save(updated)
-        } catch {
-            lastError = "Recording could not start"
-        }
+        guard let next = try? AVAudioRecorder(url: url, settings: Self.settings) else { return nil }
+        next.delegate = self
+        next.isMeteringEnabled = true
+        guard next.prepareToRecord() else { return nil }
+        return (next, filename)
     }
 
-    /// Closes the open segment. When not final, the next segment starts first so audio is not lost.
+    private func startSegment(index: Int, offset: TimeInterval) {
+        guard let prepared = prepareRecorder(index: index) else {
+            lastError = "Recording could not start"
+            return
+        }
+        startPrepared(prepared, index: index, offset: offset)
+    }
+
+    private func startPrepared(_ prepared: (AVAudioRecorder, String), index: Int, offset: TimeInterval) {
+        guard let current = manifest else { return }
+        let (next, filename) = prepared
+        guard next.record() else {
+            lastError = "Recording could not start"
+            return
+        }
+        recorder = next
+        segmentStartedAt = Date()
+        var updated = current
+        updated.segments.append(WatchRecordingSegment(
+            index: index, offset: offset, duration: 0, byteCount: 0, filename: filename
+        ))
+        manifest = updated
+        store.save(updated)
+    }
+
+    /// Closes the open segment. On rotation the next recorder is fully prepared before the open
+    /// one stops, so the gap is one `stop()` plus one `record()` call. If the next one cannot
+    /// start, the recording ends cleanly instead of silently counting on a stopped recorder.
     private func closeSegment(final: Bool) {
         guard let current = manifest, let open = recorder, let openIndex = current.segments.last?.index else { return }
         let duration = open.currentTime
         if final {
             open.stop()
         } else {
-            // Rotate: close the open file, then start the next one. The gap is a few milliseconds.
             let nextOffset = (current.segments.last?.offset ?? 0) + duration
+            let prepared = prepareRecorder(index: openIndex + 1)
             open.stop()
-            startSegment(index: openIndex + 1, offset: nextOffset)
+            if let prepared {
+                startPrepared(prepared, index: openIndex + 1, offset: nextOffset)
+            }
+            if recorder === open {
+                // The next segment did not start: finish with what we have.
+                finishAfterRotationFailure(openIndex: openIndex, duration: duration)
+                return
+            }
         }
         guard var updated = manifest, let i = updated.segments.firstIndex(where: { $0.index == openIndex }) else { return }
         updated.segments[i].duration = duration
@@ -140,6 +160,24 @@ final class WatchRecorder: NSObject, ObservableObject, AVAudioRecorderDelegate {
         manifest = updated
         store.save(updated)
         onSegmentClosed?(updated, updated.segments[i])
+    }
+
+    private func finishAfterRotationFailure(openIndex: Int, duration: TimeInterval) {
+        ticker?.invalidate()
+        ticker = nil
+        guard var updated = manifest, let i = updated.segments.firstIndex(where: { $0.index == openIndex }) else { return }
+        updated.segments[i].duration = duration
+        updated.segments[i].byteCount = store.fileSize(recordingID: updated.id, filename: updated.segments[i].filename)
+        updated.state = .interrupted
+        updated.endedAt = Date()
+        manifest = updated
+        store.save(updated)
+        recorder = nil
+        level = 0
+        lastError = "Recording stopped: the next file could not start"
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        onSegmentClosed?(updated, updated.segments[i])
+        onStopped?(updated)
     }
 
     private func tick() {

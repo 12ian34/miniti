@@ -27,12 +27,14 @@ enum WatchTranscriptionClient {
         case http(Int, String)
         case emptyTranscript
         case tooLarge
+        case unreadable
 
         var errorDescription: String? {
             switch self {
             case .http(let code, let body): return "Transcription failed (HTTP \(code)): \(body.prefix(140))"
             case .emptyTranscript: return "No speech was found in the recording"
             case .tooLarge: return "The recording is too large to transcribe"
+            case .unreadable: return "The audio files could not be read"
             }
         }
     }
@@ -101,26 +103,34 @@ enum WatchTranscriptionClient {
 
     /// Joins the watch's 5-minute AAC files into one without re-encoding, so Deepgram sees a single
     /// recording and keeps speaker labels consistent across the whole meeting.
+    /// A part that cannot be read (a file the watch never finalised because it died mid-meeting)
+    /// is skipped so the rest of the recording still becomes a meeting. Throws only when nothing
+    /// is readable.
     static func stitch(_ parts: [URL], into output: URL) async throws {
-        if parts.count == 1 {
+        var readable: [(AVURLAsset, AVAssetTrack, CMTime)] = []
+        for part in parts {
+            let asset = AVURLAsset(url: part)
+            guard let source = try? await asset.loadTracks(withMediaType: .audio).first,
+                  let duration = try? await asset.load(.duration), duration.seconds > 0 else { continue }
+            readable.append((asset, source, duration))
+        }
+        guard !readable.isEmpty else { throw Failure.unreadable }
+        if readable.count == 1 {
             if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
-            try FileManager.default.copyItem(at: parts[0], to: output)
+            try FileManager.default.copyItem(at: readable[0].0.url, to: output)
             return
         }
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw Failure.http(0, "composition")
+            throw Failure.unreadable
         }
         var cursor = CMTime.zero
-        for part in parts {
-            let asset = AVURLAsset(url: part)
-            guard let source = try await asset.loadTracks(withMediaType: .audio).first else { continue }
-            let duration = try await asset.load(.duration)
+        for (_, source, duration) in readable {
             try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: cursor)
             cursor = CMTimeAdd(cursor, duration)
         }
         guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
-            throw Failure.http(0, "export")
+            throw Failure.unreadable
         }
         if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
         try await export.export(to: output, as: .m4a)

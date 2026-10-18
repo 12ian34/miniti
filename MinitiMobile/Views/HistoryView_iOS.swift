@@ -86,7 +86,7 @@ struct HistoryView_iOS: View {
     var body: some View {
         NavigationStack(path: $detailPath) {
             Group {
-                if filteredMeetings.isEmpty && watchImports.activeJobs.isEmpty {
+                if filteredMeetings.isEmpty && (watchImports.activeJobs.isEmpty || !searchText.isEmpty) {
                     emptyState
                 } else {
                     meetingsList
@@ -151,7 +151,9 @@ struct HistoryView_iOS: View {
     
     private var meetingsList: some View {
         List {
-            WatchImportRows()
+            if searchText.isEmpty {
+                WatchImportRows()
+            }
             ForEach(meetingSections, id: \.title) { section in
                 Section(section.title) {
                     ForEach(section.meetings) { meeting in

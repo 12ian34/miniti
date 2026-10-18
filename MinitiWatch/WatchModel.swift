@@ -46,6 +46,14 @@ final class WatchModel: ObservableObject {
         link.resendPending()
     }
 
+    /// The system woke the app for Watch Connectivity (a receipt from the phone). Activation
+    /// already happened in `init`; give the session a moment to deliver, then resend leftovers.
+    func handleConnectivityWake() async {
+        try? await Task.sleep(for: .seconds(2))
+        link.resendPending()
+        reload()
+    }
+
     func discard(_ id: UUID) {
         store.delete(id)
         reload()
@@ -82,6 +90,17 @@ final class WatchModel: ObservableObject {
                 manifest.segments[i].duration = WatchRecorder.measuredDuration(
                     of: store.segmentURL(recordingID: manifest.id, filename: manifest.segments[i].filename)
                 )
+            }
+            // The file that was open when the app died has no index atom and cannot be read by
+            // anything; sending it would only make the phone fail. The earlier files are intact.
+            let unreadable = manifest.segments.filter { $0.duration == 0 }
+            for segment in unreadable {
+                try? FileManager.default.removeItem(at: store.segmentURL(recordingID: manifest.id, filename: segment.filename))
+            }
+            manifest.segments.removeAll { $0.duration == 0 }
+            if manifest.segments.isEmpty {
+                store.delete(manifest.id)
+                continue
             }
             store.save(manifest)
         }

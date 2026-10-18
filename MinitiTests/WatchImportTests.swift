@@ -1,3 +1,4 @@
+import AVFoundation
 import XCTest
 #if os(iOS)
 @testable import MinitiMobile
@@ -105,6 +106,84 @@ final class WatchImportTests: XCTestCase {
         let reloaded = WatchImportService(root: root)
         XCTAssertEqual(reloaded.jobs.map(\.id), [id])
         XCTAssertEqual(reloaded.jobs[0].status, .queued)
+    }
+
+    func testTransferMetadataSurvivesPropertyListSerialisation() throws {
+        let transfer = WatchSegmentTransfer(recordingID: UUID(), index: 2, offset: 600, duration: 300, startedAt: Date(timeIntervalSince1970: 1_800_000_000), language: "en", isManifest: false)
+        let data = try PropertyListSerialization.data(fromPropertyList: transfer.dictionary, format: .binary, options: 0)
+        let back = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        XCTAssertEqual(WatchSegmentTransfer(dictionary: back), transfer)
+        let receipt = WatchReceipt(recordingID: UUID(), receivedIndexes: [0, 1], status: .ready)
+        let rdata = try PropertyListSerialization.data(fromPropertyList: receipt.dictionary, format: .binary, options: 0)
+        XCTAssertEqual(WatchReceipt(dictionary: try XCTUnwrap(PropertyListSerialization.propertyList(from: rdata, format: nil) as? [String: Any])), receipt)
+    }
+
+    func testResentManifestKeepsAFailedJobFailedAndTellsTheWatch() throws {
+        let id = UUID()
+        let started = Date()
+        let bad = WatchSegmentTransfer(recordingID: id, index: -1, offset: 0, duration: 1, startedAt: started, language: "en", isManifest: true)
+        service.noteArrival(bad, at: drop(bad, contents: Data("nope".utf8)))
+        XCTAssertEqual(service.jobs[0].status, .failed)
+        XCTAssertEqual(receipts.last?.status, .failed)
+        // A segment arriving later does not revive it.
+        let seg = WatchSegmentTransfer(recordingID: id, index: 0, offset: 0, duration: 1, startedAt: started, language: "en", isManifest: false)
+        service.noteArrival(seg, at: drop(seg, contents: Data([1])))
+        XCTAssertEqual(service.jobs[0].status, .failed)
+        XCTAssertEqual(receipts.last?.status, .failed)
+        XCTAssertEqual(receipts.last?.receivedIndexes, [0])
+    }
+
+    func testDismissLeavesATombstoneThatAnswersReady() throws {
+        let id = UUID()
+        let started = Date()
+        let bad = WatchSegmentTransfer(recordingID: id, index: -1, offset: 0, duration: 1, startedAt: started, language: "en", isManifest: true)
+        service.noteArrival(bad, at: drop(bad, contents: Data("nope".utf8)))
+        service.dismiss(id)
+        XCTAssertEqual(service.jobs[0].status, .dismissed)
+        XCTAssertTrue(service.activeJobs.isEmpty)
+        XCTAssertEqual(receipts.last?.status, .ready)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: service.directory(for: id).path))
+        // The watch resends: still no job revived, still told ready, file dropped.
+        let seg = WatchSegmentTransfer(recordingID: id, index: 0, offset: 0, duration: 1, startedAt: started, language: "en", isManifest: false)
+        let url = drop(seg, contents: Data([1]))
+        service.noteArrival(seg, at: url)
+        XCTAssertEqual(service.jobs.count, 1)
+        XCTAssertEqual(service.jobs[0].status, .dismissed)
+        XCTAssertEqual(receipts.last?.status, .ready)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+        // Survives a relaunch.
+        XCTAssertEqual(WatchImportService(root: root).jobs[0].status, .dismissed)
+    }
+
+    func testRetryRequeuesOnlyCompleteJobs() throws {
+        let id = UUID()
+        let started = Date()
+        let bad = WatchSegmentTransfer(recordingID: id, index: -1, offset: 0, duration: 1, startedAt: started, language: "en", isManifest: true)
+        service.noteArrival(bad, at: drop(bad, contents: Data("nope".utf8)))
+        service.retry(id)
+        XCTAssertEqual(service.jobs[0].status, .receiving, "no manifest yet, so it waits for files")
+        XCTAssertTrue(service.jobs[0].isRemovable)
+    }
+
+    func testStitchSkipsUnreadablePartsAndCopiesASingleGoodOne() async throws {
+        let dir = root.appendingPathComponent("stitch")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let good = dir.appendingPathComponent("good.wav")
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        let file = try AVAudioFile(forWriting: good, settings: format.settings)
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_000))
+        buffer.frameLength = 16_000
+        try file.write(from: buffer)
+        let bad = dir.appendingPathComponent("bad.m4a")
+        try Data(repeating: 0, count: 2_000).write(to: bad)
+        let output = dir.appendingPathComponent("joined.m4a")
+        try await WatchTranscriptionClient.stitch([bad, good], into: output)
+        XCTAssertEqual(try Data(contentsOf: output), try Data(contentsOf: good))
+        do {
+            try await WatchTranscriptionClient.stitch([bad], into: output)
+            XCTFail("expected unreadable")
+        } catch WatchTranscriptionClient.Failure.unreadable {
+        }
     }
 
     func testUnreadableManifestFailsTheJob() {
