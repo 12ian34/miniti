@@ -45,27 +45,38 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
     /// so a simulator build chunks the file through `transferUserInfo`, which does arrive.
     private func transfer(_ url: URL, meta: WatchSegmentTransfer, session: WCSession) {
         #if targetEnvironment(simulator)
-        guard let data = try? Data(contentsOf: url) else { return }
+        // Only the small protobuf-backed payloads cross the simulator bridge, so the chunks go
+        // as interactive messages while the phone app is reachable. Unsent chunks are retried on
+        // the next launch because the manifest keeps `delivered` false until a receipt arrives.
+        guard session.isReachable, let data = try? Data(contentsOf: url) else { return }
         let chunkSize = 48 * 1024
         let total = max(1, (data.count + chunkSize - 1) / chunkSize)
+        simulatorInFlight.insert(meta.isManifest ? "\(meta.recordingID)/manifest" : "\(meta.recordingID)/\(meta.index)")
         for i in 0..<total {
             let slice = data.subdata(in: i * chunkSize ..< min(data.count, (i + 1) * chunkSize))
             var dict = meta.dictionary
             dict["chunk"] = i
             dict["chunks"] = total
             dict["bytes"] = slice
-            session.transferUserInfo(dict)
+            guard let payload = try? PropertyListSerialization.data(fromPropertyList: dict, format: .binary, options: 0) else { continue }
+            session.sendMessageData(payload, replyHandler: nil) { error in
+                print("[watch] simulator chunk failed: \(error.localizedDescription)")
+            }
         }
         #else
         session.transferFile(url, metadata: meta.dictionary)
         #endif
     }
 
+    #if targetEnvironment(simulator)
+    private var simulatorInFlight: Set<String> = []
+    #endif
+
     private func isQueued(session: WCSession, recordingID: UUID, where match: ([String: Any]) -> Bool) -> Bool {
         #if targetEnvironment(simulator)
-        return session.outstandingUserInfoTransfers.contains { t in
-            (t.userInfo["recording_id"] as? String) == recordingID.uuidString && match(t.userInfo)
-        }
+        let key = match(["manifest": true]) ? "\(recordingID)/manifest" : nil
+        if let key { return simulatorInFlight.contains(key) }
+        return (0..<10_000).contains { match(["index": $0, "manifest": false]) && simulatorInFlight.contains("\(recordingID)/\($0)") }
         #else
         return session.outstandingFileTransfers.contains { t in
             guard let meta = t.file.metadata, (meta["recording_id"] as? String) == recordingID.uuidString else { return false }
@@ -145,6 +156,9 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
 
     private func apply(_ receipt: WatchReceipt) {
         receipts[receipt.recordingID] = receipt
+        #if targetEnvironment(simulator)
+        simulatorInFlight = simulatorInFlight.filter { !$0.hasPrefix("\(receipt.recordingID)/") }
+        #endif
         store.deleteSegmentFiles(recordingID: receipt.recordingID, indexes: receipt.receivedIndexes)
         if receipt.status == .ready {
             store.delete(receipt.recordingID)

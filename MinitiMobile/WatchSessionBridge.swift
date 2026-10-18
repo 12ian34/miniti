@@ -85,7 +85,12 @@ final class WatchSessionBridge: NSObject, ObservableObject, WCSessionDelegate {
     #if targetEnvironment(simulator)
     /// Simulator only: the watch sends files as chunked user info because the simulator never
     /// delivers `transferFile`. Chunks are written to the inbox and joined when the last one lands.
-    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+    nonisolated func session(_ session: WCSession, didReceiveMessageData messageData: Data) {
+        guard let userInfo = (try? PropertyListSerialization.propertyList(from: messageData, format: nil)) as? [String: Any] else { return }
+        storeSimulatorChunk(userInfo)
+    }
+
+    nonisolated private func storeSimulatorChunk(_ userInfo: [String: Any]) {
         guard let transfer = WatchSegmentTransfer(dictionary: userInfo),
               let chunk = userInfo["chunk"] as? Int, let chunks = userInfo["chunks"] as? Int,
               let bytes = userInfo["bytes"] as? Data else { return }
