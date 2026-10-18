@@ -309,7 +309,9 @@ enum MeetingSyncDocument {
         parts.append(String(meeting.transcriptRevision))
         parts.append(meeting.transcriptEditedAt.map { String($0.timeIntervalSince1970) } ?? "")
         parts.append(canonical(meeting.speakerNamesJSON))
-        parts.append(canonical(meeting.speakerEmailsJSON))
+        // The resolved map, not the raw picks: a match derived from a name here becomes a pick
+        // on the other device, and both must fingerprint the same.
+        parts.append(meeting.resolvedSpeakerEmails.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: ","))
         parts.append(Array(meeting.speakerOverrides).sorted().joined(separator: ","))
         parts.append(Array(meeting.selfSpeakerIDs).sorted().map(String.init).joined(separator: ","))
         parts.append(meeting.summaryText ?? "")
