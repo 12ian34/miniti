@@ -57,7 +57,7 @@ final class MeetingSearchTests: XCTestCase {
         XCTAssertEqual(MeetingSearchQuery.clearingFilters(from: "from:watch budget"), "budget")
     }
 
-    func testFromMatchesTheRecordingDeviceOrTheImportSource() {
+    @MainActor func testFromMatchesTheRecordingDeviceOrTheImportSource() {
         let watch = makeMeeting(title: "Walk", start: Self.now)
         watch.externalSource = "watch"
         let mac = makeMeeting(title: "Desk", start: Self.now.addingTimeInterval(-60))
