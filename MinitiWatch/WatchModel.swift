@@ -57,7 +57,7 @@ final class WatchModel: ObservableObject {
     }
 
     func resend() {
-        link.resendPending()
+        link.resendPending(force: true)
     }
 
     /// The system woke the app for Watch Connectivity (a receipt from the phone). Activation

@@ -20,7 +20,7 @@ enum MeetingSyncDocument {
         "language", "pinned", "transcript_revision", "transcript_edited_at", "segments", "speaker_names", "speaker_overrides",
         "self_speaker_ids", "summary", "action_items", "key_decisions", "topics", "discussion_flow", "notes", "insights_updated_at",
         "meddpicc", "questions", "doc_topics", "template", "external_source", "external_id", "external_url", "imported_at",
-        "managed_session_id", "calendar_event_id", "attendees", "inferred_environment",
+        "managed_session_id", "calendar_event_id", "attendees", "inferred_environment", "recorded_on",
     ]
 
     // MARK: Dates
@@ -113,6 +113,7 @@ enum MeetingSyncDocument {
         doc["external_id"] = orNull(meeting.externalID)
         doc["external_url"] = orNull(meeting.externalURL)
         doc["imported_at"] = string(meeting.importedAt)
+        doc["recorded_on"] = orNull(meeting.recordedOnRaw)
         doc["managed_session_id"] = orNull(meeting.managedSessionId)
         doc["calendar_event_id"] = orNull(meeting.calendarEventId)
         doc["attendees"] = meeting.attendees.map { attendee -> [String: Any] in
@@ -224,6 +225,7 @@ enum MeetingSyncDocument {
         meeting.externalID = doc["external_id"] as? String
         meeting.externalURL = doc["external_url"] as? String
         meeting.importedAt = date(doc["imported_at"])
+        meeting.recordedOnRaw = doc["recorded_on"] as? String
         meeting.managedSessionId = doc["managed_session_id"] as? String
         meeting.calendarEventId = doc["calendar_event_id"] as? String
         meeting.attendees = ((doc["attendees"] as? [[String: Any]]) ?? []).compactMap { a in
@@ -325,6 +327,7 @@ enum MeetingSyncDocument {
         parts.append(meeting.externalSource ?? "")
         parts.append(meeting.externalID ?? "")
         parts.append(meeting.externalURL ?? "")
+        parts.append(meeting.recordedOnRaw ?? "")
         parts.append(meeting.managedSessionId ?? "")
         parts.append(meeting.calendarEventId ?? "")
         parts.append(canonical(meeting.attendeesJSON))

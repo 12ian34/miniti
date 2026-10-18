@@ -4162,6 +4162,7 @@ struct MeetingSearchFilterRow: View {
     @Binding var searchText: String
     @Binding var isPeopleMenuPresented: Bool
     @Binding var isDateMenuPresented: Bool
+    @State private var isDeviceMenuPresented = false
     @State private var peopleFilter = ""
     @State private var customRangeStart = Calendar.current.date(byAdding: .day, value: -7, to: Date()) ?? Date()
     @State private var customRangeEnd = Date()
@@ -4173,11 +4174,13 @@ struct MeetingSearchFilterRow: View {
         return people.filter { $0.name.lowercased().contains(needle) }
     }
     private var hasFilters: Bool { MeetingSearchQuery.parse(searchText).hasFilters }
+    private var devices: [MeetingSearchDeviceOption] { MeetingSearchDeviceOption.collect(from: meetings) }
 
     var body: some View {
         HStack(spacing: 6) {
             Button {
                 isDateMenuPresented = false
+                isDeviceMenuPresented = false
                 isPeopleMenuPresented.toggle()
             } label: {
                 MinitiControlLabel(role: .secondary) {
@@ -4195,6 +4198,7 @@ struct MeetingSearchFilterRow: View {
 
             Button {
                 isPeopleMenuPresented = false
+                isDeviceMenuPresented = false
                 isDateMenuPresented.toggle()
             } label: {
                 MinitiControlLabel(role: .secondary) {
@@ -4208,6 +4212,26 @@ struct MeetingSearchFilterRow: View {
             .focusable(false)
             .popover(isPresented: $isDateMenuPresented, arrowEdge: .bottom) {
                 dateMenu
+            }
+
+            if !devices.isEmpty {
+                Button {
+                    isPeopleMenuPresented = false
+                    isDateMenuPresented = false
+                    isDeviceMenuPresented.toggle()
+                } label: {
+                    MinitiControlLabel(role: .secondary) {
+                        HStack(spacing: 4) {
+                            Text("device")
+                            Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .focusable(false)
+                .popover(isPresented: $isDeviceMenuPresented, arrowEdge: .bottom) {
+                    deviceMenu
+                }
             }
 
             Spacer(minLength: 0)
@@ -4277,6 +4301,42 @@ struct MeetingSearchFilterRow: View {
         }
         .padding(8)
         .frame(width: 240)
+    }
+
+    private var deviceMenu: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(devices) { option in
+                Button {
+                    insert(option.token)
+                    isDeviceMenuPresented = false
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: option.symbolName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Theme.textDim)
+                            .frame(width: 14)
+                        Text(option.label.lowercased())
+                            .font(.system(size: 11, weight: .medium, design: .default))
+                            .foregroundStyle(Theme.text)
+                        Spacer()
+                        Text("\(option.meetingCount)")
+                            .font(.system(size: 10, design: .default))
+                            .foregroundStyle(Theme.textDim)
+                        if MeetingSearchQuery.parse(searchText).devices.contains(option.value) {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Theme.accent)
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(8)
+        .frame(width: 200)
     }
 
     private var dateMenu: some View {

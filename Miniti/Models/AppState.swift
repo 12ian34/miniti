@@ -6338,6 +6338,7 @@ final class AppState: ObservableObject {
             notes: preparedNotes
         )
         meeting.language = meetingLanguage
+        meeting.recordedOnRaw = RecordingDevice.current.rawValue
         // A meeting recorded under private mode never goes to the cloud, even after private
         // mode is turned off; the per-meeting action in History can change that later.
         meeting.syncExcluded = privateModeEnabled

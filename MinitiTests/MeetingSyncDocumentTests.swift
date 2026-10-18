@@ -243,6 +243,7 @@ extension MeetingSyncDocumentTests {
   "calendar_event_id": "evt_1",
   "attendees": [{ "email": "sasha@example.com", "name": "Sasha Petrov", "domain": "example.com", "response_status": "accepted", "is_organizer": true, "is_self": false }],
   "inferred_environment": "online",
+  "recorded_on": "mac",
   "investigations": [{ "topic": "pricing" }],
   "join_url": "https://meet.example/abc",
   "sales_enabled": true,
@@ -266,6 +267,7 @@ extension MeetingSyncDocumentTests {
         XCTAssertEqual(meeting.externalID, "csv-1")
         XCTAssertEqual(meeting.managedSessionId, "sess_1")
         XCTAssertEqual(meeting.inferredEnvironmentRaw, "online")
+        XCTAssertEqual(meeting.recordingDevice, .mac)
         XCTAssertEqual(meeting.attendees.first?.displayName, "Sasha Petrov")
         XCTAssertEqual(meeting.suggestedQuestions.first?.priority, "high")
         let back = MeetingSyncDocument.encode(meeting, segments: meeting.segments)

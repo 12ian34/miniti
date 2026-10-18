@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 import SwiftData
 
 @Model
@@ -36,6 +39,10 @@ final class Meeting {
     var externalID: String?
     var externalURL: String?
     var importedAt: Date?
+    /// Where the audio was captured (`RecordingDevice` raw value), set when a recording starts
+    /// and carried through the cloud as `recorded_on`. Nil for meetings from before 3.1.0,
+    /// which the device filter therefore never matches.
+    var recordedOnRaw: String?
     
     // MEDDPICC fields
     var meddpiccMetrics: String?
@@ -460,6 +467,14 @@ final class Meeting {
         }
         if title.wholeMatch(of: Self.timestampPattern) != nil { return "untitled" }
         return title
+    }
+
+    /// The device that captured the audio. Watch imports count as the watch even if the
+    /// field is missing, because the import itself is the proof.
+    var recordingDevice: RecordingDevice? {
+        if let raw = recordedOnRaw, let device = RecordingDevice(rawValue: raw) { return device }
+        if externalSource?.lowercased() == "watch" { return .watch }
+        return nil
     }
 
     var provenanceDisplayName: String? {
@@ -934,6 +949,11 @@ struct MeetingSearchResult {
                 guard countOccurrences(of: title, in: meeting.title) > 0
                         || countOccurrences(of: title, in: eventTitle) > 0 else { return nil }
             }
+            if !query.devices.isEmpty {
+                let source = meeting.recordingDevice?.rawValue
+                    ?? (meeting.externalSource?.lowercased() == MeetingSearchQuery.granolaSource ? MeetingSearchQuery.granolaSource : nil)
+                guard let source, query.devices.contains(source) else { return nil }
+            }
 
             var score = 0
             var totalMatches = 0
@@ -956,9 +976,12 @@ struct MeetingSearchResult {
             let recencyBoost = max(0, 10 - Int(daysSince))
 
             var context: String? = nil
-            if !matchedPeople.isEmpty || query.dateRange != nil {
+            if !matchedPeople.isEmpty || query.dateRange != nil || !query.devices.isEmpty {
                 var parts: [String] = []
                 if !matchedPeople.isEmpty { parts.append("with " + matchedPeople.prefix(2).joined(separator: ", ")) }
+                if !query.devices.isEmpty {
+                    parts.append("from " + (meeting.recordingDevice?.displayName ?? meeting.provenanceDisplayName ?? "this device"))
+                }
                 parts.append(MeetingSearchQuery.displayDate(meeting.startTime, now: now, calendar: calendar))
                 context = parts.joined(separator: " · ")
             }
@@ -1159,4 +1182,56 @@ func highlightedText(_ text: String, query: String, baseColor: Color, highlightC
     }
 
     return result
+}
+
+
+/// The hardware a meeting was recorded on. Raw values are the `from:` search filter values
+/// and the cloud document's `recorded_on`.
+enum RecordingDevice: String, CaseIterable, Codable, Sendable {
+    case mac
+    case iphone
+    case ipad
+    case watch
+    case linux
+
+    var displayName: String {
+        switch self {
+        case .mac: return "Mac"
+        case .iphone: return "iPhone"
+        case .ipad: return "iPad"
+        case .watch: return "Apple Watch"
+        case .linux: return "Linux"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .mac: return "laptopcomputer"
+        case .iphone: return "iphone"
+        case .ipad: return "ipad"
+        case .watch: return "applewatch"
+        case .linux: return "pc"
+        }
+    }
+
+    /// What a `from:` value means; typed or chosen from the filter menu.
+    static func parse(_ value: String) -> RecordingDevice? {
+        switch value.lowercased().trimmingCharacters(in: .whitespaces) {
+        case "mac", "macos", "macbook", "imac": return .mac
+        case "iphone", "phone", "ios": return .iphone
+        case "ipad", "ipados": return .ipad
+        case "watch", "apple watch", "applewatch", "watchos": return .watch
+        case "linux": return .linux
+        default: return nil
+        }
+    }
+
+    /// The device this build runs on.
+    @MainActor static var current: RecordingDevice {
+        #if os(macOS)
+        return .mac
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? .ipad : .iphone
+        #endif
+    }
 }

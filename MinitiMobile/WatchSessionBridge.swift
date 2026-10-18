@@ -36,6 +36,13 @@ final class WatchSessionBridge: NSObject, ObservableObject, WCSessionDelegate {
 
     func send(_ receipt: WatchReceipt) {
         guard let session, session.activationState == .activated, session.isPaired else { return }
+        #if targetEnvironment(simulator)
+        // The simulator bridge drops queued user info; a live message does arrive while the watch app is open.
+        if session.isReachable {
+            session.sendMessage(receipt.dictionary, replyHandler: nil) { _ in session.transferUserInfo(receipt.dictionary) }
+            return
+        }
+        #endif
         session.transferUserInfo(receipt.dictionary)
     }
 

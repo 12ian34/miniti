@@ -367,6 +367,7 @@ final class WatchImportService: ObservableObject {
         meeting.externalSource = sourceIdentifier
         meeting.externalID = job.id.uuidString
         meeting.importedAt = Date()
+        meeting.recordedOnRaw = RecordingDevice.watch.rawValue
         return meeting
     }
 

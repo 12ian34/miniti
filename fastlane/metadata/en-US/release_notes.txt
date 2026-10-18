@@ -1,2 +1,3 @@
 NEW
+- Filter History by device. The filter menu lists where your meetings were recorded: iPhone, iPad, Apple Watch, or a Granola import.
 - Apple Watch. Record a meeting from your wrist. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it.

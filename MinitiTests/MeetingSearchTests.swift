@@ -49,6 +49,37 @@ final class MeetingSearchTests: XCTestCase {
         XCTAssertEqual(q.words, ["hello"])
     }
 
+    func testFromTokensNameDevicesAndGranola() {
+        let q = parse("from:watch from:\"Apple Watch\" from:phone from:granola from:toaster budget")
+        XCTAssertEqual(q.devices, ["watch", "iphone", "granola"])
+        XCTAssertEqual(q.words, ["from:toaster", "budget"])
+        XCTAssertTrue(q.hasFilters)
+        XCTAssertEqual(MeetingSearchQuery.clearingFilters(from: "from:watch budget"), "budget")
+    }
+
+    func testFromMatchesTheRecordingDeviceOrTheImportSource() {
+        let watch = makeMeeting(title: "Walk", start: Self.now)
+        watch.externalSource = "watch"
+        let mac = makeMeeting(title: "Desk", start: Self.now.addingTimeInterval(-60))
+        mac.recordedOnRaw = RecordingDevice.mac.rawValue
+        let granola = makeMeeting(title: "Imported", start: Self.now.addingTimeInterval(-120))
+        granola.externalSource = "granola"
+        let legacy = makeMeeting(title: "Old", start: Self.now.addingTimeInterval(-180))
+        let all = [watch, mac, granola, legacy]
+
+        XCTAssertEqual(run("from:watch", all).map(\.meeting.title), ["Walk"])
+        XCTAssertEqual(run("from:mac", all).map(\.meeting.title), ["Desk"])
+        XCTAssertEqual(run("from:mac from:watch", all).map(\.meeting.title), ["Walk", "Desk"])
+        XCTAssertEqual(run("from:granola", all).map(\.meeting.title), ["Imported"])
+        XCTAssertEqual(run("from:iphone", all).count, 0, "a meeting from before 3.1.0 has no device")
+        XCTAssertEqual(run("from:watch", all).first?.context, "from Apple Watch · " + shown(Self.now))
+
+        let options = MeetingSearchDeviceOption.collect(from: all)
+        XCTAssertEqual(options.map(\.value), ["mac", "watch", "granola"])
+        XCTAssertEqual(options.map(\.meetingCount), [1, 1, 1])
+        XCTAssertEqual(options.first?.token, "from:mac")
+    }
+
     func testUnknownKeyIsAWord() {
         let q = parse("mailto:sam@acme.com in:nowhere")
         XCTAssertEqual(q.words, ["mailto:sam@acme.com", "in:nowhere"])

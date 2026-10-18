@@ -39,13 +39,17 @@ struct MeetingSearchQuery: Equatable {
     var people: [String] = []
     /// Lowercased `title:` values; every one must match the event or meeting title.
     var titles: [String] = []
+    /// `from:` values (device raw values, or `granola`); a meeting matches any one of them.
+    var devices: [String] = []
     var dateRange: DateRange?
     var scope: Scope?
 
-    var hasFilters: Bool { !people.isEmpty || !titles.isEmpty || dateRange != nil }
+    var hasFilters: Bool { !people.isEmpty || !titles.isEmpty || !devices.isEmpty || dateRange != nil }
     var isEmpty: Bool { words.isEmpty && !hasFilters }
 
-    static let filterKeys: Set<String> = ["with", "title", "on", "after", "before", "last", "in"]
+    static let filterKeys: Set<String> = ["with", "title", "from", "on", "after", "before", "last", "in"]
+    /// Non-device `from:` value: meetings imported from Granola.
+    static let granolaSource = "granola"
     static let dateKeys: Set<String> = ["on", "after", "before", "last"]
 
     // MARK: - Parsing
@@ -84,6 +88,14 @@ struct MeetingSearchQuery: Equatable {
             switch key {
             case "with": query.people.append(lower)
             case "title": query.titles.append(lower)
+            case "from":
+                if let device = RecordingDevice.parse(lower) {
+                    if !query.devices.contains(device.rawValue) { query.devices.append(device.rawValue) }
+                } else if lower == granolaSource {
+                    if !query.devices.contains(granolaSource) { query.devices.append(granolaSource) }
+                } else {
+                    query.words.append(token.lowercased())
+                }
             case "in":
                 if let scope = Scope(rawValue: lower) { query.scope = scope } else { query.words.append(token.lowercased()) }
             case "on", "after", "before", "last":
@@ -354,5 +366,39 @@ enum MeetingSearchDatePreset: String, CaseIterable, Identifiable {
         f.dateFormat = "yyyy-MM-dd"
         let endExclusive = calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: end)) ?? end
         return ["after:" + f.string(from: start), "before:" + f.string(from: endExclusive)]
+    }
+}
+
+
+/// One row of the device filter menu: a device (or Granola) that at least one meeting came from.
+struct MeetingSearchDeviceOption: Identifiable, Equatable {
+    let value: String
+    let label: String
+    let symbolName: String
+    let meetingCount: Int
+    var id: String { value }
+
+    /// `from:` token for this option.
+    var token: String { MeetingSearchQuery.filterToken(key: "from", value: value) }
+
+    /// Devices present in `meetings`, in a fixed order, with counts. Meetings from before
+    /// 3.1.0 have no device and are not counted.
+    static func collect(from meetings: [Meeting]) -> [MeetingSearchDeviceOption] {
+        var counts: [String: Int] = [:]
+        for meeting in meetings {
+            if let device = meeting.recordingDevice {
+                counts[device.rawValue, default: 0] += 1
+            } else if meeting.externalSource?.lowercased() == MeetingSearchQuery.granolaSource {
+                counts[MeetingSearchQuery.granolaSource, default: 0] += 1
+            }
+        }
+        var options: [MeetingSearchDeviceOption] = RecordingDevice.allCases.compactMap { device in
+            guard let n = counts[device.rawValue] else { return nil }
+            return MeetingSearchDeviceOption(value: device.rawValue, label: device.displayName, symbolName: device.symbolName, meetingCount: n)
+        }
+        if let n = counts[MeetingSearchQuery.granolaSource] {
+            options.append(MeetingSearchDeviceOption(value: MeetingSearchQuery.granolaSource, label: "Granola", symbolName: "square.and.arrow.down", meetingCount: n))
+        }
+        return options
     }
 }

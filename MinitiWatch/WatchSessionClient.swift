@@ -98,7 +98,11 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
     }
 
     /// Queues every undelivered file of every stopped recording. Safe to call often.
-    func resendPending() {
+    /// `force` (the Send again button) retries files a previous attempt still counts as in flight.
+    func resendPending(force: Bool = false) {
+        #if targetEnvironment(simulator)
+        if force { simulatorInFlight.removeAll() }
+        #endif
         for manifest in store.loadAll() where manifest.state != .recording {
             for segment in manifest.segments where !segment.delivered {
                 send(segment: segment, of: manifest)
@@ -136,6 +140,12 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
 
     nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
         guard let receipt = WatchReceipt(dictionary: userInfo) else { return }
+        Task { @MainActor in apply(receipt) }
+    }
+
+    /// Receipts also arrive as live messages (the simulator's only working channel).
+    nonisolated func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
+        guard let receipt = WatchReceipt(dictionary: message) else { return }
         Task { @MainActor in apply(receipt) }
     }
 

@@ -1411,6 +1411,7 @@ struct MeetingSearchFilterSheet_iOS: View {
     @State private var customRangeEnd = Date()
 
     private var people: [MeetingSearchPerson] { MeetingSearchPerson.collect(from: meetings) }
+    private var devices: [MeetingSearchDeviceOption] { MeetingSearchDeviceOption.collect(from: meetings) }
     private var filteredPeople: [MeetingSearchPerson] {
         let needle = peopleFilter.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return people }
@@ -1444,6 +1445,28 @@ struct MeetingSearchFilterSheet_iOS: View {
                                 if query.people.contains(person.name.lowercased()) {
                                     Image(systemName: "checkmark")
                                         .foregroundStyle(ColorPalette.Accent.green)
+                                }
+                            }
+                        }
+                    }
+                }
+                if !devices.isEmpty {
+                    Section("Device") {
+                        ForEach(devices) { option in
+                            Button {
+                                insert(option.token)
+                            } label: {
+                                HStack {
+                                    Label(option.label, systemImage: option.symbolName)
+                                        .foregroundStyle(ColorPalette.Text.primary)
+                                    Spacer()
+                                    Text("\(option.meetingCount)")
+                                        .foregroundStyle(ColorPalette.Text.dim)
+                                        .font(.footnote)
+                                    if query.devices.contains(option.value) {
+                                        Image(systemName: "checkmark")
+                                            .foregroundStyle(ColorPalette.Accent.green)
+                                    }
                                 }
                             }
                         }
