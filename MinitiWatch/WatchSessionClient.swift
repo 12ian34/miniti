@@ -33,32 +33,57 @@ final class WatchSessionClient: NSObject, ObservableObject, WCSessionDelegate {
         guard let session, session.activationState == .activated else { return }
         let url = store.segmentURL(recordingID: manifest.id, filename: segment.filename)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
-        let alreadyQueued = session.outstandingFileTransfers.contains { transfer in
-            transfer.file.fileURL.lastPathComponent == segment.filename
-                && (transfer.file.metadata?["recording_id"] as? String) == manifest.id.uuidString
-        }
-        guard !alreadyQueued else { return }
+        guard !isQueued(session: session, recordingID: manifest.id, where: { ($0["index"] as? Int) == segment.index && ($0["manifest"] as? Bool) != true }) else { return }
         let meta = WatchSegmentTransfer(
             recordingID: manifest.id, index: segment.index, offset: segment.offset,
             duration: segment.duration, startedAt: manifest.startedAt, language: manifest.language, isManifest: false
         )
+        transfer(url, meta: meta, session: session)
+    }
+
+    /// `transferFile` is the real path. The simulator never delivers files (Apple documents this),
+    /// so a simulator build chunks the file through `transferUserInfo`, which does arrive.
+    private func transfer(_ url: URL, meta: WatchSegmentTransfer, session: WCSession) {
+        #if targetEnvironment(simulator)
+        guard let data = try? Data(contentsOf: url) else { return }
+        let chunkSize = 48 * 1024
+        let total = max(1, (data.count + chunkSize - 1) / chunkSize)
+        for i in 0..<total {
+            let slice = data.subdata(in: i * chunkSize ..< min(data.count, (i + 1) * chunkSize))
+            var dict = meta.dictionary
+            dict["chunk"] = i
+            dict["chunks"] = total
+            dict["bytes"] = slice
+            session.transferUserInfo(dict)
+        }
+        #else
         session.transferFile(url, metadata: meta.dictionary)
+        #endif
+    }
+
+    private func isQueued(session: WCSession, recordingID: UUID, where match: ([String: Any]) -> Bool) -> Bool {
+        #if targetEnvironment(simulator)
+        return session.outstandingUserInfoTransfers.contains { t in
+            (t.userInfo["recording_id"] as? String) == recordingID.uuidString && match(t.userInfo)
+        }
+        #else
+        return session.outstandingFileTransfers.contains { t in
+            guard let meta = t.file.metadata, (meta["recording_id"] as? String) == recordingID.uuidString else { return false }
+            return match(meta)
+        }
+        #endif
     }
 
     func sendManifest(_ manifest: WatchRecordingManifest) {
         guard let session, session.activationState == .activated else { return }
         let url = store.manifestURL(for: manifest.id)
         guard FileManager.default.fileExists(atPath: url.path) else { return }
-        let alreadyQueued = session.outstandingFileTransfers.contains { transfer in
-            (transfer.file.metadata?["manifest"] as? Bool) == true
-                && (transfer.file.metadata?["recording_id"] as? String) == manifest.id.uuidString
-        }
-        guard !alreadyQueued else { return }
+        guard !isQueued(session: session, recordingID: manifest.id, where: { ($0["manifest"] as? Bool) == true }) else { return }
         let meta = WatchSegmentTransfer(
             recordingID: manifest.id, index: -1, offset: 0, duration: manifest.duration,
             startedAt: manifest.startedAt, language: manifest.language, isManifest: true
         )
-        session.transferFile(url, metadata: meta.dictionary)
+        transfer(url, meta: meta, session: session)
     }
 
     /// Queues every undelivered file of every stopped recording. Safe to call often.

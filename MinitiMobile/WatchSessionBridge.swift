@@ -82,6 +82,37 @@ final class WatchSessionBridge: NSObject, ObservableObject, WCSessionDelegate {
         Task { @MainActor in refreshFlags(paired: paired, installed: installed, activated: activated) }
     }
 
+    #if targetEnvironment(simulator)
+    /// Simulator only: the watch sends files as chunked user info because the simulator never
+    /// delivers `transferFile`. Chunks are written to the inbox and joined when the last one lands.
+    nonisolated func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any] = [:]) {
+        guard let transfer = WatchSegmentTransfer(dictionary: userInfo),
+              let chunk = userInfo["chunk"] as? Int, let chunks = userInfo["chunks"] as? Int,
+              let bytes = userInfo["bytes"] as? Data else { return }
+        let inbox = WatchImportService.inboxDirectory(for: transfer.recordingID)
+        let name = transfer.isManifest ? "manifest.json" : String(format: "segment-%03d.m4a", transfer.index)
+        let parts = inbox.appendingPathComponent("chunks-\(name)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: parts, withIntermediateDirectories: true)
+            try bytes.write(to: parts.appendingPathComponent(String(format: "%05d", chunk)), options: .atomic)
+            let have = try FileManager.default.contentsOfDirectory(atPath: parts.path).count
+            guard have >= chunks else { return }
+            var joined = Data()
+            for i in 0..<chunks {
+                joined.append(try Data(contentsOf: parts.appendingPathComponent(String(format: "%05d", i))))
+            }
+            let destination = inbox.appendingPathComponent(name)
+            try joined.write(to: destination, options: .atomic)
+            try? FileManager.default.removeItem(at: parts)
+            Task { @MainActor in
+                WatchImportService.shared.noteArrival(transfer, at: destination)
+            }
+        } catch {
+            DebugLogger.shared.log(.app, "Watch chunk could not be stored: \(error.localizedDescription)")
+        }
+    }
+    #endif
+
     nonisolated func session(_ session: WCSession, didReceive file: WCSessionFile) {
         // Must move the file before returning: the system removes it afterwards.
         guard let transfer = WatchSegmentTransfer(dictionary: file.metadata) else {
