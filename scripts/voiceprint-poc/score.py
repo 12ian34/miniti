@@ -42,7 +42,7 @@ def pair_scores(a, b, same_session):
 
 def enrol(spk, seconds=20):
     """Mean of the first windows totalling about `seconds` of speech."""
-    n = max(1, int(round(seconds / 6)))
+    n = max(1, min(len(spk), int(round(seconds / 6))))
     v = np.mean(spk[:n], axis=0); return v / (np.linalg.norm(v) + 1e-9)
 
 def identify(enrolled, probe, threshold):
@@ -88,7 +88,52 @@ for key, chunks in conds.items():
     e, t = eer(sc, lb); thresholds[key] = t
     print(f"| {key} | {len(sc)} | {s[l==1].mean():.3f} ({np.percentile(s[l==1],5):.3f}) | {s[l==0].mean():.3f} ({np.percentile(s[l==0],95):.3f}) | {100*e:.1f}% | {t:.3f} |")
 
-print("\n## Identification: enrol from 20 s in one session, identify 6 s windows elsewhere\n")
+print("\n## Identification within a session: enrol from the first 20 s, identify the second half\n")
+print("| session | mic | threshold | correct | false accept |\n|---|---|---|---|---|")
+split_candidates = sorted({round(t, 3) for t in thresholds.values()} | {0.5, 0.6, 0.7})
+for (s1, m1), d1 in runs.items():
+    spk = by_speaker(d1)
+    enrolled = {k: enrol(ws) for k, ws in spk.items() if len(ws) >= 6}
+    probe = {k: ws[len(ws) // 2:] for k, ws in spk.items() if len(ws) >= 6}
+    for t in split_candidates:
+        c, fa = identify(enrolled, probe, t)
+        print(f"| {s1} | {m1} | {t:.3f} | {100*c:.1f}% | {100*fa:.1f}% |")
+
+print("\n## Identification with averaged probes: enrol from 60 s, identify the mean of k consecutive 6 s windows (second half of the session)\n")
+print("| session | mic | k windows | threshold | correct | false accept | unassigned |\n|---|---|---|---|---|---|---|")
+def identify_avg(enrolled, probe, threshold, k):
+    names = list(enrolled); E = np.stack([enrolled[n] for n in names])
+    correct = total = fa = 0
+    for spk, ws in probe.items():
+        for i in range(0, max(0, len(ws) - k + 1), k):
+            v = np.mean(ws[i:i+k], axis=0); v = v / (np.linalg.norm(v) + 1e-9)
+            sims = E @ v; j = int(np.argmax(sims)); total += 1
+            if sims[j] >= threshold:
+                if names[j] == spk: correct += 1
+                else: fa += 1
+    return correct / max(1, total), fa / max(1, total), (total - correct - fa) / max(1, total)
+for (s1, m1), d1 in runs.items():
+    spk = by_speaker(d1)
+    enrolled = {kk: enrol(ws, 60) for kk, ws in spk.items() if len(ws) >= 12}
+    probe = {kk: ws[len(ws) // 2:] for kk, ws in spk.items() if len(ws) >= 12}
+    for k in (1, 3, 5):
+        for t in (0.4, 0.5, 0.6):
+            c, fa, un = identify_avg(enrolled, probe, t, k)
+            print(f"| {s1} | {m1} | {k} | {t:.2f} | {100*c:.1f}% | {100*fa:.1f}% | {100*un:.1f}% |")
+
+print("\n## Across mics with averaged probes: enrol from 60 s on one mic, identify k-window means on the other\n")
+print("| enrol | identify | k | threshold | correct | false accept | unassigned |\n|---|---|---|---|---|---|---|")
+for (s1, m1), d1 in runs.items():
+    enrolled = {kk: enrol(ws, 60) for kk, ws in by_speaker(d1).items() if len(ws) >= 12}
+    for (s2, m2), d2 in runs.items():
+        if s1 != s2 or m1 == m2: continue
+        probe = by_speaker(d2)
+        for k in (3, 5):
+            for t in (0.4, 0.5, 0.6):
+                c, fa, un = identify_avg(enrolled, probe, t, k)
+                print(f"| {s1} {m1} | {s2} {m2} | {k} | {t:.2f} | {100*c:.1f}% | {100*fa:.1f}% | {100*un:.1f}% |")
+
+print("\n## Identification across runs: enrol from 20 s in one session, identify 6 s windows elsewhere\n")
 print("| enrol | identify | threshold | correct | false accept |\n|---|---|---|---|---|")
 candidates = sorted({round(t, 3) for t in thresholds.values()} | {0.5, 0.6, 0.7})
 for (s1, m1), d1 in runs.items():

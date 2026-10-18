@@ -2,7 +2,7 @@
 # AMI sessions with recurring participants: ES2004a/b/c and IS1009a/b/c, headset mix and one
 # far-field array mic, converted to 16 kHz mono, plus the pyannote only_words reference RTTMs.
 # Reuses files the diarization spike already fetched into ../diarization-poc/data.
-set -e
+set +e
 cd "$(dirname "$0")/data"
 OLD=../../diarization-poc/data
 for m in ES2004a ES2004b ES2004c IS1009a IS1009b IS1009c; do
@@ -11,9 +11,9 @@ for m in ES2004a ES2004b ES2004c IS1009a IS1009b IS1009c; do
     k="$m.$ch.16k.wav"
     if [ ! -f "$k" ]; then
       if [ -f "$OLD/$k" ]; then ln -sf "$OLD/$k" "$k"; else
-        [ -f "$f" ] || curl -sSL -o "$f" "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/$m/audio/$f"
-        ffmpeg -v error -y -i "$f" -ac 1 -ar 16000 -sample_fmt s16 "$k"
-        rm -f "$f"
+        # The Edinburgh mirror is slow and drops connections: resume and retry, keep going on failure.
+        curl -sSL -C - --retry 20 --retry-delay 10 --retry-all-errors -o "$f" "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/$m/audio/$f" || { echo "incomplete: $f"; continue; }
+        ffmpeg -v error -y -i "$f" -ac 1 -ar 16000 -sample_fmt s16 "$k" && rm -f "$f"
       fi
     fi
   done
