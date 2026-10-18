@@ -1450,6 +1450,17 @@ final class AppState: ObservableObject {
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
+
+    // Voice prints (3.2.0): see AppState+VoicePrints.swift and docs/voice-prints-plan.md.
+    @AppStorage("voicePrintSelfEnabled") var voicePrintSelfEnabled: Bool = false
+    @AppStorage("voicePrintOthersEnabled") var voicePrintOthersEnabled: Bool = false
+    let voicePrints = VoicePrintStore()
+    let voicePrintEmbedder = VoicePrintEmbedderService()
+    /// Live speaker ids named by a confident print this session; naming must not overwrite them.
+    @Published var livePrintMatchedIDs: Set<String> = []
+    /// Live speaker ids with a close-but-uncertain print, offered in the rename sheet.
+    @Published var livePrintSuggestions: [String: VoicePrintSuggestion] = [:]
+    var lastVoicePrintMatchAt: Date?
     /// Transcribe with the on-device Nemotron 3.5 recogniser instead of Deepgram. Default off
     /// (beta, 2.12.0). When the model for the meeting language is loaded, new sessions feed
     /// audio to it and open no Deepgram socket; managed mode then reports no minutes.
@@ -4098,6 +4109,7 @@ final class AppState: ObservableObject {
                         await refreshDocsTopics()
                     }
                 }
+                voicePrintMatchTick(now: now)
                 // Speaker names: low-cadence, best-effort. Rely on its own throttle.
                 if autoInferSpeakerNames, !isGeneratingSpeakerNames {
                     let meetsSegmentThreshold = finalCount >= lastSpeakerNamesSegmentCount + (
@@ -4914,7 +4926,7 @@ final class AppState: ObservableObject {
         }
 
         let key = String(speakerID)
-        guard !liveSpeakerOverrides.contains(key) else { return false }
+        guard !liveSpeakerOverrides.contains(key), !livePrintMatchedIDs.contains(key) else { return false }
         if liveSpeakerNames[key] == attendeeName { return false }
 
         var merged = liveSpeakerNames
@@ -5041,7 +5053,7 @@ final class AppState: ObservableObject {
             var merged = liveSpeakerNames
             var applied = 0
             var skippedOverrides: [String] = []
-            for (key, value) in supported where !liveSpeakerOverrides.contains(key) {
+            for (key, value) in supported where !liveSpeakerOverrides.contains(key) && !livePrintMatchedIDs.contains(key) {
                 merged[key] = value
                 applied += 1
             }
@@ -5310,6 +5322,7 @@ final class AppState: ObservableObject {
         } else {
             onDeviceDiarization.unload()
         }
+        refreshVoicePrintAvailability()
     }
 
     /// Load or drop the on-device transcription model family for the meeting language to match
@@ -5432,7 +5445,7 @@ final class AppState: ObservableObject {
     private func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource) -> OnDeviceSpeakerTimeline? {
         guard onDeviceSpeakerSeparationEnabled else { return nil }
         let sources: Set<TranscriptSource> = multichannel ? [.microphone, .system] : [monoSource]
-        return onDeviceDiarization.beginSession(sources: sources)
+        return onDeviceDiarization.beginSession(sources: sources, collector: makeVoicePrintCollector())
     }
 
     /// Audio callback that feeds the on-device diarizer (when a session is active) and then
@@ -6405,6 +6418,7 @@ final class AppState: ObservableObject {
         liveTemplateSections = [:]
         liveTemplateID = templateInsightsEnabled ? selectedInsightTemplate.id : nil
         liveDocTopics = []
+        resetLiveVoicePrintState()
         liveSpeakerNames = [:]
         liveSpeakerOverrides = []
         liveSelfSpeakerIDs = []
@@ -8377,6 +8391,7 @@ final class AppState: ObservableObject {
         #endif
         
         audioCaptureService?.stopCapture()
+        learnVoicePrintsAtMeetingEnd()
         onDeviceDiarization.endSession()
         let stoppedOnDevice = sessionTranscribesOnDevice
         sessionTranscribesOnDevice = false

@@ -432,6 +432,14 @@ struct TranscriptView: View {
             onPickAttendee: { attendee in
                 appState.setLiveSpeakerAttendee(id: speakerID, attendee: attendee)
                 renamingSpeaker = nil
+            },
+            suggestion: appState.livePrintSuggestions[key],
+            onConfirmSuggestion: {
+                appState.confirmVoicePrintSuggestion(speakerID: speakerID)
+                renamingSpeaker = nil
+            },
+            onDismissSuggestion: {
+                appState.dismissVoicePrintSuggestion(speakerID: speakerID)
             }
         )
     }
@@ -1350,6 +1358,10 @@ struct RenameSpeakerView: View {
     /// Calendar attendees offered as one-tap names; empty when the meeting has none.
     var attendees: [MeetingAttendee] = []
     var onPickAttendee: ((MeetingAttendee) -> Void)? = nil
+    /// A remembered voice that sounds like this speaker but not confidently enough to apply alone.
+    var suggestion: VoicePrintSuggestion? = nil
+    var onConfirmSuggestion: (() -> Void)? = nil
+    var onDismissSuggestion: (() -> Void)? = nil
 
     @State private var draft: String = ""
     @FocusState private var focused: Bool
@@ -1390,6 +1402,42 @@ struct RenameSpeakerView: View {
                 .font(.system(size: 10, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
                 .lineLimit(2)
+
+            if let suggestion, let onConfirmSuggestion {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("sounds like \(suggestion.displayName)")
+                        .font(.system(size: 11, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                    HStack(spacing: 6) {
+                        Button {
+                            onConfirmSuggestion()
+                        } label: {
+                            Text("yes, that's \(suggestion.displayName)")
+                                .font(.system(size: 11, weight: .semibold, design: .default))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 6)
+                                .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1F3A22")))
+                                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(hex: "3FB950"), lineWidth: 1))
+                                .foregroundStyle(ColorPalette.Accent.greenGitHub)
+                        }
+                        .buttonStyle(.plain)
+                        if let onDismissSuggestion {
+                            Button {
+                                onDismissSuggestion()
+                            } label: {
+                                Text("no")
+                                    .font(.system(size: 11, weight: .semibold, design: .default))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "13151A")))
+                                    .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(hex: "1C1C1F"), lineWidth: 1))
+                                    .foregroundStyle(ColorPalette.Text.muted)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
 
             if !attendees.isEmpty, let onPickAttendee {
                 VStack(alignment: .leading, spacing: 4) {

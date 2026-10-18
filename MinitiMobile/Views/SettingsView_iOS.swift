@@ -229,6 +229,8 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(.secondary)
                 }
 
+                VoicePrintSettingsSection(store: appState.voicePrints, embedder: appState.voicePrintEmbedder)
+
                 Section("Language") {
                     Picker("Default Language", selection: $appState.defaultLanguage) {
                         ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
@@ -815,6 +817,7 @@ private struct SettingsDetailView_iOS: View {
                 if category == .privacy {
                 Section("Privacy") {
                     Text("Private mode, where a meeting never leaves the device, is on the Mac app for now.")
+                    Text("Voices (Settings, Transcription) keeps voice fingerprints on this device only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

@@ -1832,6 +1832,16 @@ struct PrivacySettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 OnDeviceTranscriptionModelsRow(service: appState.onDeviceTranscription, isEnabled: appState.onDeviceTranscriptionEnabled)
+                HStack {
+                    Text("Voice model")
+                    Spacer()
+                    Text(appState.voicePrintSelfEnabled || appState.voicePrintOthersEnabled ? "downloaded when Voices is on, about 17 MB" : "not loaded")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Voices (Transcription) keeps voice fingerprints on this Mac only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .id("privacy.models")
         }
@@ -2085,6 +2095,8 @@ private struct TranscriptionModelsSection: View {
                     .foregroundStyle(.secondary)
             }
         }
+
+        VoicePrintSettingsSection(store: appState.voicePrints, embedder: appState.voicePrintEmbedder)
     }
 }
 

@@ -504,6 +504,18 @@ struct SpeakerIdentityState: Sendable, Equatable {
         stableProviderSources = sources
     }
 
+    /// Provider slot to app speaker id for the on-device diarized sources (generation 0 keys).
+    func stableProviderMap() -> [TranscriptSource: [Int: Int]] {
+        var out: [TranscriptSource: [Int: Int]] = [:]
+        for (key, appID) in assignments {
+            let parts = key.split(separator: "#")
+            guard parts.count == 3, parts[2] == "0", let source = TranscriptSource(rawValue: String(parts[0])),
+                  stableProviderSources.contains(source), let provider = Int(parts[1]) else { continue }
+            out[source, default: [:]][provider] = appID
+        }
+        return out
+    }
+
     mutating func appSpeakerID(source: TranscriptSource, providerID: Int) -> Int {
         guard source != .unknown else { return providerID }
         let keyGeneration: UInt64 = stableProviderSources.contains(source) ? 0 : generation
@@ -605,6 +617,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
 
     /// App speaker IDs allocated to microphone-channel speakers this session.
     var micAppSpeakerIDs: Set<Int> { speakerIdentityState.micAppSpeakerIDs }
+    /// Diarizer slot to app speaker id, for the voice print matcher.
+    var onDeviceSpeakerMap: [TranscriptSource: [Int: Int]] { speakerIdentityState.stableProviderMap() }
 
     /// Register app speaker IDs restored from a persisted meeting before a
     /// resume connect, so new allocations cannot collide with restored ones.

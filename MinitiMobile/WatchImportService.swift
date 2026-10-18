@@ -327,7 +327,9 @@ final class WatchImportService: ObservableObject {
             fail("Storage unavailable")
             return
         }
-        let meeting = Self.makeMeeting(job: job, result: result)
+        // Local speaker labels and remembered voices, when the on-device diarizer is on.
+        let labels = await WatchVoiceDiarization.relabel(fileURL: joined, result: result, appState: appState)
+        let meeting = Self.makeMeeting(job: job, result: result, labels: labels)
         job.meetingID = meeting.id
         upsert(job)
         let saved = appState.commit(.watchImport, in: context, mutate: { context.insert(meeting) })
@@ -357,8 +359,8 @@ final class WatchImportService: ObservableObject {
         DebugLogger.shared.log(.app, "Watch import done \(job.id): \(Int(result.duration))s, \(result.segments.count) segments")
     }
 
-    static func makeMeeting(job: WatchImportJob, result: WatchTranscriptionClient.Result) -> Meeting {
-        let segments = result.segments.map {
+    static func makeMeeting(job: WatchImportJob, result: WatchTranscriptionClient.Result, labels: WatchVoiceDiarization.Outcome? = nil) -> Meeting {
+        let segments = (labels?.segments ?? result.segments).map {
             TranscriptSegment(text: $0.text, speaker: $0.speaker, timestamp: $0.timestamp, isFinal: true, confidence: $0.confidence)
         }
         let end = job.startedAt.addingTimeInterval(max(result.duration, job.durationSeconds))
@@ -368,6 +370,11 @@ final class WatchImportService: ObservableObject {
         meeting.externalID = job.id.uuidString
         meeting.importedAt = Date()
         meeting.recordedOnRaw = RecordingDevice.watch.rawValue
+        if let labels {
+            meeting.speakerNames = labels.speakerNames
+            meeting.speakerEmails = labels.speakerEmails
+            meeting.selfSpeakerIDs = labels.selfSpeakerIDs
+        }
         return meeting
     }
 

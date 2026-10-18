@@ -9,10 +9,10 @@ Started 2026-10-18 after the Apple Watch release. Owner: Ian. Related: `docs/on-
 | Plan | written 2026-10-18 | This document. Decisions below are Ian's from the 2026-10-18 conversation: build it, voice prints first, the attendee email link alongside. |
 | Spike: does CAM++ separate people across meetings and microphones | first pass 2026-10-18, cross-session pending | `scripts/voiceprint-poc/RESULTS.md`. Within a session, enrol 60 s and match a 30 s per-speaker average: 100% correct, 0 false accepts, both meetings, both mics, thresholds 0.4 to 0.6. Across mics: 100% on ES2004a, 81 to 89% on IS1009a with 6 to 12% false accepts at 0.5 (0 to 7% at 0.6, the rest unassigned). 6 ms per window. Single 6 s windows: 8.5% EER within, 12.9% across mics, so matching uses averages only. Starting thresholds: match 0.60, confirm 0.45 to 0.60. Sessions b and c (same people, another day) are still downloading from the AMI mirror; the cross-session gate is measured when they land. |
 | Slice 0: attendee email link | built 2026-10-18, unreleased | `speaker_emails` on the meeting, matched at naming time and when a speaker is renamed from the attendee list; in the webhook, markdown, cloud document, REST and MCP; shown under the name in the speaker rename popover on both platforms. Caro's ask; independent of the spike. |
-| Slice 1: your voice | not started, gated on the spike | Enrol in Settings, Transcription, Your voice (20 s read), or learn from the Mac mic channel automatically. Labels "You" on iPhone, in-room Mac and watch meetings. Needs the on-device diarizer. |
-| Slice 2: remembered voices | not started, gated on the spike | Opt-in. A print per attendee email, saved after a meeting links a speaker to an attendee. Next meeting: labelled before anyone says a name; a close-but-uncertain match asks "Is this Sam?". Delete per person. |
-| Slice 3: watch recordings diarised on the phone | not started | Run the Nemotron diarizer and CAM++ over the joined file on the phone, use Deepgram only for words. Gives watch meetings the same prints and consistency. |
-| Privacy policy and docs | not started | Biometric data: opt-in, device only, never in the cloud document, deletable per person, stated in the policy. Linux tracking note. |
+| Slice 1: your voice | built 2026-10-19, unreleased | Settings, Transcription, Voices, "Your voice" (off by default). Learnt from every speaker marked as me at the end of a meeting with the on-device diarizer (20 s of own speech minimum), merged across meetings with a history cap. Matched live every 15 s once a speaker has 10 s of own speech; a confident match marks the speaker as you, a close one shows "sounds like You" in the rename sheet with a confirm button. No reading-passage enrolment yet; mark yourself once in a meeting instead. |
+| Slice 2: remembered voices | built 2026-10-19, unreleased | "Remember voices" (off by default). A print per attendee email, learnt at the end of a meeting from speakers that resolve to an email (name match or pick), named next meeting from the first 10 s of own speech, with a confirm band in the rename sheet. The Voices section lists everyone with a Forget button; switching off deletes all. Prints are JSON files in Application Support/VoicePrints, never in SwiftData, the sync document, exports or diagnostics (test). |
+| Slice 3: watch recordings diarised on the phone | built 2026-10-19, unreleased | When Speakers is "This device" and the model is loaded, the phone runs the Nemotron diarizer over the joined file, relabels Deepgram's words by the local timeline (splitting utterances where the speaker changes), and names speakers from the prints; confident matches also reinforce the print. Skipped when a live meeting is using the diarizer. |
+| Privacy policy and docs | app copy done 2026-10-19; website at release | Settings, Privacy on both platforms states what is kept and where. The website privacy policy paragraph and the docs page are written at release. |
 
 ## Why
 
@@ -70,6 +70,15 @@ Harness (`scripts/voiceprint-poc/harness`, Swift, FluidAudio 0.17.4 like the tra
 4. **Speed**: milliseconds per window on this Mac, to size the live budget.
 
 Go: EER under 5% within and across sessions on the headset mix, under 10% across mics, with one threshold that keeps false accepts under 2% in every condition. No go: write it up and stop at slice 0.
+
+## As built (2026-10-19)
+
+- `Miniti/Services/VoicePrints.swift`: `VoicePrint`, `VoicePrintStore` (JSON per print, merge with `historyCap` 10), `VoicePrintMatcher` (thresholds 0.60 and 0.45, 10 s minimum, 20 s to learn, self first, one to one), `VoicePrintEmbedderService` (CAM++ via FluidAudio, 17 MB download on first enable), `VoicePrintCollector` (per-slot own-speech windows of 6 s, embedded off the audio thread, running mean per slot).
+- `OnDeviceSpeakerTimeline.append` now reports exclusivity per frame and calls `onFrames`; the diarization `Session` takes an optional collector and can ingest decoded samples (watch files); `endSessionAndWait()` for offline runs.
+- `SpeakerIdentityState.stableProviderMap()` and `DeepgramService.onDeviceSpeakerMap` translate diarizer slots to app speaker ids.
+- `AppState+VoicePrints.swift`: settings (`voicePrintSelfEnabled`, `voicePrintOthersEnabled`), `voicePrintMatchTick` from the transcript-finalize hook, `learnVoicePrintsAtMeetingEnd` from `stopRecording`, suggestions and confirm. Confident print names are protected from the GPT and Jev naming merge (`livePrintMatchedIDs`).
+- `Miniti/Views/VoicePrintSettingsView.swift` (both platforms), suggestion row in `RenameSpeakerView`, `MinitiMobile/WatchVoiceDiarization.swift`.
+- Tests: `MinitiTests/VoicePrintTests.swift`.
 
 ## Rules
 

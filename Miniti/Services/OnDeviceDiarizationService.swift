@@ -52,6 +52,9 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     /// time 0 at the *start* of the packet that opened the socket.
     private var lastPacketSamples: [TranscriptSource: Int] = [:]
     private var socketOriginSeconds: [TranscriptSource: Double] = [:]
+    /// Voice prints: called after every append with (source, first frame index, dominant
+    /// slots, exclusivity per frame). Set once by the session, before any audio.
+    var onFrames: ((TranscriptSource, Int, [UInt8], [Bool]) -> Void)?
 
     init(sources: Set<TranscriptSource>) {
         self.sources = sources
@@ -99,24 +102,32 @@ final class OnDeviceSpeakerTimeline: @unchecked Sendable {
     func append(source: TranscriptSource, probabilities: [Float], frameCount: Int, numSpeakers: Int, threshold: Float = 0.5) {
         guard frameCount > 0, numSpeakers > 0, probabilities.count >= frameCount * numSpeakers, sources.contains(source) else { return }
         var frames = [UInt8](repeating: Self.silence, count: frameCount)
+        var exclusive = [Bool](repeating: false, count: frameCount)
         for frame in 0..<frameCount {
             var best = -1
             var bestProbability = threshold
+            var active = 0
             let base = frame * numSpeakers
             for slot in 0..<numSpeakers {
                 let probability = probabilities[base + slot]
+                if probability > threshold { active += 1 }
                 if probability > bestProbability {
                     bestProbability = probability
                     best = slot
                 }
             }
             if best >= 0 { frames[frame] = UInt8(best) }
+            exclusive[frame] = active == 1
         }
-        lock.lock(); defer { lock.unlock() }
+        lock.lock()
+        let startFrame = dominant[source]?.count ?? 0
         dominant[source, default: []].append(contentsOf: frames)
         var counts = slotFrames[source] ?? [Int](repeating: 0, count: Int(Self.silence))
         for frame in frames where frame != Self.silence { counts[Int(frame)] += 1 }
         slotFrames[source] = counts
+        let hook = onFrames
+        lock.unlock()
+        hook?(source, startFrame, frames, exclusive)
     }
 
     /// Seconds of diarizer output available for `source`.
@@ -224,6 +235,8 @@ final class OnDeviceDiarizationService: ObservableObject {
     /// The live session, read from the audio thread by `ingest`.
     nonisolated(unsafe) private var _session: Session?
     private(set) var activeTimeline: OnDeviceSpeakerTimeline?
+    /// Voice print collector of the live session, when prints are on.
+    private(set) var activeCollector: VoicePrintCollector?
 
     nonisolated static var isHardwareSupported: Bool {
         #if targetEnvironment(simulator)
@@ -314,35 +327,59 @@ final class OnDeviceDiarizationService: ObservableObject {
 
     /// Start diarizing `sources` for one recording session. Returns nil, leaving Deepgram
     /// diarization in charge, unless models for at least one requested source are loaded.
-    func beginSession(sources: Set<TranscriptSource>) -> OnDeviceSpeakerTimeline? {
+    func beginSession(sources: Set<TranscriptSource>, collector: VoicePrintCollector? = nil) -> OnDeviceSpeakerTimeline? {
         guard isReady, _session == nil else { return nil }
         let usable = sources.filter { models[$0] != nil }
         guard !usable.isEmpty else { return nil }
         let timeline = OnDeviceSpeakerTimeline(sources: usable)
+        if let collector {
+            timeline.onFrames = { source, start, frames, exclusive in
+                collector.noteFrames(source: source, startFrame: start, dominant: frames, exclusive: exclusive)
+            }
+        }
         var diarizers: [TranscriptSource: Nemotron3Diarizer] = [:]
         for source in usable {
             guard let model = models[source] else { continue }
             diarizers[source] = Nemotron3Diarizer(config: Self.preset, models: model)
         }
-        let session = Session(timeline: timeline, diarizers: diarizers)
+        let session = Session(timeline: timeline, diarizers: diarizers, collector: collector)
         _session = session
         activeTimeline = timeline
+        activeCollector = collector
         DebugLogger.shared.log(.audio, "On-device diarization session started: sources=\(usable.map(\.rawValue).sorted())")
         return timeline
     }
 
     /// Stop feeding the diarizers and flush their tails. The timeline stays valid for any
     /// transcript still being parsed.
+    /// Like `endSession()` but waits for the diarizers to flush (watch recordings).
+    func endSessionAndWait() async {
+        guard let session = _session else { return }
+        _session = nil
+        activeTimeline = nil
+        activeCollector = nil
+        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+            session.finish { c.resume() }
+        }
+    }
+
     func endSession() {
         guard let session = _session else { return }
         _session = nil
         activeTimeline = nil
+        activeCollector = nil
         session.finish()
         DebugLogger.shared.log(.audio, "On-device diarization session ended: mic=\(String(format: "%.0f", session.timeline.processedSeconds(source: .microphone)))s system=\(String(format: "%.0f", session.timeline.processedSeconds(source: .system)))s")
     }
 
     /// Feed the PCM16 the app is about to send to Deepgram. Call before `sendAudio` so the
     /// socket-start alignment sees these samples. Cheap when no session is active.
+    /// Feed already-decoded 16 kHz mono samples for one source (watch recordings on the phone).
+    nonisolated func ingest(samples: [Float], source: TranscriptSource) {
+        guard let session = _session else { return }
+        session.ingest(samples: samples, source: source)
+    }
+
     nonisolated func ingest(_ data: Data, multichannel: Bool, monoSource: TranscriptSource) {
         guard let session = _session else { return }
         session.ingest(data, multichannel: multichannel, monoSource: monoSource)
@@ -375,11 +412,23 @@ final class OnDeviceDiarizationService: ObservableObject {
         let timeline: OnDeviceSpeakerTimeline
         private let queue = DispatchQueue(label: "com.miniti.onDeviceDiarization", qos: .userInitiated)
         private var diarizers: [TranscriptSource: Nemotron3Diarizer]
+        private let collector: VoicePrintCollector?
         private var failed = false
 
-        init(timeline: OnDeviceSpeakerTimeline, diarizers: [TranscriptSource: Nemotron3Diarizer]) {
+        init(timeline: OnDeviceSpeakerTimeline, diarizers: [TranscriptSource: Nemotron3Diarizer], collector: VoicePrintCollector? = nil) {
             self.timeline = timeline
             self.diarizers = diarizers
+            self.collector = collector
+        }
+
+        /// Already-decoded 16 kHz mono samples for one source (watch recordings on the phone).
+        func ingest(samples: [Float], source: TranscriptSource) {
+            guard timeline.covers(source) else { return }
+            timeline.noteAudioFed(source: source, sampleCount: samples.count)
+            queue.async { [self] in
+                collector?.noteAudio(source: source, samples: samples)
+                process(source: source, samples: samples)
+            }
         }
 
         func ingest(_ data: Data, multichannel: Bool, monoSource: TranscriptSource) {
@@ -388,7 +437,10 @@ final class OnDeviceDiarizationService: ObservableObject {
                 // Clock advances on the audio thread so `markSocketStart` (same thread, right
                 // after this call) sees exactly the samples Deepgram is about to receive.
                 timeline.noteAudioFed(source: source, sampleCount: samples.count)
-                queue.async { [self] in process(source: source, samples: samples) }
+                queue.async { [self] in
+                    collector?.noteAudio(source: source, samples: samples)
+                    process(source: source, samples: samples)
+                }
             }
         }
 
@@ -405,8 +457,9 @@ final class OnDeviceDiarizationService: ObservableObject {
             }
         }
 
-        func finish() {
+        func finish(completion: (@Sendable () -> Void)? = nil) {
             queue.async { [self] in
+                defer { completion?() }
                 guard !failed else { return }
                 for (source, diarizer) in diarizers {
                     if let chunks = try? diarizer.finishStream() {

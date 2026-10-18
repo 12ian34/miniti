@@ -6,6 +6,9 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### Unreleased - v3.2.0
 
+- new: (macOS and iOS) miniti recognises you by voice. Turn on Your voice in Settings, Transcription, mark yourself once in a meeting, and from then on you are You from the first sentence on the phone, in a room and in watch recordings. Needs Speakers set to this device. The fingerprint is 192 numbers kept on the device, never synced or sent anywhere
+- new: (macOS and iOS) remembered voices. Turn on Remember voices and people miniti has matched to a calendar guest are named next time before they say their name. A close call asks you to confirm when you tap the speaker. Forget anyone in Settings, Transcription; turning it off forgets everyone
+- new: (iOS) watch recordings get speaker labels from the on-device model when Speakers is set to this device, so they use the same voices as live meetings
 - new: (macOS and iOS) speakers get their email. When a meeting comes from Google Calendar, a named speaker is matched to the guest list and the email travels with the meeting: in the webhook as speaker_emails, in the markdown export, in the API and MCP. Tap a speaker to see the email, or pick the right guest from the list
 
 ### 2026-10-18 - v3.1.0

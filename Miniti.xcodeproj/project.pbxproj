@@ -201,6 +201,15 @@
 		W31000010000000000000002 /* SpeakerAttendeeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */; };
 		W31000010000000000000003 /* SpeakerAttendeeMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */; };
 		W31000010000000000000004 /* SpeakerAttendeeMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */; };
+		W41000010000000000000001 /* VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000001 /* VoicePrints.swift */; };
+		W41000010000000000000002 /* VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000001 /* VoicePrints.swift */; };
+		W41000010000000000000003 /* AppState+VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000002 /* AppState+VoicePrints.swift */; };
+		W41000010000000000000004 /* AppState+VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000002 /* AppState+VoicePrints.swift */; };
+		W41000010000000000000005 /* VoicePrintSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000003 /* VoicePrintSettingsView.swift */; };
+		W41000010000000000000006 /* VoicePrintSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000003 /* VoicePrintSettingsView.swift */; };
+		W41000010000000000000007 /* WatchVoiceDiarization.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000004 /* WatchVoiceDiarization.swift */; };
+		W41000010000000000000008 /* VoicePrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000005 /* VoicePrintTests.swift */; };
+		W41000010000000000000009 /* VoicePrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000005 /* VoicePrintTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -381,6 +390,11 @@
 		W20000010000000000000010 /* MinitiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinitiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcher.swift; sourceTree = "<group>"; };
 		W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcherTests.swift; sourceTree = "<group>"; };
+		W42000010000000000000001 /* VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrints.swift; sourceTree = "<group>"; };
+		W42000010000000000000002 /* AppState+VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+VoicePrints.swift"; sourceTree = "<group>"; };
+		W42000010000000000000003 /* VoicePrintSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintSettingsView.swift; sourceTree = "<group>"; };
+		W42000010000000000000004 /* WatchVoiceDiarization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchVoiceDiarization.swift; sourceTree = "<group>"; };
+		W42000010000000000000005 /* VoicePrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -478,6 +492,7 @@
 		A50000010000000000000004 /* Views */ = {
 			isa = PBXGroup;
 			children = (
+				W42000010000000000000003 /* VoicePrintSettingsView.swift */,
 				CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */,
 				D10000000000000000000022 /* TemplateSettingsViews.swift */,
 				D1000000000000000000000D /* PersistenceIssueBanner.swift */,
@@ -506,6 +521,7 @@
 		A50000010000000000000005 /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				W42000010000000000000002 /* AppState+VoicePrints.swift */,
 				W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */,
 				CC9797B767A692503713EF53 /* AppState+CloudSync.swift */,
 				CCAA041382F34C227825B8B5 /* MeetingTombstone.swift */,
@@ -522,6 +538,7 @@
 		A50000010000000000000006 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				W42000010000000000000001 /* VoicePrints.swift */,
 				CC20B006C9441532FAF7A235 /* CloudSyncEngine.swift */,
 				CC3B01BB5D4DE4EB3C28BC52 /* MinitiAPIService+Cloud.swift */,
 				CC53627F2C6B5F2A58798D64 /* MeetingSyncDocument.swift */,
@@ -560,6 +577,7 @@
 		C50000010000000000000001 /* MinitiMobile */ = {
 			isa = PBXGroup;
 			children = (
+				W42000010000000000000004 /* WatchVoiceDiarization.swift */,
 				W2000001000000000000000B /* WatchSessionBridge.swift */,
 				W2000001000000000000000C /* WatchTranscriptionClient.swift */,
 				W2000001000000000000000D /* WatchImportService.swift */,
@@ -606,6 +624,7 @@
 		T50000010000000000000001 /* MinitiTests */ = {
 			isa = PBXGroup;
 			children = (
+				W42000010000000000000005 /* VoicePrintTests.swift */,
 				W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */,
 				W2000001000000000000000F /* WatchImportTests.swift */,
 				CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */,
@@ -937,6 +956,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W41000010000000000000005 /* VoicePrintSettingsView.swift in Sources */,
+				W41000010000000000000001 /* VoicePrints.swift in Sources */,
+				W41000010000000000000003 /* AppState+VoicePrints.swift in Sources */,
 				W31000010000000000000001 /* SpeakerAttendeeMatcher.swift in Sources */,
 				W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */,
 				CCF3D0C5DD23EFBB03A21C0A /* CloudSettingsView.swift in Sources */,
@@ -1000,6 +1022,10 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W41000010000000000000007 /* WatchVoiceDiarization.swift in Sources */,
+				W41000010000000000000006 /* VoicePrintSettingsView.swift in Sources */,
+				W41000010000000000000002 /* VoicePrints.swift in Sources */,
+				W41000010000000000000004 /* AppState+VoicePrints.swift in Sources */,
 				W31000010000000000000002 /* SpeakerAttendeeMatcher.swift in Sources */,
 				W1000001000000000000000B /* WatchSessionBridge.swift in Sources */,
 				W1000001000000000000000C /* WatchTranscriptionClient.swift in Sources */,
@@ -1074,6 +1100,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W41000010000000000000008 /* VoicePrintTests.swift in Sources */,
 				W31000010000000000000003 /* SpeakerAttendeeMatcherTests.swift in Sources */,
 				W1000001000000000000000F /* WatchImportTests.swift in Sources */,
 				CC93D31D938C49C98375A6FC /* CloudSyncEngineTests.swift in Sources */,
@@ -1110,6 +1137,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				W41000010000000000000009 /* VoicePrintTests.swift in Sources */,
 				W31000010000000000000004 /* SpeakerAttendeeMatcherTests.swift in Sources */,
 				W1000001000000000000001F /* WatchImportTests.swift in Sources */,
 				CC2ADF613D67704486A3F647 /* CloudSyncEngineTests.swift in Sources */,

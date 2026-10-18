@@ -16,11 +16,19 @@ enum WatchTranscriptionClient {
         let duration: TimeInterval
     }
 
+    struct WordTiming: Equatable, Sendable {
+        let word: String
+        let start: TimeInterval
+        let end: TimeInterval
+    }
+
     struct TranscriptSegmentDraft: Equatable, Sendable {
         let text: String
         let speaker: Int
         let timestamp: TimeInterval
         let confidence: Double
+        /// Word timings, so the phone can relabel speakers with the on-device model.
+        var words: [WordTiming] = []
     }
 
     enum Failure: LocalizedError {
@@ -75,12 +83,20 @@ enum WatchTranscriptionClient {
 
     struct Response: Decodable {
         struct Metadata: Decodable { let duration: Double? }
+        struct Word: Decodable {
+            let word: String
+            let punctuatedWord: String?
+            let start: Double
+            let end: Double
+            enum CodingKeys: String, CodingKey { case word, start, end, punctuatedWord = "punctuated_word" }
+        }
         struct Utterance: Decodable {
             let start: Double
             let end: Double
             let confidence: Double?
             let transcript: String
             let speaker: Int?
+            let words: [Word]?
         }
         struct Results: Decodable { let utterances: [Utterance]? }
         let metadata: Metadata?
@@ -93,7 +109,8 @@ enum WatchTranscriptionClient {
         let segments = utterances.compactMap { u -> TranscriptSegmentDraft? in
             let text = u.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
-            return TranscriptSegmentDraft(text: text, speaker: u.speaker ?? 0, timestamp: offset + u.start, confidence: u.confidence ?? 1)
+            let words = (u.words ?? []).map { WordTiming(word: $0.punctuatedWord ?? $0.word, start: offset + $0.start, end: offset + $0.end) }
+            return TranscriptSegmentDraft(text: text, speaker: u.speaker ?? 0, timestamp: offset + u.start, confidence: u.confidence ?? 1, words: words)
         }
         guard !segments.isEmpty else { throw Failure.emptyTranscript }
         return Result(segments: segments, duration: response.metadata?.duration ?? (utterances.last?.end ?? 0))
