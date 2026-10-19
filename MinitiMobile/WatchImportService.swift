@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import SwiftData
 #if canImport(UIKit)
@@ -203,6 +204,7 @@ final class WatchImportService: ObservableObject {
             upsert(job)
             sendReceipt(WatchReceipt(recordingID: job.id, receivedIndexes: job.receivedIndexes, status: .failed, message: message))
             DebugLogger.shared.log(.app, "Watch import failed \(job.id): \(message)")
+            appState.enqueueDiagnosticEvent("watch_import_failed", category: .app, level: .warning)
         }
 
         /// Nothing was consumed yet and the cause is temporary (network, suspension): back to the
@@ -294,15 +296,17 @@ final class WatchImportService: ObservableObject {
             credential = .init(scheme: "Token", token: key)
         }
 
-        // 3. One file, joined without re-encoding. Reused when a previous attempt already made it.
+        // 3. One file. Reused when a previous attempt already made it. If joining fails, the
+        // parts are transcribed one by one instead (speaker numbers may restart per part).
         let joined = directory(for: job.id).appendingPathComponent("joined.m4a")
+        var transcribeSeparately = false
         if !FileManager.default.fileExists(atPath: joined.path) {
             do {
                 try await WatchTranscriptionClient.stitch(parts, into: joined)
             } catch {
-                if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
-                fail("Could not read the audio: \(error.localizedDescription)")
-                return
+                transcribeSeparately = true
+                DebugLogger.shared.log(.app, "Watch import: joining failed (\(error.localizedDescription)), transcribing \(parts.count) parts separately")
+                appState.enqueueDiagnosticEvent("watch_import_join_failed", category: .app, level: .warning)
             }
         }
 
@@ -310,7 +314,17 @@ final class WatchImportService: ObservableObject {
         // failure of the recording: it goes back to the queue.
         let result: WatchTranscriptionClient.Result
         do {
-            result = try await WatchTranscriptionClient.transcribe(fileURL: joined, language: job.language, credential: credential)
+            if transcribeSeparately {
+                var running: TimeInterval = 0
+                var partList: [(url: URL, offset: TimeInterval)] = []
+                for url in parts {
+                    partList.append((url, running))
+                    running += (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
+                }
+                result = try await WatchTranscriptionClient.transcribeParts(partList, language: job.language, credential: credential)
+            } else {
+                result = try await WatchTranscriptionClient.transcribe(fileURL: joined, language: job.language, credential: credential)
+            }
         } catch let error as URLError {
             if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
             retryLater("upload: \(error.localizedDescription)")

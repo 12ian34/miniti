@@ -123,6 +123,11 @@ enum WatchTranscriptionClient {
     /// A part that cannot be read (a file the watch never finalised because it died mid-meeting)
     /// is skipped so the rest of the recording still becomes a meeting. Throws only when nothing
     /// is readable.
+    ///
+    /// Several files are re-encoded with the Apple M4A preset (about 25 kbps for 16 kHz mono,
+    /// five minutes of audio in 0.2 s on a Mac). A passthrough export of a composition built from
+    /// more than one file fails with "Operation Stopped, not supported for this media" (-11838),
+    /// which is what every watch recording over five minutes hit in 3.1.0.
     static func stitch(_ parts: [URL], into output: URL) async throws {
         var readable: [(AVURLAsset, AVAssetTrack, CMTime)] = []
         for part in parts {
@@ -146,10 +151,42 @@ enum WatchTranscriptionClient {
             try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: source, at: cursor)
             cursor = CMTimeAdd(cursor, duration)
         }
-        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else {
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
             throw Failure.unreadable
         }
         if FileManager.default.fileExists(atPath: output.path) { try FileManager.default.removeItem(at: output) }
         try await export.export(to: output, as: .m4a)
+        // The export must have produced something Deepgram can read.
+        guard let seconds = try? await AVURLAsset(url: output).load(.duration).seconds, seconds > 0 else {
+            try? FileManager.default.removeItem(at: output)
+            throw Failure.unreadable
+        }
+    }
+
+    /// Fallback when joining fails: transcribe every part on its own and shift the timestamps.
+    /// Speaker numbers restart per part, so people may get a new number after each five minutes;
+    /// still a meeting rather than a permanent failure.
+    static func transcribeParts(_ parts: [(url: URL, offset: TimeInterval)], language: String, credential: Credential) async throws -> Result {
+        var segments: [TranscriptSegmentDraft] = []
+        var duration: TimeInterval = 0
+        var nextSpeakerBase = 0
+        for (index, part) in parts.enumerated() {
+            let one: Result
+            do {
+                one = try await transcribe(fileURL: part.url, language: language, credential: credential)
+            } catch Failure.emptyTranscript {
+                continue
+            }
+            let shifted = one.segments.map { s in
+                TranscriptSegmentDraft(text: s.text, speaker: s.speaker + nextSpeakerBase, timestamp: s.timestamp + part.offset, confidence: s.confidence,
+                                       words: s.words.map { WordTiming(word: $0.word, start: $0.start + part.offset, end: $0.end + part.offset) })
+            }
+            segments.append(contentsOf: shifted)
+            nextSpeakerBase += (one.segments.map(\.speaker).max() ?? -1) + 1
+            duration += one.duration
+            DebugLogger.shared.log(.app, "Watch import: transcribed part \(index + 1) of \(parts.count) separately")
+        }
+        guard !segments.isEmpty else { throw Failure.emptyTranscript }
+        return Result(segments: segments, duration: duration)
     }
 }

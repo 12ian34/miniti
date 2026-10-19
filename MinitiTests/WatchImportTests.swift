@@ -221,6 +221,31 @@ final class WatchImportTests: XCTestCase {
         XCTAssertEqual(meeting.endTime, job.startedAt.addingTimeInterval(61.2))
     }
 
+    func testStitchJoinsSeveralRealAACFilesIntoOneReadableFile() async throws {
+        // The 3.1.0 bug: a passthrough export over more than one AAC file fails with -11838.
+        let dir = root.appendingPathComponent("aac")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1))
+        var parts: [URL] = []
+        for i in 0..<3 {
+            let url = dir.appendingPathComponent("segment-00\(i).m4a")
+            try {
+                let file = try AVAudioFile(forWriting: url, settings: WatchRecorder_settingsForTests(), commonFormat: .pcmFormatFloat32, interleaved: false)
+                let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 32_000))
+                buffer.frameLength = 32_000
+                let data = buffer.floatChannelData![0]
+                for n in 0..<32_000 { data[n] = sinf(Float(n) * 0.05 * Float(i + 1)) * 0.3 }
+                try file.write(from: buffer)
+            }()
+            parts.append(url)
+        }
+        let output = dir.appendingPathComponent("joined.m4a")
+        try await WatchTranscriptionClient.stitch(parts, into: output)
+        let seconds = try await AVURLAsset(url: output).load(.duration).seconds
+        XCTAssertEqual(seconds, 6, accuracy: 0.3, "three two-second parts")
+        XCTAssertGreaterThan(try XCTUnwrap(FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int), 1_000)
+    }
+
     func testEmptyTranscriptIsAnError() {
         let json = #"{"metadata":{"duration":4},"results":{"utterances":[]}}"#
         XCTAssertThrowsError(try WatchTranscriptionClient.parse(Data(json.utf8)))
@@ -233,5 +258,14 @@ final class WatchImportTests: XCTestCase {
         XCTAssertTrue(url.contains("diarize=true"))
         XCTAssertTrue(url.contains("utterances=true"))
     }
+}
+#endif
+
+
+#if os(iOS)
+/// The watch recorder's AAC settings, mirrored here because the watch target is not linked into the tests.
+func WatchRecorder_settingsForTests() -> [String: Any] {
+    [AVFormatIDKey: Int(kAudioFormatMPEG4AAC), AVSampleRateKey: WatchRecordingProtocol.sampleRate,
+     AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: WatchRecordingProtocol.bitRate, AVEncoderAudioQualityKey: AVAudioQuality.medium.rawValue]
 }
 #endif

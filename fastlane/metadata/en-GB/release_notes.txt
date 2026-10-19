@@ -1,5 +1,8 @@
 NEW
-- Apple Watch app. Record a meeting from your wrist, with the phone in your pocket or at home. The audio moves to your iPhone when the two are in range, gets transcribed with speaker labels, and shows up in History with a summary. Minutes count the same as a live meeting, and nothing leaves the watch until the phone has it. Needs watchOS 10.
+- miniti recognises you by voice. Turn on Your voice in Settings, Transcription, mark yourself once in a meeting, and from then on you are You from the first sentence, on the phone, in a room and in watch recordings. Needs Speakers set to this device. The fingerprint stays on the device.
+- Remembered voices. People miniti has matched to a calendar guest are named next time before they say their name. Forget anyone in Settings, Transcription.
+- Speakers get their email. A named speaker is matched to the calendar guest list; the email travels with the meeting in exports, the API and webhooks. Tap a speaker to see it or pick the right guest.
+- Watch recordings get speaker labels from the on-device model when Speakers is set to this device.
 
-IMPROVED
-- Filter History by device. The filter menu lists where your meetings were recorded: Apple Watch, iPhone, iPad, Mac, or a Granola import.
+FIXED
+- A watch recording longer than 5 minutes failed with "Could not read the audio". Tap Try again on the row in History for a recording that was stuck.
