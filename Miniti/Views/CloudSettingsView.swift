@@ -438,31 +438,87 @@ struct CloudEnableSheet: View {
 struct MCPSetupRows: View {
     let token: String?
     @State private var copiedTool: MCPTool?
+    @Environment(\.openURL) private var openURL
 
+    /// Ordered as people meet them: the two chat apps sign in by OAuth and only need the URL;
+    /// the editors and command-line tools below take a one-click install or a token snippet.
     enum MCPTool: String, CaseIterable, Identifiable {
+        case claude = "Claude"
+        case chatGPT = "ChatGPT"
         case claudeCode = "Claude Code"
-        case claudeDesktop = "Claude Desktop, Cursor, Windsurf"
+        case cursor = "Cursor"
+        case vsCode = "VS Code"
+        case windsurf = "Windsurf"
         case codex = "Codex"
         case geminiCLI = "Gemini CLI"
         case curl = "curl, Grok Bot, scripts"
-        case hosted = "Claude.ai, ChatGPT"
         var id: String { rawValue }
+
+        /// Rows that need a personal access token in the snippet.
+        var needsToken: Bool {
+            switch self {
+            case .claude, .chatGPT, .claudeCode, .cursor, .vsCode: return false
+            case .windsurf, .codex, .geminiCLI, .curl: return true
+            }
+        }
+
+        /// A page to open after copying, when the tool has one.
+        var openLink: (label: String, url: URL)? {
+            switch self {
+            case .claude: return ("Open Claude connectors", URL(string: "https://claude.ai/settings/connectors")!)
+            case .chatGPT: return ("Open ChatGPT settings", URL(string: "https://chatgpt.com/#settings/Connectors")!)
+            case .cursor: return ("Add to Cursor", MCPSetupRows.cursorInstallURL)
+            case .vsCode: return ("Add to VS Code", MCPSetupRows.vsCodeInstallURL)
+            default: return nil
+            }
+        }
     }
 
-    static let serverURL = "https://api.miniti.app/api/mcp"
-    static let restURL = "https://api.miniti.app/api/v1"
+    nonisolated static let serverURL = "https://api.miniti.app/api/mcp"
+    nonisolated static let restURL = "https://api.miniti.app/api/v1"
+
+    /// Cursor's install deep link: name plus a base64 JSON config. OAuth handles sign-in.
+    nonisolated static var cursorInstallURL: URL {
+        let config = Data("{\"url\":\"\(serverURL)\"}".utf8).base64EncodedString()
+        return URL(string: "cursor://anysphere.cursor-deeplink/mcp/install?name=miniti&config=\(config)")!
+    }
+
+    /// VS Code's install link: the server config as URL-encoded JSON.
+    nonisolated static var vsCodeInstallURL: URL {
+        let json = "{\"name\":\"miniti\",\"type\":\"http\",\"url\":\"\(serverURL)\"}"
+        let encoded = json.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? json
+        return URL(string: "vscode:mcp/install?\(encoded)")!
+    }
 
     static func snippet(for tool: MCPTool, token: String?) -> String {
         let t = token ?? "<token>"
         switch tool {
+        case .claude, .chatGPT:
+            return serverURL
         case .claudeCode:
-            return "claude mcp add --transport http miniti \(serverURL) --header \"Authorization: Bearer \(t)\""
-        case .claudeDesktop:
+            return "claude mcp add --transport http miniti \(serverURL)"
+        case .cursor:
+            return """
+            {
+              "mcpServers": {
+                "miniti": { "url": "\(serverURL)" }
+              }
+            }
+            """
+        case .vsCode:
+            return """
+            {
+              "servers": {
+                "miniti": { "type": "http", "url": "\(serverURL)" }
+              }
+            }
+            """
+        case .windsurf:
             return """
             {
               "mcpServers": {
                 "miniti": {
-                  "url": "\(serverURL)",
+                  "serverUrl": "\(serverURL)",
                   "headers": { "Authorization": "Bearer \(t)" }
                 }
               }
@@ -487,19 +543,20 @@ struct MCPSetupRows: View {
             """
         case .curl:
             return "curl \(restURL)/meetings -H \"Authorization: Bearer \(t)\""
-        case .hosted:
-            return serverURL
         }
     }
 
     static func hint(for tool: MCPTool) -> String {
         switch tool {
-        case .claudeCode: return "Run in a terminal."
-        case .claudeDesktop: return "Add to the app's MCP settings file: claude_desktop_config.json, .cursor/mcp.json, or mcp_config.json."
-        case .codex: return "Add to ~/.codex/config.toml."
-        case .geminiCLI: return "Add to ~/.gemini/settings.json."
-        case .curl: return "Lists your meetings as JSON. Also /meetings/{id}, /meetings/{id}/transcript?format=markdown, /action-items."
-        case .hosted: return "Add this URL as a custom connector. It signs you in with your email, no token needed."
+        case .claude: return "Settings, Connectors, Add custom connector, paste this URL, Add, then Connect and approve. Signs you in with your miniti email. The same connector works in the Claude desktop app. No token needed."
+        case .chatGPT: return "Settings, Connectors, add a custom connector with this URL, then sign in and approve. Needs Pro, Business or Enterprise, or developer mode on Plus. No token needed."
+        case .claudeCode: return "Run in a terminal, then type /mcp in Claude Code to sign in. No token needed."
+        case .cursor: return "Add to Cursor opens Cursor and installs it; sign in when Cursor asks. Or put the snippet in .cursor/mcp.json."
+        case .vsCode: return "Add to VS Code opens VS Code and installs it; sign in when it asks. Or put the snippet in .vscode/mcp.json."
+        case .windsurf: return "Add to Windsurf's mcp_config.json. Needs a token."
+        case .codex: return "Add to ~/.codex/config.toml. Needs a token."
+        case .geminiCLI: return "Add to ~/.gemini/settings.json. Needs a token."
+        case .curl: return "Lists your meetings as JSON. Also /meetings/{id}, /meetings/{id}/transcript?format=markdown, /action-items. Needs a token."
         }
     }
 
@@ -509,6 +566,9 @@ struct MCPSetupRows: View {
                 HStack {
                     Text(tool.rawValue)
                     Spacer()
+                    if let link = tool.openLink {
+                        Button(link.label) { openURL(link.url) }
+                    }
                     Button(copiedTool == tool ? "Copied" : "Copy") {
                         MCPSetupRows.copy(MCPSetupRows.snippet(for: tool, token: token))
                         copiedTool = tool
@@ -526,7 +586,7 @@ struct MCPSetupRows: View {
             .padding(.vertical, 2)
         }
         if token == nil {
-            Text("Make a token and copy a snippet while it is on screen; the token is filled in for you.")
+            Text("The rows marked \"needs a token\": make a token and copy the snippet while it is on screen; the token is filled in for you.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -541,7 +601,6 @@ struct MCPSetupRows: View {
         #endif
     }
 }
-
 
 /// Settings → Cloud → View log: what the engine uploaded, downloaded, changed, deleted or
 /// skipped this session, newest first. Titles only, never transcript text.
