@@ -962,7 +962,9 @@ final class AppState: ObservableObject {
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasAcceptedTerms") private var legacyHasAcceptedTerms: Bool = false
     @AppStorage("acceptedTermsVersion") private var acceptedTermsVersion: Int = 0
-    private let currentTermsVersion = 1
+    /// 2 (3.3.0): the first screen now names Deepgram and OpenAI, says what each receives, and
+    /// asks for permission before anything is sent. Everyone sees it once.
+    private let currentTermsVersion = 2
 
     var hasAcceptedTerms: Bool {
         get { acceptedTermsVersion >= currentTermsVersion }

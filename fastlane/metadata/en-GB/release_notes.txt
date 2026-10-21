@@ -2,6 +2,7 @@ NEW
 - Cloud is one switch for your account. Turn it on on one device and every device on the account turns on at its next launch. Turn it off anywhere and it is off everywhere.
 
 IMPROVED
+- The first screen now says what goes to Deepgram and OpenAI and asks you to allow it before anything is sent.
 - Settings, Cloud says Downloading while meetings from your other devices come down.
 
 FIXED

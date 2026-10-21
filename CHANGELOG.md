@@ -8,6 +8,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 - new: (macOS and iOS) cloud is one switch for your account. Turn it on on one device and every device on the account turns on at its next launch. Turn it off anywhere and it is off everywhere. Private mode still pauses it on that device only
 - improvement: (macOS and iOS) Settings, Cloud says Downloading while meetings from your other devices come down
+- improvement: (iOS) the first screen now says what goes to Deepgram and OpenAI and asks you to allow it before anything is sent. Everyone sees it once
 - fix: (macOS) 3.2.1 lost your account on the second launch: no Pro, no cloud, no calendar. The device id had been moved to a place the app cannot write. 3.3.0 puts it back from your saved sign-in. Nothing to re-enter
 - fix: (macOS and iOS) cloud could upload every meeting again after an update and log a conflict for each. A meeting's own time stamp came back from the cloud rounded to the millisecond and read as newer than itself
 - fix: (macOS) Investigate codebase sometimes listed files under the wrong names, or found nothing in a folder
