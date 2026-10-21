@@ -314,6 +314,19 @@ struct ClientAuthCredentials: Codable, Equatable {
         self.recoveryKeyAcknowledged = recoveryKeyAcknowledged
     }
 
+    /// The device id the access token was issued to (its `sub`), when there is one. This is the
+    /// identity the server binds the installation key to, so it outranks a Keychain device id
+    /// that disagrees with it (see `ClientAuthManager.reconcileDeviceIdentity`).
+    var tokenDeviceID: String? {
+        guard let accessToken else { return nil }
+        let parts = accessToken.split(separator: ".")
+        guard parts.count == 3,
+              let payload = ClientAuthCrypto.b64urlDecode(String(parts[1])),
+              let claims = try? JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              let sub = claims["sub"] as? String, UUID(uuidString: sub) != nil else { return nil }
+        return sub
+    }
+
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         installationKey = try c.decode(InstallationKey.Stored.self, forKey: .installationKey)
@@ -389,86 +402,46 @@ protocol ClientAuthCredentialStore: AnyObject, Sendable {
     func clear()
 }
 
-/// The managed credential lives in the data protection keychain (`kSecUseDataProtectionKeychain`),
-/// where access is by team and bundle id rather than by a per-app access list. The legacy
-/// file-based macOS keychain put up "miniti wants to use your confidential information" every
-/// time a differently signed build (the Debug test host after a release re-created the item)
-/// read it, and blocked the app at launch until someone clicked Always Allow. An item still in
-/// the legacy keychain is read once and moved over.
+/// The managed credential in one `KeychainSlot` (`DeviceIdentifier.swift`): the data protection
+/// keychain where this build can use it, the login keychain otherwise, updated in place and
+/// never deleted before its replacement is written. This-device-only: the installation key
+/// must never travel through iCloud Keychain.
 final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Sendable {
-    private let service = "com.miniti.device-auth"
-    private let account = "credentials"
+    private let slot: KeychainSlot
 
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: false,
-            kSecUseDataProtectionKeychain as String: true,
-        ]
-    }
-
-    /// The pre-3.2.1 location on macOS (iOS has always used the data protection keychain).
-    private var legacyQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecAttrSynchronizable as String: false,
-        ]
+    init(backend: KeychainBackend = SecurityKeychainBackend()) {
+        slot = KeychainSlot(
+            service: "com.miniti.device-auth",
+            account: "credentials",
+            accessible: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+            synchronizable: false,
+            backend: backend
+        )
     }
 
     func load() -> ClientAuthCredentials? {
-        if let data = read(baseQuery) {
+        switch slot.read() {
+        case .found(let data):
             return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
-        }
-        #if os(macOS)
-        if let data = read(legacyQuery), let credentials = try? JSONDecoder().decode(ClientAuthCredentials.self, from: data) {
-            if save(credentials) {
-                SecItemDelete(legacyQuery as CFDictionary)
-                DebugLogger.shared.log(.app, "Device auth credential moved to the data protection keychain")
-            }
-            return credentials
-        }
-        #endif
-        return nil
-    }
-
-    private func read(_ base: [String: Any]) -> Data? {
-        var query = base
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else {
-            if status != errSecItemNotFound {
-                // A locked or prompting keychain looks like "not enrolled" to the rest of
-                // the app; the status makes that distinguishable in the debug log.
-                DebugLogger.shared.log(.app, "Device auth keychain read failed: status=\(status)")
-            }
+        case .missing:
+            return nil
+        case .unreadable(let status):
+            // A locked or prompting keychain looks like "not enrolled" to the rest of
+            // the app; the status makes that distinguishable in the debug log.
+            DebugLogger.shared.log(.app, "Device auth keychain read failed: status=\(status)")
             return nil
         }
-        return data
     }
 
     func save(_ credentials: ClientAuthCredentials) -> Bool {
         guard let data = try? JSONEncoder().encode(credentials) else { return false }
-        SecItemDelete(baseQuery as CFDictionary)
-        var add = baseQuery
-        add[kSecValueData as String] = data
-        // This-device-only: the installation key must never travel through iCloud Keychain.
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        let status = SecItemAdd(add as CFDictionary, nil)
-        if status != errSecSuccess {
-            DebugLogger.shared.log(.app, "Device auth keychain save FAILED: status=\(status)")
-        }
-        return status == errSecSuccess
+        let saved = slot.write(data)
+        if !saved { DebugLogger.shared.log(.app, "Device auth keychain save FAILED") }
+        return saved
     }
 
     func clear() {
-        SecItemDelete(baseQuery as CFDictionary)
-        SecItemDelete(legacyQuery as CFDictionary)
+        slot.delete()
     }
 }
 
@@ -530,7 +503,8 @@ final class ClientAuthManager: @unchecked Sendable {
     static let shared = ClientAuthManager(
         store: KeychainClientAuthStore(),
         deviceLabelProvider: { AppState.managedDeviceLabel },
-        deviceIDRotator: { DeviceIdentifier.rotate() }
+        deviceIDRotator: { DeviceIdentifier.rotate() },
+        deviceIDAdopter: { DeviceIdentifier.adopt($0, reason: "credentials") }
     )
 
     /// Refresh the access token when within this many seconds of expiry.
@@ -553,6 +527,9 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Mints and persists a new device id (see `createAccount`). `nil` means the install
     /// cannot change identity; the conflict is then surfaced instead.
     let deviceIDRotator: (@Sendable () -> String)?
+    /// Makes a given id this install's device identity (see `reconcileDeviceIdentity`). Returns
+    /// false when the identity cannot be changed right now. `nil` means never reconcile.
+    let deviceIDAdopter: (@Sendable (String) -> Bool)?
 
     init(
         store: ClientAuthCredentialStore,
@@ -560,7 +537,8 @@ final class ClientAuthManager: @unchecked Sendable {
         session: URLSession = .shared,
         deviceIDProvider: @escaping @Sendable () -> String = { DeviceIdentifier.getOrCreateDeviceId() },
         deviceLabelProvider: @escaping @Sendable () -> String? = { nil },
-        deviceIDRotator: (@Sendable () -> String)? = nil
+        deviceIDRotator: (@Sendable () -> String)? = nil,
+        deviceIDAdopter: (@Sendable (String) -> Bool)? = nil
     ) {
         self.store = store
         self.baseURL = baseURL
@@ -568,7 +546,27 @@ final class ClientAuthManager: @unchecked Sendable {
         self.deviceIDProvider = deviceIDProvider
         self.deviceLabelProvider = deviceLabelProvider
         self.deviceIDRotator = deviceIDRotator
+        self.deviceIDAdopter = deviceIDAdopter
         self.credentials = store.load()
+        reconcileDeviceIdentity()
+    }
+
+    /// The credential and the device id are two Keychain items, and 3.2.1 on macOS lost the
+    /// second while keeping the first: the app then minted a new id, and the server answered
+    /// every call with `device_mismatch` because the token names the old one. The token's
+    /// device id is the one the server binds this installation key to, so when the two
+    /// disagree the id is restored from the token before any request goes out.
+    private func reconcileDeviceIdentity() {
+        guard let deviceIDAdopter else { return }
+        let stored: ClientAuthCredentials? = { lock.lock(); defer { lock.unlock() }; return credentials }()
+        guard let stored, !Self.isDraft(stored), let tokenDevice = stored.tokenDeviceID else { return }
+        let current = deviceIDProvider()
+        guard tokenDevice.caseInsensitiveCompare(current) != .orderedSame else { return }
+        if deviceIDAdopter(tokenDevice) {
+            DebugLogger.shared.log(.app, "Device auth: device id restored from the stored access token (was \(current.prefix(8))...)")
+        } else {
+            DebugLogger.shared.log(.app, "Device auth: device id differs from the stored access token; keychain unreadable, left as is")
+        }
     }
 
     // MARK: State

@@ -137,6 +137,8 @@ protocol CloudSyncTransport: AnyObject, Sendable {
     func deleteMeeting(id: UUID, baseRevision: Int) async throws -> CloudDeleteResult
     func status() async throws -> CloudStatus
     func deleteCloudCopy() async throws
+    /// The account's cloud switch (3.3.0). Returns the new version.
+    func setAccountCloud(enabled: Bool) async throws -> Int
 }
 
 extension MinitiAPIService: CloudSyncTransport {
@@ -288,6 +290,14 @@ extension MinitiAPIService: CloudSyncTransport {
 
     func deleteCloudCopy() async throws {
         _ = try await cloudCall(cloudRequest(path: "/sync/account", method: "DELETE", body: Data("{}".utf8)))
+    }
+
+    func setAccountCloud(enabled: Bool) async throws -> Int {
+        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        let (status, json) = try await cloudCall(cloudRequest(path: "/account/cloud", method: "PUT", body: body))
+        // A backend without the route (404) must leave the choice pending, not confirm it.
+        guard (200..<300).contains(status) else { throw CloudSyncError.server(code: "http_\(status)", status: status) }
+        return (json["version"] as? NSNumber)?.intValue ?? 0
     }
 
     // MARK: Settings → Cloud management

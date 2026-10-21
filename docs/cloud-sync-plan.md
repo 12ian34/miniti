@@ -19,6 +19,7 @@
 | Docs, changelog, privacy policy, website, public docs, Linux note | done 2026-10-15 | `### Unreleased - v3.0.0` entry and iOS release notes; AGENTS, architecture, patterns, monetization, testing, settings plan; privacy policy (cloud section, Neon and Resend as subprocessors), pricing cards, llms.txt; miniti-docs `features/cloud-sync` and `reference/api-and-mcp` plus account, tiers, mode, platform and FAQ pages; `../miniti-linux/PLAN.md` parity note. Independent review 2026-10-15 (lost deletes, feed pruning, scan cadence, pause mid-pass, segment diffing, 401 handling) fixed the same day. |
 | Vercel env and deploy | done 2026-10-16 | `DATABASE_URL`, `CLOUD_SYNC_ENABLED=false`, `CLOUD_SYNC_ALLOWLIST`, `RESEND_API_KEY` (the website's key), `CLOUD_EMAIL_FROM`, `WEB_SESSION_SECRET`, `CRON_SECRET`, `CLOUD_PUBLIC_URL`. Deploy with the switch off, then Ian's account on the allowlist. |
 | Manual validation | partly done 2026-10-16 | Ian ran first enable, recording each way, rename, pin, delete, trim, email sign-in and join by email on his Mac and phone; the rest is covered by the shared wire fixture, the engine tests and the backend route tests. Claude.ai connector and Claude Code with a real token still untested live. |
+| One switch per account | built 2026-10-21 for 3.3.0 | `cloud_enabled` and `cloud_version` on the account (Redis, `setAccountCloud`), `GET`/`PUT /api/account/cloud`, mirrored on `/api/usage`; `AppState.cloudAccountFlagAction` decides push, follow, acknowledge or wait; per-account version and pending keys in UserDefaults; copy in Settings → Cloud and the enable sheet. Section "One switch per account" below has the rules and edge cases. Backend deployed first; Linux tracks it in its PLAN. |
 | Staged rollout | shipping 2026-10-16 | macOS 3.0.0 (build 130) live on GitHub, appcast and MACOS_LATEST; iOS build 130 uploaded and submitted; website and docs deployed. `CLOUD_SYNC_ALLOWLIST` still holds Ian's account until he removes it (the classifier blocked the agent). App Privacy labels (email, user content) to be added by Ian in App Store Connect. |
 
 ## What the user gets
@@ -311,3 +312,37 @@ The 100-user row is dominated by the $19 compute floor; it is the price of a rea
 - APNs silent push for near-instant pulls, and whether the Mac polls faster during a calendar meeting window.
 - A web view of History at miniti.app: the sign-in page and sessions built here are its front door; the view itself is a later slice.
 - Passkeys instead of, or next to, the email magic link: cleaner and phishing-resistant, but Linux browsers and cross-device sign-in need the QR flow; revisit after the email path ships.
+
+## One switch per account (3.3.0)
+
+Until 3.2.1 the switch was a per-device preference and the server knew nothing about it: a new device, or a device whose settings were lost, started with cloud off while the rest of the account was syncing (2026-10-21, Ian's Mac after the 3.2.1 upgrade and a test run that reset it). Decision 2026-10-21: one switch for the account. "On" on any device means on everywhere, "off" anywhere means off everywhere. The cost, "on for the Mac, off for the phone", is accepted: the switch copy already says the copy is on miniti's servers for every device.
+
+**Server.** `auth:account:{id}` gains `cloudEnabled` (`'1'`/`'0'`, absent until a device sets it) and `cloudVersion` (`HINCRBY`, grows on every change). `PUT /api/account/cloud { enabled }` sets it (device auth, proof, `cloud_manage` limit, free allowed, kill switch respected), `GET` reads it, and `/api/usage` carries `cloud_enabled` (absent while unset) and `cloud_version` for device-authenticated callers. No clock is compared anywhere: a device knows a change by its number.
+
+**Client.** `applyAccountCloudFlag()` runs after every successful usage check (launch, activation, enrollment, after a recording). The decision is the pure `AppState.cloudAccountFlagAction` (tested in `CloudSyncAppStateTests`):
+
+| Situation | Action |
+|---|---|
+| This device flipped the switch and the account has not confirmed it (`pending`) | push it again; a pending choice wins over any server value, so an offline flip is never undone |
+| Account unset (before 3.3.0, or new), device on | push on: existing users teach their account on the first 3.3.0 launch |
+| Account unset, device off | nothing: an off device, free or not, writes nothing |
+| Account version already applied | nothing |
+| Newer version, same value | remember the version |
+| Newer version, account off | turn off here (also under private mode and without Pro) |
+| Newer version, account on, Pro, private mode off | turn on here, without the consent sheet: the person consented on the device that turned it on, and the log says "turned on on another device" |
+| Newer version, account on, not Pro or private mode on | wait; the version stays unapplied so the next usage check tries again (Pro arrives, private mode ends) |
+
+A person's flip goes through `setCloudSyncEnabled(_, source: .user)`, which writes the account (`pushCloudAccountFlag`: pending mark first, cleared only when the server confirms that same value, so a newer flip in flight keeps its mark). A follow goes through `source: .account` and is never written back. Version and pending marks are stored per account id, so joining or moving to another account starts from "never applied" with no reset code.
+
+**Edge cases considered.**
+
+- *Private mode* sets `cloudSyncEnabled` directly, never through the switch, so it is a device state and is not written to the account. While it is on, an account "on" waits.
+- *Pro lapses* on one device: the switch stays on, sync pauses with `.notPro`, and the account flag is untouched. A free device may still turn the account off.
+- *Two devices flip in opposite directions at once*: last write wins on the server; each device applies the version it sees next. Both end up the same way within one usage check of each other.
+- *Offline flip*: the pending mark survives launches (UserDefaults) and is retried at every usage check until the server confirms it.
+- *Delete cloud copy* and *Delete account* do not touch the switch; the first keeps syncing afterwards (meetings re-upload), the second takes the account record with it.
+- *Join by email, attach, sign out*: per-account keys, no carry-over.
+- *BYOK*: `appMode != .managed` short-circuits everything, as with the rest of cloud.
+- *Older clients* (3.2.x Apple, Linux today) ignore the two fields and keep their local switch; they neither write nor follow until they adopt the protocol.
+- *Propagation delay*: a device learns a change at its next usage check, which is launch, activation, enrollment or the end of a recording. A Mac left in the background keeps its last state until it comes to the front. Adding the flag to the 60 s poll (`/api/sync/status`) is the obvious next step if that proves too slow.
+- *Kill switch off or allowlist refusal*: the write fails, stays pending, and is retried; the local switch still flipped, so the person is not blocked by the server.

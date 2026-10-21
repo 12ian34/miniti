@@ -123,6 +123,18 @@ final class CloudSyncEngine: ObservableObject {
     var transport: CloudSyncTransport?
     /// Injectable for tests.
     var now: () -> Date = Date.init
+
+    /// Cloud stamps carry milliseconds; a local `Date` carries microseconds. A meeting's own
+    /// stamp, echoed back by the cloud, must not read as "newer than itself" (2026-10-21: every
+    /// meeting re-uploaded as a conflict after a reconcile, bumping every revision).
+    nonisolated static func isNewer(_ local: Date, than remote: Date) -> Bool {
+        local.timeIntervalSince(remote) > 0.001
+    }
+
+    /// Stamps written locally are rounded to the millisecond so they survive the round trip unchanged.
+    nonisolated static func stamp(_ date: Date) -> Date {
+        Date(timeIntervalSince1970: (date.timeIntervalSince1970 * 1000).rounded() / 1000)
+    }
     var sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }
     var defaults: UserDefaults = .standard
 
@@ -371,7 +383,7 @@ final class CloudSyncEngine: ObservableObject {
             }
         }
         if !changed.isEmpty {
-            let stamp = now()
+            let stamp = Self.stamp(now())
             _ = host.cloudCommit {
                 for (meeting, fingerprint) in changed {
                     // First observation of a legacy meeting keeps its own history as the timestamp.
@@ -456,10 +468,19 @@ final class CloudSyncEngine: ObservableObject {
                 deleteLocal(meeting, host: host)
                 return
             }
-            if !retrying { note(.conflict, meeting.title, "edited on another device too") }
-            let remoteNewer = (state.updatedAt ?? .distantPast) > localUpdatedAt
+            let remoteStamp = state.updatedAt ?? .distantPast
+            let localNewer = Self.isNewer(localUpdatedAt, than: remoteStamp)
+            if !retrying {
+                if localNewer || Self.isNewer(remoteStamp, than: localUpdatedAt) {
+                    note(.conflict, meeting.title, "edited on another device too")
+                } else {
+                    // Same stamp on both sides: this is our own edit coming back, or the same
+                    // edit made on both devices. The cloud copy is taken, nothing is pushed.
+                    note(.info, meeting.title, "already in the cloud")
+                }
+            }
             let decoded = state.document.flatMap(MeetingSyncDocument.decode)
-            if remoteNewer || retrying, let decoded {
+            if !localNewer || retrying, let decoded {
                 applyRemote(decoded, revision: state.revision, to: meeting, host: host)
                 host.cloudDidChangeMeetings([meeting])
             } else if !retrying, let decoded, decoded.transcriptRevision > localTranscriptRevision, let context = host.cloudModelContext {
@@ -542,7 +563,7 @@ final class CloudSyncEngine: ObservableObject {
                 if let local {
                     guard local.cloudRevision < change.revision else { continue }
                     let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
-                    if dirty, let localUpdated = local.updatedAt, localUpdated > decoded.updatedAt {
+                    if dirty, let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
                         // Local edit is newer: keep it and push against the new revision.
                         local.cloudRevision = change.revision
                         self.note(.conflict, local.title, "kept this device's newer edit")
@@ -608,6 +629,8 @@ final class CloudSyncEngine: ObservableObject {
         var updated: [Meeting] = []
         var changed = false
         var index = 0
+        // What the other devices hold comes down before anything goes up; say so.
+        if !toFetch.isEmpty { phase = .pulling }
         while index < toFetch.count {
             guard stillAllowed else { return }
             let batch = Array(toFetch[index..<min(index + Self.reconcileBatch, toFetch.count)])
@@ -618,7 +641,7 @@ final class CloudSyncEngine: ObservableObject {
                     guard let document = state.document, let decoded = MeetingSyncDocument.decode(document) else { continue }
                     if let local = self.localMeeting(id: state.id, host: host) {
                         let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
-                        if dirty, let localUpdated = local.updatedAt, localUpdated > decoded.updatedAt {
+                        if dirty, let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
                             local.cloudRevision = state.revision
                             self.note(.conflict, local.title, "kept this device's newer edit")
                             continue

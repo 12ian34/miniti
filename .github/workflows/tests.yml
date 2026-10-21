@@ -46,8 +46,12 @@ jobs:
             -derivedDataPath DerivedData \
             -only-testing:MinitiTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            2>&1 | tee macos-tests.log | grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true
-          grep -qE 'Executed [0-9]+ tests, with [0-9]+ test[s]? skipped and 0 failures|Executed [0-9]+ tests, with 0 failures' macos-tests.log
+            2>&1 | tee macos-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          # pipefail above makes xcodebuild's own exit status decide (a compiler crash or a failed
+          # test fails the step); the gate below reads the bundle total, the last "Executed" line,
+          # not any one suite's line. The old gate matched a suite with 0 failures while the bundle
+          # had 15 (2026-10-19 run), and the step passed.
+          grep -E 'Executed [0-9]+ tests' macos-tests.log | tail -1 | tee /dev/stderr | grep -qE 'with ([0-9]+ tests? skipped and )?0 failures \(0 unexpected\)'
 
       - name: Upload log on failure
         if: failure()
@@ -98,8 +102,12 @@ jobs:
             -derivedDataPath DerivedData \
             -only-testing:MinitiMobileTests \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            2>&1 | tee ios-tests.log | grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true
-          grep -qE 'Executed [0-9]+ tests, with [0-9]+ test[s]? skipped and 0 failures|Executed [0-9]+ tests, with 0 failures' ios-tests.log
+            2>&1 | tee ios-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          # pipefail above makes xcodebuild's own exit status decide (a compiler crash or a failed
+          # test fails the step); the gate below reads the bundle total, the last "Executed" line,
+          # not any one suite's line. The old gate matched a suite with 0 failures while the bundle
+          # had 15 (2026-10-19 run), and the step passed.
+          grep -E 'Executed [0-9]+ tests' ios-tests.log | tail -1 | tee /dev/stderr | grep -qE 'with ([0-9]+ tests? skipped and )?0 failures \(0 unexpected\)'
 
       - name: Upload log on failure
         if: failure()

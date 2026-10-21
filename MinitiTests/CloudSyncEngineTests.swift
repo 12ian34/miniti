@@ -26,9 +26,17 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var failNext: CloudSyncError?
     var tooLargeTitles: Set<String> = []
     var tier = "pro"
+    var accountCloud: (enabled: Bool?, version: Int) = (nil, 0)
     /// Runs after a put is accepted and before the result is returned (simulates the user
     /// acting while an upload is in flight).
     var onPut: ((UUID) -> Void)?
+
+    func setAccountCloud(enabled: Bool) async throws -> Int {
+        calls.append("setAccountCloud:\(enabled)")
+        try throwIfArmed()
+        accountCloud = (enabled, accountCloud.version + 1)
+        return accountCloud.version
+    }
 
     private func throwIfArmed() throws {
         if let error = failNext { failNext = nil; throw error }
@@ -311,6 +319,30 @@ final class CloudSyncEngineTests: XCTestCase {
         await engine.sync(reason: "test")
         XCTAssertEqual(transport.rows[a.id]?.document["title"] as? String, "Local wins")
         XCTAssertEqual(a.cloudRevision, transport.rows[a.id]?.revision)
+    }
+
+    func testAMeetingsOwnStampEchoedByTheCloudIsNotANewerEdit() async throws {
+        // 2026-10-21: a device that lost its sync bookkeeping (or lagged behind a wave of pushes)
+        // compared its microsecond stamp with the cloud's millisecond echo of that same stamp,
+        // called every meeting "newer", and re-uploaded the whole library as conflicts.
+        let a = finished("Alpha")
+        await tick()
+        let stamp = clock.addingTimeInterval(100)
+        transport.remoteEdit(a.id, updatedAt: stamp) { _ in }      // same content, newer revision
+        let remoteRevision = try XCTUnwrap(transport.rows[a.id]?.revision)
+        a.updatedAt = stamp.addingTimeInterval(0.0004)             // our copy of that stamp, 0.4 ms "later"
+        a.syncFingerprint = nil                                    // looks dirty
+        try host.context.save()
+        engine.clearLog()
+        await engine.sync(reason: "test")
+        XCTAssertFalse(engine.log.contains { $0.kind == .conflict }, "\(engine.log.map(\.detail))")
+        XCTAssertEqual(transport.rows[a.id]?.revision, remoteRevision, "nothing was pushed")
+        XCTAssertEqual(a.cloudRevision, remoteRevision)
+        XCTAssertEqual(a.syncFingerprint, MeetingSyncDocument.fingerprint(of: a), "the cloud copy was taken as synced")
+        // A real later edit still wins.
+        XCTAssertTrue(CloudSyncEngine.isNewer(stamp.addingTimeInterval(0.002), than: stamp))
+        XCTAssertFalse(CloudSyncEngine.isNewer(stamp.addingTimeInterval(0.0009), than: stamp))
+        XCTAssertEqual(CloudSyncEngine.stamp(Date(timeIntervalSince1970: 1_790_000_000.1234)).timeIntervalSince1970, 1_790_000_000.123, accuracy: 0.0000001)
     }
 
     func testTrimGuardNeverLetsAStaleTranscriptReplaceTheServer() async throws {
@@ -612,6 +644,31 @@ final class CloudSyncAppStateTests: XCTestCase {
             XCTAssertTrue(state.cloudSyncEnabled, "private mode is unavailable here, so nothing changes")
         }
         state.cloudSyncEnabled = false
+    }
+
+    func testAccountCloudSwitchDecisions() {
+        typealias A = AppState.CloudAccountFlagAction
+        func decide(local: Bool, pending: Bool? = nil, server: Bool?, version: Int = 1, applied: Int = 0, pro: Bool = true, privateMode: Bool = false) -> A {
+            AppState.cloudAccountFlagAction(localOn: local, pending: pending, serverEnabled: server, serverVersion: version, appliedVersion: applied, isPro: pro, privateMode: privateMode)
+        }
+        // A choice the account has not confirmed wins over everything, including a newer server value.
+        XCTAssertEqual(decide(local: true, pending: true, server: false, version: 9), .push(true))
+        XCTAssertEqual(decide(local: false, pending: false, server: true, version: 9), .push(false))
+        // Account never set (before 3.3.0, or new): an "on" device teaches it, an "off" device stays quiet.
+        XCTAssertEqual(decide(local: true, server: nil, version: 0), .push(true))
+        XCTAssertEqual(decide(local: false, server: nil, version: 0), .none)
+        // Nothing new since the last applied version.
+        XCTAssertEqual(decide(local: false, server: true, version: 3, applied: 3), .none)
+        XCTAssertEqual(decide(local: true, server: false, version: 2, applied: 5), .none)
+        // Another device flipped it: follow. Off always applies; on waits for Pro and the end of private mode.
+        XCTAssertEqual(decide(local: true, server: false, version: 4, applied: 3), .follow(false))
+        XCTAssertEqual(decide(local: false, server: true, version: 4, applied: 3), .follow(true))
+        XCTAssertEqual(decide(local: false, server: true, version: 4, applied: 3, pro: false), .none, "not Pro: wait, version stays unapplied")
+        XCTAssertEqual(decide(local: false, server: true, version: 4, applied: 3, privateMode: true), .none, "private mode: wait")
+        XCTAssertEqual(decide(local: true, server: false, version: 4, applied: 3, privateMode: true), .follow(false), "off applies even under private mode")
+        // Same state, newer version: just remember it.
+        XCTAssertEqual(decide(local: true, server: true, version: 4, applied: 3), .acknowledge)
+        XCTAssertEqual(decide(local: false, server: false, version: 4, applied: 3), .acknowledge)
     }
 
     func testPauseReasonOrderAndKeepOffTheCloud() throws {

@@ -10540,6 +10540,7 @@ final class AppState: ObservableObject {
         do {
             usageInfo = try await minitiAPIService.checkUsage(deviceId: deviceId)
             isDeviceDisabled = false
+            applyAccountCloudFlag()
         } catch MinitiAPIService.ServiceError.deviceDisabled {
             isDeviceDisabled = true
             DebugLogger.shared.log(.app, "Device disabled in managed mode")
@@ -12388,9 +12389,15 @@ final class AppState: ObservableObject {
             let score: Int
         }
 
+        // The enumerator does not follow a root that is itself a symlink (it lists nothing), and
+        // under a symlinked parent (`/var/...`, every temporary folder on a Mac) it hands back
+        // resolved paths (`/private/var/...`). So the walk starts at the resolved folder and the
+        // relative path is taken against that same resolved root, never by counting characters.
+        let resolvedRoot = rootURL.resolvingSymlinksInPath().standardizedFileURL
+        let rootPath = resolvedRoot.path
         let keys: [URLResourceKey] = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]
         guard let enumerator = FileManager.default.enumerator(
-            at: rootURL,
+            at: resolvedRoot,
             includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return CodebaseSnapshot(context: "", files: []) }
@@ -12414,7 +12421,10 @@ final class AppState: ObservableObject {
 
             guard let data = try? Data(contentsOf: fileURL, options: .mappedIfSafe),
                   let content = String(data: data, encoding: .utf8) else { continue }
-            let relativePath = String(fileURL.path.dropFirst(rootURL.path.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            let resolvedPath = fileURL.resolvingSymlinksInPath().standardizedFileURL.path
+            let relativePath = resolvedPath.hasPrefix(rootPath + "/")
+                ? String(resolvedPath.dropFirst(rootPath.count + 1))
+                : fileURL.lastPathComponent
             let lowerPath = relativePath.lowercased()
             let lowerContent = content.lowercased()
             var score = 0

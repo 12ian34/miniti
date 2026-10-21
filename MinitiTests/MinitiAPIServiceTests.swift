@@ -36,6 +36,29 @@ final class MinitiAPIServiceTests: XCTestCase {
         XCTAssertFalse(info.isPro)
     }
 
+    func testUsageInfoCarriesTheAccountCloudSwitch() throws {
+        let unset = """
+        {"minutes_used": 1, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "cloud_version": 0}
+        """.data(using: .utf8)!
+        let before = try decoder.decode(MinitiAPIService.UsageInfo.self, from: unset)
+        XCTAssertNil(before.cloudEnabled, "an account that never set the switch reports nothing")
+        XCTAssertEqual(before.cloudVersion, 0)
+
+        let set = """
+        {"minutes_used": 1, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "cloud_enabled": true, "cloud_version": "3"}
+        """.data(using: .utf8)!
+        let after = try decoder.decode(MinitiAPIService.UsageInfo.self, from: set)
+        XCTAssertEqual(after.cloudEnabled, true)
+        XCTAssertEqual(after.cloudVersion, 3, "Redis may hand the version back as a string")
+
+        let legacy = """
+        {"minutes_used": 1, "minutes_limit": 500, "resets_at": "2026-04-01T00:00:00Z", "tier": "free"}
+        """.data(using: .utf8)!
+        let old = try decoder.decode(MinitiAPIService.UsageInfo.self, from: legacy)
+        XCTAssertNil(old.cloudEnabled)
+        XCTAssertNil(old.cloudVersion)
+    }
+
     func testUsageInfoProViaAccountFlagDefaultsToFalse() throws {
         let sponsored = """
         {"minutes_used": 10, "minutes_limit": 5000, "resets_at": "2026-04-01T00:00:00Z", "tier": "pro", "subscription_status": "active", "entitlement_via_account": true}

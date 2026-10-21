@@ -1679,9 +1679,16 @@ final class AppStateComputationTests: XCTestCase {
             .write(to: root.appendingPathComponent("BillingCoordinator.swift"))
         try Data("struct UnrelatedWaveformRenderer {}".utf8)
             .write(to: root.appendingPathComponent("Waveform.swift"))
+        // The folder is chosen through a symlink, as `/var/folders` and `/tmp` are on every Mac
+        // (CI reported "E7F9F2FC/BillingCoordinator.swift" because the relative path was cut by
+        // the unresolved root's length).
+        let alias = FileManager.default.temporaryDirectory
+            .appendingPathComponent("miniti-investigation-alias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: root)
+        defer { try? FileManager.default.removeItem(at: alias) }
 
         let snapshot = try AppState.buildCodebaseSnapshot(
-            rootURL: root,
+            rootURL: alias,
             focus: "Could we retry a failed invoice payment?",
             maxCharacters: 2_000,
             maxFiles: 2
@@ -1941,7 +1948,13 @@ final class AppStateComputationTests: XCTestCase {
     }
 
     @MainActor
-    func testMeetingReminderCategoriesAreRegisteredWithSmartMeetingCategories() async {
+    func testMeetingReminderCategoriesAreRegisteredWithSmartMeetingCategories() async throws {
+        // GitHub's runner builds the host with code signing off, and an unsigned bundle has no
+        // notification center: every category read comes back empty there (2026-10-19 run).
+        let env = ProcessInfo.processInfo.environment
+        if env["GITHUB_ACTIONS"] != nil || env["CI"] != nil {
+            throw XCTSkip("the unsigned CI test host has no notification center")
+        }
         AppState.registerSmartMeetingNotificationCategory()
         let categories = await withCheckedContinuation { (continuation: CheckedContinuation<Set<UNNotificationCategory>, Never>) in
             UNUserNotificationCenter.current().getNotificationCategories { cats in

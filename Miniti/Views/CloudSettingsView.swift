@@ -164,7 +164,7 @@ struct CloudSettingsSections: View {
                 }
             ))
             .disabled(!appState.isPro || appState.privateModeEnabled)
-            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Off by default.")
+            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Off by default. One switch for your account: every device follows it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !appState.isPro {
@@ -481,7 +481,7 @@ struct CloudEnableSheet: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Keep your meetings in the cloud")
                 .font(.title3.weight(.semibold))
-            Text(meetingCount.map { "\($0) finished meeting\($0 == 1 ? "" : "s") on this device will upload, and everything your other devices hold will come here." } ?? "Your finished meetings will upload, and everything your other devices hold will come here.")
+            Text(meetingCount.map { "\($0) finished meeting\($0 == 1 ? "" : "s") on this device will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account." } ?? "Your finished meetings will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account.")
             Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Meetings recorded in private mode stay off the cloud.")
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 6) {

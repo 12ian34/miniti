@@ -99,6 +99,7 @@ final class MeetingHandoffTests: XCTestCase {
     }
 
     func testEndAndStartNextLeavesCaptureLiveOnTheNewMeeting() async throws {
+        try Self.requireMicrophone()
         // A Zoom call is already running when the first meeting starts, and stays up through
         // the handoff: that is the back-to-back shape the report describes.
         feedCall([Self.zoom])
@@ -142,6 +143,7 @@ final class MeetingHandoffTests: XCTestCase {
     }
 
     func testEndAndStartUnscheduledLeavesCaptureLiveOnTheNewMeeting() async throws {
+        try Self.requireMicrophone()
         XCTAssertTrue(state.startNewMeeting())
         await waitUntil { self.state.audioCaptureService?.isCapturing == true }
         let firstID = state.currentMeeting?.id
@@ -270,6 +272,7 @@ final class MeetingHandoffTests: XCTestCase {
     /// input device and format unchanged. Before the fix the mic stayed dead (every flag
     /// still true) until stop/resume. The default output is restored afterwards.
     func testMicKeepsDeliveringAfterTheDefaultOutputDeviceChanges() async throws {
+        try Self.requireMicrophone()
         XCTAssertTrue(state.startNewMeeting())
         await waitUntil { (self.state.audioCaptureService?.micBufferCountForTesting ?? 0) > 5 }
         let cap = try XCTUnwrap(state.audioCaptureService)
@@ -302,6 +305,14 @@ final class MeetingHandoffTests: XCTestCase {
         XCTAssertTrue(cap.isMicActive, describePipeline("after output switch"))
         XCTAssertGreaterThan(countLater, countAfterSwitch, "mic buffers must keep arriving after the output device changed. " + describePipeline("after output switch"))
         dumpLog("output switch")
+    }
+
+    /// These tests run the real capture pipeline, so they need an input device. GitHub's macOS
+    /// runners have none, and the pipeline then reports `mic=false capturing=false` (2026-10-19).
+    private static func requireMicrophone() throws {
+        guard let input = defaultDevice(kAudioHardwarePropertyDefaultInputDevice), input != kAudioObjectUnknown else {
+            throw XCTSkip("no microphone on this Mac")
+        }
     }
 
     private static func defaultDevice(_ selector: AudioObjectPropertySelector) -> AudioDeviceID? {

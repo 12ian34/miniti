@@ -124,9 +124,18 @@ final class MinitiAPIService: @unchecked Sendable {
         /// True when this device is Pro because another device on its account holds
         /// the subscription (2.8.0 backend). Absent from older backends = false.
         let entitlementViaAccount: Bool
+        /// The account's cloud switch (3.3.0): nil until any device on the account set it, or
+        /// from an older backend. `cloudVersion` grows on every change and is what a device
+        /// compares with the version it last applied (`AppState.cloudAccountFlagAction`).
+        let cloudEnabled: Bool?
+        let cloudVersion: Int?
 
         enum CodingKeys: String, CodingKey {
             case entitlementViaAccount = "entitlement_via_account"
+            case cloudEnabled = "cloud_enabled"
+            case cloudVersion = "cloud_version"
+            case cloudEnabledCamel = "cloudEnabled"
+            case cloudVersionCamel = "cloudVersion"
             case minutesUsed = "minutes_used"
             case minutesLimit = "minutes_limit"
             case resetsAt = "resets_at"
@@ -176,6 +185,9 @@ final class MinitiAPIService: @unchecked Sendable {
             docsLookupsUsed = MinitiAPIService.decodeOptionalInt(container, .docsLookupsUsed, .docsLookupsUsedCamel)
             docsLookupsLimit = MinitiAPIService.decodeOptionalInt(container, .docsLookupsLimit, .docsLookupsLimitCamel)
             entitlementViaAccount = (try? container.decodeIfPresent(Bool.self, forKey: .entitlementViaAccount)) ?? false
+            cloudEnabled = ((try? container.decodeIfPresent(Bool.self, forKey: .cloudEnabled)) ?? nil)
+                ?? ((try? container.decodeIfPresent(Bool.self, forKey: .cloudEnabledCamel)) ?? nil)
+            cloudVersion = MinitiAPIService.decodeOptionalInt(container, .cloudVersion, .cloudVersionCamel)
         }
 
         var isPro: Bool { tier == "pro" }

@@ -109,3 +109,17 @@ Fixes landed:
 - `scripts/release-info.sh` re-verifies the sandbox entitlement in the final DMG — belt-and-braces in case the fastlane guard ever drifts.
 
 Takeaway for future Sparkle-adjacent changes: **never call `codesign --force --sign` on a bundle that has entitlements without also passing `--entitlements`**. It silently strips them. And never trust "this bug exists only in my uncommitted changes" — the pbxproj setting was there all along; the signed binary differed from the source-controlled entitlements file because the release script was overriding them at export time.
+
+## Postmortem: v3.2.1 — "miniti forgot my account" (resolved in v3.3.0)
+
+What happened: 3.2.1 moved the managed credential and the device id (`com.miniti.device-auth`, `com.miniti.device-id`) into the data protection keychain (`kSecUseDataProtectionKeychain`) to stop the Keychain permission dialog the Debug test host put up after every release. On macOS that keychain needs the `com.apple.application-identifier` entitlement, which a Developer ID build only gets from an embedded provisioning profile. miniti's release build has none (and neither does the Debug host), so every `SecItemAdd` there failed with `errSecMissingEntitlement` (-34018) while reads answered `errSecItemNotFound`. The device id migration deleted the login-keychain item **before** the new add, so the first launch of 3.2.1 ran on the old id from memory and destroyed its only copy; the second launch found nothing, minted a fresh id, and the server answered every call `device_mismatch` because the saved access token names the old one. From the person's seat: no account, no Pro, no cloud, no calendar, and "join by email" also failing with 401. The credential itself survived in the login keychain (3.2.1 never managed to write it anywhere).
+
+Why tests did not catch it: the storage layer called Security.framework directly, so the unit tests covered only the pure `resolution(afterReadStatus:hasFallback:)` decision; the manual check ran the first launch only, which works.
+
+Fixes landed in 3.3.0:
+
+- `KeychainSlot` (`DeviceIdentifier.swift`) is the one storage policy for both items: data protection keychain first, login keychain on macOS when it refuses, update in place, nothing deleted until the replacement is written. The `KeychainBackend` protocol makes it testable against `FakeKeychain` in `ClientAuthTests`, which models the no-entitlement build.
+- `ClientAuthManager.reconcileDeviceIdentity()` runs when the manager loads: the access token is a JWT whose `sub` is the device id the server bound this installation key to, so if the Keychain device id disagrees, `DeviceIdentifier.adopt` restores the token's id before any request goes out. This is what heals every Mac that already ran 3.2.1 twice.
+- Updating in place keeps the item's access list, so the Debug host's Always Allow now sticks across token refreshes, which was the original itch.
+
+Takeaways: a Keychain migration must add first and delete only on success; `-34018` on macOS means a missing entitlement, not a locked keychain; and a second-launch check belongs in the manual matrix for anything touching identity storage. Using the data protection keychain for real would need a Developer ID provisioning profile in the release build (and the Debug host), a deliberate change to the signing setup, not a side effect.

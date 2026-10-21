@@ -72,6 +72,10 @@ extension AppState: CloudSyncHost {
     /// Called when the model context arrives; also safe to call again.
     func configureCloudSyncIfNeeded() {
         guard !ScreenshotMode.isActive else { return }
+        // The test host is the real app on the real store, with the Mac's own credentials. Its
+        // own instance must never sync that store from a second process while the installed
+        // app is open (the engine tests drive `CloudSyncEngine` directly with a fake host).
+        guard !Self.isRunningUnderXCTest else { return }
         cloudSync.host = self
         if cloudSync.transport == nil {
             if minitiAPIService == nil { minitiAPIService = MinitiAPIService() }
@@ -94,14 +98,109 @@ extension AppState: CloudSyncHost {
 
     // MARK: Settings actions
 
-    func setCloudSyncEnabled(_ on: Bool) {
+    enum CloudSwitchSource { case user, account }
+
+    /// The switch. A person's flip is also written to the account (3.3.0), so every other
+    /// device follows; a flip that follows the account is not written back.
+    func setCloudSyncEnabled(_ on: Bool, source: CloudSwitchSource = .user) {
         cloudSyncEnabled = on
         refreshCloudSyncState()
         if on {
             configureCloudSyncIfNeeded()
             cloudSync.kick(reason: "enabled")
         }
-        DebugLogger.shared.log(.app, "Cloud sync \(on ? "on" : "off")")
+        DebugLogger.shared.log(.app, "Cloud sync \(on ? "on" : "off")\(source == .account ? " (follows the account)" : "")")
+        if source == .account {
+            cloudSync.note(.info, on ? "Cloud on" : "Cloud off", "turned \(on ? "on" : "off") on another device")
+        } else if appMode == .managed {
+            Task { await pushCloudAccountFlag(on) }
+        }
+    }
+
+    // MARK: One switch per account (3.3.0)
+
+    enum CloudAccountFlagAction: Equatable {
+        case none
+        /// The account already says what this device has; remember the version.
+        case acknowledge
+        /// Write this device's choice to the account.
+        case push(Bool)
+        /// Take the account's choice on this device.
+        case follow(Bool)
+    }
+
+    /// What to do with the account's cloud switch after a usage check (`cloud_enabled`,
+    /// `cloud_version` on `/api/usage`).
+    ///
+    /// - `pending` is a choice this device made that the account has not confirmed yet
+    ///   (offline, failed write): it wins until it lands, so a flip made offline is never undone
+    ///   by a stale server value.
+    /// - An unset account (nil: created before 3.3.0, or new) learns this device's switch when
+    ///   it is on; an off device teaches nothing, so a free account never writes anything.
+    /// - A version this device has not applied means another device changed the switch:
+    ///   follow it. "On" waits for Pro and the end of private mode, and leaves the version
+    ///   unapplied so the next usage check tries again; "off" always applies.
+    nonisolated static func cloudAccountFlagAction(
+        localOn: Bool, pending: Bool?, serverEnabled: Bool?, serverVersion: Int, appliedVersion: Int,
+        isPro: Bool, privateMode: Bool
+    ) -> CloudAccountFlagAction {
+        if let pending { return .push(pending) }
+        guard let serverEnabled else { return localOn ? .push(true) : .none }
+        guard serverVersion > appliedVersion else { return .none }
+        if serverEnabled == localOn { return .acknowledge }
+        if serverEnabled { return isPro && !privateMode ? .follow(true) : .none }
+        return .follow(false)
+    }
+
+    /// Per account, so joining another account starts from "never applied" without any reset.
+    private static func cloudFlagVersionKey(_ account: String) -> String { "cloudSync.accountFlag.version.\(account)" }
+    private static func cloudFlagPendingKey(_ account: String) -> String { "cloudSync.accountFlag.pending.\(account)" }
+
+    /// Runs after every successful usage check.
+    func applyAccountCloudFlag() {
+        guard appMode == .managed, let usage = usageInfo, let account = cloudAccountID else { return }
+        let defaults = UserDefaults.standard
+        let version = usage.cloudVersion ?? 0
+        let action = Self.cloudAccountFlagAction(
+            localOn: cloudSyncEnabled,
+            pending: defaults.object(forKey: Self.cloudFlagPendingKey(account)) as? Bool,
+            serverEnabled: usage.cloudEnabled,
+            serverVersion: version,
+            appliedVersion: defaults.integer(forKey: Self.cloudFlagVersionKey(account)),
+            isPro: isPro,
+            privateMode: privateModeEnabled
+        )
+        switch action {
+        case .none:
+            break
+        case .acknowledge:
+            defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
+        case .push(let on):
+            Task { await pushCloudAccountFlag(on) }
+        case .follow(let on):
+            defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
+            setCloudSyncEnabled(on, source: .account)
+        }
+    }
+
+    /// Write this device's choice to the account. The choice stays marked pending until the
+    /// server confirms it, and `applyAccountCloudFlag` retries a pending one at every usage check.
+    func pushCloudAccountFlag(_ on: Bool) async {
+        guard appMode == .managed, let account = cloudAccountID else { return }
+        let defaults = UserDefaults.standard
+        defaults.set(on, forKey: Self.cloudFlagPendingKey(account))
+        guard let api = minitiAPIService else { return }
+        do {
+            let version = try await api.setAccountCloud(enabled: on)
+            // A newer flip made while this one was in flight keeps its own pending mark.
+            if (defaults.object(forKey: Self.cloudFlagPendingKey(account)) as? Bool) == on {
+                defaults.removeObject(forKey: Self.cloudFlagPendingKey(account))
+                defaults.set(version, forKey: Self.cloudFlagVersionKey(account))
+            }
+            DebugLogger.shared.log(.app, "Cloud switch \(on ? "on" : "off") written to the account (version \(version))")
+        } catch {
+            DebugLogger.shared.log(.app, "Cloud switch not written to the account yet (\(error)); retrying at the next usage check", level: .warning)
+        }
     }
 
     /// Per-meeting "Keep off the cloud". Turning it on removes the cloud copy; turning it off

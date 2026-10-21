@@ -1,8 +1,8 @@
 NEW
-- Settings, API. Connected apps, tokens and the setup for Claude, ChatGPT, Claude Code, Cursor and scripts have their own tab. Not on Pro yet, or cloud off? It says what you get and what to turn on.
+- Cloud is one switch for your account. Turn it on on one device and every device on the account turns on at its next launch. Turn it off anywhere and it is off everywhere.
 
 IMPROVED
-- Connecting Claude and ChatGPT is just the URL, with a button that opens their connectors page. Add to Cursor and Add to VS Code install the server with one click. Tokens are only for Windsurf, Codex, Gemini CLI and scripts.
+- Settings, Cloud says Downloading while meetings from your other devices come down.
 
 FIXED
-- Approving a connection from Claude could fail with "that did not come from this site".
+- Cloud could upload every meeting again after an update and log a conflict for each.

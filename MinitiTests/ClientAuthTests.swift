@@ -523,4 +523,215 @@ final class ClientAuthTests: XCTestCase {
         let legacy = try JSONDecoder().decode(ClientAuthCredentials.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertFalse(legacy.recoveryKeyAcknowledged)
     }
+
+    // MARK: - Keychain storage policy (3.2.1 lost the macOS device id)
+
+    /// In-memory stand-in for Security.framework. `dataProtectionAvailable == false` behaves like
+    /// miniti's Developer ID build, which has no application-identifier entitlement: reads of the
+    /// data protection keychain answer "not found" and writes fail with -34018.
+    final class FakeKeychain: KeychainBackend, @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [String: Data] = [:]
+        private(set) var adds: [String: Int] = [:]
+        var dataProtectionAvailable: Bool
+
+        init(dataProtectionAvailable: Bool) { self.dataProtectionAvailable = dataProtectionAvailable }
+
+        private func key(_ query: [String: Any]) -> String {
+            let dp = (query[kSecUseDataProtectionKeychain as String] as? Bool) ?? false
+            return "\(dp ? "dp" : "legacy")|\(query[kSecAttrService as String] as? String ?? "")|\(query[kSecAttrAccount as String] as? String ?? "")"
+        }
+        private func isDP(_ query: [String: Any]) -> Bool { (query[kSecUseDataProtectionKeychain as String] as? Bool) ?? false }
+
+        func item(service: String, account: String, dataProtection: Bool) -> Data? {
+            lock.lock(); defer { lock.unlock() }
+            return items["\(dataProtection ? "dp" : "legacy")|\(service)|\(account)"]
+        }
+        func addCount(service: String, account: String, dataProtection: Bool) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            return adds["\(dataProtection ? "dp" : "legacy")|\(service)|\(account)"] ?? 0
+        }
+        func set(_ data: Data, service: String, account: String, dataProtection: Bool) {
+            lock.lock(); defer { lock.unlock() }
+            items["\(dataProtection ? "dp" : "legacy")|\(service)|\(account)"] = data
+        }
+
+        func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
+            lock.lock(); defer { lock.unlock() }
+            if isDP(query), !dataProtectionAvailable { return (errSecItemNotFound, nil) }
+            guard let data = items[key(query)] else { return (errSecItemNotFound, nil) }
+            return (errSecSuccess, data)
+        }
+        func add(_ attributes: [String: Any]) -> OSStatus {
+            lock.lock(); defer { lock.unlock() }
+            if isDP(attributes), !dataProtectionAvailable { return KeychainSlot.missingEntitlement }
+            let k = key(attributes)
+            if items[k] != nil { return errSecDuplicateItem }
+            items[k] = attributes[kSecValueData as String] as? Data
+            adds[k, default: 0] += 1
+            return errSecSuccess
+        }
+        func update(_ query: [String: Any], _ attributes: [String: Any]) -> OSStatus {
+            lock.lock(); defer { lock.unlock() }
+            if isDP(query), !dataProtectionAvailable { return KeychainSlot.missingEntitlement }
+            let k = key(query)
+            guard items[k] != nil else { return errSecItemNotFound }
+            items[k] = attributes[kSecValueData as String] as? Data
+            return errSecSuccess
+        }
+        func delete(_ query: [String: Any]) -> OSStatus {
+            lock.lock(); defer { lock.unlock() }
+            if isDP(query), !dataProtectionAvailable { return KeychainSlot.missingEntitlement }
+            return items.removeValue(forKey: key(query)) == nil ? errSecItemNotFound : errSecSuccess
+        }
+    }
+
+    private let deviceService = "com.miniti.device-id"
+    private let deviceAccount = "device-uuid"
+
+    /// Point `DeviceIdentifier` at a fake keychain and an empty defaults suite for one test,
+    /// restoring the real storage afterwards so the host app's identity is untouched.
+    private func withFakeDeviceStorage(_ fake: FakeKeychain, _ body: (UserDefaults) throws -> Void) throws {
+        let originalSlot = DeviceIdentifier.slot
+        let originalDefaults = DeviceIdentifier.defaults
+        let defaults = UserDefaults(suiteName: "test_device_id_\(UUID().uuidString)")!
+        DeviceIdentifier.slot = KeychainSlot(service: deviceService, account: deviceAccount, accessible: kSecAttrAccessibleAfterFirstUnlock, backend: fake)
+        DeviceIdentifier.defaults = defaults
+        DeviceIdentifier.resetForTesting()
+        defer {
+            DeviceIdentifier.slot = originalSlot
+            DeviceIdentifier.defaults = originalDefaults
+            DeviceIdentifier.resetForTesting()
+        }
+        try body(defaults)
+    }
+
+    private func fakeAccessToken(sub: String) throws -> String {
+        let header = ClientAuthCrypto.b64url(Data("{\"alg\":\"HS256\",\"typ\":\"JWT\"}".utf8))
+        let payload = ClientAuthCrypto.b64url(try JSONSerialization.data(withJSONObject: ["iss": "miniti", "sub": sub, "acct": "acct_test", "scope": "managed"]))
+        return "\(header).\(payload).sig"
+    }
+
+    func testAccessTokenNamesTheDeviceItWasIssuedTo() throws {
+        var stored = credentials()
+        XCTAssertNil(stored.tokenDeviceID, "an opaque token names no device")
+        stored.accessToken = try fakeAccessToken(sub: "550E8400-E29B-41D4-A716-446655440000")
+        XCTAssertEqual(stored.tokenDeviceID, "550E8400-E29B-41D4-A716-446655440000")
+        stored.accessToken = try fakeAccessToken(sub: "not-a-uuid")
+        XCTAssertNil(stored.tokenDeviceID)
+        stored.accessToken = nil
+        XCTAssertNil(stored.tokenDeviceID)
+    }
+
+    func testManagerRestoresTheDeviceIDFromTheTokenWhenTheKeychainIDDiffers() throws {
+        let tokenDevice = "550e8400-e29b-41d4-a716-446655440000"
+        final class Adopted: @unchecked Sendable { var ids: [String] = [] }
+        let adopted = Adopted()
+        var stored = credentials()
+        stored.accessToken = try fakeAccessToken(sub: tokenDevice)
+
+        // The 3.2.1 case: credentials for device A, Keychain now says device B.
+        _ = ClientAuthManager(store: InMemoryClientAuthStore(stored), deviceIDProvider: { "11111111-2222-3333-4444-555555555555" }, deviceIDAdopter: { adopted.ids.append($0); return true })
+        XCTAssertEqual(adopted.ids, [tokenDevice])
+
+        // Same id, any casing: nothing to do.
+        adopted.ids = []
+        _ = ClientAuthManager(store: InMemoryClientAuthStore(stored), deviceIDProvider: { tokenDevice.uppercased() }, deviceIDAdopter: { adopted.ids.append($0); return true })
+        XCTAssertEqual(adopted.ids, [])
+
+        // A draft has no token and no account: never touch the device id for it.
+        let draft = ClientAuthCredentials(installationKey: stored.installationKey, recoveryKey: stored.recoveryKey, accountID: "", accessToken: nil, accessExpiresAt: nil, refreshToken: nil, deviceCap: nil, enrolledAt: "", enrollmentPath: "create")
+        _ = ClientAuthManager(store: InMemoryClientAuthStore(draft), deviceIDProvider: { "11111111-2222-3333-4444-555555555555" }, deviceIDAdopter: { adopted.ids.append($0); return true })
+        XCTAssertEqual(adopted.ids, [])
+
+        // No adopter (tests, tools): no reconcile.
+        _ = ClientAuthManager(store: InMemoryClientAuthStore(stored), deviceIDProvider: { "11111111-2222-3333-4444-555555555555" })
+        XCTAssertEqual(adopted.ids, [])
+    }
+
+    func testCredentialStoreUpdatesInPlaceAndRoundTrips() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: true)
+        let store = KeychainClientAuthStore(backend: fake)
+        XCTAssertNil(store.load())
+        var first = credentials()
+        XCTAssertTrue(store.save(first))
+        first.accessToken = "tok2"
+        XCTAssertTrue(store.save(first))
+        XCTAssertEqual(store.load(), first)
+        XCTAssertEqual(fake.addCount(service: "com.miniti.device-auth", account: "credentials", dataProtection: true), 1, "a second save updates the item instead of re-creating it, so its access list survives")
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+
+    func testAdoptMakesTheGivenIDTheDeviceIdentity() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: true)
+        try withFakeDeviceStorage(fake) { defaults in
+            let minted = DeviceIdentifier.getOrCreateDeviceId()
+            XCTAssertNotNil(UUID(uuidString: minted))
+            XCTAssertTrue(DeviceIdentifier.adopt("550E8400-E29B-41D4-A716-446655440000", reason: "test"))
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000")
+            DeviceIdentifier.resetForTesting()
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000", "adopted id is persisted, not just cached")
+            XCTAssertNil(defaults.string(forKey: "device-uuid-fallback"))
+        }
+    }
+
+    #if os(macOS)
+    func testDeviceIDStaysInTheLoginKeychainWhenTheBuildCannotUseDataProtection() throws {
+        // The shipped Developer ID build: legacy item present, data protection keychain refuses writes.
+        let fake = FakeKeychain(dataProtectionAvailable: false)
+        fake.set(Data("550E8400-E29B-41D4-A716-446655440000".utf8), service: deviceService, account: deviceAccount, dataProtection: false)
+        try withFakeDeviceStorage(fake) { defaults in
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000")
+            XCTAssertEqual(fake.item(service: deviceService, account: deviceAccount, dataProtection: false), Data("550E8400-E29B-41D4-A716-446655440000".utf8), "the login keychain item is not deleted before a replacement exists")
+            XCTAssertNil(fake.item(service: deviceService, account: deviceAccount, dataProtection: true))
+            XCTAssertNil(defaults.string(forKey: "device-uuid-fallback"))
+            // Second launch (3.2.1 minted a new id here).
+            DeviceIdentifier.resetForTesting()
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000")
+        }
+    }
+
+    func testDeviceIDMovesToTheDataProtectionKeychainOnlyAfterTheWriteSucceeded() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: true)
+        fake.set(Data("550E8400-E29B-41D4-A716-446655440000".utf8), service: deviceService, account: deviceAccount, dataProtection: false)
+        try withFakeDeviceStorage(fake) { _ in
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000")
+            XCTAssertEqual(fake.item(service: deviceService, account: deviceAccount, dataProtection: true), Data("550E8400-E29B-41D4-A716-446655440000".utf8))
+            XCTAssertNil(fake.item(service: deviceService, account: deviceAccount, dataProtection: false), "moved, so the legacy copy is gone")
+            DeviceIdentifier.resetForTesting()
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), "550E8400-E29B-41D4-A716-446655440000")
+        }
+    }
+
+    func testFreshDeviceIDIsKeptInTheLoginKeychainWhenDataProtectionIsUnavailable() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: false)
+        try withFakeDeviceStorage(fake) { defaults in
+            let minted = DeviceIdentifier.getOrCreateDeviceId()
+            XCTAssertNotNil(UUID(uuidString: minted))
+            XCTAssertEqual(fake.item(service: deviceService, account: deviceAccount, dataProtection: false), Data(minted.utf8))
+            XCTAssertNil(defaults.string(forKey: "device-uuid-fallback"), "the login keychain is persistence enough; no UserDefaults fallback")
+            DeviceIdentifier.resetForTesting()
+            XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), minted)
+        }
+    }
+
+    func testCredentialStoreFallsBackToTheLoginKeychainAndReadsLegacyItems() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: false)
+        let store = KeychainClientAuthStore(backend: fake)
+        // A 3.2.0 credential in the login keychain is read as is.
+        let legacy = credentials()
+        fake.set(try JSONEncoder().encode(legacy), service: "com.miniti.device-auth", account: "credentials", dataProtection: false)
+        XCTAssertEqual(store.load(), legacy)
+        XCTAssertNotNil(fake.item(service: "com.miniti.device-auth", account: "credentials", dataProtection: false), "not deleted while the move cannot happen")
+        // A token refresh saves back into the login keychain, in place.
+        var refreshed = legacy
+        refreshed.accessToken = "tok2"
+        XCTAssertTrue(store.save(refreshed))
+        XCTAssertEqual(store.load(), refreshed)
+        XCTAssertEqual(fake.addCount(service: "com.miniti.device-auth", account: "credentials", dataProtection: false), 0, "the existing item was updated, never re-created")
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+    #endif
 }
