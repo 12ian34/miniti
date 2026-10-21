@@ -39,14 +39,28 @@ jobs:
       - name: Run MinitiTests
         run: |
           set -o pipefail
-          xcodebuild test \
-            -project Miniti.xcodeproj \
-            -scheme Miniti \
-            -destination 'platform=macOS' \
-            -derivedDataPath DerivedData \
-            -only-testing:MinitiTests \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            2>&1 | tee macos-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          run_tests() {
+            xcodebuild test \
+              -project Miniti.xcodeproj \
+              -scheme Miniti \
+              -destination 'platform=macOS' \
+              -derivedDataPath DerivedData \
+              -only-testing:MinitiTests \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+              2>&1 | tee macos-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          }
+          # The runner's swift-frontend (Swift 6.3.3) crashes now and then in its SendNonSendable
+          # pass on the sync engine's commit closures; the local Xcode 27.1 never does. A crash
+          # leaves "Stack dump" in the log and is retried once. A failing test or a real compile
+          # error has no stack dump and fails here at once.
+          if ! run_tests; then
+            if grep -q "Stack dump" macos-tests.log; then
+              echo "::warning::swift-frontend crashed (runner toolchain); retrying once"
+              run_tests
+            else
+              false
+            fi
+          fi
           # pipefail above makes xcodebuild's own exit status decide (a compiler crash or a failed
           # test fails the step); the gate below reads the bundle total, the last "Executed" line,
           # not any one suite's line. The old gate matched a suite with 0 failures while the bundle
@@ -95,14 +109,28 @@ jobs:
       - name: Run MinitiMobileTests
         run: |
           set -o pipefail
-          xcodebuild test \
-            -project Miniti.xcodeproj \
-            -scheme MinitiMobile \
-            -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
-            -derivedDataPath DerivedData \
-            -only-testing:MinitiMobileTests \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
-            2>&1 | tee ios-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          run_tests() {
+            xcodebuild test \
+              -project Miniti.xcodeproj \
+              -scheme MinitiMobile \
+              -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \
+              -derivedDataPath DerivedData \
+              -only-testing:MinitiMobileTests \
+              CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= \
+              2>&1 | tee ios-tests.log | (grep -E 'Test Suite|Test Case.*(passed|failed)|error:|Executed|BUILD|TEST' || true)
+          }
+          # The runner's swift-frontend (Swift 6.3.3) crashes now and then in its SendNonSendable
+          # pass on the sync engine's commit closures; the local Xcode 27.1 never does. A crash
+          # leaves "Stack dump" in the log and is retried once. A failing test or a real compile
+          # error has no stack dump and fails here at once.
+          if ! run_tests; then
+            if grep -q "Stack dump" ios-tests.log; then
+              echo "::warning::swift-frontend crashed (runner toolchain); retrying once"
+              run_tests
+            else
+              false
+            fi
+          fi
           # pipefail above makes xcodebuild's own exit status decide (a compiler crash or a failed
           # test fails the step); the gate below reads the bundle total, the last "Executed" line,
           # not any one suite's line. The old gate matched a suite with 0 failures while the bundle
