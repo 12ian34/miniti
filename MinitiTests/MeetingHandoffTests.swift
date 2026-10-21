@@ -307,11 +307,16 @@ final class MeetingHandoffTests: XCTestCase {
         dumpLog("output switch")
     }
 
-    /// These tests run the real capture pipeline, so they need an input device. GitHub's macOS
-    /// runners have none, and the pipeline then reports `mic=false capturing=false` (2026-10-19).
+    /// These tests run the real capture pipeline, so they need a microphone the host may read.
+    /// GitHub's runner lists a default input device that delivers nothing and never grants the
+    /// unsigned host microphone access, so the pipeline reports `mic=false capturing=false`
+    /// there (2026-10-19 and 2026-10-21 runs). Authorization is the reliable signal.
     private static func requireMicrophone() throws {
         guard let input = defaultDevice(kAudioHardwarePropertyDefaultInputDevice), input != kAudioObjectUnknown else {
             throw XCTSkip("no microphone on this Mac")
+        }
+        guard TestHost.microphoneIsAuthorized else {
+            throw XCTSkip("this host has no microphone access")
         }
     }
 

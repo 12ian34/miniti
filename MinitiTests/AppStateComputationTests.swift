@@ -1951,10 +1951,8 @@ final class AppStateComputationTests: XCTestCase {
     func testMeetingReminderCategoriesAreRegisteredWithSmartMeetingCategories() async throws {
         // GitHub's runner builds the host with code signing off, and an unsigned bundle has no
         // notification center: every category read comes back empty there (2026-10-19 run).
-        let env = ProcessInfo.processInfo.environment
-        if env["GITHUB_ACTIONS"] != nil || env["CI"] != nil {
-            throw XCTSkip("the unsigned CI test host has no notification center")
-        }
+        // The shell's CI variables never reach the host process, so ask the code signature.
+        guard TestHost.isCodeSigned else { throw XCTSkip("the unsigned CI test host has no notification center") }
         AppState.registerSmartMeetingNotificationCategory()
         let categories = await withCheckedContinuation { (continuation: CheckedContinuation<Set<UNNotificationCategory>, Never>) in
             UNUserNotificationCenter.current().getNotificationCategories { cats in

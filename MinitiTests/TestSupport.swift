@@ -1,6 +1,8 @@
 import Foundation
 import SwiftData
 import XCTest
+import Security
+import AVFoundation
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -151,5 +153,24 @@ enum TestSupport {
             }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
+    }
+}
+
+/// Facts about the process the tests run in. GitHub's runner builds the host with code signing
+/// off and never grants it the microphone; neither shows up as an environment variable inside
+/// the host (xcodebuild does not pass the shell's `CI` through), so the tests ask the system.
+enum TestHost {
+    /// False on GitHub's runner (`CODE_SIGNING_ALLOWED=NO`). An unsigned bundle has no
+    /// notification center and no keychain identity.
+    static var isCodeSigned: Bool {
+        var code: SecCode?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return false }
+        return SecCodeCheckValidity(code, [], nil) == errSecSuccess
+    }
+
+    /// True only when the host may actually read the microphone. The runner has a default
+    /// input device that delivers nothing, so the device list alone is not enough.
+    static var microphoneIsAuthorized: Bool {
+        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 }
