@@ -10,7 +10,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - improvement: (macOS and iOS) Settings, Cloud says Downloading while meetings from your other devices come down
 - fix: (macOS) 3.2.1 lost your account on the second launch: no Pro, no cloud, no calendar. The device id had been moved to a place the app cannot write. 3.3.0 puts it back from your saved sign-in. Nothing to re-enter
 - fix: (macOS and iOS) cloud could upload every meeting again after an update and log a conflict for each. A meeting's own time stamp came back from the cloud rounded to the millisecond and read as newer than itself
-- fix: (macOS) Investigate codebase showed wrong file paths for a folder under a symlink, such as /tmp, and nothing for a folder that is itself a symlink
+- fix: (macOS) Investigate codebase sometimes listed files under the wrong names, or found nothing in a folder
 
 ### 2026-10-21 - v3.2.1
 
