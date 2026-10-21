@@ -137,14 +137,39 @@ enum DeviceIdentifier {
     
     // MARK: - Keychain Operations
     
+    /// Data protection keychain (no per-app access list, so a differently signed build never
+    /// prompts), with a one-time move of the pre-3.2.1 item on macOS. See `KeychainClientAuthStore`.
     private static func getFromKeychain() -> KeychainReadResult {
-        let query: [String: Any] = [
+        let result = readKeychain(dataProtection: true)
+        #if os(macOS)
+        if case .missing = result, case .found(let legacy) = readKeychain(dataProtection: false) {
+            if saveToKeychain(legacy) {
+                SecItemDelete(legacyDeleteQuery as CFDictionary)
+                DebugLogger.shared.log(.app, "Device ID moved to the data protection keychain")
+            }
+            return .found(legacy)
+        }
+        #endif
+        return result
+    }
+
+    private static var legacyDeleteQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+    }
+
+    private static func readKeychain(dataProtection: Bool) -> KeychainReadResult {
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
+        if dataProtection { query[kSecUseDataProtectionKeychain as String] = true }
         
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -166,21 +191,20 @@ enum DeviceIdentifier {
     private static func saveToKeychain(_ value: String) -> Bool {
         guard let data = value.data(using: .utf8) else { return false }
         
-        // Delete any existing item first
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+        // Delete any existing item first, in both keychains
+        var deleteQuery: [String: Any] = legacyDeleteQuery
+        SecItemDelete(deleteQuery as CFDictionary)
+        deleteQuery[kSecUseDataProtectionKeychain as String] = true
         SecItemDelete(deleteQuery as CFDictionary)
         
-        // Add new item — accessible after first unlock so it works during login
+        // Add new item, accessible after first unlock so it works during login
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecUseDataProtectionKeychain as String: true
         ]
         
         let status = SecItemAdd(addQuery as CFDictionary, nil)

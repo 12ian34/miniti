@@ -389,6 +389,12 @@ protocol ClientAuthCredentialStore: AnyObject, Sendable {
     func clear()
 }
 
+/// The managed credential lives in the data protection keychain (`kSecUseDataProtectionKeychain`),
+/// where access is by team and bundle id rather than by a per-app access list. The legacy
+/// file-based macOS keychain put up "miniti wants to use your confidential information" every
+/// time a differently signed build (the Debug test host after a release re-created the item)
+/// read it, and blocked the app at launch until someone clicked Always Allow. An item still in
+/// the legacy keychain is read once and moved over.
 final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Sendable {
     private let service = "com.miniti.device-auth"
     private let account = "credentials"
@@ -399,11 +405,38 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: false,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+    }
+
+    /// The pre-3.2.1 location on macOS (iOS has always used the data protection keychain).
+    private var legacyQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecAttrSynchronizable as String: false,
         ]
     }
 
     func load() -> ClientAuthCredentials? {
-        var query = baseQuery
+        if let data = read(baseQuery) {
+            return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
+        }
+        #if os(macOS)
+        if let data = read(legacyQuery), let credentials = try? JSONDecoder().decode(ClientAuthCredentials.self, from: data) {
+            if save(credentials) {
+                SecItemDelete(legacyQuery as CFDictionary)
+                DebugLogger.shared.log(.app, "Device auth credential moved to the data protection keychain")
+            }
+            return credentials
+        }
+        #endif
+        return nil
+    }
+
+    private func read(_ base: [String: Any]) -> Data? {
+        var query = base
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: AnyObject?
@@ -416,7 +449,7 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
             }
             return nil
         }
-        return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
+        return data
     }
 
     func save(_ credentials: ClientAuthCredentials) -> Bool {
@@ -435,6 +468,7 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
 
     func clear() {
         SecItemDelete(baseQuery as CFDictionary)
+        SecItemDelete(legacyQuery as CFDictionary)
     }
 }
 
