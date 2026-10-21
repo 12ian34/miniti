@@ -286,7 +286,7 @@ final class DeliveryOutbox: ObservableObject {
             }
             let data = try encoder.encode(items)
             try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: storeURL, options: [.atomic, .completeFileProtection])
+            try data.write(to: storeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
         } catch {
             DebugLogger.shared.log(.app, "Outbox: persist FAILED: \(type(of: error))", level: .warning)
         }

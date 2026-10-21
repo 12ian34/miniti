@@ -1,8 +1,8 @@
 NEW
-- miniti recognises you by voice. Turn on Your voice in Settings, Transcription, mark yourself once in a meeting, and from then on you are You from the first sentence, on the phone, in a room and in watch recordings. Needs Speakers set to this device. The fingerprint stays on the device.
-- Remembered voices. People miniti has matched to a calendar guest are named next time before they say their name. Forget anyone in Settings, Transcription.
-- Speakers get their email. A named speaker is matched to the calendar guest list; the email travels with the meeting in exports, the API and webhooks. Tap a speaker to see it or pick the right guest.
-- Watch recordings get speaker labels from the on-device model when Speakers is set to this device.
+- Settings, API. Connected apps, tokens and the setup for Claude, ChatGPT, Claude Code, Cursor and scripts have their own tab. Not on Pro yet, or cloud off? It says what you get and what to turn on.
+
+IMPROVED
+- Connecting Claude and ChatGPT is just the URL, with a button that opens their connectors page. Add to Cursor and Add to VS Code install the server with one click. Tokens are only for Windsurf, Codex, Gemini CLI and scripts.
 
 FIXED
-- A watch recording longer than 5 minutes failed with "Could not read the audio". Tap Try again on the row in History for a recording that was stuck.
+- Approving a connection from Claude could fail with "that did not come from this site".
