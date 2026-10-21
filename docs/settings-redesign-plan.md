@@ -92,3 +92,8 @@ The destination is persisted as `selectedSettingsDestination`. Legacy destinatio
 ## 3.0.0: Cloud
 
 Cloud is a tab in the Setup group, directly under Account (General, Account, Cloud), one question: do your meetings live on miniti's servers too. It was briefly a sixth group on 2026-10-15; Ian moved it into Setup on 2026-10-16 after using it, because the bottom of the sidebar was the wrong place for a setup choice. The settings tests pin only Privacy and Support.
+
+
+## API tab (3.2.1)
+
+`SettingsDestination.api` sits in the Connections group between Webhooks and Playbook on both platforms, visible to everyone. It is `CloudSettingsSections(mode: .api)`: an intro section that states what the API and MCP give you and the one thing missing (BYOK: needs the managed plan; free: Upgrade to Pro; Pro with cloud off: open Cloud; no email: add one in Cloud), then, for Pro with cloud on, Connected apps and Tokens and setup (`MCPSetupRows`). Connected apps and tokens moved here from the Cloud tab; web sign-in stays in Cloud. Search ids `api.setup`, `api.connected`, `api.tokens`; legacy ids `tokens`, `connectors`, `connected` map here.

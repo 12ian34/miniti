@@ -1,8 +1,10 @@
 import SwiftUI
 import SwiftData
 
-/// Settings → Cloud (3.0.0): the switch, status, web sign-in, connected apps, API tokens, and
-/// delete. One view on macOS; the sections are reused by the iOS settings list.
+/// Settings → Cloud (3.0.0): the switch, status, web sign-in and delete. Settings → API
+/// (3.2.1): connected apps, tokens and the connector setup, with the upgrade path for people
+/// who are not on Pro or have cloud off. One view each on macOS; the sections are reused by
+/// the iOS settings list.
 #if os(macOS)
 struct CloudSettingsView: View {
     @EnvironmentObject private var appState: AppState
@@ -16,13 +18,29 @@ struct CloudSettingsView: View {
         .settingsSearchScrolling(for: .cloud)
     }
 }
+
+struct APIAccessSettingsView: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Form {
+            CloudSettingsSections(engine: appState.cloudSync, mode: .api)
+        }
+        .formStyle(.grouped)
+        .padding()
+        .settingsSearchScrolling(for: .api)
+    }
+}
 #endif
 
 struct CloudSettingsSections: View {
+    enum Mode { case cloud, api }
+
     @EnvironmentObject private var appState: AppState
     /// Observed directly: `AppState` holds the engine as a `let`, so its phase, last-synced
     /// time and skipped count would otherwise never refresh while the tab is open.
     @ObservedObject var engine: CloudSyncEngine
+    var mode: Mode = .cloud
     @State private var isPresentingEnable = false
     @State private var isConfirmingDelete = false
     @State private var isBusy = false
@@ -39,21 +57,100 @@ struct CloudSettingsSections: View {
     @State private var isShowingLog = false
 
     var body: some View {
-        if appState.appMode == .byok {
-            Section("Cloud") {
-                Text("Cloud needs the managed plan.")
-                    .foregroundStyle(.secondary)
+        switch mode {
+        case .cloud:
+            if appState.appMode == .byok {
+                Section("Cloud") {
+                    Text("Cloud needs the managed plan.")
+                        .foregroundStyle(.secondary)
+                }
+                .id("cloud.sync")
+            } else {
+                cloudSection
+                if appState.cloudSyncEnabled {
+                    statusSection
+                    signInSection
+                    deleteSection
+                }
             }
-            .id("cloud.sync")
-        } else {
-            cloudSection
-            if appState.cloudSyncEnabled {
-                statusSection
-                signInSection
+        case .api:
+            apiIntroSection
+            if appState.appMode != .byok, appState.isPro, appState.cloudSyncEnabled {
+                connectedAppsSection
                 apiSection
-                deleteSection
             }
         }
+    }
+
+    // MARK: API tab
+
+    /// What the API gives you, and the one thing standing between this person and it.
+    private var apiIntroSection: some View {
+        Section("Your meetings in your own tools") {
+            Text("Ask Claude or ChatGPT about last week's call, let Claude Code and Cursor read a meeting while you work, or pull transcripts and action items into a script. Read only: nothing here can change or delete a meeting.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if appState.appMode == .byok {
+                Text("Needs the managed plan with Pro, because the tools read the cloud copy of your meetings. Bring-your-own-keys mode has no account to connect to.")
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.dim)
+            } else if !appState.isPro {
+                Text("Needs Pro: the tools read the cloud copy of your meetings, and cloud is part of Pro.")
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.dim)
+                #if os(macOS)
+                Button("Upgrade to Pro ($5/month, 5,000 min)") {
+                    Task { await appState.openSubscribePage() }
+                }
+                #else
+                Button("Upgrade to Pro in Settings, Account") {
+                    appState.selectedSettingsTab = SettingsDestination.account.rawValue
+                }
+                #endif
+            } else if !appState.cloudSyncEnabled {
+                Text("Turn on cloud first: the tools read the cloud copy of your meetings, so there is nothing to read until it exists.")
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.dim)
+                #if os(macOS)
+                Button("Open Cloud settings") {
+                    appState.selectedSettingsTab = SettingsDestination.cloud.rawValue
+                }
+                #endif
+            } else if email == nil {
+                Text("Claude and ChatGPT sign you in with the email on your account. Add one in Settings, Cloud, Web sign-in before connecting them. Tokens work without it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .id("api.setup")
+        .task(id: appState.clientAuthStatus.accountID) { await loadIfNeeded() }
+        .onReceive(NotificationCenter.default.publisher(for: .minitiCloudCallback)) { _ in
+            loadedAccount = nil
+            Task { await loadIfNeeded() }
+        }
+    }
+
+    private var connectedAppsSection: some View {
+        Section("Connected apps") {
+            if connectedApps.isEmpty {
+                Text("Nothing connected yet. Connect Claude or ChatGPT with the URL below.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(connectedApps) { app in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(app.clientName)
+                        Text(app.lastUsedAt.map { "Last used \(CloudSettingsSections.relative($0))" } ?? "Not used yet")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Disconnect") { disconnect(app) }.disabled(isBusy)
+                }
+            }
+        }
+        .id("api.connected")
     }
 
     // MARK: Sections
@@ -182,27 +279,15 @@ struct CloudSettingsSections: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if !connectedApps.isEmpty {
-                ForEach(connectedApps) { app in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(app.clientName)
-                            Text(app.lastUsedAt.map { "Last used \(CloudSettingsSections.relative($0))" } ?? "Not used yet")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button("Disconnect") { disconnect(app) }.disabled(isBusy)
-                    }
-                }
-                .id("cloud.connected")
-            }
+            Text("Connected apps and tokens live in Settings, API.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .id("cloud.signin")
     }
 
     private var apiSection: some View {
-        Section("API access") {
+        Section("Tokens and setup") {
             ForEach(tokens) { token in
                 HStack {
                     VStack(alignment: .leading, spacing: 2) {
@@ -241,7 +326,7 @@ struct CloudSettingsSections: View {
                 .foregroundStyle(.secondary)
             MCPSetupRows(token: revealedToken)
         }
-        .id("cloud.tokens")
+        .id("api.tokens")
     }
 
     private var deleteSection: some View {

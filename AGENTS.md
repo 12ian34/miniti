@@ -51,7 +51,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Change shared-microphone diarization or automatic in-room/hybrid inference | [docs/automatic-in-room-diarization-plan.md](docs/automatic-in-room-diarization-plan.md) |
 | Read backend admin stats (cost, revenue, MRR, devices, usage, client errors) from a terminal or a bot without the dashboard | [docs/admin-stats-access-plan.md](docs/admin-stats-access-plan.md) (built 2026-10-15: `../miniti-api/scripts/admin-stats.mjs` plus the `admin-stats` skill; read-only `ADMIN_READ_TOKEN` deployed 2026-10-15 for Grok Bot via `scripts/admin-stats-curl.md`; no MCP by decision) |
 | Change cloud sync, the sync document, Settings → Cloud, web sign-in, tokens, the REST API or the MCP server | [docs/cloud-sync-plan.md](docs/cloud-sync-plan.md) (built 2026-10-15 for 3.0.0, status table) + [`../miniti-api/docs/agents/08-cloud.md`](../miniti-api/docs/agents/08-cloud.md) (the contract) + [docs/patterns.md](docs/patterns.md) § "Cloud sync" |
-| Change settings navigation, categories, or search | [docs/settings-redesign-plan.md](docs/settings-redesign-plan.md) (2.12.0 hierarchy: Setup, Meetings, Connections, Privacy, Support; Cloud joined Setup in 3.0.0; single-word tabs; `SettingsGroup`) |
+| Change settings navigation, categories, or search | [docs/settings-redesign-plan.md](docs/settings-redesign-plan.md) (2.12.0 hierarchy: Setup, Meetings, Connections, Privacy, Support; Cloud joined Setup in 3.0.0; API joined Connections in 3.2.1; single-word tabs; `SettingsGroup`) |
 | See what shipped in which version | [CHANGELOG.md](CHANGELOG.md) (+ `fastlane/metadata/en-US/release_notes.txt` per release) |
 | Understand visual language / tokens | [design.md](design.md) |
 | Use / debug Fastlane specifically | [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md) |
@@ -185,7 +185,7 @@ ANDROID_PLAN.md                    # Exploratory Android port plan (not started)
 - The user values clear labels and keyboard hints on macOS home actions (e.g. shortcuts/settings) alongside icons when both are requested.
 - Meeting utility actions such as Investigate and Catch me up use labelled neutral `MinitiControlLabel` chrome with aligned SF Symbols; do not substitute emoji or one-off button layouts.
 - No em dashes anywhere in the product, not only in copy: menus, settings, errors, notifications, exports. Use commas, full stops or colons.
-- Settings tabs are single words, one question per tab, grouped Setup / Meetings / Connections / Privacy / Support (Cloud sits in Setup under Account since 3.0.0); model choices are "Deepgram" or "This Mac" pickers, never model names in the control. Privacy and Support are separate; About is the support tab.
+- Settings tabs are single words, one question per tab, grouped Setup / Meetings / Connections / Privacy / Support (Cloud sits in Setup under Account since 3.0.0; API is its own tab in Connections since 3.2.1, visible to everyone with the upgrade path when Pro or cloud is missing); model choices are "Deepgram" or "This Mac" pickers, never model names in the control. Privacy and Support are separate; About is the support tab.
 - Do not label Jev or the Nemotron models as beta. Insight menus show names only, with a settings link at the bottom, never "Name — description".
 - Normal updates should not appear as home-screen banners: macOS uses Sparkle and iOS uses the App Store. Keep `/api/version` only for the minimum-version force-update gate.
 

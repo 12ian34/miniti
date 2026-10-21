@@ -6,6 +6,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### Unreleased - v3.2.1
 
+- new: (macOS and iOS) Settings, API. Connected apps, tokens and the setup for Claude, ChatGPT, Claude Code, Cursor and scripts have their own tab, visible to everyone. Not on Pro yet, or cloud off? It says what you get and what to turn on
 - improvement: (macOS and iOS) connecting Claude and ChatGPT is just the URL. Settings, Cloud now says so, with a button that opens the connectors page, and Add to Cursor and Add to VS Code install the server with one click. Tokens are only for Windsurf, Codex, Gemini CLI and scripts
 - fix: (macOS and iOS) approving a connection from Claude could fail with "that did not come from this site". Fixed on the server
 

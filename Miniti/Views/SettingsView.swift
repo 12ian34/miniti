@@ -169,6 +169,8 @@ struct SettingsView: View {
             PrivacySettingsView()
         case .cloud:
             CloudSettingsView()
+        case .api:
+            APIAccessSettingsView()
         case .about:
             AboutSettingsView()
         }

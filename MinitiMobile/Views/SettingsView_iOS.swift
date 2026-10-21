@@ -831,6 +831,10 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
+                if category == .api {
+                    CloudSettingsSections(engine: appState.cloudSync, mode: .api)
+                }
+
                 if category == .cloud {
                     CloudSettingsSections(engine: appState.cloudSync)
                 }

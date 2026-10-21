@@ -165,6 +165,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case calendar
     case crm
     case webhooks
+    case api
     case playbook
     case data
     case privacy
@@ -176,7 +177,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         switch self {
         case .general, .account, .cloud: return .setup
         case .recording, .transcription, .ai, .templates, .notifications: return .meetings
-        case .calendar, .crm, .webhooks, .playbook, .data: return .connections
+        case .calendar, .crm, .webhooks, .api, .playbook, .data: return .connections
         case .privacy: return .privacy
         case .about: return .support
         }
@@ -194,6 +195,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .calendar: return "Calendar"
         case .crm: return "CRM"
         case .webhooks: return "Webhooks"
+        case .api: return "API"
         case .playbook: return "Playbook"
         case .data: return "Data"
         case .privacy: return "Privacy"
@@ -214,10 +216,11 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .calendar: return "Google Calendar, filters and auto start"
         case .crm: return "Attio and Twenty"
         case .webhooks: return "Endpoint and delivery queue"
+        case .api: return "Claude, ChatGPT, Cursor and scripts read your meetings"
         case .playbook: return "Your docs server for grounded answers"
         case .data: return "Granola import and markdown export"
         case .privacy: return "Private mode, diagnostics and models on this device"
-        case .cloud: return "Your meetings on every device, and your tools"
+        case .cloud: return "Your meetings on every device"
         case .about: return "Version, updates, help and licences"
         }
     }
@@ -234,6 +237,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .calendar: return "calendar"
         case .crm: return "person.2"
         case .webhooks: return "arrow.triangle.branch"
+        case .api: return "terminal"
         case .playbook: return "books.vertical"
         case .data: return "tray.and.arrow.down"
         case .privacy: return "lock"
@@ -253,6 +257,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case "integrations": return .calendar
         case "webhook": return .webhooks
         case "mcp", "docsMCP", "docs": return .playbook
+        case "tokens", "connectors", "connected": return .api
         case "dataExport", "export": return .data
         case "privacySupport": return .privacy
         case "support": return .about
@@ -346,8 +351,9 @@ enum SettingsSearchCatalog {
         .init("cloud.sync", "Keep a copy of your meetings on miniti's servers", section: "Cloud", destination: .cloud, keywords: ["sync", "cloud", "devices", "backup", "iPhone", "Mac", "copy"]),
         .init("cloud.status", "Cloud status", section: "Cloud", destination: .cloud, keywords: ["last synced", "size", "sync now", "skipped"], requiresManaged: true),
         .init("cloud.signin", "Web sign-in", section: "Web sign-in", destination: .cloud, keywords: ["email", "magic link", "sign in", "login", "web"], requiresManaged: true),
-        .init("cloud.connected", "Connected apps", section: "Web sign-in", destination: .cloud, keywords: ["Claude", "ChatGPT", "OAuth", "disconnect", "connector"], requiresManaged: true),
-        .init("cloud.tokens", "API access", section: "API access", destination: .cloud, keywords: ["token", "API", "MCP", "Claude Code", "Cursor", "REST", "key"], requiresManaged: true),
+        .init("api.connected", "Connected apps", section: "Connected apps", destination: .api, keywords: ["Claude", "ChatGPT", "OAuth", "disconnect", "connector"], requiresManaged: true),
+        .init("api.tokens", "Tokens", section: "Tokens", destination: .api, keywords: ["token", "API", "REST", "key", "scripts", "curl"], requiresManaged: true),
+        .init("api.setup", "Connect an app", section: "Connect", destination: .api, keywords: ["MCP", "Claude", "ChatGPT", "Claude Code", "Cursor", "VS Code", "Windsurf", "Codex", "Gemini"], requiresManaged: true),
         .init("cloud.delete", "Delete cloud copy", section: "Cloud", destination: .cloud, keywords: ["remove", "wipe", "server", "delete"], requiresManaged: true),
 
         .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
