@@ -38,7 +38,7 @@ Covers JSON decoding, data models, pure computation, payload construction, the p
 
 ## Running tests
 
-Use the fastlane lanes. A direct `xcodebuild test` with `-only-testing:` filters hung the macOS test host twice on 2026-10-15 ("The test runner hung before establishing connection"); `fastlane mac test` on the same tree ran fine. The macOS host app shares the Mac's own Keychain, so a test that constructs `AppState()` may find it enrolled.
+Use the fastlane lanes. "The test runner hung before establishing connection" on macOS (seen 2026-10-15 with a direct `xcodebuild test -only-testing:` run and 2026-10-21 with `fastlane mac test` itself) is a Keychain permission dialog: `AppState.init` reads the managed credential through `SecItemCopyMatching` on the main thread, the Debug-signed test host is not the app that wrote the item, and macOS puts up "miniti wants to use your confidential information stored in the keychain", which blocks the host before it can connect to XCTest. Sampling the host (`sample <pid>`) shows the main thread inside `KeychainClientAuthStore.load()`. Click **Always Allow** on that dialog once and the lanes run; it comes back whenever the release app re-creates the item (a Sparkle update did on 2026-10-21). The macOS host app shares the Mac's own Keychain, so a test that constructs `AppState()` may find it enrolled.
 
 
 - Run macOS tests: `fastlane mac test` (or `xcodebuild test -scheme Miniti -destination 'platform=macOS' -derivedDataPath DerivedDataLocal -only-testing:MinitiTests`)
