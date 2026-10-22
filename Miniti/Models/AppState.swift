@@ -356,6 +356,7 @@ enum SettingsSearchCatalog {
         .init("api.setup", "Connect an app", section: "Connect", destination: .api, keywords: ["MCP", "Claude", "ChatGPT", "Claude Code", "Cursor", "VS Code", "Windsurf", "Codex", "Gemini"], requiresManaged: true),
         .init("cloud.delete", "Delete cloud copy", section: "Cloud", destination: .cloud, keywords: ["remove", "wipe", "server", "delete"], requiresManaged: true),
 
+        .init("privacy.thirdPartyAI", "Sending meetings", section: "Deepgram and OpenAI", destination: .privacy, keywords: ["permission", "consent", "deepgram", "openai", "allow", "withdraw", "third party"]),
         .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
         .init("privacy.models", "Models on This Device", section: "Models on this device", destination: .privacy, keywords: ["download", "remove", "nemotron", "disk"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
@@ -962,21 +963,55 @@ final class AppState: ObservableObject {
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasAcceptedTerms") private var legacyHasAcceptedTerms: Bool = false
     @AppStorage("acceptedTermsVersion") private var acceptedTermsVersion: Int = 0
+    /// The disclosure version the person answered "not now" to. The first screen steps aside
+    /// once the current version has been answered either way; a record attempt asks again.
+    @AppStorage("declinedTermsVersion") private var declinedTermsVersion: Int = 0
     /// 2 (3.3.0): the first screen now names Deepgram and OpenAI, says what each receives, and
     /// asks for permission before anything is sent. Everyone sees it once.
     private let currentTermsVersion = 2
+    /// Set when a recording is attempted without permission; the main view presents the
+    /// disclosure as a sheet so the person can allow it at that moment.
+    @Published var showThirdPartyAIConsent = false
 
+    /// Permission to send meeting audio and text to Deepgram and OpenAI (App Review 5.1.2(i)).
+    /// Gates every recording start and every network insight.
     var hasAcceptedTerms: Bool {
         get { acceptedTermsVersion >= currentTermsVersion }
         set {
             if newValue {
                 acceptedTermsVersion = currentTermsVersion
                 legacyHasAcceptedTerms = true
+                declinedTermsVersion = 0
             } else {
                 acceptedTermsVersion = 0
                 legacyHasAcceptedTerms = false
             }
         }
+    }
+
+    /// True once the current disclosure has been answered either way, so the first screen
+    /// steps aside. Only `hasAcceptedTerms` lets anything be sent.
+    var hasAnsweredThirdPartyAIConsent: Bool {
+        Self.thirdPartyAIConsentAnswered(
+            acceptedVersion: acceptedTermsVersion,
+            declinedVersion: declinedTermsVersion,
+            currentVersion: currentTermsVersion
+        )
+    }
+
+    nonisolated static func thirdPartyAIConsentAnswered(acceptedVersion: Int, declinedVersion: Int, currentVersion: Int) -> Bool {
+        acceptedVersion >= currentVersion || declinedVersion >= currentVersion
+    }
+
+    /// Allow or withdraw permission for Deepgram and OpenAI. Withdrawing records the current
+    /// version as declined so the first screen does not come back at the next launch; the
+    /// person is asked again when they try to record, and can change it in Settings, Privacy.
+    func setThirdPartyAIConsent(_ allowed: Bool) {
+        hasAcceptedTerms = allowed
+        if !allowed {
+            declinedTermsVersion = currentTermsVersion
+        }
+        DebugLogger.shared.log(.app, allowed ? "Deepgram and OpenAI: allowed" : "Deepgram and OpenAI: not allowed, nothing is sent")
     }
     
     /// Type-safe app mode. Changing this is a pure routing toggle — doesn't reset anything.
@@ -6335,7 +6370,8 @@ final class AppState: ObservableObject {
         shouldOpenMeetingAfterFinalization = false
 
         guard hasAcceptedTerms else {
-            DebugLogger.shared.log(.app, "startNewMeeting blocked: terms not accepted")
+            DebugLogger.shared.log(.app, "startNewMeeting blocked: Deepgram and OpenAI not allowed, asking")
+            showThirdPartyAIConsent = true
             return false
         }
         

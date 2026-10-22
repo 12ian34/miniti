@@ -15,7 +15,7 @@ import CoreAudio
 final class MeetingHandoffTests: XCTestCase {
     private var state: AppState!
     private static let touchedDefaults = [
-        "appMode", "deepgramApiKey", "acceptedTermsVersion", "hasAcceptedTerms",
+        "appMode", "deepgramApiKey", "acceptedTermsVersion", "declinedTermsVersion", "hasAcceptedTerms",
         "captureMicrophone", "captureSystemAudio", "smartMeetingsEnabled",
         "autoExportMarkdown", "webhookURL",
         // The host install may run the on-device engines; these tests exercise the Deepgram path.

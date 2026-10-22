@@ -1812,6 +1812,11 @@ struct PrivacySettingsView: View {
 
     var body: some View {
         Form {
+            Section("Deepgram and OpenAI") {
+                ThirdPartyAIConsentRow()
+            }
+            .id("privacy.thirdPartyAI")
+
             Section("Privacy") {
                 PrivateModeToggle()
             }
@@ -1979,6 +1984,50 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
 
 /// One switch for the whole private bundle. The individual toggles under Recording and AI stay
 /// for people who want a mix; this flips them all and restores them on the way back.
+/// The permission the first screen asked for, with the way to withdraw it or give it later.
+private struct ThirdPartyAIConsentRow: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var showingConsent = false
+
+    var body: some View {
+        HStack {
+            Text("Sending meetings")
+            Spacer()
+            Text(appState.hasAcceptedTerms ? "allowed" : "not allowed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        Text(appState.hasAcceptedTerms
+             ? "While you record, the live audio, meeting title and attendee names go to Deepgram for transcription, and the transcript, your notes and the title go to OpenAI for summaries, action items, questions and speaker names. Nothing is stored by either."
+             : "Recording and AI features are off and nothing is sent. You can still read, import and export your meetings.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if appState.hasAcceptedTerms {
+            Button("Withdraw permission") {
+                appState.setThirdPartyAIConsent(false)
+            }
+            .disabled(appState.isRecording)
+            if appState.isRecording {
+                Text("Stop the recording first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Button("Allow…") {
+                showingConsent = true
+            }
+            .sheet(isPresented: $showingConsent) {
+                TermsAcceptanceView(presentation: .sheet)
+                    #if os(macOS)
+                    .frame(width: 560, height: 520)
+                    #else
+                    .preferredColorScheme(.dark)
+                    #endif
+            }
+        }
+    }
+}
+
 private struct PrivateModeToggle: View {
     @EnvironmentObject private var appState: AppState
 

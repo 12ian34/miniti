@@ -319,6 +319,10 @@ struct MainWindow: View {
         }
         .frame(minWidth: 760, minHeight: 520)
         .background(Theme.bg)
+        .sheet(isPresented: $appState.showThirdPartyAIConsent) {
+            TermsAcceptanceView(presentation: .sheet)
+                .frame(width: 560, height: 520)
+        }
         .background(
             MainWindowNavigationSwipeObserver(
                 canGoBack: canNavigateBack,

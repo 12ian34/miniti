@@ -60,6 +60,10 @@ struct MainTabView: View {
                 SettingsView_iOS()
                     .preferredColorScheme(.dark)
             }
+            .sheet(isPresented: $appState.showThirdPartyAIConsent) {
+                TermsAcceptanceView(presentation: .sheet)
+                    .preferredColorScheme(.dark)
+            }
     }
 
     @ViewBuilder

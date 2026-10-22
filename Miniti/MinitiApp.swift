@@ -402,7 +402,7 @@ struct MinitiApp: App {
                     StoreRecoveryView(failure: failure, readOnlyContainer: readOnly, retry: retryStoreOpen)
                 } else if appState.requiresForceUpdate {
                     ForceUpdateView()
-                } else if !appState.hasAcceptedTerms {
+                } else if !appState.hasAnsweredThirdPartyAIConsent {
                     TermsAcceptanceView()
                 } else if appState.hasCompletedOnboarding {
                     MainWindow()

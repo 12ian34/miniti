@@ -3020,6 +3020,54 @@ final class AppStateComputationTests: XCTestCase {
 
 // MARK: - Cross-speaker mic dedup (cumulative finals whose diarized speaker flips)
 
+@MainActor
+final class ThirdPartyAIConsentTests: XCTestCase {
+    private let keys = ["acceptedTermsVersion", "declinedTermsVersion", "hasAcceptedTerms"]
+
+    private func withCleanConsentDefaults(_ body: () throws -> Void) rethrows {
+        let defaults = UserDefaults.standard
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer {
+            for (key, value) in saved {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        try body()
+    }
+
+    func testTheFirstScreenStepsAsideOnceAnsweredEitherWay() {
+        XCTAssertFalse(AppState.thirdPartyAIConsentAnswered(acceptedVersion: 0, declinedVersion: 0, currentVersion: 2))
+        XCTAssertFalse(AppState.thirdPartyAIConsentAnswered(acceptedVersion: 1, declinedVersion: 0, currentVersion: 2), "an older acceptance sees the new disclosure")
+        XCTAssertFalse(AppState.thirdPartyAIConsentAnswered(acceptedVersion: 0, declinedVersion: 1, currentVersion: 2), "an older decline sees the new disclosure")
+        XCTAssertTrue(AppState.thirdPartyAIConsentAnswered(acceptedVersion: 2, declinedVersion: 0, currentVersion: 2))
+        XCTAssertTrue(AppState.thirdPartyAIConsentAnswered(acceptedVersion: 0, declinedVersion: 2, currentVersion: 2))
+    }
+
+    func testNotNowOpensTheAppWithoutPermissionAndRecordAsksAgain() {
+        withCleanConsentDefaults {
+            let state = AppState()
+            XCTAssertFalse(state.hasAcceptedTerms)
+            XCTAssertFalse(state.hasAnsweredThirdPartyAIConsent, "fresh install sees the first screen")
+
+            state.setThirdPartyAIConsent(false)
+            XCTAssertTrue(state.hasAnsweredThirdPartyAIConsent, "not now moves past the first screen")
+            XCTAssertFalse(state.hasAcceptedTerms, "but nothing may be sent")
+
+            XCTAssertFalse(state.startNewMeeting(), "a record attempt is refused")
+            XCTAssertTrue(state.showThirdPartyAIConsent, "and asks for permission at that moment")
+
+            state.setThirdPartyAIConsent(true)
+            XCTAssertTrue(state.hasAcceptedTerms)
+            XCTAssertEqual(UserDefaults.standard.integer(forKey: "declinedTermsVersion"), 0, "allowing clears the decline")
+
+            state.setThirdPartyAIConsent(false)
+            XCTAssertFalse(state.hasAcceptedTerms, "withdrawing in Settings turns it off again")
+            XCTAssertTrue(state.hasAnsweredThirdPartyAIConsent, "without bringing the first screen back")
+        }
+    }
+}
+
 final class MicFinalDedupTests: XCTestCase {
     private func micSegment(_ text: String, speaker: Int, timestamp: TimeInterval) -> AppState.LiveSegment {
         AppState.LiveSegment(

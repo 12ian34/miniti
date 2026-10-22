@@ -158,7 +158,7 @@ enum ScreenshotMode {
         var domain = defaults.volatileDomain(forName: UserDefaults.argumentDomain)
         let overrides: [String: Any] = [
             "hasCompletedOnboarding": true,
-            "acceptedTermsVersion": 1,
+            "acceptedTermsVersion": 2,
             "appMode": "managed",
             "salesInsightsEnabled": true,
             "templateInsightsEnabled": true,
