@@ -1393,7 +1393,7 @@ struct IntegrationsSettingsView: View {
         Form {
             if content == .dataExport {
             Section("Import from Granola") {
-                Text("Generate a CSV from Granola, then import it into Miniti. Imported meetings keep their Granola provenance, and importing the same export again skips duplicates.")
+                Text("Generate an export in Granola, then import it here. Imported meetings keep their Granola provenance, and importing the same export again skips duplicates.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -1414,7 +1414,7 @@ struct IntegrationsSettingsView: View {
                                 Text("importing…")
                             }
                         } else {
-                            Label("Import CSV…", systemImage: "tray.and.arrow.down")
+                            Label("Import…", systemImage: "tray.and.arrow.down")
                         }
                     }
                     .disabled(isImportingGranola || appState.persistentStoreFailure != nil)
@@ -1435,7 +1435,7 @@ struct IntegrationsSettingsView: View {
                     .foregroundStyle(granolaImportFailed ? ColorPalette.Status.error : ColorPalette.Accent.green)
                 }
 
-                Text("Granola opens Profile → Account management. Choose Generate CSV; Granola emails the download when it is ready.")
+                Text("Granola opens Profile → Account management. Choose Generate CSV; Granola emails a zip when it is ready. Import the zip, or the CSV files inside it. Granola's transcripts carry no speakers or timings, so an imported meeting shows one speaker and an estimated length.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1671,10 +1671,11 @@ struct IntegrationsSettingsView: View {
         .settingsSearchScrolling(for: content.destination)
         .fileImporter(
             isPresented: $isGranolaImporterPresented,
-            allowedContentTypes: [.commaSeparatedText, .plainText]
+            allowedContentTypes: [.zip, .commaSeparatedText, .plainText],
+            allowsMultipleSelection: true
         ) { result in
-            if case .success(let url) = result {
-                importGranolaCSV(from: url)
+            if case .success(let urls) = result {
+                importGranolaCSV(from: urls)
             } else if case .failure(let error) = result {
                 granolaImportFailed = true
                 granolaImportMessage = error.localizedDescription
@@ -1682,14 +1683,14 @@ struct IntegrationsSettingsView: View {
         }
     }
 
-    private func importGranolaCSV(from url: URL) {
-        guard appState.persistentStoreFailure == nil else { return }
+    private func importGranolaCSV(from urls: [URL]) {
+        guard appState.persistentStoreFailure == nil, !urls.isEmpty else { return }
         isImportingGranola = true
         granolaImportMessage = nil
         granolaImportFailed = false
         Task {
             do {
-                let parsed = try await GranolaCSVImporter.load(from: url)
+                let parsed = try await GranolaCSVImporter.load(from: urls)
                 let result = try GranolaCSVImporter.importMeetings(
                     parsed,
                     into: modelContext,

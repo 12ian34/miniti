@@ -976,7 +976,7 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
 
         XCTAssertEqual(result.imported, 1)
         let meeting = try XCTUnwrap(try context.fetch(FetchDescriptor<Meeting>()).first)
-        XCTAssertEqual(meeting.summaryText, "### Decisions\n- Ship on Friday")
+        XCTAssertEqual(meeting.summaryText, "Decisions\n- Ship on Friday")
         XCTAssertTrue(meeting.segments.isEmpty)
         XCTAssertEqual(meeting.externalSource, "granola")
     }
@@ -992,6 +992,140 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
         let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
         XCTAssertEqual(parsed.meetings.count, 1)
         XCTAssertEqual(parsed.skippedRows, 1)
+    }
+
+    /// The bulk export Granola emailed on 2026-10-23: `document_*` columns, a markdown summary
+    /// that opens with a title heading, and a transcript of one short fragment per line with no
+    /// speakers and no timings.
+    @MainActor
+    func testGranolaBulkExportColumnsSentencesAndEstimatedLength() throws {
+        let transcript = """
+        And and that's, like,
+        if they had
+        started a bit earlier, then we would have just used it.
+        Yeah.
+        Just got everything in Fathom now
+        """
+        let summary = "# Emily and Ian Meeting Notes\n\n### CRM Discussion\n\n- Emily \\& Ian compared **Attio** with Salesforce\n  - Found it easy"
+        let csv = """
+        document_id,user_email,document_title,workspace_name,document_created,summary,notes,transcript
+        04827048-b78d-47e0-acf3-3bb9eb9a1055,ian@example.com,Emily and Ian,Ian,2025-07-31T13:43:28.068Z,"\(csvEscaped(summary))",my own note,"\(csvEscaped(transcript))"
+        """
+
+        let parsed = try GranolaCSVImporter.parse(data: Data(csv.utf8))
+        XCTAssertEqual(parsed.skippedRows, 0)
+        let record = try XCTUnwrap(parsed.meetings.first)
+        XCTAssertEqual(record.title, "Emily and Ian")
+        XCTAssertEqual(record.externalID, "04827048-b78d-47e0-acf3-3bb9eb9a1055")
+        XCTAssertEqual(record.startTime.timeIntervalSince1970, 1_753_969_408.068, accuracy: 0.01)
+        XCTAssertEqual(record.transcript.map(\.text), [
+            "And and that's, like, if they had started a bit earlier, then we would have just used it.",
+            "Yeah.",
+            "Just got everything in Fathom now",
+        ])
+        XCTAssertTrue(record.transcript.allSatisfy { $0.speakerName == nil && !$0.isSelf && $0.relativeTimestamp == nil })
+        // 25 words at 150 a minute: 10 seconds.
+        XCTAssertEqual(record.endTime.timeIntervalSince(record.startTime), 10, accuracy: 0.001)
+        XCTAssertEqual(record.summary, "CRM Discussion\n\n- Emily & Ian compared Attio with Salesforce\n  - Found it easy")
+        XCTAssertEqual(record.notes, "my own note")
+
+        let result = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+        XCTAssertEqual(result.imported, 1)
+        let meeting = try XCTUnwrap(try context.fetch(FetchDescriptor<Meeting>()).first)
+        XCTAssertEqual(meeting.title, "Emily and Ian")
+        XCTAssertEqual(meeting.duration ?? -1, 10, accuracy: 0.001)
+        let segments = meeting.segments.sorted { $0.timestamp < $1.timestamp }
+        XCTAssertEqual(segments.map(\.speaker), [0, 0, 0])
+        XCTAssertTrue(meeting.speakerNames.isEmpty)
+        XCTAssertTrue(meeting.selfSpeakerIDs.isEmpty)
+        // Turns sit where their words fall: 18 of 25 words before "Yeah.", 19 before the last turn.
+        XCTAssertEqual(segments.map(\.timestamp), [0, 7.2, 7.6])
+    }
+
+    func testGranolaLabelledTranscriptKeepsSpeakersAndContinuations() throws {
+        let csv = """
+        document_id,document_title,document_created,transcript
+        abc,Panel,2025-06-11T16:04:41.102Z,"Speaker A: On the way over here.
+        Speaker B: Yes.
+        and it carried on
+        Speaker A: Right."
+        """
+        let record = try XCTUnwrap(GranolaCSVImporter.parse(data: Data(csv.utf8)).meetings.first)
+        XCTAssertEqual(record.transcript.map(\.text), ["On the way over here.", "Yes. and it carried on", "Right."])
+        XCTAssertEqual(record.transcript.map(\.speakerKey), ["speaker a", "speaker b", "speaker a"])
+        XCTAssertTrue(record.transcript.allSatisfy { $0.speakerName == nil })
+    }
+
+    func testGranolaPlainTextSummaryKeepsWordsDropsMarkup() {
+        XCTAssertEqual(GranolaCSVImporter.plainTextSummary("### Personal Updates \\& Office Logistics\n\n- Matthew moving to London\n\n\n\n- Done"),
+                       "Personal Updates & Office Logistics\n\n- Matthew moving to London\n\n- Done")
+        XCTAssertEqual(GranolaCSVImporter.plainTextSummary("#### Deep\nSee \\[docs\\](x) and 2 \\* 3"), "Deep\nSee [docs](x) and 2 * 3")
+        XCTAssertEqual(GranolaCSVImporter.plainTextSummary("Plain prose stays"), "Plain prose stays")
+        XCTAssertEqual(GranolaCSVImporter.estimatedDuration(words: 2847), 1139)
+        XCTAssertEqual(GranolaCSVImporter.estimatedDuration(words: 0), 0)
+    }
+
+    @MainActor
+    func testGranolaZipIsReadLikeItsCSVParts() throws {
+        let header = "document_id,document_title,document_created,summary,transcript\n"
+        let part0 = header + "id-0,First,2025-07-31T13:43:28.068Z,Notes one,Hello there.\n"
+        let part1 = header + "id-1,Second,2025-08-01T09:00:00.000Z,Notes two,Hi again.\n"
+        let archive = try zipArchive([
+            (name: "granola-export-2026-10-23/", data: Data(), deflate: false),
+            (name: "granola-export-2026-10-23/granola-export-2026-10-23-001.csv", data: Data(part1.utf8), deflate: true),
+            (name: "granola-export-2026-10-23/granola-export-2026-10-23-000.csv", data: Data(part0.utf8), deflate: false),
+            (name: "__MACOSX/granola-export-2026-10-23/._granola-export-2026-10-23-000.csv", data: Data([0, 1, 2]), deflate: false),
+            (name: "granola-export-2026-10-23/readme.txt", data: Data("ignored".utf8), deflate: false),
+        ])
+
+        XCTAssertTrue(GranolaZipReader.isZip(archive))
+        XCTAssertFalse(GranolaZipReader.isZip(Data(part0.utf8)))
+        let parsed = try GranolaCSVImporter.parse(download: archive)
+        XCTAssertEqual(parsed.meetings.map(\.title), ["First", "Second"])
+        XCTAssertEqual(parsed.meetings.map(\.externalID), ["id-0", "id-1"])
+        XCTAssertEqual(try GranolaCSVImporter.parse(download: Data(part0.utf8)).meetings.count, 1)
+
+        let result = try GranolaCSVImporter.importMeetings(parsed, into: context, defaultLanguage: "en")
+        XCTAssertEqual(result.imported, 2)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<Meeting>()), 2)
+    }
+
+    func testGranolaZipWithoutCSVIsRefused() throws {
+        let archive = try zipArchive([(name: "notes.txt", data: Data("x".utf8), deflate: false)])
+        XCTAssertThrowsError(try GranolaCSVImporter.parse(download: archive)) { error in
+            XCTAssertEqual(error as? GranolaCSVImportError, .noCSVInArchive)
+        }
+        XCTAssertThrowsError(try GranolaCSVImporter.parse(download: Data("PK\u{03}\u{04}junk".utf8))) { error in
+            XCTAssertEqual(error as? GranolaCSVImportError, .unsupportedArchive)
+        }
+    }
+
+    /// A minimal zip writer: local headers, central directory, end record. CRCs are zero because
+    /// the reader does not check them.
+    private func zipArchive(_ entries: [(name: String, data: Data, deflate: Bool)]) throws -> Data {
+        func le16(_ value: Int) -> [UInt8] { [UInt8(value & 0xff), UInt8((value >> 8) & 0xff)] }
+        func le32(_ value: Int) -> [UInt8] { le16(value & 0xffff) + le16((value >> 16) & 0xffff) }
+        var output = Data()
+        var central = Data()
+        for entry in entries {
+            let payload = entry.deflate ? try (entry.data as NSData).compressed(using: .zlib) as Data : entry.data
+            let name = Data(entry.name.utf8)
+            let method = entry.deflate ? 8 : 0
+            let localOffset = output.count
+            output.append(contentsOf: le32(0x0403_4b50) + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(0)
+                + le32(payload.count) + le32(entry.data.count) + le16(name.count) + le16(0))
+            output.append(name)
+            output.append(payload)
+            central.append(contentsOf: le32(0x0201_4b50) + le16(20) + le16(20) + le16(0) + le16(method) + le16(0) + le16(0) + le32(0)
+                + le32(payload.count) + le32(entry.data.count) + le16(name.count) + le16(0) + le16(0) + le16(0) + le16(0) + le32(0)
+                + le32(localOffset))
+            central.append(name)
+        }
+        let directoryOffset = output.count
+        output.append(central)
+        output.append(contentsOf: le32(0x0605_4b50) + le16(0) + le16(0) + le16(entries.count) + le16(entries.count)
+            + le32(central.count) + le32(directoryOffset) + le16(0))
+        return output
     }
 
     private func csvEscaped(_ value: String) -> String {

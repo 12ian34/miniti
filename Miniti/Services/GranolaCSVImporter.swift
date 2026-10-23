@@ -62,6 +62,8 @@ enum GranolaCSVImportError: LocalizedError {
     case malformedCSV
     case missingRecognizedColumns
     case noImportableMeetings
+    case noCSVInArchive
+    case unsupportedArchive
 
     var errorDescription: String? {
         switch self {
@@ -73,6 +75,10 @@ enum GranolaCSVImportError: LocalizedError {
             return "This CSV does not contain recognizable Granola meeting columns."
         case .noImportableMeetings:
             return "No importable meetings were found. Each row needs a meeting date."
+        case .noCSVInArchive:
+            return "The zip does not contain a Granola CSV file."
+        case .unsupportedArchive:
+            return "This zip could not be read. Unzip it and import the CSV files inside."
         }
     }
 }
@@ -82,9 +88,9 @@ enum GranolaCSVImporter {
     static let exportURL = URL(string: "https://notes.granola.ai/settings/profile")!
 
     private static let idHeaders = ["id", "noteid", "documentid", "meetingid", "granolaid"]
-    private static let titleHeaders = ["title", "notetitle", "meetingtitle", "name"]
+    private static let titleHeaders = ["title", "notetitle", "meetingtitle", "documenttitle", "name"]
     private static let startHeaders = [
-        "starttime", "meetingstart", "meetingdate", "date", "createdat", "created",
+        "starttime", "meetingstart", "meetingdate", "date", "createdat", "created", "documentcreated",
         "scheduledstarttime", "calendareventstart"
     ]
     private static let endHeaders = [
@@ -96,21 +102,63 @@ enum GranolaCSVImporter {
     ].map(normalizeHeader)
     private static let transcriptHeaders = ["transcript", "rawtranscript", "fulltranscript", "transcription"]
     private static let attendeeHeaders = ["attendees", "invitees", "participants", "people"]
-    private static let ownerEmailHeaders = ["owneremail", "owner", "createdbyemail"]
+    private static let ownerEmailHeaders = ["owneremail", "owner", "createdbyemail", "useremail"]
     private static let organizerHeaders = ["organizer", "organiser", "organizeremail", "organiseremail"]
     private static let calendarIDHeaders = ["calendareventid", "calendarid", "eventid"]
     private static let urlHeaders = ["weburl", "granolaurl", "url", "link"]
+    /// Granola prefixes its columns with the kind of record (`document_title`, `document_created`).
+    /// A header that is not known as written is retried without that prefix.
+    private static let headerPrefixes = ["document", "note", "meeting", "granola"]
+    private static let recognizedHeaders: Set<String> = Set(
+        idHeaders + titleHeaders + startHeaders + endHeaders + summaryHeaders + notesHeaders +
+        transcriptHeaders + attendeeHeaders + ownerEmailHeaders + organizerHeaders +
+        calendarIDHeaders + urlHeaders
+    )
+
+    /// Granola's bulk export carries no end time and no word timings, so a meeting's length is
+    /// read from how much was said. Conversation runs at about 150 words a minute.
+    static let estimatedWordsPerMinute: Double = 150
 
     static func load(from url: URL) async throws -> GranolaCSVParseResult {
+        try await load(from: [url])
+    }
+
+    /// Reads what Granola emails: the zip itself, or the CSV files inside it (a large export is
+    /// split into `-000.csv`, `-001.csv`, …). Every file is parsed and the results merged; the
+    /// first file that cannot be read fails the import with its own message.
+    static func load(from urls: [URL]) async throws -> GranolaCSVParseResult {
         try await Task.detached(priority: .userInitiated) {
-            let hasSecurityScope = url.startAccessingSecurityScopedResource()
-            defer {
-                if hasSecurityScope {
-                    url.stopAccessingSecurityScopedResource()
+            var meetings: [GranolaImportedMeeting] = []
+            var skippedRows = 0
+            for url in urls {
+                let hasSecurityScope = url.startAccessingSecurityScopedResource()
+                defer {
+                    if hasSecurityScope {
+                        url.stopAccessingSecurityScopedResource()
+                    }
                 }
+                let parsed = try parse(download: Data(contentsOf: url))
+                meetings.append(contentsOf: parsed.meetings)
+                skippedRows += parsed.skippedRows
             }
-            return try parse(data: Data(contentsOf: url))
+            return GranolaCSVParseResult(meetings: meetings, skippedRows: skippedRows)
         }.value
+    }
+
+    /// A Granola download is either a CSV or the zip that holds one or more CSV parts.
+    static func parse(download data: Data) throws -> GranolaCSVParseResult {
+        guard GranolaZipReader.isZip(data) else { return try parse(data: data) }
+        let parts = try GranolaZipReader.csvEntries(in: data)
+        guard !parts.isEmpty else { throw GranolaCSVImportError.noCSVInArchive }
+
+        var meetings: [GranolaImportedMeeting] = []
+        var skippedRows = 0
+        for part in parts {
+            let parsed = try parse(data: part)
+            meetings.append(contentsOf: parsed.meetings)
+            skippedRows += parsed.skippedRows
+        }
+        return GranolaCSVParseResult(meetings: meetings, skippedRows: skippedRows)
     }
 
     static func parse(data: Data) throws -> GranolaCSVParseResult {
@@ -125,12 +173,7 @@ enum GranolaCSVImporter {
         guard let rawHeaders = rows.first, !rawHeaders.isEmpty else {
             throw GranolaCSVImportError.missingRecognizedColumns
         }
-        let headers = rawHeaders.map(normalizeHeader)
-        let recognizedHeaders = Set(
-            idHeaders + titleHeaders + startHeaders + endHeaders + summaryHeaders + notesHeaders +
-            transcriptHeaders + attendeeHeaders + ownerEmailHeaders + organizerHeaders +
-            calendarIDHeaders + urlHeaders
-        )
+        let headers = rawHeaders.map(canonicalHeader)
         guard headers.contains(where: recognizedHeaders.contains) else {
             throw GranolaCSVImportError.missingRecognizedColumns
         }
@@ -195,6 +238,9 @@ enum GranolaCSVImporter {
         var speakerNames: [String: String] = [:]
         var selfSpeakerIDs: Set<Int> = []
         let duration = max(0, record.endTime.timeIntervalSince(record.startTime))
+        let wordCounts = record.transcript.map { wordCount($0.text) }
+        let totalWords = wordCounts.reduce(0, +)
+        var wordsBefore = 0
 
         let segments = record.transcript.enumerated().map { index, turn in
             let speakerID: Int
@@ -221,11 +267,13 @@ enum GranolaCSVImporter {
                 timestamp = max(0, relative)
             } else if let absolute = turn.absoluteTimestamp {
                 timestamp = max(0, absolute.timeIntervalSince(record.startTime))
-            } else if duration > 0, record.transcript.count > 1 {
-                timestamp = duration * Double(index) / Double(record.transcript.count - 1)
+            } else if duration > 0, totalWords > 0 {
+                // No timings in the export: a turn sits where its words fall in the meeting.
+                timestamp = duration * Double(wordsBefore) / Double(totalWords)
             } else {
                 timestamp = Double(index)
             }
+            wordsBefore += wordCounts[index]
 
             return TranscriptSegment(
                 text: turn.text,
@@ -277,11 +325,14 @@ enum GranolaCSVImporter {
         let rowEnd = parseDate(value(in: row, headers: headers, aliases: endHeaders))
         let lastTranscriptDate = transcript.compactMap(\.absoluteTimestamp).max()
         let lastRelativeTimestamp = transcript.compactMap(\.relativeTimestamp).max()
+        let spokenWords = transcript.reduce(0) { $0 + wordCount($1.text) }
         let endTime = max(
             startTime,
-            rowEnd ?? lastTranscriptDate ?? lastRelativeTimestamp.map { startTime.addingTimeInterval($0) } ?? startTime
+            rowEnd ?? lastTranscriptDate
+                ?? lastRelativeTimestamp.map { startTime.addingTimeInterval($0) }
+                ?? startTime.addingTimeInterval(estimatedDuration(words: spokenWords))
         )
-        let summary = nilIfEmpty(value(in: row, headers: headers, aliases: summaryHeaders))
+        let summary = nilIfEmpty(value(in: row, headers: headers, aliases: summaryHeaders)).map(plainTextSummary)
         let notes = value(in: row, headers: headers, aliases: notesHeaders)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let sourceURL = nilIfEmpty(value(in: row, headers: headers, aliases: urlHeaders))
@@ -364,6 +415,12 @@ enum GranolaCSVImporter {
         return rows
     }
 
+    private struct ParsedTranscriptLine {
+        let timestamp: TimeInterval?
+        let text: String
+        let speaker: (speaker: String, text: String)?
+    }
+
     private static func parseTranscript(_ rawValue: String) -> [GranolaImportedTranscriptTurn] {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
@@ -371,44 +428,139 @@ enum GranolaCSVImporter {
             return jsonTurns
         }
 
-        var turns: [GranolaImportedTranscriptTurn] = []
-        for rawLine in trimmed.components(separatedBy: .newlines) {
-            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !line.isEmpty else { continue }
+        let lines = trimmed.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .map { line -> ParsedTranscriptLine in
+                let leading = extractLeadingTimestamp(from: line)
+                return ParsedTranscriptLine(
+                    timestamp: leading.timestamp,
+                    text: leading.remainder,
+                    speaker: splitSpeakerPrefix(leading.remainder)
+                )
+            }
+        let labelledCount = lines.filter { $0.speaker != nil }.count
+        let turns = labelledCount * 2 >= lines.count ? labelledTurns(from: lines) : unlabelledTurns(from: lines)
+        return turns.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 
-            let timestampResult = extractLeadingTimestamp(from: line)
-            let remainder = timestampResult.remainder
-            if let speakerSplit = splitSpeakerPrefix(remainder) {
+    /// Most lines name a speaker (`Speaker A: …`, `[00:12] Me: …`); a line without one continues
+    /// the previous turn.
+    private static func labelledTurns(from lines: [ParsedTranscriptLine]) -> [GranolaImportedTranscriptTurn] {
+        var turns: [GranolaImportedTranscriptTurn] = []
+        for line in lines {
+            if let speakerSplit = line.speaker {
                 let speaker = speakerMetadata(from: speakerSplit.speaker)
                 turns.append(GranolaImportedTranscriptTurn(
                     text: speakerSplit.text,
                     speakerKey: speaker.key,
                     speakerName: speaker.name,
                     isSelf: speaker.isSelf,
-                    relativeTimestamp: timestampResult.timestamp,
+                    relativeTimestamp: line.timestamp,
                     absoluteTimestamp: nil
                 ))
             } else if let last = turns.popLast() {
                 turns.append(GranolaImportedTranscriptTurn(
-                    text: last.text + " " + remainder,
+                    text: last.text + " " + line.text,
                     speakerKey: last.speakerKey,
                     speakerName: last.speakerName,
                     isSelf: last.isSelf,
-                    relativeTimestamp: last.relativeTimestamp ?? timestampResult.timestamp,
+                    relativeTimestamp: last.relativeTimestamp ?? line.timestamp,
                     absoluteTimestamp: last.absoluteTimestamp
                 ))
             } else {
                 turns.append(GranolaImportedTranscriptTurn(
-                    text: remainder,
+                    text: line.text,
                     speakerKey: "unknown",
                     speakerName: nil,
                     isSelf: false,
-                    relativeTimestamp: timestampResult.timestamp,
+                    relativeTimestamp: line.timestamp,
                     absoluteTimestamp: nil
                 ))
             }
         }
-        return turns.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return turns
+    }
+
+    /// Granola's bulk export writes most transcripts as one short fragment per line with no
+    /// speaker at all ("Yeah.", "the average talk time indicator and the"). Lines are joined until
+    /// a sentence ends so each turn reads as one thought. Nobody is named and nobody is You.
+    private static let maxWordsPerUnlabelledTurn = 60
+
+    private static func unlabelledTurns(from lines: [ParsedTranscriptLine]) -> [GranolaImportedTranscriptTurn] {
+        var turns: [GranolaImportedTranscriptTurn] = []
+        var text = ""
+        var words = 0
+        var timestamp: TimeInterval?
+
+        func flush() {
+            guard !text.isEmpty else { return }
+            turns.append(GranolaImportedTranscriptTurn(
+                text: text,
+                speakerKey: "unknown",
+                speakerName: nil,
+                isSelf: false,
+                relativeTimestamp: timestamp,
+                absoluteTimestamp: nil
+            ))
+            text = ""
+            words = 0
+            timestamp = nil
+        }
+
+        for line in lines {
+            if text.isEmpty {
+                timestamp = line.timestamp
+                text = line.text
+            } else {
+                text += " " + line.text
+            }
+            words += wordCount(line.text)
+            if endsSentence(line.text) || words >= maxWordsPerUnlabelledTurn {
+                flush()
+            }
+        }
+        flush()
+        return turns
+    }
+
+    private static func endsSentence(_ text: String) -> Bool {
+        let closers: Set<Character> = ["\"", "\u{201D}", "'", "\u{2019}", ")", "]"]
+        guard let last = text.reversed().first(where: { !closers.contains($0) && !$0.isWhitespace }) else {
+            return false
+        }
+        return [".", "?", "!", "\u{2026}"].contains(last)
+    }
+
+    static func wordCount(_ text: String) -> Int {
+        text.split(whereSeparator: { $0.isWhitespace || $0.isNewline }).count
+    }
+
+    static func estimatedDuration(words: Int) -> TimeInterval {
+        guard words > 0 else { return 0 }
+        return (Double(words) / estimatedWordsPerMinute * 60).rounded()
+    }
+
+    /// Granola's summary column is markdown (headings, bullets, `\&` escapes), usually opening with
+    /// a title heading. miniti shows a summary as plain text, so the markup goes and the words stay.
+    static func plainTextSummary(_ markdown: String) -> String {
+        var lines = markdown.components(separatedBy: .newlines)
+        if let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           lines[first].contains(/^\s*#\s+\S/) {
+            lines.remove(at: first)
+        }
+        let cleaned = lines.map { line -> String in
+            var text = line
+            if let heading = text.firstMatch(of: /^\s*#{1,6}\s+(.*)$/) {
+                text = String(heading.1)
+            }
+            text = text.replacingOccurrences(of: "**", with: "")
+            text = text.replacing(/\\([^A-Za-z0-9\s])/) { String($0.1) }
+            return text
+        }
+        return cleaned.joined(separator: "\n")
+            .replacing(/\n{3,}/, with: "\n\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func parseJSONTranscript(_ text: String) -> [GranolaImportedTranscriptTurn]? {
@@ -660,6 +812,16 @@ enum GranolaCSVImporter {
             .joined()
     }
 
+    private static func canonicalHeader(_ rawValue: String) -> String {
+        let normalized = normalizeHeader(rawValue)
+        if recognizedHeaders.contains(normalized) { return normalized }
+        for prefix in headerPrefixes where normalized.hasPrefix(prefix) {
+            let stripped = String(normalized.dropFirst(prefix.count))
+            if recognizedHeaders.contains(stripped) { return stripped }
+        }
+        return normalized
+    }
+
     private static func nilIfEmpty(_ value: String) -> String? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
@@ -678,5 +840,99 @@ enum GranolaCSVImporter {
     private static func emailDomain(_ email: String) -> String {
         guard let at = email.lastIndex(of: "@") else { return "" }
         return String(email[email.index(after: at)...]).lowercased()
+    }
+}
+
+/// Just enough of the zip format to open the archive Granola emails: stored or deflated entries,
+/// no zip64, no encryption. Anything else is refused with a message that says to unzip by hand.
+enum GranolaZipReader {
+    static let maxEntryBytes = 256 * 1024 * 1024
+
+    static func isZip(_ data: Data) -> Bool {
+        guard data.count >= 4 else { return false }
+        let start = data.startIndex
+        return data[start] == 0x50 && data[start + 1] == 0x4b && data[start + 2] == 0x03 && data[start + 3] == 0x04
+    }
+
+    /// Every `.csv` entry in the archive, in name order, decompressed.
+    static func csvEntries(in data: Data) throws -> [Data] {
+        let bytes = [UInt8](data)
+        guard let directory = endOfCentralDirectory(in: bytes) else {
+            throw GranolaCSVImportError.unsupportedArchive
+        }
+
+        var entries: [(name: String, data: Data)] = []
+        var offset = directory.offset
+        for _ in 0..<directory.entryCount {
+            guard offset + 46 <= bytes.count, u32(bytes, offset) == 0x0201_4b50 else {
+                throw GranolaCSVImportError.unsupportedArchive
+            }
+            let flags = u16(bytes, offset + 8)
+            let method = u16(bytes, offset + 10)
+            let compressedSize = Int(u32(bytes, offset + 20))
+            let uncompressedSize = Int(u32(bytes, offset + 24))
+            let nameLength = Int(u16(bytes, offset + 28))
+            let extraLength = Int(u16(bytes, offset + 30))
+            let commentLength = Int(u16(bytes, offset + 32))
+            let localOffset = Int(u32(bytes, offset + 42))
+            guard offset + 46 + nameLength <= bytes.count else { throw GranolaCSVImportError.unsupportedArchive }
+            let name = String(decoding: bytes[(offset + 46)..<(offset + 46 + nameLength)], as: UTF8.self)
+            offset += 46 + nameLength + extraLength + commentLength
+
+            guard isCSVEntry(name) else { continue }
+            guard flags & 0x1 == 0,
+                  compressedSize != 0xFFFF_FFFF, uncompressedSize != 0xFFFF_FFFF, localOffset != 0xFFFF_FFFF,
+                  uncompressedSize <= maxEntryBytes,
+                  localOffset + 30 <= bytes.count, u32(bytes, localOffset) == 0x0403_4b50 else {
+                throw GranolaCSVImportError.unsupportedArchive
+            }
+            let dataStart = localOffset + 30 + Int(u16(bytes, localOffset + 26)) + Int(u16(bytes, localOffset + 28))
+            guard dataStart + compressedSize <= bytes.count else { throw GranolaCSVImportError.unsupportedArchive }
+            let payload = Data(bytes[dataStart..<(dataStart + compressedSize)])
+
+            switch method {
+            case 0:
+                entries.append((name, payload))
+            case 8:
+                guard let inflated = try? (payload as NSData).decompressed(using: .zlib) as Data,
+                      inflated.count == uncompressedSize else {
+                    throw GranolaCSVImportError.unsupportedArchive
+                }
+                entries.append((name, inflated))
+            default:
+                throw GranolaCSVImportError.unsupportedArchive
+            }
+        }
+        return entries.sorted { $0.name < $1.name }.map(\.data)
+    }
+
+    private static func isCSVEntry(_ name: String) -> Bool {
+        guard !name.hasSuffix("/"), !name.hasPrefix("__MACOSX/"), !name.contains("/__MACOSX/") else { return false }
+        let base = name.split(separator: "/").last.map(String.init) ?? name
+        return !base.hasPrefix(".") && base.lowercased().hasSuffix(".csv")
+    }
+
+    private static func endOfCentralDirectory(in bytes: [UInt8]) -> (entryCount: Int, offset: Int)? {
+        guard bytes.count >= 22 else { return nil }
+        let lowest = max(0, bytes.count - 22 - 0xFFFF)
+        var index = bytes.count - 22
+        while index >= lowest {
+            if u32(bytes, index) == 0x0605_4b50 {
+                let entryCount = Int(u16(bytes, index + 10))
+                let offset = Int(u32(bytes, index + 16))
+                guard offset < bytes.count else { return nil }
+                return (entryCount, offset)
+            }
+            index -= 1
+        }
+        return nil
+    }
+
+    private static func u16(_ bytes: [UInt8], _ offset: Int) -> UInt16 {
+        UInt16(bytes[offset]) | UInt16(bytes[offset + 1]) << 8
+    }
+
+    private static func u32(_ bytes: [UInt8], _ offset: Int) -> UInt32 {
+        UInt32(bytes[offset]) | UInt32(bytes[offset + 1]) << 8 | UInt32(bytes[offset + 2]) << 16 | UInt32(bytes[offset + 3]) << 24
     }
 }

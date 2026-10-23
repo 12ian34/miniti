@@ -4,6 +4,13 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
+### Unreleased - v3.3.1
+
+- improvement: (macOS and iOS) Granola import takes the zip Granola emails, or several CSV files at once
+- fix: (macOS and iOS) Granola import refused the export Granola makes today and said every row was missing a date. The columns changed. miniti reads them again
+- fix: (macOS and iOS) an imported Granola transcript arrived as one block with no length. Each sentence is its own turn now, and the length is estimated from the words spoken, about 150 a minute
+- fix: (macOS and iOS) Granola summaries show as plain text instead of raw markdown
+
 ### 2026-10-21 - v3.3.0
 
 - new: (macOS and iOS) cloud is one switch for your account. Turn it on on one device and every device on the account turns on at its next launch. Turn it off anywhere and it is off everywhere. Private mode still pauses it on that device only

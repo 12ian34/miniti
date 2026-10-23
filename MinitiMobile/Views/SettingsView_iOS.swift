@@ -678,7 +678,7 @@ private struct SettingsDetailView_iOS: View {
                                 Text("Importing…")
                             }
                         } else {
-                            Label("Import Granola CSV", systemImage: "tray.and.arrow.down")
+                            Label("Import Granola export", systemImage: "tray.and.arrow.down")
                         }
                     }
                     .disabled(isImportingGranola || appState.persistentStoreFailure != nil)
@@ -698,7 +698,7 @@ private struct SettingsDetailView_iOS: View {
                         .foregroundStyle(granolaImportFailed ? ColorPalette.Status.error : ColorPalette.Accent.green)
                     }
 
-                    Text("Granola opens Profile → Account management. Generate the CSV, then select the emailed download here. Re-importing skips meetings already brought into Miniti.")
+                    Text("Granola opens Profile → Account management. Choose Generate CSV, then pick the emailed zip here, or the CSV files inside it. Granola's transcripts carry no speakers or timings, so an imported meeting shows one speaker and an estimated length. Importing again skips meetings already in miniti.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -944,10 +944,11 @@ private struct SettingsDetailView_iOS: View {
             }
             .fileImporter(
                 isPresented: $isGranolaImporterPresented,
-                allowedContentTypes: [.commaSeparatedText, .plainText]
+                allowedContentTypes: [.zip, .commaSeparatedText, .plainText],
+                allowsMultipleSelection: true
             ) { result in
-                if case .success(let url) = result {
-                    importGranolaCSV(from: url)
+                if case .success(let urls) = result {
+                    importGranolaCSV(from: urls)
                 } else if case .failure(let error) = result {
                     granolaImportFailed = true
                     granolaImportMessage = error.localizedDescription
@@ -964,14 +965,14 @@ private struct SettingsDetailView_iOS: View {
         .preferredColorScheme(.dark)
     }
 
-    private func importGranolaCSV(from url: URL) {
-        guard appState.persistentStoreFailure == nil else { return }
+    private func importGranolaCSV(from urls: [URL]) {
+        guard appState.persistentStoreFailure == nil, !urls.isEmpty else { return }
         isImportingGranola = true
         granolaImportMessage = nil
         granolaImportFailed = false
         Task {
             do {
-                let parsed = try await GranolaCSVImporter.load(from: url)
+                let parsed = try await GranolaCSVImporter.load(from: urls)
                 let result = try GranolaCSVImporter.importMeetings(
                     parsed,
                     into: modelContext,
