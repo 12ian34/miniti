@@ -2,13 +2,15 @@
 
 > **Shipped regression contract:** The searchable category registry and adaptive macOS, iPhone, and iPad navigation described here are implemented. Retain this document as the information-architecture and regression contract for future Settings changes.
 
+**Current navigation (3.4.0 QA build):** Setup is General, Account, Cloud, Sending. Connections is Calendar, CRM (macOS), Webhooks, API, Playbook, Data. Meetings, Privacy and Support retain the baseline below. Cloud arrived in 3.0.0, API in 3.2.1; Sending describes outbound data and links to the owning setting. `SettingsDestination` in `AppState.swift` is authoritative for order, group and legacy identifiers.
+
 ## Goal
 
 Make a growing settings surface easy to browse and search without changing the behavior, storage key, or default of any preference. macOS uses a fixed sidebar/detail settings window with no collapse affordance; iPhone retains push navigation; regular-width iPad uses a sidebar/detail layout.
 
 ## Information architecture
 
-The shared registry (`SettingsDestination`, grouped by `SettingsGroup`) uses these destinations, in this order, since 2.12.0. One tab per question, single-word titles. Recording is hardware, Transcription is speech to text, AI is everything after the transcript, Privacy is the off switch, About is support.
+The shared registry (`SettingsDestination`, grouped by `SettingsGroup`) introduced the following baseline in 2.12.0. The current additions below extend it. One tab per question, single-word titles. Recording is hardware, Transcription is speech to text, AI is everything after the transcript, Privacy is the off switch, About is support.
 
 Setup
 1. General — startup, appearance, shortcuts
@@ -36,7 +38,7 @@ Support
 
 Before 2.12.0 the tabs were General, Account & Plan, Recording & Audio, Language, AI & Models, Templates, Notifications, Calendar & Meetings, CRM, Webhooks, Docs MCP, Data & Export, Privacy & Support. `fromLegacyID` maps every old raw value (`language`, `docsMCP`, `dataExport`, `privacySupport`, `about`, and the older `audio`, `apikeys`, `mcp`, `integrations`) onto the new tabs, so persisted selections and deep links keep working. Catalog ids follow their tab (`transcription.*`, `playbook.server`, `privacy.*`, `about.*`); the `integrations.*` ids stay for calendar, CRM and webhook rows. A registry test asserts both.
 
-The destination is persisted as `selectedSettingsDestination`. Legacy destination IDs such as `audio`, `apikeys`, and `about` resolve to the new Recording & Audio, Account & Plan, and Privacy & Support destinations.
+The destination is persisted as `selectedSettingsDestination`. Legacy destination IDs such as `audio`, `apikeys`, and `about` resolve to Recording, Account, and About respectively.
 
 ## Search contract
 
@@ -97,3 +99,9 @@ Cloud is a tab in the Setup group, directly under Account (General, Account, Clo
 ## API tab (3.2.1)
 
 `SettingsDestination.api` sits in the Connections group between Webhooks and Playbook on both platforms, visible to everyone. It is `CloudSettingsSections(mode: .api)`: an intro section that states what the API and MCP give you and the one thing missing (BYOK: needs the managed plan; free: Upgrade to Pro; Pro with cloud off: open Cloud; no email: add one in Cloud), then, for Pro with cloud on, Connected apps and Tokens and setup (`MCPSetupRows`). Connected apps and tokens moved here from the Cloud tab; web sign-in stays in Cloud. Search ids `api.setup`, `api.connected`, `api.tokens`; legacy ids `tokens`, `connectors`, `connected` map here.
+
+## Approved follow-up, not implemented (2026-10-26)
+
+Account UX is specified in [enrollment-identity-plan.md](enrollment-identity-plan.md), B6a: optional verified email first, full recognizable address, recovery key as backup, separate Switch account and billing restore, email available on free accounts with cloud off. B6a can precede the ownership migrations; persisted first-use/sign-out choices remain B6b/A4.
+
+Sending U1 and first-run consent U2 are in [reliability-follow-up-plan.md](reliability-follow-up-plan.md). Sending becomes three concise groups with truthful state labels, one primary settings action per row and expandable details. Consent becomes a short disclosure with the action area outside the scroll body. These retain shared tokens, native actions and adaptive platform navigation. Completion requires rendered review at minimum Mac window sizes, compact iPhone/iPad and accessibility sizes, not just model tests. Existing 3.4.0 UI is not yet this design.

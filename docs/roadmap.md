@@ -19,13 +19,12 @@ Within a priority, order is intentional unless a production incident changes it.
 
 ## Recommended execution order
 
-1. Separate admin authentication from the shipped client credential immediately while managed-service baselining and long-session Deepgram grant verification run in parallel.
-2. Make persistence startup recoverable, surface database failures, and close the webhook transport/logging privacy issue.
-3. Add continuous build/test gates and critical UI/network automation.
-4. Make managed device registration and session finalization atomic, then introduce anonymous recovery and device-bound authorization through staged enforcement.
-5. Validate and tune 60+ minute performance, reduce the abrupt-kill checkpoint window, and correct filler counting/product wording.
-6. Scale History search, harden outbound delivery, and measure prompt caching and current unit economics.
-7. After those reliability gates, choose the next bounded product expansion from custom insight templates, deeper CRM automation, or entity detection based on user evidence.
+Current order, reconciled 2026-10-26:
+
+1. Use the recorded 3.4.0 QA in P1.4a: Mac build 137 on macOS 27 and iPhone build 138 passed the recorded scenarios; macOS 26 is unmeasured with Ian's explicit release waiver. Built, deployed, tested and released remain distinct states.
+2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review; no version is assigned yet.
+3. Continue enrollment A3/A4 and Track B only under the slice-specific decisions, compatibility tests and cutover rules in the enrollment plan.
+4. Keep the unresolved long-session, device QA, measurement and platform work below. Historical implementation phases document why the code exists; do not restart completed auth, persistence or CI work.
 
 ## P0 — protect users and releases
 
@@ -53,12 +52,14 @@ This programme is complete only when all of the following are true:
 - Prompt-cache hit rate, cached tokens, latency, and cost are observable; prompt changes are retained only if they produce a measured improvement.
 - Managed Deepgram reconnects are proven to refresh expired grants in unit and real reconnect testing, and the stale documentation gap is closed.
 
-#### Current audit
+#### Original programme audit and completion pointers
 
-| Workstream | Current state | Required outcome |
+The original gaps below are historical context. The dated delivery phases and focused plans record subsequent implementation; they are not all open today.
+
+| Workstream | Original gap / completion pointer | Required outcome |
 | --- | --- | --- |
 | Admin authentication | **Done 2026-09-13.** `/api/admin/*` requires the `miniti_admin_session` cookie issued by `POST /api/admin/session` from `ADMIN_SECRET_KEY`; the client key gets `401`; the dashboard keeps nothing in `sessionStorage`. | Server-only admin authentication and a short-lived browser session. |
-| Client authentication | Open. All installations share an extractable bearer value. | Anonymous recovery for account continuity and per-installation proof-of-possession credentials for API access. |
+| Client authentication | Device-bound auth implemented in Apple 2.6.0 and Linux 0.3.0; the original gap was a shared extractable client value. Production enforcement is a deployment setting, not inferred from source. | Anonymous recovery for account continuity and per-installation proof-of-possession credentials for API access. |
 | New-device limiter | Broken. `/api/usage` creates the device before testing whether it is new. Other routes can also create devices. | One centralized, atomic registration/admission path. |
 | Session finalization | Open. Check, usage increments, session deletion, and idempotency result are separate writes. | One atomic Redis finalization operation. |
 | Device registry | Open. Admin listing uses `kv.keys('device:*')` and loads all records. | Explicit registry, secondary indices/counters, reconciliation, and pagination. |
@@ -232,7 +233,7 @@ All failing validation/type checks happen before the first mutation. Entitlement
 
 ##### Phase 4 — Introduce anonymous recovery and device-bound authorization
 
-**Status (2026-09-06):** backend protocol, enrollment, token, account routes, the one-time `/api/auth/migrate` path, and restore re-binding are implemented in `miniti-api` (flags still `observe`); the Linux app shipped device-bound auth in 0.3.0; the Apple migration-capable release is implemented in this repo for 2.7.0 (silent migrate on first launch, automatic account creation for new installs, restore in onboarding and Settings, device list, rotate, sign out, delete; no legacy key in the binary). Still open: Polar-restore enrollment, shared account-level usage counters, and the enforcement ladder. Phase 1 (admin-auth separation) shipped 2026-09-13. **2.8.0 (2026-09-11):** account-level Pro entitlement (`lib/accountEntitlement.ts`, `/api/usage` `entitlement_via_account`) and `POST /api/auth/account/attach` are implemented in `miniti-api`, and the Apple clients show sponsored Pro and offer "Move this device to another account" in Settings → Account.
+**Status (2026-09-06):** backend protocol, enrollment, token, account routes, the one-time `/api/auth/migrate` path, and restore re-binding are implemented in `miniti-api` (flags still `observe`); the Linux app shipped device-bound auth in 0.3.0; the Apple migration-capable release is implemented in this repo for 2.6.0 (silent migrate on first launch, automatic account creation for new installs, restore in onboarding and Settings, device list, rotate, sign out, delete; no legacy key in the binary). Later state: 3.0.0 added account-total usage by aggregating device counters and email enrollment. An account-owned atomic usage ledger remains Track B2; Polar-license restore is not account authentication. Check deployment flags before asserting enforcement. Phase 1 (admin-auth separation) shipped 2026-09-13. **2.8.0 (2026-09-11):** account-level Pro entitlement (`lib/accountEntitlement.ts`, `/api/usage` `entitlement_via_account`) and `POST /api/auth/account/attach` are implemented in `miniti-api`, and the Apple clients show sponsored Pro and offer "Move this device to another account" in Settings → Account.
 
 **Backend protocol:** Add Node-runtime enrollment endpoints and edge-compatible access-token verification:
 
@@ -240,7 +241,7 @@ All failing validation/type checks happen before the first mutation. Entitlement
 - `POST /api/auth/account/restore`
 - `POST /api/auth/account/recovery-key/rotate`
 - `GET /api/auth/account/devices`
-- `POST /api/auth/account/devices/attach`
+- `POST /api/auth/account/attach`
 - `DELETE /api/auth/account/devices/{installationId}`
 - `DELETE /api/auth/account`
 - `POST /api/auth/challenge`
@@ -275,7 +276,7 @@ Access tokens are short-lived, server-signed, scoped, and bound to the installat
 **Existing multi-device accounts:**
 
 - Never infer that free devices share an owner from IP address, timing, labels, usage patterns, calendar data, CRM identity, or other heuristics. Each free installation can migrate safely on its own without blocking normal use.
-- Let a user choose one recovery account and attach another already-migrated installation by authorizing the source with its current installation proof and the destination with the recovery key. `POST /api/auth/account/devices/attach` atomically moves the installation membership while preserving its device UUID, device record, integrations, label, history, and credentials.
+- Let a user choose one recovery account and attach another already-migrated installation by authorizing the source with its current installation proof and the destination with the recovery key. `POST /api/auth/account/attach` atomically moves the installation membership while preserving its device UUID, device record, integrations, label, history, and credentials.
 - If the source recovery account becomes empty, revoke its recovery digest and remove it unless billing, legal, or audit retention requires a tombstone. Reject moves that exceed the destination device cap or create conflicting ownership/subscription state. A failed move changes neither account.
 - Automatically join devices only through a freshly verified stable subscription identifier: Polar subscription ID for the macOS rail or Apple original transaction ID for the iOS rail. Namespace the mapping by rail. Apple entitlement must not unlock macOS and Polar entitlement must not unlock iOS, even when both installations belong to one recovery account.
 - Existing users do not need to link devices to complete the security migration. Linking is an optional account/allowance consolidation action that can happen at any later time from any device.
@@ -288,7 +289,7 @@ Access tokens are short-lived, server-signed, scoped, and bound to the installat
 
 **Anonymous recovery-key creation/restore:**
 
-1. First launch offers **create recovery key** and **restore with recovery key** without email, username, or password.
+1. Current first managed use silently enrolls and offers a recovery-key nudge. Email is optional and approved links can restore devices. A4/B6 add the explicit first-use choice later; no mandatory email, username or password.
 2. Create generates a versioned, checksummed key with at least 120 random bits and a distinct P-256 installation key. Store both in Keychain before idempotent account creation.
 3. Restore normalizes the code, proves possession of the new installation key, verifies the keyed digest under strict rate limits, and atomically adds the installation below the device cap.
 4. Both paths issue rotating device-bound credentials. Normal traffic never sends the recovery key.
@@ -415,9 +416,9 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.2 Recover from SwiftData startup failure
 
-**Built, unreleased (2026-09-13, for 2.9.0):** `PersistentStore.open()` replaces both `fatalError`s, tries a read-only open for export, classifies the failure without content, and renders `StoreRecoveryView` (try again, export diagnostics, export meetings, show database folder, get help). Debug `-MinitiStoreURL` flag and the manual drill are in [testing.md](testing.md); 13 automated cases in `PersistentStoreTests`. Still owed: the manual drill on a real Mac and iPhone. Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
+**Implemented 2026-09-13 for 2.9.0 (historical delivery record):** `PersistentStore.open()` replaces both `fatalError`s, tries a read-only open for export, classifies the failure without content, and renders `StoreRecoveryView` (try again, export diagnostics, export meetings, show database folder, get help). Debug `-MinitiStoreURL` flag and the manual drill are in [testing.md](testing.md); 13 automated cases in `PersistentStoreTests`. Still owed: the manual drill on a real Mac and iPhone. Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
 
-**Why:** Both app targets currently call `fatalError` when their `ModelContainer` cannot open. Store corruption, an incompatible migration, or a disk failure can therefore make Miniti unlaunchable precisely when a user needs to recover or export their meetings.
+**Original problem (fixed by the implementation above):** Both app targets called `fatalError` when their `ModelContainer` cannot open. Store corruption, an incompatible migration, or a disk failure can therefore make Miniti unlaunchable precisely when a user needs to recover or export their meetings.
 
 **Work:**
 
@@ -433,7 +434,7 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.3 Centralize and surface persistence errors
 
-**Built, unreleased (2026-09-13, for 2.9.0):** every production `try? save()` and silent fetch now goes through `AppState.commit`/`fetchMeetings` (`AppState+Persistence.swift`): explicit revert, log with domain/code only, `persistence_*_failed` diagnostics event, and one root banner per platform with retry. A failed delete stays pending (SwiftData traps on `rollback()` of a cascade delete, so it is never rolled back), stale finalization no longer reports sessions it did not persist, corrections return `.saveFailed`, and a fetch failure keeps the previous history instead of rendering empty. 18 automated cases in `PersistencePolicyTests`; rule recorded in [patterns.md](patterns.md). Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
+**Implemented 2026-09-13 for 2.9.0 (historical delivery record):** every production `try? save()` and silent fetch now goes through `AppState.commit`/`fetchMeetings` (`AppState+Persistence.swift`): explicit revert, log with domain/code only, `persistence_*_failed` diagnostics event, and one root banner per platform with retry. A failed delete stays pending (SwiftData traps on `rollback()` of a cascade delete, so it is never rolled back), stale finalization no longer reports sessions it did not persist, corrections return `.saveFailed`, and a fetch failure keeps the previous history instead of rendering empty. 18 automated cases in `PersistencePolicyTests`; rule recorded in [patterns.md](patterns.md). Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
 
 **Why:** The durable live-transcript save queue is hardened, but many direct pin, delete, title, speaker, Docs, and other SwiftData writes use `try?`. Some fetches also collapse failure into an empty/no-op result. A mutation can silently disappear, and a fetch failure can resemble missing history.
 
@@ -464,7 +465,7 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 **Built 2026-10-05:** `.github/workflows/tests.yml` runs `MinitiTests` (macOS) and `MinitiMobileTests` (iOS simulator) on `macos-26` with Xcode 26.6 for every push to `main` and every pull request, unsigned builds, Nemotron model and SwiftPM caches. First verified on the `ci` branch.
 
-**Why:** There are no GitHub Actions workflows; release confidence currently depends on local Fastlane execution.
+**Original problem:** release confidence depended on local Fastlane runs. The workflows now in `.github/workflows/` provide CI; maintain those gates alongside local release-signed/device QA.
 
 **Work:**
 
@@ -478,7 +479,7 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.6 Automate critical UI and network regressions
 
-**Built, unreleased (2026-09-13, for 2.9.0):** `MinitiAPIService(session:auth:)`, `InsightsService(session:)`, and `DeepgramService.sessionConfiguration`/`endpointURL` seams; `AppState` skips all launch-time network from the XCTest host; shared `StubURLProtocol` in `TestSupport.swift`; `MinitiAPIServiceTransportTests` (every status class, token refresh, revocation, timeout/offline, cancellation), `CalendarEventDecodingTests` (the 2.7.0 wire-format regression), `MeetingJourneyTests` (stop → save → history, kill → relaunch → resume, pin survives relaunch), six-series Coaching chart tests, `scripts/screenshots/smoke.sh` as the launch gate with an iOS ready marker and two new scenes, `code_coverage: true` on both Fastlane test lanes plus `scripts/coverage.sh`. No XCUITest target by decision. Coverage re-measured in [testing.md](testing.md). Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
+**Implemented 2026-09-13 for 2.9.0 (historical delivery record):** `MinitiAPIService(session:auth:)`, `InsightsService(session:)`, and `DeepgramService.sessionConfiguration`/`endpointURL` seams; `AppState` skips all launch-time network from the XCTest host; shared `StubURLProtocol` in `TestSupport.swift`; `MinitiAPIServiceTransportTests` (every status class, token refresh, revocation, timeout/offline, cancellation), `CalendarEventDecodingTests` (the 2.7.0 wire-format regression), `MeetingJourneyTests` (stop → save → history, kill → relaunch → resume, pin survives relaunch), six-series Coaching chart tests, `scripts/screenshots/smoke.sh` as the launch gate with an iOS ready marker and two new scenes, `code_coverage: true` on both Fastlane test lanes plus `scripts/coverage.sh`. No XCUITest target by decision. Coverage re-measured in [testing.md](testing.md). Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
 
 **Why:** Coverage was last measured around 18% at v1.17.0. SwiftUI views are effectively untested, hardware audio is mostly manual, and network paths need controlled mocking. Recent Coaching layout, chart, focus, and navigation regressions demonstrate the gap.
 
@@ -527,7 +528,7 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 **Shipped in 2.8.0 (2026-09-11):** HTTPS required with a loopback-only `http://` exception, enforced at send time and in both Settings views; logs carry scheme + host only and the full URL is a redaction pattern; transport and redaction tests in `WebhookPayloadTests`. Settings copy states that the payload includes the transcript and attendee names.
 
-**Why:** Webhook payloads can contain the full transcript and attendee information, yet Settings currently accepts `http://`. Failure/non-2xx logs can include the complete URL, which may expose an embedded secret in exported diagnostics.
+**Original problem (transport/logging fix implemented):** webhook payloads contain transcript and attendee information; unrestricted HTTP and complete-URL failure logs exposed that data or endpoint secrets. Preserve HTTPS/loopback validation and endpoint redaction. The remaining delivery races are P0.11, R5/R6.
 
 **Work:**
 
@@ -541,6 +542,8 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.10 Reconcile stale and conflicting local documentation
 
+**2026-10-26 reconciliation:** auth and email contracts, account usage, model routing, Settings navigation, architecture/test maps and enrollment/ops status corrected in the app and backend docs. Known code gaps are explicitly linked to P0.11. Historical measurement and live-deployment claims still require their own evidence; no coverage percentages or device-QA results were invented.
+
 **Why:** Contradictory local guidance causes regressions even when the implementation is correct.
 
 **Work:**
@@ -553,6 +556,14 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 - Reconcile [ANDROID_PLAN.md](../ANDROID_PLAN.md) with current platform behavior before implementation: it still proposes a normal update banner and lockstep macOS/iOS/Android versions, while normal banners have been removed and Apple platforms may ship independently. Also update stale platform-scope statements such as Calendar being macOS-only.
 
 **Complete when:** Local documents agree with `AGENTS.md`, shipped work is not presented as future work, and every unchecked acceptance item is genuinely open.
+
+### P0.11 Fix permission, account-switch and delivery races; clarify Sending and consent
+
+**Status (2026-10-26):** approved for a future update, not implemented and no release number assigned. [reliability-follow-up-plan.md](reliability-follow-up-plan.md) holds the evidence, eight behavioral slices plus U1 Sending/U2 consent UX, regression requirements, dependencies and compatibility gates. Optional email-first account protection is B6a in the enrollment plan, an early slice independent of the ownership migration.
+
+Scope: private-mode transitions during capture; consistent AI-content consent; account/generation fencing for cloud work; bounded Watch import retries; safe webhook coalescing; current-state resend after terminal webhook failure; History response revision guards; atomic web/confirmation link consumption. Deliberately configured webhook/CRM exports remain allowed in private mode, per Ian. U1 groups Sending into concise transcription/AI, sync/exports and account/connections sections with accurate states and a single Configure action per row. U2 shortens first-run disclosure and keeps Allow/Not now visible outside the scroll body, including small-window and accessibility QA. This does not authorize ownership migrations or claim current QA closes these issues.
+
+**Complete when:** each slice's real-action regression passes, both Apple bundles pass on the combined tree, backend store/route tests pass where affected, and the named device scenarios are recorded. Existing account IDs, credentials, data and user-configured exports are preserved.
 
 ## P1 — reliable at scale
 
@@ -572,9 +583,9 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P1.2 Make webhooks and automatic CRM sync durable
 
-**Built, unreleased (2026-10-05, for 2.11.0):** `Miniti/Services/DeliveryOutbox.swift`, a persisted queue (Application Support `deliveries-outbox.json`) for webhooks (encoded body kept only until delivery) and automatic Attio/Twenty sends (payload rebuilt from the saved meeting at send time). Backoff 30 s, 2 min, 10 min, 30 min, 2 h, then terminal; 24 h max age; 429/5xx/transport retry, other 4xx reject, CRM no-unique-match skip; one `meeting.updated` per meeting (superseded in place); `X-Miniti-Delivery-Id` and `X-Miniti-Attempt` headers; kicked on enqueue, timer, and app activation; deleted meetings drop their items. Settings rows per kind with retry and discard. `DeliveryOutboxTests` (9). Not yet: connectivity-aware retry on network path change.
+**Implemented 2026-10-05 for 2.11.0 (historical delivery record):** `Miniti/Services/DeliveryOutbox.swift`, a persisted queue (Application Support `deliveries-outbox.json`) for webhooks (encoded body kept only until delivery) and automatic Attio/Twenty sends (payload rebuilt from the saved meeting at send time). Backoff 30 s, 2 min, 10 min, 30 min, 2 h, then terminal; 24 h max age; 429/5xx/transport retry, other 4xx reject, CRM no-unique-match skip; one `meeting.updated` per meeting (superseded in place); `X-Miniti-Delivery-Id` and `X-Miniti-Attempt` headers; kicked on enqueue, timer, and app activation; deleted meetings drop their items. Settings rows per kind with retry and discard. `DeliveryOutboxTests` (9). Not yet: connectivity-aware retry on network path change.
 
-**Why:** Webhooks and automatic Attio/Twenty exports are detached best-effort calls. Network failure is logged but not persisted, retried, or visible, so an automation can be silently lost.
+**Original problem:** detached best-effort exports lost automation on network failure. The persisted outbox above addresses durability; in-flight coalescing and manual webhook resend remain P0.11, R5/R6.
 
 **Work:**
 
@@ -621,11 +632,11 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 **Why:** The 2026-10-25 audit behind [enrollment-identity-plan.md](enrollment-identity-plan.md) found that a device can silently become a new free account (unreadable or undecodable credential, sign out, server revoke, backup restore), that attach destroys the source account while orphaning its email, tokens and cloud meetings, that a license key or receipt binds to whatever account the presenting device is on, that consumed minutes follow the device rather than the account, that session-end metering is not exactly-once, and that any account change uploads the whole local library into the new account.
 
-**Work:** Tracked in the plan's status table. Track A (client protection) ships in slices from 3.4.0: diagnostics with a pre-sink buffer, a tested enrollment coordinator, the Keychain two-store fix, credential fixtures, draft write check; then unreadable and damaged credential states with a way out; then explicit choice states for conflict, sign out and revoke. Track B (account ownership) is backend-led and independently rollbackable: one device record per device, account-owned subscriptions, an atomic account usage ledger, non-destructive attach and dormant accounts, cloud data consent, account-owned integration connections, Protect your account. P1.4's event vocabulary is delivered by Track A's first slice; the rest of P1.4 (retention, rate limits, server-side schema enforcement) stays here.
+**Work:** Tracked in the plan's status table. Track A (client protection) ships in slices from 3.4.0: diagnostics with a pre-sink buffer, a tested enrollment coordinator, the Keychain two-store fix, credential fixtures, draft write check; then unreadable and damaged credential states with a way out; then explicit choice states for conflict, sign out and revoke. Track B (account ownership) is backend-led, with rollback defined per slice and fix-forward boundaries for B0/B1/B2: one device record per device, account-owned subscriptions, an atomic account usage ledger, non-destructive attach and dormant accounts, cloud data consent, account-owned integration connections, Protect your account. P1.4's event vocabulary is delivered by Track A's first slice; the rest of P1.4 (retention, rate limits, server-side schema enforcement) stays here.
 
 **Complete when:** replacing, removing or losing a device does not change what its account owns, and the plan's cross-cutting tests (device removal, account switching, lost responses, failed writes, backup restore, billing events, old clients, mixed-case ids) pass in both repositories.
 
-**Status (2026-10-25):** planned; nothing built. Track B revised after a second review (2026-10-25 night, seven migration scenarios) , a third (2026-10-26, five more: counter adoption, entitlement fallback, meeting copies under a grant, version-gated old-client handling, charge-based reconciliation) , a fourth (2026-10-26, the migration sequences: period-aware baseline, writers before reads, one seed per device, grant retry and revocation) , a fifth (2026-10-26, transactions and ownership: checkout attribution only, the copy as one Postgres transaction, destination-bound grants, a mutation journal) , a sixth (2026-10-26, ownership edge cases) and a seventh (2026-10-26, interactions: generation survives attach, the credit reaches client and ledger, honest redemption contract). Decisions D1 to D10. Decisions D1 to D10 in the plan need Ian; cap, platform policy and billing-on-deletion are the unchanged baseline.
+**Status (2026-10-26):** A0/A0a and A1–A2e built; backend through `4b41878` deployed per Fable, with revoked-ID create exemption removed and the targeted admission regression independently rerun. QA recorded for Mac 3.4.0 build 137 on macOS 27 and iPhone build 138; macOS 26 remains unmeasured with Ian's explicit waiver. No client release inferred. A2f now puts its outer request budget before eligibility reads; A3a defers on 429. A3/A4 and ownership migrations remain planned. B6a's optional email-first protection, full Account email, clear recovery/billing actions and free/cloud-off availability are approved for an early future slice (D8 settled); B6b stays with A4. Other migration decisions retain their individual status in the enrollment plan.
 
 ### P1.5 Maintain large-history Coaching performance
 
@@ -633,7 +644,7 @@ This is distinct from the one-time Instruments pass. Keep a benchmark fixture fo
 
 ### P1.6 Recalculate managed-mode unit economics
 
-**Why:** The financial model in [monetization.md](monetization.md) is explicitly historical. It predates the current $5/5,000-minute Pro tier, multichannel Deepgram billing, and the split between incremental `gpt-5-mini` and non-incremental `gpt-5.4-mini`. It must not guide pricing or capacity decisions.
+**Why:** The financial model in [monetization.md](monetization.md) is explicitly historical. It predates the current $5/5,000-minute Pro tier, multichannel Deepgram billing, and the current quality/lightweight mode router (quality modes use `gpt-5.4-mini` for full and incremental requests by default). It must not guide pricing or capacity decisions.
 
 **Work:** Recalculate blended transcription, multichannel, LLM, storage, payment, support, and infrastructure cost using current prices and observed user distributions. Model free, typical Pro, and heavy Pro cohorts; include reconnects, failed requests, Playbook usage, platform fees, VAT, and negotiated-volume scenarios. Use P0.1 Phase 5 cache/call telemetry and actual Deepgram billing rather than planning assumptions. Define margin/cost alerts and revisit limits or pricing only from current evidence.
 
@@ -643,7 +654,7 @@ This is distinct from the one-time Instruments pass. Keep a benchmark fixture fo
 
 **Done 2026-10-05:** `LimitReachedView` and its preview deleted; the file is now `LimitWarningBanner.swift` holding only the live banner Home uses.
 
-`Miniti/Views/LimitReachedView.swift` is currently unreferenced; shipped limit handling is inline in the macOS and iOS meeting views. Either delete the dead screen and its preview or deliberately make it the shared limit experience with cross-platform tests. Do not modify it under the assumption that users can see it.
+Regression contract: keep the inline limit experience in the platform meeting views and the shared `LimitWarningBanner`; do not recreate the deleted standalone screen or treat this completed cleanup as pending.
 
 ### P1.8 Plan backend runtime and Redis-client maintenance
 
@@ -664,7 +675,7 @@ Start with a constrained section/prompt schema, preview, validation, safe token/
 
 **Status (2.6.0):** the first cut shipped as the built-in template pack (BANT, SPIN, interview scorecard, customer check-in, stand-up, 1:1) behind `mode=template` with the definition sent per request and the section/length limits enforced on both sides.
 
-**Built, unreleased (2026-09-13, for 2.9.0):** the user-defined editor (Settings → Templates on both platforms: name, summary, up to 8 sections with title and guidance, live validation against the shared limits, preview against a past meeting, duplicate a built-in, JSON export/import, `CustomInsightTemplates.swift`), custom templates in the More menu, meetings keep a copy of their template (`Meeting.templateDefinitionJSON`) so history and exports survive edits and deletes, and template sections in Attio/Twenty notes (`AttioMeetingPayload.template`, `formatMeetingNoteContent`). No free-text prompts and no cross-device sync by design. Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
+**Implemented 2026-09-13 for 2.9.0 (historical delivery record):** the user-defined editor (Settings → Templates on both platforms: name, summary, up to 8 sections with title and guidance, live validation against the shared limits, preview against a past meeting, duplicate a built-in, JSON export/import, `CustomInsightTemplates.swift`), custom templates in the More menu, meetings keep a copy of their template (`Meeting.templateDefinitionJSON`) so history and exports survive edits and deletes, and template sections in Attio/Twenty notes (`AttioMeetingPayload.template`, `formatMeetingNoteContent`). No free-text prompts and no cross-device sync by design. Tracking: [p0-hardening-batch-2026-09-plan.md](p0-hardening-batch-2026-09-plan.md).
 
 ### P2.3 Deeper CRM workflow automation
 

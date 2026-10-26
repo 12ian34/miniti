@@ -1,6 +1,6 @@
 # Testing
 
-Two XCTest targets share the same 18 test files in `MinitiTests/`:
+Two XCTest targets share the same shared test and support sources in `MinitiTests/`:
 
 - `MinitiTests` — tests the macOS `Miniti` host app
 - `MinitiMobileTests` — tests the iOS `MinitiMobile` host app. It runs fewer cases because audio-source ring/RMS, export helpers, the system-callback watchdog, native long-transcript layout, and main-window navigation tests are macOS-only, partly offset by iOS-only Live Activity privacy and StoreKit-state tests
@@ -128,7 +128,15 @@ Two devices on one Pro account, cloud on in Settings, Cloud. Mac records, phone 
 
 ## Cross-platform test files
 
-All 18 test files compile for both macOS and iOS via conditional imports (`#if IOS_TEST_TARGET` → `@testable import MinitiMobile`, else `@testable import miniti`). The `IOS_TEST_TARGET` flag is set in `MinitiMobileTests` build settings via `SWIFT_ACTIVE_COMPILATION_CONDITIONS`. macOS-only tests (markdown export helpers) are guarded with `#if os(macOS)`. `ColorPaletteTests` uses a cross-platform `colorComponents()` helper (`NSColor` on macOS, `UIColor` on iOS).
+The shared test and support sources compile for both macOS and iOS via conditional imports (`#if IOS_TEST_TARGET` → `@testable import MinitiMobile`, else `@testable import miniti`). The `IOS_TEST_TARGET` flag is set in `MinitiMobileTests` build settings via `SWIFT_ACTIVE_COMPILATION_CONDITIONS`. macOS-only tests (markdown export helpers) are guarded with `#if os(macOS)`. `ColorPaletteTests` uses a cross-platform `colorComponents()` helper (`NSColor` on macOS, `UIColor` on iOS).
+
+## Current regression coverage and limits (2026-10-26)
+
+`ClientAuthTests` now exercises damaged/temporary key failures, unsigned-refresh preservation, fresh-key reauthentication and the real AppState attach/restore/email actions through an injected manager. Its in-memory cloud-bookkeeping test attaches the test AppState as host without starting the sync engine; it covers an idle account change, not an outstanding cloud response.
+
+`DataFlowSummaryTests` covers Sending presentation combinations. `DeliveryOutboxTests` covers persistence/retry policies with injected senders. These do not close the live private-mode mismatch, permission gaps or real-sender payload failures found in the audit. The eight slices in [reliability-follow-up-plan.md](reliability-follow-up-plan.md) specify missing behavioral regressions. Add delayed transport/sender continuations and assert resulting models and delivered bodies, not only status or request counts.
+
+Reported after app `62a2f80`: 64 auth tests; macOS 967 passed/3 skipped; iOS 909 passed/3 skipped on the combined tree. These are dated implementation results, not a fresh run for this docs change or evidence that real-device QA passed. Use `Miniti.xcodeproj/project.pbxproj` for current bundle membership rather than preserving a stale file count.
 
 ## Coverage
 

@@ -2,7 +2,7 @@
 
 **Most meeting tools stop at notes. miniti coaches you to speak with clarity and confidence, and you own your transcripts and insights forever.**
 
-miniti is a native meeting assistant for macOS and iOS. It records your meetings without joining as a bot, transcribes them live with speaker identification, writes the summary and action items as the meeting happens, and coaches how you speak. Everything you record stays on your device.
+miniti is a native meeting assistant for macOS and iOS. It records your meetings without joining as a bot, transcribes them live with speaker identification, writes the summary and action items as the meeting happens, and coaches how you speak. Meetings are saved on your device. Cloud transcription and AI process content when enabled; optional sync and configured exports can send copies to the services you choose.
 
 [![Download for Mac](https://img.shields.io/badge/macOS-download%20DMG-3FB950?style=for-the-badge&logo=apple&logoColor=white)](https://github.com/12ian34/miniti/releases/latest)
 [![Download on the App Store](https://img.shields.io/badge/iPhone%20%26%20iPad-App%20Store-0A84FF?style=for-the-badge&logo=apple&logoColor=white)](https://apps.apple.com/app/id6759067308)
@@ -47,7 +47,7 @@ More screenshots at [miniti.app/screens](https://miniti.app/screens).
 | Pro | 5,000 per month | $5 per month, covers every device on your account |
 | Bring your own keys | unlimited | free, you pay Deepgram and OpenAI directly |
 
-Accounts are an anonymous recovery key. No email, no password, up to five devices.
+Start with an anonymous account and a recovery key, with up to five devices. Email is optional and can be added for web sign-in and device recovery; no password is required.
 
 ## Platforms
 
