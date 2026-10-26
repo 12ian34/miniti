@@ -522,16 +522,121 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(events.all[0].details, ["status": "-25308", "phase": "launch"])
     }
 
-    func testAFailedDraftWriteIsCounted() async {
+    func testAFailedDraftWriteStopsTheEnrollmentBeforeAnyRequestAndIsCounted() async {
+        // A2c: a credential the Keychain refuses to hold is one the person could never recover
+        // from; the account is not created on the server first.
         let store = DiagnosticClientAuthStore(diagnostic: nil, saveSucceeds: false)
         let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
-        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"client_auth_unavailable","message":"x"}"#.utf8)) }
+        StubURLProtocol.lastRequest = nil
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/api/auth/challenge" { return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8)) }
+            return (200, Data(#"{"token_type":"Bearer","access_token":"tok","expires_in":3600,"refresh_token":"mrt_a","refresh_expires_in":7776000,"account_id":"acct_new","device_id":"550e8400-e29b-41d4-a716-446655440000","device_cap":5}"#.utf8))
+        }
         defer { StubURLProtocol.handler = nil }
         let events = EventCollector()
         manager.attachEventSink { events.append($0) }
+        do {
+            _ = try await manager.createAccount()
+            XCTFail("expected storage")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .storage)
+        }
+        XCTAssertNil(StubURLProtocol.lastRequest, "no request was sent")
+        XCTAssertFalse(manager.isEnrolled)
+        XCTAssertEqual(events.names, ["client_auth_draft_write_failed"])
+        XCTAssertEqual(events.all[0].details, ["path": "create"])
+        XCTAssertEqual(ClientAuthError.storage.errorDescription, "miniti could not save its sign-in on this device. Try again.")
+
+        // The same path with a working store proceeds.
+        store.saveSucceeds = true
         _ = try? await manager.createAccount()
-        XCTAssertTrue(events.names.contains("client_auth_draft_write_failed"))
-        XCTAssertEqual(events.all.first { $0.name == "client_auth_draft_write_failed" }?.details, ["path": "create"])
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+
+        // Migrate stops the same way.
+        let second = DiagnosticClientAuthStore(diagnostic: nil, saveSucceeds: false)
+        let migrating = ClientAuthManager(store: second, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.lastRequest = nil
+        do {
+            try await migrating.migrateLegacyDevice()
+            XCTFail("expected storage")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .storage)
+        }
+        XCTAssertNil(StubURLProtocol.lastRequest)
+    }
+
+    // MARK: - A2b credential format fixtures
+
+    /// Captured shapes of the stored credential JSON, one per shipped format. Never edit a
+    /// fixture; add one for each format change together with a test that the older ones still
+    /// decode to the expected values (docs/enrollment-identity-plan.md, A2b). Key material is fake.
+    private enum CredentialFixtures {
+        /// 3.3.0, enrolled by recovery key, software key, acknowledged.
+        static let enrolled_3_3_0 = """
+        {"installationKey":{"kind":"sw","data":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"},"recoveryKey":"M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB","accountID":"acct_fixture","accessToken":"hdr.payload.sig","accessExpiresAt":1761480000,"refreshToken":"mrt_fixture","deviceCap":5,"enrolledAt":"2026-10-21T18:25:09Z","enrollmentPath":"restore","recoveryKeyAcknowledged":true}
+        """
+        /// 3.3.0 draft: key and recovery key written before the request, no account, no token.
+        static let draft_3_3_0 = """
+        {"installationKey":{"kind":"se","data":"c2VfYmxvYg"},"recoveryKey":"M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB","accountID":"","enrolledAt":"","enrollmentPath":"create","recoveryKeyAcknowledged":false}
+        """
+        /// 3.3.0, joined by an approved email link: no recovery key of its own, Secure Enclave key.
+        static let emailJoined_3_3_0 = """
+        {"installationKey":{"kind":"se","data":"c2VfYmxvYg"},"recoveryKey":"","accountID":"acct_fixture","accessToken":"hdr.payload.sig","accessExpiresAt":1761480000,"refreshToken":"mrt_fixture","deviceCap":5,"enrolledAt":"2026-10-21T18:25:09Z","enrollmentPath":"restore","recoveryKeyAcknowledged":true}
+        """
+        /// 2.6.0 to 2.8.x wrote no acknowledgement flag; the decoder defaults it to false.
+        static let enrolled_2_6_0 = """
+        {"installationKey":{"kind":"sw","data":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"},"recoveryKey":"M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB","accountID":"acct_fixture","accessToken":"hdr.payload.sig","accessExpiresAt":1761480000,"refreshToken":"mrt_fixture","deviceCap":5,"enrolledAt":"2026-09-06T00:00:00Z","enrollmentPath":"migrate"}
+        """
+    }
+
+    private func decodeFixture(_ json: String) throws -> ClientAuthCredentials {
+        try JSONDecoder().decode(ClientAuthCredentials.self, from: Data(json.utf8))
+    }
+
+    func testEveryShippedCredentialFormatStillDecodesFieldByField() throws {
+        let enrolled = try decodeFixture(CredentialFixtures.enrolled_3_3_0)
+        XCTAssertEqual(enrolled.installationKey, .init(kind: "sw", data: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"))
+        XCTAssertEqual(enrolled.recoveryKey, "M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB")
+        XCTAssertEqual(enrolled.accountID, "acct_fixture")
+        XCTAssertEqual(enrolled.accessToken, "hdr.payload.sig")
+        XCTAssertEqual(enrolled.accessExpiresAt, 1_761_480_000)
+        XCTAssertEqual(enrolled.refreshToken, "mrt_fixture")
+        XCTAssertEqual(enrolled.deviceCap, 5)
+        XCTAssertEqual(enrolled.enrolledAt, "2026-10-21T18:25:09Z")
+        XCTAssertEqual(enrolled.enrollmentPath, "restore")
+        XCTAssertTrue(enrolled.recoveryKeyAcknowledged)
+        XCTAssertNotNil(InstallationKey(stored: enrolled.installationKey), "a software key from a fixture loads anywhere")
+        let enrolledManager = ClientAuthManager(store: InMemoryClientAuthStore(enrolled), deviceIDProvider: { "d" })
+        XCTAssertTrue(enrolledManager.isEnrolled)
+        XCTAssertFalse(enrolledManager.status.isHardwareBacked)
+        XCTAssertEqual(enrolledManager.revealRecoveryKey(), ClientAuthCrypto.formatRecoveryKey("M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB"))
+        // Round trip: what 3.3.1 writes for this blob decodes to the same values.
+        XCTAssertEqual(try JSONDecoder().decode(ClientAuthCredentials.self, from: JSONEncoder().encode(enrolled)), enrolled)
+
+        let draft = try decodeFixture(CredentialFixtures.draft_3_3_0)
+        XCTAssertEqual(draft.accountID, "")
+        XCTAssertNil(draft.accessToken)
+        XCTAssertEqual(draft.enrollmentPath, "create")
+        XCTAssertFalse(draft.recoveryKeyAcknowledged)
+        let draftManager = ClientAuthManager(store: InMemoryClientAuthStore(draft), deviceIDProvider: { "d" })
+        XCTAssertFalse(draftManager.isEnrolled, "a draft is not an enrollment")
+        XCTAssertNil(draftManager.revealRecoveryKey())
+
+        let joined = try decodeFixture(CredentialFixtures.emailJoined_3_3_0)
+        XCTAssertEqual(joined.recoveryKey, "")
+        XCTAssertEqual(joined.accountID, "acct_fixture")
+        XCTAssertEqual(joined.installationKey.kind, "se")
+        let joinedManager = ClientAuthManager(store: InMemoryClientAuthStore(joined), deviceIDProvider: { "d" })
+        XCTAssertTrue(joinedManager.isEnrolled)
+        XCTAssertTrue(joinedManager.status.isHardwareBacked)
+        XCTAssertEqual(joinedManager.revealRecoveryKey(), "", "an email-joined device has no key of its own until it rotates one")
+        XCTAssertNil(InstallationKey(stored: joined.installationKey), "a Secure Enclave blob from another machine does not load (the 2026-10-26 case, A2d)")
+
+        let old = try decodeFixture(CredentialFixtures.enrolled_2_6_0)
+        XCTAssertFalse(old.recoveryKeyAcknowledged, "defaulted for a blob that predates the flag")
+        XCTAssertEqual(old.enrollmentPath, "migrate")
+        XCTAssertTrue(ClientAuthManager(store: InMemoryClientAuthStore(old), deviceIDProvider: { "d" }).isEnrolled)
     }
 
     func testEnrollingOnAnOldDeviceIDWithNoCredentialIsCountedWithItsReason() async {
@@ -1166,11 +1271,15 @@ private final class DiagnosticClientAuthStore: ClientAuthCredentialStore, @unche
     private let lock = NSLock()
     private var value: ClientAuthCredentials?
     private let diagnostic: ClientAuthStoreDiagnostic?
-    private let saveSucceeds: Bool
+    private var saveAllowed: Bool
+    var saveSucceeds: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return saveAllowed }
+        set { lock.lock(); defer { lock.unlock() }; saveAllowed = newValue }
+    }
 
     init(diagnostic: ClientAuthStoreDiagnostic?, saveSucceeds: Bool = true) {
         self.diagnostic = diagnostic
-        self.saveSucceeds = saveSucceeds
+        self.saveAllowed = saveSucceeds
     }
 
     var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { diagnostic }

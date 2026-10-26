@@ -286,6 +286,12 @@ struct InstallationKey {
 
 // MARK: Credentials + storage
 
+/// Stored as JSON in the Keychain. **Format rule (enrollment-identity-plan A2b):** a blob written
+/// by any shipped version must keep decoding. Every new field is optional with a default in
+/// `init(from:)`, and that is a coding habit, not the guarantee: the guarantee is
+/// `ClientAuthTests` `CredentialFixtures`, one captured blob per shipped format, never edited,
+/// each decoded and asserted field by field. A format change adds a fixture and a test that
+/// the old fixtures still decode and migrate to the expected values.
 struct ClientAuthCredentials: Codable, Equatable {
     var installationKey: InstallationKey.Stored
     /// Canonical recovery key (`M1…`), shown only on explicit reveal.
@@ -530,7 +536,7 @@ enum ClientAuthError: LocalizedError, Equatable {
         case .rateLimited: return "Too many attempts. Please wait a moment."
         case .network(let message): return "Network error: \(message)"
         case .server(let code, let status): return "Server error (\(status)): \(code)"
-        case .storage: return "Could not store credentials securely on this device."
+        case .storage: return "miniti could not save its sign-in on this device. Try again."
         }
     }
 }
@@ -978,7 +984,8 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// A draft is written before any enrollment request so a lost response cannot lose the
     /// only copy of a freshly generated recovery key. A draft has no account yet.
-    private func writeDraft(key: InstallationKey, recoveryKey: String, path: ClientAuthEnrollmentPath) {
+    @discardableResult
+    private func writeDraft(key: InstallationKey, recoveryKey: String, path: ClientAuthEnrollmentPath) -> Bool {
         let saved = store.save(ClientAuthCredentials(
             installationKey: key.stored,
             recoveryKey: recoveryKey,
@@ -990,8 +997,8 @@ final class ClientAuthManager: @unchecked Sendable {
             enrolledAt: "",
             enrollmentPath: path.rawValue
         ))
-        // A2c makes this stop the enrollment; until then it is counted.
         if !saved { emit("client_auth_draft_write_failed", level: .warning, details: ["path": path.rawValue]) }
+        return saved
     }
 
     /// Resume a draft (key + recovery key generated, but the request never completed).
@@ -1011,7 +1018,10 @@ final class ClientAuthManager: @unchecked Sendable {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
         reportEnrollmentStart(path: "create")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
-        writeDraft(key: key, recoveryKey: recoveryKey, path: .create)
+        // A credential this device cannot store is one the person cannot recover from later:
+        // creating the account first would leave an orphan installation holding a cap slot
+        // and a recovery key nobody has (enrollment-identity-plan A2c). Stop before any request.
+        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .create) else { throw ClientAuthError.storage }
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
@@ -1055,7 +1065,7 @@ final class ClientAuthManager: @unchecked Sendable {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
         reportEnrollmentStart(path: "migrate")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
-        writeDraft(key: key, recoveryKey: recoveryKey, path: .migrate)
+        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .migrate) else { throw ClientAuthError.storage }
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/migrate", key: key, recoveryKey: recoveryKey, label: label)
