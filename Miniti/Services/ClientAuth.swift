@@ -1330,3 +1330,111 @@ final class ClientAuthManager: @unchecked Sendable {
         clearLocal(reason: "delete")
     }
 }
+
+// MARK: - Enrollment policy
+
+/// The managed enrollment policy, moved out of `AppState` so it can be tested without a host
+/// app (docs/enrollment-identity-plan.md, A2). Behaviour is the 3.3.0 `AppState` policy
+/// ported line for line: enrolled → nothing to do; device id session-only → defer; migrate,
+/// then create on `notEligibleForMigration` or `deviceAlreadyEnrolled`; concurrent callers
+/// share one attempt; a failure is remembered and the next trigger retries. The screenshot
+/// and XCTest guards, the mode check and the published mirrors stay in `AppState`, which
+/// hands this object closures for them so the order of every side effect is unchanged.
+@MainActor
+final class ManagedEnrollmentCoordinator {
+    typealias EventLevel = MinitiAPIService.ClientEventPayload.EventLevel
+
+    /// What the coordinator needs from its host, as closures so a test can observe each one.
+    struct Hooks {
+        /// `DeviceIdentifier.isUsingSessionOnlyID`: the real id exists but cannot be read now.
+        var deviceIDIsSessionOnly: () -> Bool
+        /// Label sent with an enrollment ("Mac", "iPhone or iPad").
+        var deviceLabel: () -> String?
+        /// The host's published status says enrolled (it may lag the manager).
+        var statusIsEnrolled: () -> Bool
+        /// Mirror of `AppState.isEnrollingManagedDevice`.
+        var setEnrolling: (Bool) -> Void
+        /// Mirror of `AppState.managedEnrollmentError`.
+        var setError: (String?) -> Void
+        /// `AppState.refreshClientAuthStatus()`.
+        var refreshStatus: () -> Void
+        /// `AppState.enqueueDiagnosticEvent` (category app).
+        var event: (_ name: String, _ level: EventLevel, _ details: [String: String]) -> Void
+        /// `DebugLogger.shared.log(.app, …)`.
+        var log: (String) -> Void
+    }
+
+    private let manager: ClientAuthManager
+    private let hooks: Hooks
+    private var task: Task<Bool, Never>?
+
+    init(manager: ClientAuthManager, hooks: Hooks) {
+        self.manager = manager
+        self.hooks = hooks
+    }
+
+    /// True while an attempt is running (for tests and for the host's retry button).
+    var isAttemptInFlight: Bool { task != nil }
+
+    /// Make sure this installation holds device-bound credentials before a managed request.
+    /// Existing installations migrate silently (their device record predates the backend
+    /// cutoff); anything else gets a fresh anonymous account. Failures are retried on the
+    /// next managed action rather than surfaced as a gate, since managed features need the
+    /// network anyway. Concurrent callers share one attempt.
+    @discardableResult
+    func ensure(trigger: String) async -> Bool {
+        if manager.isEnrolled {
+            if !hooks.statusIsEnrolled() { hooks.refreshStatus() }
+            return true
+        }
+        if hooks.deviceIDIsSessionOnly() {
+            // The real device ID exists but the Keychain could not be read right now
+            // (locked, prompting). Enrolling would bind a new account and stored
+            // credentials to a temporary identity; wait for the next trigger instead.
+            hooks.log("enrollment_deferred_session_only_device_id trigger=\(trigger)")
+            return false
+        }
+        if let task { return await task.value }
+        let attempt = Task<Bool, Never> { @MainActor [weak self] in
+            guard let self else { return false }
+            defer { self.task = nil }
+            return await self.perform(trigger: trigger)
+        }
+        task = attempt
+        return await attempt.value
+    }
+
+    private func perform(trigger: String) async -> Bool {
+        hooks.setEnrolling(true)
+        defer { hooks.setEnrolling(false) }
+        let label = hooks.deviceLabel()
+        do {
+            try await manager.migrateLegacyDevice(label: label)
+            hooks.setError(nil)
+            hooks.log("Managed enrollment: migrated existing device (trigger=\(trigger))")
+            hooks.event("client_auth_migrated", .info, [:])
+        } catch ClientAuthError.notEligibleForMigration, ClientAuthError.deviceAlreadyEnrolled {
+            // Not eligible: no pre-cutoff device record. Already enrolled: the server holds an
+            // installation under this device id with a key this Keychain does not have (a
+            // restored backup); createAccount takes a fresh device id in that case.
+            do {
+                try await manager.createAccount(label: label)
+                hooks.setError(nil)
+                hooks.log("Managed enrollment: created anonymous account (trigger=\(trigger))")
+                hooks.event("client_auth_created", .info, [:])
+            } catch {
+                hooks.setError(error.localizedDescription)
+                hooks.log("Managed enrollment FAILED (create, trigger=\(trigger)): \(error.localizedDescription)")
+                hooks.event("client_auth_enrollment_failed", .warning, ["path": "create"])
+            }
+        } catch ClientAuthError.alreadyEnrolled {
+            hooks.setError(nil)
+        } catch {
+            hooks.setError(error.localizedDescription)
+            hooks.log("Managed enrollment FAILED (migrate, trigger=\(trigger)): \(error.localizedDescription)")
+            hooks.event("client_auth_enrollment_failed", .warning, ["path": "migrate"])
+        }
+        hooks.refreshStatus()
+        return manager.isEnrolled
+    }
+}

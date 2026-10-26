@@ -1069,7 +1069,21 @@ final class AppState: ObservableObject {
     /// Sees every diagnostics event before the share/mode guards; tests assert through it.
     var diagnosticEventObserver: ((String, [String: String]) -> Void)?
     private var recoveryKeyNoticeSnoozed = false
-    private var enrollmentTask: Task<Bool, Never>?
+    /// The enrollment policy lives in `ManagedEnrollmentCoordinator` (ClientAuth.swift); this
+    /// object keeps the guards that need the host and the published mirrors it updates.
+    private lazy var enrollmentCoordinator = ManagedEnrollmentCoordinator(
+        manager: ClientAuthManager.shared,
+        hooks: .init(
+            deviceIDIsSessionOnly: { DeviceIdentifier.isUsingSessionOnlyID },
+            deviceLabel: { Self.managedDeviceLabel },
+            statusIsEnrolled: { [weak self] in self?.clientAuthStatus.isEnrolled ?? false },
+            setEnrolling: { [weak self] in self?.isEnrollingManagedDevice = $0 },
+            setError: { [weak self] in self?.managedEnrollmentError = $0 },
+            refreshStatus: { [weak self] in self?.refreshClientAuthStatus() },
+            event: { [weak self] name, level, details in self?.enqueueDiagnosticEvent(name, category: .app, level: level, details: details) },
+            log: { DebugLogger.shared.log(.app, $0) }
+        )
+    )
     @Published var isLoadingUsage = false
     @Published var managedSessionError: String?
     @Published var isDeviceDisabled = false
@@ -10728,60 +10742,7 @@ final class AppState: ObservableObject {
         guard !ScreenshotMode.isActive else { return true }
         guard !Self.isRunningUnderXCTest else { return false }
         guard appMode == .managed else { return false }
-        if ClientAuthManager.shared.isEnrolled {
-            if !clientAuthStatus.isEnrolled { refreshClientAuthStatus() }
-            return true
-        }
-        if DeviceIdentifier.isUsingSessionOnlyID {
-            // The real device ID exists but the Keychain could not be read right now
-            // (locked, prompting). Enrolling would bind a new account and stored
-            // credentials to a temporary identity; wait for the next trigger instead.
-            DebugLogger.shared.log(.app, "enrollment_deferred_session_only_device_id trigger=\(trigger)")
-            return false
-        }
-        if let enrollmentTask { return await enrollmentTask.value }
-        let task = Task<Bool, Never> { @MainActor [weak self] in
-            guard let self else { return false }
-            defer { self.enrollmentTask = nil }
-            return await self.performManagedEnrollment(trigger: trigger)
-        }
-        enrollmentTask = task
-        return await task.value
-    }
-
-    private func performManagedEnrollment(trigger: String) async -> Bool {
-        isEnrollingManagedDevice = true
-        defer { isEnrollingManagedDevice = false }
-        let manager = ClientAuthManager.shared
-        let label = Self.managedDeviceLabel
-        do {
-            try await manager.migrateLegacyDevice(label: label)
-            managedEnrollmentError = nil
-            DebugLogger.shared.log(.app, "Managed enrollment: migrated existing device (trigger=\(trigger))")
-            enqueueDiagnosticEvent("client_auth_migrated", category: .app, level: .info)
-        } catch ClientAuthError.notEligibleForMigration, ClientAuthError.deviceAlreadyEnrolled {
-            // Not eligible: no pre-cutoff device record. Already enrolled: the server holds an
-            // installation under this device id with a key this Keychain does not have (a
-            // restored backup); createAccount takes a fresh device id in that case.
-            do {
-                try await manager.createAccount(label: label)
-                managedEnrollmentError = nil
-                DebugLogger.shared.log(.app, "Managed enrollment: created anonymous account (trigger=\(trigger))")
-                enqueueDiagnosticEvent("client_auth_created", category: .app, level: .info)
-            } catch {
-                managedEnrollmentError = error.localizedDescription
-                DebugLogger.shared.log(.app, "Managed enrollment FAILED (create, trigger=\(trigger)): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("client_auth_enrollment_failed", category: .app, level: .warning, details: ["path": "create"])
-            }
-        } catch ClientAuthError.alreadyEnrolled {
-            managedEnrollmentError = nil
-        } catch {
-            managedEnrollmentError = error.localizedDescription
-            DebugLogger.shared.log(.app, "Managed enrollment FAILED (migrate, trigger=\(trigger)): \(error.localizedDescription)")
-            enqueueDiagnosticEvent("client_auth_enrollment_failed", category: .app, level: .warning, details: ["path": "migrate"])
-        }
-        refreshClientAuthStatus()
-        return manager.isEnrolled
+        return await enrollmentCoordinator.ensure(trigger: trigger)
     }
 
     /// Short, non-identifying label shown in the device list ("MacBook Pro", "iPhone").

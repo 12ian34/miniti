@@ -842,6 +842,234 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNil(store.load())
     }
     #endif
+    // MARK: - A2 enrollment coordinator
+
+    /// Records every hook call so a test can assert the order of side effects.
+    @MainActor
+    private final class CoordinatorHost {
+        var sessionOnly = false
+        var statusEnrolled = false
+        var enrolling: [Bool] = []
+        var errors: [String?] = []
+        var refreshes = 0
+        var events: [(String, [String: String])] = []
+        var logs: [String] = []
+
+        // Strong captures on purpose: the coordinator owns the hooks, and a test may drop its
+        // own reference to the host while the coordinator still reports into it.
+        func hooks() -> ManagedEnrollmentCoordinator.Hooks {
+            .init(
+                deviceIDIsSessionOnly: { self.sessionOnly },
+                deviceLabel: { "Mac" },
+                statusIsEnrolled: { self.statusEnrolled },
+                setEnrolling: { self.enrolling.append($0) },
+                setError: { self.errors.append($0) },
+                refreshStatus: { self.refreshes += 1 },
+                event: { name, _, details in self.events.append((name, details)) },
+                log: { self.logs.append($0) }
+            )
+        }
+    }
+
+    private enum Paths { nonisolated(unsafe) static var hits: [String] = [] }
+
+    /// A manager wired to the stub; the handler maps each auth path to an answer.
+    @MainActor
+    private func coordinatorFixture(
+        enrolled: Bool = false,
+        rotator: (@Sendable () -> String)? = nil,
+        answers: @escaping @Sendable (String, [String: Any]) -> (Int, Data)
+    ) -> (ManagedEnrollmentCoordinator, CoordinatorHost, ClientAuthManager) {
+        let store = InMemoryClientAuthStore(enrolled ? credentials() : nil)
+        // The provider follows the rotator, as DeviceIdentifier does for the real manager.
+        nonisolated(unsafe) var currentID = "550e8400-e29b-41d4-a716-446655440000"
+        let manager = ClientAuthManager(
+            store: store, baseURL: "https://api.test/api", session: stubbedSession(),
+            deviceIDProvider: { currentID },
+            deviceIDRotator: rotator.map { rotate in { currentID = rotate(); return currentID } }
+        )
+        Paths.hits = []
+        StubURLProtocol.handler = { [self] request in
+            let path = request.url?.path ?? ""
+            Paths.hits.append(path)
+            if path == "/api/auth/challenge" { return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8)) }
+            return answers(path, requestBody(request))
+        }
+        let host = CoordinatorHost()
+        let coordinator = ManagedEnrollmentCoordinator(manager: manager, hooks: host.hooks())
+        return (coordinator, host, manager)
+    }
+
+    private static func tokens(_ account: String, device: String = "550e8400-e29b-41d4-a716-446655440000") -> (Int, Data) {
+        (200, Data("""
+        {"token_type":"Bearer","access_token":"tok","expires_in":3600,"refresh_token":"mrt_a","refresh_expires_in":7776000,"account_id":"\(account)","device_id":"\(device)","device_cap":5}
+        """.utf8))
+    }
+
+    private static func failure(_ status: Int, _ error: String) -> (Int, Data) {
+        (status, Data("{\"error\":\"\(error)\",\"message\":\"x\"}".utf8))
+    }
+
+    @MainActor
+    func testCoordinatorMigratesAnEligibleLegacyDevice() async {
+        let (coordinator, host, manager) = coordinatorFixture { path, _ in
+            path == "/api/auth/migrate" ? Self.tokens("acct_legacy") : Self.failure(500, "unexpected")
+        }
+        defer { StubURLProtocol.handler = nil }
+        let ok = await coordinator.ensure(trigger: "usage")
+        XCTAssertTrue(ok)
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(manager.status.enrollmentPath, "migrate")
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"), "migrate first, create never needed")
+        XCTAssertEqual(host.enrolling, [true, false])
+        XCTAssertEqual(host.errors, [nil])
+        XCTAssertEqual(host.events.map(\.0), ["client_auth_migrated"])
+        XCTAssertEqual(host.refreshes, 1)
+    }
+
+    @MainActor
+    func testCoordinatorCreatesWhenNotEligibleForMigration() async {
+        let (coordinator, host, manager) = coordinatorFixture { path, _ in
+            switch path {
+            case "/api/auth/migrate": return Self.failure(404, "device_not_eligible")
+            case "/api/auth/account/create": return Self.tokens("acct_new")
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        let outcome1 = await coordinator.ensure(trigger: "start")
+        XCTAssertTrue(outcome1)
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+        XCTAssertEqual(manager.status.enrollmentPath, "create")
+        XCTAssertEqual(host.events.map(\.0), ["client_auth_created"])
+        XCTAssertEqual(host.errors, [nil])
+    }
+
+    @MainActor
+    func testCoordinatorFallsBackToCreateWhenMigrateSaysAlreadyEnrolled() async {
+        let (coordinator, _, manager) = coordinatorFixture { path, _ in
+            switch path {
+            case "/api/auth/migrate": return Self.failure(409, "device_already_enrolled")
+            case "/api/auth/account/create": return Self.tokens("acct_new")
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        let outcome2 = await coordinator.ensure(trigger: "start")
+        XCTAssertTrue(outcome2)
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/create" }.count, 1)
+    }
+
+    @MainActor
+    func testCoordinatorRotatesOnceWhenCreateConflicts() async {
+        nonisolated(unsafe) var rotations = 0
+        let (coordinator, host, manager) = coordinatorFixture(rotator: { rotations += 1; return "11111111-2222-4333-8444-555555555555" }) { path, body in
+            switch path {
+            case "/api/auth/migrate": return Self.failure(404, "device_not_eligible")
+            case "/api/auth/account/create":
+                let id = body["device_id"] as? String ?? ""
+                return id == "550e8400-e29b-41d4-a716-446655440000" ? Self.failure(409, "device_already_enrolled") : Self.tokens("acct_rotated", device: id)
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        let outcome3 = await coordinator.ensure(trigger: "start")
+        XCTAssertTrue(outcome3)
+        XCTAssertEqual(rotations, 1, "the rotator is counted once")
+        XCTAssertEqual(manager.status.accountID, "acct_rotated")
+        XCTAssertEqual(host.events.map(\.0), ["client_auth_created"])
+    }
+
+    @MainActor
+    func testCoordinatorDefersWhileTheDeviceIDIsSessionOnlyAndMakesNoRequest() async {
+        let (coordinator, host, manager) = coordinatorFixture { _, _ in Self.failure(500, "unexpected") }
+        defer { StubURLProtocol.handler = nil }
+        host.sessionOnly = true
+        let outcome4 = await coordinator.ensure(trigger: "usage")
+        XCTAssertFalse(outcome4)
+        XCTAssertTrue(Paths.hits.isEmpty, "no network call while the id is temporary")
+        XCTAssertFalse(manager.isEnrolled)
+        XCTAssertEqual(host.enrolling, [])
+        XCTAssertTrue(host.logs.contains { $0.hasPrefix("enrollment_deferred_session_only_device_id trigger=usage") })
+    }
+
+    @MainActor
+    func testCoordinatorReturnsTrueWithoutNetworkWhenAlreadyEnrolledAndRefreshesALaggingStatus() async {
+        let (coordinator, host, _) = coordinatorFixture(enrolled: true) { _, _ in Self.failure(500, "unexpected") }
+        defer { StubURLProtocol.handler = nil }
+        host.statusEnrolled = false
+        let outcome5 = await coordinator.ensure(trigger: "settings")
+        XCTAssertTrue(outcome5)
+        XCTAssertTrue(Paths.hits.isEmpty)
+        XCTAssertEqual(host.refreshes, 1, "the host's published status lagged and was refreshed")
+        host.statusEnrolled = true
+        let outcome6 = await coordinator.ensure(trigger: "settings")
+        XCTAssertTrue(outcome6)
+        XCTAssertEqual(host.refreshes, 1, "no refresh when the status already agrees")
+        XCTAssertEqual(host.enrolling, [])
+    }
+
+    @MainActor
+    func testCoordinatorSharesOneAttemptBetweenConcurrentCallers() async {
+        let (coordinator, host, _) = coordinatorFixture { path, _ in
+            switch path {
+            case "/api/auth/migrate": return Self.failure(404, "device_not_eligible")
+            case "/api/auth/account/create": return Self.tokens("acct_new")
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        async let first = coordinator.ensure(trigger: "start")
+        async let second = coordinator.ensure(trigger: "usage")
+        let results = await [first, second]
+        XCTAssertEqual(results, [true, true])
+        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/create" }.count, 1, "one network sequence for two callers")
+        XCTAssertEqual(host.enrolling, [true, false], "one attempt, one pair of mirror updates")
+        XCTAssertFalse(coordinator.isAttemptInFlight)
+    }
+
+    @MainActor
+    func testCoordinatorRemembersAFailureAndRetriesOnTheNextTrigger() async {
+        nonisolated(unsafe) var createAnswer: (Int, Data) = Self.failure(503, "client_auth_unavailable")
+        let (coordinator, host, manager) = coordinatorFixture { path, _ in
+            switch path {
+            case "/api/auth/migrate": return Self.failure(404, "device_not_eligible")
+            case "/api/auth/account/create": return createAnswer
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        let outcome7 = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(outcome7)
+        XCTAssertFalse(manager.isEnrolled)
+        XCTAssertNotNil(host.errors.last ?? nil, "the failure is remembered for the host to show")
+        XCTAssertEqual(host.events.map(\.0), ["client_auth_enrollment_failed"])
+        XCTAssertEqual(host.events.last?.1, ["path": "create"])
+        XCTAssertEqual(host.enrolling, [true, false])
+        XCTAssertEqual(host.refreshes, 1)
+
+        createAnswer = Self.tokens("acct_new")
+        let outcome8 = await coordinator.ensure(trigger: "usage")
+        XCTAssertTrue(outcome8)
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertNil(host.errors.last ?? nil, "cleared on success")
+        XCTAssertEqual(host.enrolling, [true, false, true, false])
+    }
+
+    @MainActor
+    func testCoordinatorReportsAMigrateFailureOnItsOwnPath() async {
+        let (coordinator, host, _) = coordinatorFixture { path, _ in
+            path == "/api/auth/migrate" ? Self.failure(503, "client_auth_unavailable") : Self.failure(500, "unexpected")
+        }
+        defer { StubURLProtocol.handler = nil }
+        let outcome9 = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(outcome9)
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"), "a 503 on migrate is not a reason to create")
+        XCTAssertEqual(host.events.last?.0, "client_auth_enrollment_failed")
+        XCTAssertEqual(host.events.last?.1, ["path": "migrate"])
+    }
+
 }
 
 // MARK: - A1 fixtures
