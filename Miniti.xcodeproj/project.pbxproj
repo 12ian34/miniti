@@ -86,6 +86,8 @@
 		AE0000010000000000000033 /* ClientAuth.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000031 /* ClientAuth.swift */; };
 		AE0000010000000000000042 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
 		AE0000010000000000000043 /* ClientAuthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000041 /* ClientAuthTests.swift */; };
+		DF00000100000000000000B1 /* DataFlowSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000B0 /* DataFlowSummaryTests.swift */; };
+		DF00000100000000000000B2 /* DataFlowSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000B0 /* DataFlowSummaryTests.swift */; };
 		AE0000010000000000000023 /* InsightTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000021 /* InsightTemplates.swift */; };
 		AE0000010000000000000013 /* ScreenshotMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000011 /* ScreenshotMode.swift */; };
 		AE0000010000000000000003 /* ForceUpdateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE0000010000000000000001 /* ForceUpdateView.swift */; };
@@ -173,6 +175,8 @@
 		CC4D21FCB569C1AE26FD32ED /* CloudSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC20B006C9441532FAF7A235 /* CloudSyncEngine.swift */; };
 		CCDD42A0227AC49BF517F4AB /* AppState+CloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9797B767A692503713EF53 /* AppState+CloudSync.swift */; };
 		CC27061722F7A9211C9FFBDB /* AppState+CloudSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC9797B767A692503713EF53 /* AppState+CloudSync.swift */; };
+		DF00000100000000000000A1 /* DataFlowSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000A0 /* DataFlowSummary.swift */; };
+		DF00000100000000000000A2 /* DataFlowSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF00000100000000000000A0 /* DataFlowSummary.swift */; };
 		CCF3D0C5DD23EFBB03A21C0A /* CloudSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */; };
 		CCAB18E5DADE6DFC642F009B /* CloudSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */; };
 		CCD5F92AEF942F2D79CEB10D /* MeetingSyncDocumentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */; };
@@ -314,6 +318,7 @@
 		AE0000010000000000000031 /* ClientAuth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuth.swift; sourceTree = "<group>"; };
 		AE0000010000000000000051 /* ManagedAccountViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedAccountViews.swift; sourceTree = "<group>"; };
 		AE0000010000000000000041 /* ClientAuthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClientAuthTests.swift; sourceTree = "<group>"; };
+		DF00000100000000000000B0 /* DataFlowSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataFlowSummaryTests.swift; sourceTree = "<group>"; };
 		AF0000010000000000000003 /* SelectableTextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableTextView.swift; sourceTree = "<group>"; };
 		B70000010000000000000001 /* LiveTranscriptTextPaneMac.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveTranscriptTextPaneMac.swift; sourceTree = "<group>"; };
 		C20000010000000000000001 /* MinitiApp_iOS.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiApp_iOS.swift; sourceTree = "<group>"; };
@@ -371,6 +376,7 @@
 		CC3B01BB5D4DE4EB3C28BC52 /* MinitiAPIService+Cloud.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MinitiAPIService+Cloud.swift"; sourceTree = "<group>"; };
 		CC20B006C9441532FAF7A235 /* CloudSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncEngine.swift; sourceTree = "<group>"; };
 		CC9797B767A692503713EF53 /* AppState+CloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CloudSync.swift"; sourceTree = "<group>"; };
+		DF00000100000000000000A0 /* DataFlowSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataFlowSummary.swift; sourceTree = "<group>"; };
 		CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSettingsView.swift; sourceTree = "<group>"; };
 		CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MeetingSyncDocumentTests.swift"; sourceTree = "<group>"; };
 		CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CloudSyncEngineTests.swift"; sourceTree = "<group>"; };
@@ -527,6 +533,7 @@
 				W42000010000000000000002 /* AppState+VoicePrints.swift */,
 				W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */,
 				CC9797B767A692503713EF53 /* AppState+CloudSync.swift */,
+				DF00000100000000000000A0 /* DataFlowSummary.swift */,
 				CCAA041382F34C227825B8B5 /* MeetingTombstone.swift */,
 				D1000000000000000000000A /* AppState+Persistence.swift */,
 				A20000010000000000000008 /* Meeting.swift */,
@@ -652,6 +659,7 @@
 				T20000010000000000000003 /* MeetingModelTests.swift */,
 				T20000010000000000000004 /* WebhookPayloadTests.swift */,
 				AE0000010000000000000041 /* ClientAuthTests.swift */,
+				DF00000100000000000000B0 /* DataFlowSummaryTests.swift */,
 				T20000010000000000000005 /* AppStateComputationTests.swift */,
 				T20000010000000000000006 /* DeepgramParsingTests.swift */,
 				T20000010000000000000007 /* InsightsParsingTests.swift */,
@@ -967,6 +975,7 @@
 				W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */,
 				CCF3D0C5DD23EFBB03A21C0A /* CloudSettingsView.swift in Sources */,
 				CCDD42A0227AC49BF517F4AB /* AppState+CloudSync.swift in Sources */,
+				DF00000100000000000000A1 /* DataFlowSummary.swift in Sources */,
 				CC7C059E805E2A4CE4DF9824 /* CloudSyncEngine.swift in Sources */,
 				CCEBC49F09AF285BAAF7040F /* MinitiAPIService+Cloud.swift in Sources */,
 				CCD2ECA0C709430BBE56BCCD /* MeetingSyncDocument.swift in Sources */,
@@ -1038,6 +1047,7 @@
 				W1000001000000000000002A /* WatchRecordingProtocol.swift in Sources */,
 				CCAB18E5DADE6DFC642F009B /* CloudSettingsView.swift in Sources */,
 				CC27061722F7A9211C9FFBDB /* AppState+CloudSync.swift in Sources */,
+				DF00000100000000000000A2 /* DataFlowSummary.swift in Sources */,
 				CC4D21FCB569C1AE26FD32ED /* CloudSyncEngine.swift in Sources */,
 				CC045106FC0CF75582A1084A /* MinitiAPIService+Cloud.swift in Sources */,
 				CCA4D1DD67B6591D9E56B712 /* MeetingSyncDocument.swift in Sources */,
@@ -1129,6 +1139,7 @@
 				T10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
 				AE0000010000000000000042 /* ClientAuthTests.swift in Sources */,
+				DF00000100000000000000B1 /* DataFlowSummaryTests.swift in Sources */,
 				T10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				T10000010000000000000007 /* InsightsParsingTests.swift in Sources */,
@@ -1167,6 +1178,7 @@
 				U10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
 				AE0000010000000000000043 /* ClientAuthTests.swift in Sources */,
+				DF00000100000000000000B2 /* DataFlowSummaryTests.swift in Sources */,
 				U10000010000000000000005 /* AppStateComputationTests.swift in Sources */,
 				U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */,
 				U10000010000000000000007 /* InsightsParsingTests.swift in Sources */,

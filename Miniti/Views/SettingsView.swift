@@ -169,6 +169,8 @@ struct SettingsView: View {
             PrivacySettingsView()
         case .cloud:
             CloudSettingsView()
+        case .sending:
+            SendingSettingsView()
         case .api:
             APIAccessSettingsView()
         case .about:
@@ -1816,6 +1818,8 @@ struct PrivacySettingsView: View {
         Form {
             Section("Deepgram and OpenAI") {
                 ThirdPartyAIConsentRow()
+                Button("See what leaves this Mac") { appState.jumpToSetting("sending.overview") }
+                    .buttonStyle(.link)
             }
             .id("privacy.thirdPartyAI")
 
@@ -1857,6 +1861,29 @@ struct PrivacySettingsView: View {
         .formStyle(.grouped)
         .padding()
         .settingsSearchScrolling(for: .privacy)
+    }
+}
+
+/// Setup, Sending: every recipient of anything from this Mac, what it gets right now, and a
+/// link to the setting that decides it. Status only; the controls stay on their own tabs.
+struct SendingSettingsView: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Form {
+            Section("What leaves this Mac") {
+                DataFlowRowsView()
+            }
+            .id("sending.overview")
+            Section {
+                Text("Worked out from your settings right now. Change a setting and this list changes with it. The first screen asked for permission once; this is the running answer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .settingsSearchScrolling(for: .sending)
     }
 }
 

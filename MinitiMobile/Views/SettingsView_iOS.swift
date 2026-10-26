@@ -814,8 +814,21 @@ private struct SettingsDetailView_iOS: View {
                     .id("playbook.server")
                 }
 
+                if category == .sending {
+                Section("What leaves this device") {
+                    DataFlowRowsView(showsJumps: false)
+                    Text("Worked out from your settings right now. Change a setting and this list changes with it. Each row names the tab that decides it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .id("sending.overview")
+                }
+
                 if category == .privacy {
                 Section("Privacy") {
+                    Text("What leaves this device, and who gets it, is listed under Setup, Sending.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Text("Private mode, where a meeting never leaves the device, is on the Mac app for now.")
                     Text("Voices (Settings, Transcription) keeps voice fingerprints on this device only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
                         .font(.caption)

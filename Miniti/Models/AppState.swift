@@ -157,6 +157,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case general
     case account
     case cloud
+    case sending
     case recording
     case transcription
     case ai
@@ -175,7 +176,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
 
     var group: SettingsGroup {
         switch self {
-        case .general, .account, .cloud: return .setup
+        case .general, .account, .cloud, .sending: return .setup
         case .recording, .transcription, .ai, .templates, .notifications: return .meetings
         case .calendar, .crm, .webhooks, .api, .playbook, .data: return .connections
         case .privacy: return .privacy
@@ -200,6 +201,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .data: return "Data"
         case .privacy: return "Privacy"
         case .cloud: return "Cloud"
+        case .sending: return "Sending"
         case .about: return "About"
         }
     }
@@ -221,6 +223,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .data: return "Granola import and markdown export"
         case .privacy: return "Private mode, diagnostics and models on this device"
         case .cloud: return "Your meetings on every device"
+        case .sending: return "What leaves this device, who gets it, and where to change it"
         case .about: return "Version, updates, help and licences"
         }
     }
@@ -242,6 +245,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .data: return "tray.and.arrow.down"
         case .privacy: return "lock"
         case .cloud: return "cloud"
+        case .sending: return "paperplane"
         case .about: return "info.circle"
         }
     }
@@ -260,6 +264,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case "tokens", "connectors", "connected": return .api
         case "dataExport", "export": return .data
         case "privacySupport": return .privacy
+        case "dataFlow", "whatLeaves": return .sending
         case "support": return .about
         default: return .general
         }
@@ -357,6 +362,7 @@ enum SettingsSearchCatalog {
         .init("cloud.delete", "Delete cloud copy", section: "Cloud", destination: .cloud, keywords: ["remove", "wipe", "server", "delete"], requiresManaged: true),
 
         .init("privacy.thirdPartyAI", "Sending meetings", section: "Deepgram and OpenAI", destination: .privacy, keywords: ["permission", "consent", "deepgram", "openai", "allow", "withdraw", "third party"]),
+        .init("sending.overview", "What Leaves This Device", section: "Sending", destination: .sending, keywords: ["sent", "where", "data", "deepgram", "openai", "typesafe", "jev", "webhook", "cloud", "calendar", "crm", "what goes where", "privacy"]),
         .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
         .init("privacy.models", "Models on This Device", section: "Models on this device", destination: .privacy, keywords: ["download", "remove", "nemotron", "disk"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
