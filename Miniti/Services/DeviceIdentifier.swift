@@ -131,8 +131,17 @@ final class KeychainSlot: @unchecked Sendable {
             // answer is the real one.
             return legacy
         }
-        #endif
+        // Neither store holds a readable item. "Not found" from both is absence; anything
+        // else from either store means the item may exist and could not be read right now,
+        // which is unreadable, never missing. Until 3.3.1 the primary store's "not found"
+        // was returned over a locked or denied login keychain, so a locked login keychain
+        // read as "no credential" and started an enrollment (enrollment-identity-plan, A2a).
+        if case .unreadable = primary { return primary }
+        if case .unreadable = legacy { return legacy }
+        return .missing
+        #else
         return primary
+        #endif
     }
 
     func write(_ data: Data) -> Bool {

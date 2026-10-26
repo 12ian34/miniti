@@ -642,8 +642,16 @@ final class ClientAuthTests: XCTestCase {
         private var items: [String: Data] = [:]
         private(set) var adds: [String: Int] = [:]
         var dataProtectionAvailable: Bool
+        /// Make every read of one store answer this status (a locked or denied keychain,
+        /// or a build whose data protection reads answer -34018 rather than "not found").
+        private var readFailures: [Bool: OSStatus] = [:]
 
         init(dataProtectionAvailable: Bool) { self.dataProtectionAvailable = dataProtectionAvailable }
+
+        func failReads(dataProtection: Bool, with status: OSStatus) {
+            lock.lock(); defer { lock.unlock() }
+            readFailures[dataProtection] = status
+        }
 
         private func key(_ query: [String: Any]) -> String {
             let dp = (query[kSecUseDataProtectionKeychain as String] as? Bool) ?? false
@@ -666,6 +674,7 @@ final class ClientAuthTests: XCTestCase {
 
         func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
             lock.lock(); defer { lock.unlock() }
+            if let status = readFailures[isDP(query)] { return (status, nil) }
             if isDP(query), !dataProtectionAvailable { return (errSecItemNotFound, nil) }
             guard let data = items[key(query)] else { return (errSecItemNotFound, nil) }
             return (errSecSuccess, data)
@@ -822,6 +831,76 @@ final class ClientAuthTests: XCTestCase {
             DeviceIdentifier.resetForTesting()
             XCTAssertEqual(DeviceIdentifier.getOrCreateDeviceId(), minted)
         }
+    }
+
+    /// A2a: the two stores read together. Every primary answer crossed with every login
+    /// keychain answer; both read models of the shipped build (data protection reads answer
+    /// "not found", or answer -34018) are rows here.
+    func testKeychainSlotClassifiesBothStoresTogether() throws {
+        enum Answer { case found, missing, unreadable(OSStatus) }
+        let locked: OSStatus = -25308   // errSecInteractionNotAllowed
+        let denied: OSStatus = -25293   // errSecAuthFailed
+        let primaryAnswers: [Answer] = [.found, .missing, .unreadable(locked), .unreadable(denied), .unreadable(KeychainSlot.missingEntitlement)]
+        let loginAnswers: [Answer] = [.found, .missing, .unreadable(locked)]
+        let dpData = Data("dp".utf8)
+        let loginData = Data("login".utf8)
+
+        for primary in primaryAnswers {
+            for login in loginAnswers {
+                let fake = FakeKeychain(dataProtectionAvailable: true)
+                switch primary {
+                case .found: fake.set(dpData, service: "s", account: "a", dataProtection: true)
+                case .missing: break
+                case .unreadable(let status): fake.failReads(dataProtection: true, with: status)
+                }
+                switch login {
+                case .found: fake.set(loginData, service: "s", account: "a", dataProtection: false)
+                case .missing: break
+                case .unreadable(let status): fake.failReads(dataProtection: false, with: status)
+                }
+                let slot = KeychainSlot(service: "s", account: "a", accessible: kSecAttrAccessibleAfterFirstUnlock, backend: fake)
+                let result = slot.read()
+                let label = "primary=\(primary) login=\(login)"
+
+                switch (primary, login) {
+                case (.found, _):
+                    XCTAssertEqual(result, .found(dpData), label)
+                case (.unreadable(KeychainSlot.missingEntitlement), .found):
+                    XCTAssertEqual(result, .found(loginData), label)
+                case (.unreadable(KeychainSlot.missingEntitlement), .missing):
+                    XCTAssertEqual(result, .missing, "\(label): -34018 means this build cannot use the primary store; the login answer is the real one")
+                case (.unreadable(KeychainSlot.missingEntitlement), .unreadable(let status)):
+                    XCTAssertEqual(result, .unreadable(status), label)
+                case (.unreadable(let status), .found):
+                    XCTAssertEqual(result, .found(loginData), label)
+                    _ = status
+                case (.unreadable(let status), _):
+                    XCTAssertEqual(result, .unreadable(status), "\(label): the primary store's own refusal is reported")
+                case (.missing, .found):
+                    XCTAssertEqual(result, .found(loginData), label)
+                    XCTAssertEqual(fake.item(service: "s", account: "a", dataProtection: true), loginData, "\(label): moved into the primary store")
+                case (.missing, .missing):
+                    XCTAssertEqual(result, .missing, label)
+                case (.missing, .unreadable(let status)):
+                    XCTAssertEqual(result, .unreadable(status), "\(label): a locked login keychain is not absence (the 3.3.0 gap)")
+                }
+            }
+        }
+    }
+
+    func testALockedLoginKeychainIsReportedAsUnreadableNotAsNoCredential() throws {
+        // The shipped Developer ID build: data protection reads answer "not found" (postmortem
+        // model) and the login keychain is locked.
+        let fake = FakeKeychain(dataProtectionAvailable: false)
+        fake.failReads(dataProtection: false, with: -25308)
+        let store = KeychainClientAuthStore(backend: fake)
+        XCTAssertNil(store.load(), "A1 and A2a: still nil for callers; A3 changes what the manager does with it")
+        XCTAssertEqual(store.lastLoadDiagnostic, .unreadable(status: -25308))
+        let manager = ClientAuthManager(store: store, deviceIDProvider: { "d" })
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        XCTAssertEqual(events.names, ["client_auth_credential_unreadable"])
+        XCTAssertEqual(events.all.first?.details["status"], "-25308")
     }
 
     func testCredentialStoreFallsBackToTheLoginKeychainAndReadsLegacyItems() throws {
