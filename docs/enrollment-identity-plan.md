@@ -1,0 +1,666 @@
+# Enrollment identity and account ownership plan
+
+> **What this is.** A plan, not an implementation. Nothing described under "Proposed" exists in code as of 2026-10-25. It started on 2026-10-23 as a narrow fix for one failure (a device silently becoming a new user), was revised on 2026-10-25 after two reviews against the code, was extended the same day into the account-ownership design that the narrow fix turns out to need, had Track B revised again that night after a second review found seven migration scenarios that could lose usage, break access or send data to the wrong account, a third pass on 2026-10-26 corrected five more (counter adoption order, the entitlement fallback, meeting copies instead of moves, old-client refusal handling, charge-based reconciliation), a fourth the same day fixed the migration sequences themselves (period-aware baseline, writers before reads with ownership before transfer, one-seed-per-device claims, the copy grant's retry and revocation contract), a fifth fixed the transaction and ownership rules (checkout attribution as the only owner source for new purchases, the copy as one Postgres transaction, grants bound to a destination, a journal instead of replay from responses), a sixth closed the ownership edge cases (expired subscriptions owned before transfer, generation-bound grants, idempotent destination binding, a migration credit instead of over-counting), and a seventh fixed three interactions (the generation survives attach, the credit reaches the client and the ledger, the serialisation claim replaced by the honest contract). The two tracks are separately shippable: Track A (client protection) does not wait for Track B (ownership migration), and Track B is not part of 3.3.1.
+>
+> **How it was checked.** Every "Today" statement below was read in code on 2026-10-25 across `../miniti`, `../miniti-api` and `../miniti-linux`, with file and line references. Where a document and the code disagree, the code is reported and the document is listed under "Documentation that is stale". Where production behaviour could not be established from the repos, the statement is marked **unverified**.
+>
+> Related: [roadmap.md](roadmap.md) is the cross-repository priority and completion tracker (P1.4 and the P0.1 Phase 4 status refer here). Backend contracts live in `../miniti-api/docs/agents/04-api-reference.md` and `08-cloud.md`; this plan proposes changes to them and does not replace them. Backend: `miniti-api/docs/agents/04-api-reference.md`, "Device-bound client authorization".
+
+## Status
+
+| Slice | What | Repo | Status | Release | User-visible change |
+|---|---|---|---|---|---|
+| **Track A: client protection** | | | | | |
+| A0 | Server logs the create/migrate `409 device_already_enrolled` (log line only, no hint in the body) | miniti-api | **built 2026-10-26**, not deployed | any deploy | none |
+| A0a | The device list shows each installation's app version from its last enrolment write only; after a successful authentication the token refresh and `/api/usage` update only the metadata fields (`appVersion`, `platform`) on the canonical installation record, preserving existing values when headers are absent, never calling the enrollment writer; shown as "last reported version"; does not fix missing labels | miniti-api | **built 2026-10-26**, not deployed | any deploy | device list versions become current |
+| A1 | Client diagnostic events for rotation, unreadable, undecodable, conflict, draft write failure, silent re-create; events raised before the sink exists are buffered and replayed | miniti | **built 2026-10-26** (31 auth tests green on macOS, iOS bundle compiles) | 3.3.1 | none |
+| A2 | Enrollment policy moved out of `AppState` into a tested coordinator, behaviour identical, tests written against the old code first | miniti | planned | 3.3.1 | none |
+| A2a | `KeychainSlot.read()`: "missing" in one store plus "unreadable" in the other is unreadable | miniti | planned | 3.3.1 | only when the login keychain is locked or denied: today that reads as "no credential" |
+| A2b | Decoding tests against stored-credential fixtures captured per shipped version (3.3.0 first), plus a migration test for each format change | miniti | planned | 3.3.1 | none |
+| A2c | A failed draft write stops enrollment before any request | miniti | planned | 3.3.1 | only when the Keychain refuses the write |
+| A2e | Restore and sign-in errors tell the truth: the client shows the server's reason (invalid key, no active subscription, rate limited, wrong organisation, connection) instead of one sentence for everything, and queues a diagnostic event with the code | miniti (client half planned); miniti-api (backend contract **built 2026-10-26**, not deployed) | planned | 3.3.1 | clearer error text only |
+| A2d | A stored installation key that cannot be loaded on this machine (a Secure Enclave key after a Migration Assistant move) re-binds with a fresh key using the stored recovery key, same device id, no new account; Sign out clears locally when the key is unusable | miniti | planned | 3.3.1 | only for a Mac set up from another Mac's backup or migration: today it cannot record and cannot sign out |
+| A3 | Tri-state credential state in the manager; unreadable and damaged defer with a message and a Settings way out; rotation permitted only from a confirmed-absent store, checked before the draft is written, recorded on the draft | miniti | planned | release after 3.3.1 | yes, only for locked, denied or corrupt Keychains |
+| A4 | Explicit choice states: enrollment conflict, signed out, revoked, damaged. Each shows Restore / Sign in by email / Set up as new; nothing rotates or creates silently | miniti | planned | after A3 | yes, for restored backups, signed-out and revoked devices |
+| A5 | Device QA on release-signed builds before A3 and A4 | both | planned | with A3, A4 | none |
+| **Track B: account ownership** | | | | | |
+| B0 | One device record per device: canonical write routing first, then an atomic per-pair merge of the uppercase twin, over an inventory of every device-keyed namespace (device records, subscription sets, sessions, idempotency keys, integration tokens, OAuth state); admin shows one row | miniti-api, then clients | planned | backend first | none |
+| B1 | Subscriptions owned by the account: `sub:{rail}:{id}` records whose owner is fixed at first bind (checkout attribution captured when checkout starts); renewals update the record by subscription id regardless of where the buying device is now; restore and verify bind a new subscription to the device's account and refuse one owned elsewhere | miniti-api | planned | after B0 | a restore on the wrong account is refused with guidance instead of silently sponsoring it |
+| B2 | Usage charged to the account: attribution captured at session creation and kept for the whole retry window; end-of-session metering is one Lua script that marks idempotency and increments the account ledger; per-account atomic seeding before that account's dual-write; reconciliation against attributable records, not device sums | miniti-api | planned | after B0 | none visible; totals stop changing when a device leaves |
+| B3 | Account lifecycle: attach is a device transfer and never retires the source; dormant accounts (zero installations) stay alive while they hold anything; explicit deletion only; guest-account upgrade is adding a recovery method to the same id | miniti-api | planned | after B1 | a device moved off an account no longer destroys that account |
+| B4 | Cloud data consent: meetings carry an owner account and a provenance (recorded here, downloaded, unknown) on the client; legacy rows are unknown, never guessed; an account change never uploads another account's or unknown meetings; chosen meetings are **copied** under a grant minted while still a member of the source, never moved; the server's origin index refuses foreign pushes only from clients that understand the refusal | miniti, miniti-linux, miniti-api | planned | after B3 | a prompt after moving or signing in on a device that has meetings; old clients unchanged until they update |
+| B5 | Integrations as account connections: Google, Attio and Twenty tokens owned by the account; each installation keeps its existing routing until the person changes it; ambiguity requires a selection, never a guess; disconnect routes for Attio and Twenty; orphan cleanup | miniti-api, clients | planned | after B3 | a connection made on one device can be chosen on the others |
+| B6 | "Protect your account" in Settings, Account and on Home: recovery key and email as recovery methods, independent of the cloud switch and Pro; first launch offers "sign in with email" or "start fresh" on Home; the connected email is shown; client UI moved out of the Cloud tab | miniti, miniti-linux, miniti-api (allowlist) | planned | after A4 | yes, a new section and a nudge at Pro purchase and cloud enable |
+| B7 | Linux mirror and admin surfaces | miniti-linux, miniti-api | planned | alongside each slice | none |
+
+3.3.1 carries A1, A2, A2a, A2b, A2c, A2d and A2e alongside the Granola import fix and the Settings Sending tab. Review state 2026-10-26: A2d, A2e and A0a are reviewed and ready to implement against their tests and the A5 lines; readiness to implement, not a claim that unbuilt recovery code is safe to ship. A0 deploys on its own. Nothing in Track B belongs to 3.3.1.
+
+## Product direction
+
+First use stays email-free. **Today and through 3.3.1:** on the first managed action miniti silently creates an anonymous account and an installation authorised to use it. **From A4:** first use waits for one choice on Home, "Sign in to an existing account" or "Continue without signing in", and the second choice is that same silent creation made explicit (B6). Nothing is created before the choice. Adding a recovery method later (verified email, saved recovery key) protects that same account; it never creates a second one. An account can stay anonymous for ever. Email, passwords and cloud meeting uploads are never required.
+
+**The invariant:** replacing, removing or losing a device does not change what its account owns.
+
+Four things that today are tangled into one device record are kept apart:
+
+| Concept | Owns | Proves | Lives |
+|---|---|---|---|
+| **Account** | subscriptions, consumed usage, cloud meetings, account-owned integration connections, the cloud switch | nothing | `auth:account:{id}` plus the records below |
+| **Recovery method** | nothing | access to an account: recovery key, verified email, later possibly approval from another signed-in device | `auth:recovery:{digest}`, `account_emails` |
+| **Installation** | device-local preferences only | that this device may act for the account; independently revocable; its own key pair | `auth:installation:{deviceId}` |
+| **Session, token** | nothing | temporary authorisation | access token, refresh family, Deepgram grant |
+
+"Protect your account" is offered at the moments it matters: before relying on cloud or a second device, at Pro purchase (prominently, without blocking existing subscribers), and once from Home as today's recovery-key card. It is a nudge, never a gate. **Email is never mandatory, on either platform.** A mandatory email would not have prevented either of the 2026-10-26 failures (a dead device key, a mispasted server value), and App Review 5.1.1(v) expects an app whose core feature works without an account to keep working without one; account-dependent features (cloud, a second device) may ask for a sign-in method when they are used.
+
+**Existing users keep everything.** Account ids, credentials and access stay as they are; there is no forced sign-out and no migration screen. New recovery methods are linked onto the existing account, the anonymous-account-gains-a-sign-in pattern (Firebase documents the same linking model for anonymous accounts; miniti adopts the pattern, not the product). Adding an email that already belongs to another account is an explicit sign-in or switch flow with the outcome stated; it never merges accounts or moves ownership.
+
+**Later, not in these releases:** Sign in with Apple as an alternative to email links, with recovery keys kept as the advanced fallback; and StoreKit's `appAccountToken` on new Apple purchases so the transaction names the internal account rather than the device (complements B1's ownership record, replaces nothing in authentication). Neither enters the incident release.
+
+**What we will not promise.** A person who loses every credential and has no recovery method cannot be recovered securely; the account is still there but nobody can prove it is theirs. A complete local erasure makes a returning installation indistinguishable from first use, and the server must treat it as first use. Ownership is never inferred from a device UUID that happens to match, from a similar email, from an IP address or from device metadata. Approval from another signed-in device is a possible later recovery method, not part of this plan.
+
+## How it works today (verified 2026-10-25)
+
+### Identity records
+
+Redis, all written by `miniti-api/lib/clientAuthStore.ts` unless noted:
+
+- `auth:account:{acct}` hash: status, createdAt, deviceCap (frozen at creation), originPlatform, recoveryDigest (exactly one), recoveryVersion, cloudEnabled, cloudVersion, cloudChangedAt, deletedAt (lines 62 to 73). No TTL while active; 30 days once tombstoned (704).
+- `auth:recovery:{digest}` → accountId. One per account; rotate replaces, never adds (680 to 693).
+- `auth:account:{id}:installations` set of **lowercase** device ids (392).
+- `auth:installation:{deviceId}` hash (key lowercased, `lib/clientAuth.ts:538`): accountId, publicKeyJwk, jkt, enrollmentPath, platform, appVersion, label, createdAt, lastAuthAt, revokedAt, refreshFamily. Never deleted; revoke sets `revokedAt` (670).
+- `device:{deviceId}` hash: the legacy usage, tier, Polar and Apple record (`lib/usage.ts:22-60`). **Two spellings exist for every Apple device**: the auth layer writes the lowercase body id (`clientAuthRoutes.ts:48`, `clientAuthStore.ts:393`); every client route writes `X-Device-ID` as sent, which Swift sends uppercase (`lib/validate.ts:24-39`). The subscription sits on the uppercase record, the `accountId` mirror on the lowercase one.
+- Challenges (120 s), refresh tokens (90 d), replay guards (600 s), locks (30 s).
+
+Postgres (Neon), `db/migrations/001_cloud.sql`: `meetings` PK `(account_id, id)` with audit columns `created_by_device`, `updated_by_device` that nothing reads; `meeting_changes`; `account_emails (account_id PK, email UNIQUE)`; `login_links`; `web_sessions`; `api_tokens`; `oauth_*`. `account_id` is a bare text copy of the KV id, no foreign key, no lifecycle hook. There is no accounts table.
+
+### Enrollment transitions
+
+- **Create** (`clientAuthStore.ts:414-455`): `409 device_already_enrolled` when a non-revoked installation exists with a different jkt or a different account. Same jkt and same recovery key replays the lost response. A **revoked** installation may create again under the same device id (389, 423). `409 recovery_key_in_use` when the digest maps to an account with members (430); a digest on an empty account resumes a crashed bind (435). The 409 is not logged.
+- **Migrate** (578 to 628): same shape, requires a `device:` record created before `CLIENT_MIGRATION_CUTOFF`, read under the **lowercase** id. **Unverified:** whether that read ever matched an Apple legacy record, which was written uppercase; tests use lowercase ids only (`auth-routes.test.ts:21-23`).
+- **Restore** (`bindRestoredInstallation`, 493 to 531): same account, different key → re-bind without a cap slot; another account → `409 device_already_enrolled`; otherwise cap check then write. Shared by the recovery-key route and the approved email link.
+- **Attach** (781 to 889): rewrites the installation's accountId, moves the membership set entry, revokes the refresh family, rewrites the `accountId` mirror on `device:{id}`. **Moves nothing else**: usage counters, Polar and Apple fields, label and integration tokens stay on the device record and travel implicitly because they are device-keyed (877). If the source account is left with no installations it is **tombstoned** (881, 700 to 705): recovery digest deleted, membership set deleted, status `deleted`, 30-day expiry. Not touched: `account_emails`, `web_sessions`, `api_tokens`, `oauth_grants`, cloud `meetings`. The email stays on a dead account and `POST /api/account/email` on the destination answers `409 email_in_use` (`app/api/account/email/route.ts:38`). No reversal exists.
+- **Revoke** (665 to 677): sets `revokedAt`, revokes refresh family, removes from the set. The account is **not** tombstoned, so an account whose last device is revoked stays alive and its key still restores. Attach and revoke therefore disagree about what an empty account is.
+- **Delete** (`app/api/auth/account/route.ts`): revokes all, tombstones, purges cloud data best effort. The only path that removes Postgres rows for an account other than the user's own "Delete cloud copy".
+- **Cap**: enforced on restore and attach from `scard` of the membership set against the frozen cap; re-binds skip it; create has none; phantom entries from a failed attach count (775).
+
+### Client states
+
+`ClientAuthManager.init` reads the credential **once** (`ClientAuth.swift:550`), before `AppState` exists far enough to attach anything to it. `KeychainClientAuthStore.load()` returns nil for missing, unreadable (logged) and undecodable (not logged) alike (425 to 432). `isEnrolled` is "credentials present and not a draft" (578). `ensureManagedEnrollment` (`AppState.swift:10726`) returns true early when enrolled, defers when the **device id** is session-only, and otherwise runs migrate then create (10751). `createAccount` writes a draft before any request and ignores a failed write (885, 858); on `409 device_already_enrolled` only (`mapError` 706) it rotates the device id and creates again with the same draft key (889 to 899). After `signOut` or a server `installation_revoked`, the credential is cleared, the device id stays, and the next trigger **silently creates a new account under the same device id**; the client keeps no "signed out" marker, so this is indistinguishable from first use on the client side. A device joined by email holds an empty recovery key (836), so the `invalid_proof` re-bind sends `""` and cannot heal it. On a server revoke, `clientAuthStatus` is not refreshed until a later refresh, so Account reads "enrolled" for a while.
+
+`KeychainSlot.read()` (`DeviceIdentifier.swift:112-136`): primary store first, then the login keychain on macOS. **Primary "missing" plus login "unreadable" returns "missing"** (135). The `-34018` branch (129) applies only when the primary store's *read* fails with that code. The 3.2.1 postmortem (`distribution.md:115`) and `FakeKeychain` (`ClientAuthTests.swift:561-584`) both model the Developer ID build as **reads answer `errSecItemNotFound`, writes fail `-34018`**. Under that model the combination is reachable in production today whenever the login keychain is locked or an ACL prompt is denied. **Unverified** on real hardware: whether a read in the release build ever answers `-34018`; nothing in the repo records it either way. The 2026-10-25 revision of this plan said the opposite and was wrong.
+
+### Subscriptions
+
+No account-level subscription record exists. Polar fields live on the device hash under the id Polar echoes back as `customer.external_id`, which is the header spelling (uppercase for Apple apps); `polar_sub:{id}:devices` is a reverse set never pruned on revoke or attach. Apple fields likewise, with `apple_sub:{otx}:devices`, `apple_sub_state`, `apple_sub_events`. Entitlement for `/api/usage` (`usage.ts:316-432`): own Polar, then own Apple (iOS or null platform), then `findSponsor` over the account's installations reading both spellings, first match in set order wins (`accountEntitlement.ts:25-44`); the overlay is memory only. `/api/subscribe` refuses a sponsored device; **`/api/restore` and `/api/apple/verify` do not check tier or account**, so any enrolled device on any account presenting a valid license key or receipt links the subscription to itself and sponsors that whole account (`restore/route.ts:46-67`, `verify/route.ts`). Attach refuses same-rail conflicts at move time only. Polar webhooks have no event-id idempotency; a late `active` after `canceled` re-links. Platform rule: Apple is iOS-only (`usage.ts:210-240`), Polar has no platform check.
+
+### Usage
+
+No minutes at session create. `POST /api/session/end` reads `session_end:{deviceId}:{sessionId}`, then `incrementUsage` (`HINCRBYFLOAT` on the header-spelled device record, separate commands with no transaction around them; the repo's one Lua script is the cloud sequence cache, `kv.eval` in `lib/cloud.ts:111`, so the client does expose it), then writes the idempotency key 30 days (`session/end/route.ts:56-122`). A failure between the increment and the mark double-counts on retry. The session record stores the device id as sent and end compares it with exact case (line 70); the idempotency key embeds the header spelling (line 56). Offline ends are trusted up to 240 minutes; a never-sent end records nothing. Prerecorded (Watch) uses the same gate and meters client-reported minutes. Docs lookups increment without idempotency (`insights/route.ts:393-418`). Reset dates are **per device**: webhook or passive, so two devices on one account routinely have different windows and the account total (`accountUsage.ts:36-68`, sum over current non-revoked members, larger of the two spellings, zero if past its own reset) is a sum of counters with different windows. Counters stay on the device record: a device that is revoked or attached elsewhere **disappears from the old account's total at once and brings its minutes into the new account's total**.
+
+### Cloud data
+
+Meetings are account-scoped by the device token's account claim. Push is CAS on `(account_id, id)`; pull is a client-held `since` cursor per account; the server stores no per-device cursor. The document carries no owner or origin field; `created_by_device` is audit only. **Nothing prevents a client from uploading meetings it pulled from account A into account B**, and the client protocol expects exactly that: after attach, join or sign-out-then-enrol, `resetBookkeeping()` zeroes every meeting's revision and the next reconcile pushes every finished non-excluded meeting into the new account (`CloudSyncEngine.swift:222-242, 365-415, 590-665`); without a reset (restore by key, revoke then silent re-create) the reconcile reaches the same outcome by zeroing revisions the new manifest lacks (623). Tombstones from the old account are pushed to the new one. `docs/patterns.md:180` describes this as intended; the move sheet copy does not say it (`ManagedAccountViews.swift:128, 785`). Delete cloud copy is a hard delete; account deletion purges; attach-tombstone purges nothing.
+
+### Integrations
+
+Google, Attio and Twenty tokens are `{provider}:token:{deviceId}` KV blobs keyed by the header spelling, no TTL, no cleanup on rotation, revoke, attach or deletion. Two devices on one account hold independent connections, possibly to different upstream accounts. Google has a disconnect route with best-effort upstream revoke; **Attio and Twenty have none**. No server-side per-device preference exists; routing and auto-export live in client `@AppStorage` (`AppState.swift:1472-1478`). On device id rotation the connection is orphaned and the client shows "not connected" at the next status check.
+
+### Email and recovery
+
+Server side, adding an email requires device auth, the server cloud kill switch and `CLOUD_SYNC_ALLOWLIST`, **not Pro and not the account's cloud switch** (`lib/cloud.ts:71-88`, `account/email/route.ts:12`). New-device approval (`/api/auth/email/start`) needs no device auth, gates only on the server kill switch and Resend, always answers 202 with a link id, rate limited 20 per hour per network and 5 per hour per email, single-use links of 15 minutes. Client side, the **add-email UI lives inside the Cloud tab behind the cloud toggle**, which requires Pro (`CloudSettingsView.swift:70-74, 166, 250-287`), while "Sign in with email" and "Join by email" sit in Settings, Account ungated (`ManagedAccountViews.swift:469, 509`). So the server already allows email as a recovery method for free accounts with cloud off; the client hides the way to add one.
+
+### Linux
+
+`../miniti-linux/src-tauri/src/auth/manager.rs`: credentials in an owner-only file first, keyring second. An undecodable **file** reads as "nothing stored" (211 to 214), same shape as Swift; the keyring path is tri-state and sets `keyring_pending` so the UI must not offer account creation (291 to 355). Drafts carry an explicit `draft: true` in their own file. `create_account` does not resume a draft and has **no rotation**: `409 device_already_enrolled` maps to `EnrolledElsewhere` and surfaces. No device id rotate function exists. `PLAN.md:473-474` lists the Apple rotation and re-bind behaviour as "to mirror"; this plan withdraws that item (see Linux handoff).
+
+## Documentation that is stale
+
+Found during the 2026-10-25 sweep. Not fixed by this plan; each owner document should be corrected in its own commit. Quoted claims are what the document says; the code is as described above.
+
+| Document | Says | Code |
+|---|---|---|
+| `docs/monetization.md:157, 169, 171, 182` | routes "require X-API-Key", key "XOR-obfuscated in MinitiAPIService" | the app sends no such header (`MinitiAPIService.swift:44-66`); device-bound auth since 2.6.0 |
+| `docs/monetization.md:173` | replacing the shared key is future work | done; the same file's line 13 says so |
+| `docs/cloud-sync-plan.md:126, 280` | "the email never enrolls a device"; "restoring a device still needs the recovery key" | approved email links enrol a device (`clientAuthStore.ts:546-554`); the same file's lines 13 and 18 describe it |
+| `docs/cloud-sync-plan.md:103, 288-289` | `SyncEngine.swift`, `SyncEngineTests`, `PrivateModeTests` | `CloudSyncEngine.swift`, `CloudSyncEngineTests`, `CloudSyncAppStateTests` |
+| `docs/cloud-sync-plan.md:120` | "Settings says this in the move sheet" (meetings upload to the destination) | the sheet copy does not say it (`ManagedAccountViews.swift:128, 785`) |
+| `docs/patterns.md:12`, `03-patterns.md:59` | `/api/version` creates or touches device records for BYOK | the record is touched only with a valid credential (`04-api-reference.md:864`); BYOK has none |
+| `docs/patterns.md:156`, `roadmap.md:235`, `07-client-integration.md:11` vs `CHANGELOG.md:142-147` | device-bound release was 2.7.0 | changelog records it under 2.6.0 |
+| `docs/roadmap.md:235, 278, 291`, `05-runbook.md:116` | "shared account-level usage counters still open"; route `/account/devices/attach`; "without email" | per-account minutes shipped in 3.0.0; route is `/api/auth/account/attach`; email sign-in shipped in 3.0.0 |
+| `README.md:50` | "No email, no password" | email is optional since 3.0.0 |
+| `03-patterns.md:10`, `04-api-reference.md:7, 27, 519`, `02-environment.md:23`, `07-client-integration.md:18`, `01-overview.md:25` | shared `X-API-Key` as the normal gate; Apple clients "keep using X-API-Key"; admin "API key auth" | bearer first, key only in observe/prefer (`clientAuth.ts:617-692`); admin uses a session cookie |
+| `04-api-reference.md:157-159` | account deletion without the cloud purge; log event list | purge in `auth/account/route.ts:24-29`; `client_auth_rebind`, `_migration`, `_migration_rejected`, `_enrollment_by_email` also logged |
+| `04-api-reference.md:148-150`, `03-patterns.md:89` | attach leaves tokens untouched (true) | omit that cloud meetings, PATs, grants, email and sessions stay on the source and are orphaned when it is tombstoned |
+| `03-patterns.md:76` | both-spelling read takes "the larger" | takes the record with larger `minutesUsed` and that record's docs count |
+| `08-cloud.md:101` | later sections "still to come" | they exist at 171 to 250 |
+| `docs/enrollment-identity-plan.md` (2026-10-25 morning) | "the two-store combination cannot occur in production" | reachable under the postmortem's read model; see above |
+| `ClientAuth.swift:479, 485`, `MinitiAPIService.swift:1136, 1138` (copy, not docs) | "Settings → Account", "Miniti" | copy rules: "Settings, Account", lowercase miniti |
+
+## Where it is fragile
+
+Ranked by blast radius. Items 1 to 5 are from the 2026-10-23 draft and stand; 6 to 12 come from the 2026-10-25 audits.
+
+1. **A found-but-undecodable credential is "not enrolled".** A struct change that breaks decoding of stored JSON turns every upgraded user into a new free account on first launch, silently, through rotate-and-create. No fixture test guards it.
+2. **An unreadable credential is "not enrolled", and the answer sticks for the process.** Reachable today on macOS whenever the login keychain is locked or denied, because `KeychainSlot.read()` reports primary-missing as the answer.
+3. **Rotation is silent on both sides.**
+4. **Rotation ignores what it leaves behind**, and the server cannot tell a disposable account from one with Pro sponsored by a sibling device, an email, cloud meetings or connections.
+5. **The policy is untestable**: `ensureManagedEnrollment` refuses to run under XCTest and reaches for singletons.
+6. **Attach destroys the source account** when the last device leaves, deleting its recovery digest while leaving its email, tokens, sessions and cloud meetings orphaned and un-reusable.
+7. **Sign out and server revoke both end in a silent new account** under the same device id, which the invariant forbids and which also uploads the whole local library into the new account once it is Pro.
+8. **Subscriptions bind to whatever account the device is on**: a license key or receipt presented from any device links there and sponsors it. Attach's rail-conflict check is bypassed by linking after the move.
+9. **Consumed minutes follow the device, not the account that incurred them**, and the account total is a sum of counters with different reset windows.
+10. **Session-end metering is not exactly-once**: increment and idempotency mark are separate commands.
+11. **Cloud sync has no provenance**: a device that changes account uploads every local meeting, including ones downloaded from the previous account, with no consent step.
+12. **Integrations are orphaned on any identity change** and have no account view, no TTL and, for Attio and Twenty, no disconnect.
+
+### Invariants the current code does not hold
+
+From the audits, in one list so a test can be written against each: one account has at most one active subscription per rail; a subscription is bound to the account that bought it; a session end is metered exactly once; minutes are recorded for a session whose end never arrives (they are not, by design, and this plan does not change that); all devices on an account share a billing window; a sponsored device's persisted tier reflects its effective Pro; Polar webhook handling is idempotent; one device is one `device:` record; `polar_sub` and `apple_sub` sets reflect membership; admin counts equal real devices; sponsor choice is deterministic with two sponsors; an account with zero installations can be deliberately alive; a second recovery method can exist; an installation can prove access without being the identity; cloud rows have an owner lookup once the KV account expires; the cap reflects live devices.
+
+## Review 2026-10-25
+
+Two reviews of the 2026-10-23 draft against the code, one by Astra (another session) and one by the session that built the Granola fix, followed by the five-area audit that produced "How it works today". Findings and decisions:
+
+1. **Keychain wrapper two-store gap. Accepted, and more urgent than first stated.** The combination is reachable in today's Developer ID build under the postmortem's read model. A2a ships in 3.3.1 with a table test over the store combinations.
+2. **The draft defeats a "store must be missing" rotation guard. Accepted.** The absence check moves to the start of `createAccount`, before the draft is written. **Correction to the morning revision:** a draft that already exists does not prove the check ran before it was created. Legacy drafts (no marker) therefore never grant rotation permission; A3 adds an `absenceConfirmed` field to the draft format, written only by code that performed the check, and A2b's fixture tests cover drafts with and without it.
+3. **"Unknown" must not mean "safe to replace". Accepted.** No account hint in the 409 body; nothing rotates without an explicit tap (A4).
+4. **"No subscription or email" does not prove disposability. Accepted.** The check would have missed account-sponsored Pro, connections and cloud data. Any conflict offers the recovery choice.
+5. **Telemetry blind spot. Accepted.** The manager reads the credential before `AppState` can attach a sink, so launch-time events need the pre-sink buffer (A1). **Correction to the morning revision:** a quiet week does not establish that nobody is affected. Events reach the server only from a device that later enrols somewhere with Share Diagnostics on; a device stuck unreadable, one whose person gives up, one on which diagnostics are off, and one where the draft or final write fails all report nothing. The week of data sizes what it can see and gates nothing in Track A.
+6. **The 409 hint discloses account facts to an unauthenticated caller. Accepted.** A0 is a server log line only.
+7. **Rotation fires on `device_already_enrolled` specifically, not any 409. Accepted.**
+8. **Sequencing. Decided:** A3 ships one release after its safety net (A2 tests, A2b fixtures, A5 QA), not alongside it.
+9. **Draft write failure. Correction to the morning revision:** a transient failed save does not prove the final save would fail. A2c stops enrollment anyway because a credential the device cannot store durably is a credential the person cannot recover from later; creating the account first and failing to store it leaves an orphan installation holding a cap slot and a recovery key nobody has. The stop is justified by the durable-recovery requirement, not by prediction.
+10. **Compatibility fixtures. Correction to the morning revision:** declaring new fields optional is a coding rule, not a guarantee. A2b keeps one fixture per shipped credential format (3.3.0 enrolled, 3.3.0 draft, email-joined with empty recovery key) and requires an explicit decode-and-migrate test for every format change, including the A3 draft marker.
+
+## Review 2026-10-25, second pass (Track B)
+
+Astra reviewed the evening revision's Track B against the code. Seven blockers, all checked and accepted; Track B below is the revised version. Track A was not affected.
+
+1. **The B4 backfill invented ownership.** `cloudRevision > 0` does not mean "owned by the current account": every existing account switch zeroes revisions, including on downloaded meetings, so legacy rows would have become "recorded here" and eligible for upload elsewhere. Legacy rows now carry provenance `unknown` and are never auto-uploaded across an account change. Old clients omit the owner claim, so the server gains a global origin index and refuses a push of a meeting id owned by another account (B4).
+2. **The B5 fallback could pick the wrong CRM.** "Explicit, else the account's only connection, else the device's" let a phone that uses CRM Y silently route to CRM X once X became the account connection. The order is now: explicit, else this installation's existing connection, else the account's only connection, else require a selection (B5).
+3. **Lowercasing the id globally would strand records outside `device:*`.** Integration tokens, OAuth state, `session:{id}.deviceId` (compared with exact case, `session/end/route.ts:70`), `session_end:{deviceId}:{sid}` idempotency keys and rate-limit buckets all embed the header spelling. B0 now carries a namespace inventory with a compatibility rule per namespace.
+4. **The B0 backfill ran before legacy writers stopped**, so live traffic could recreate an uppercase record that the `mergedAt` skip would then ignore, and read-copy-rename could race an increment. B0 now installs canonical write routing first and merges each pair in one Lua script.
+5. **B1 made renewals depend on the buying device's current account.** A device that moved after buying would have had its renewal refused. Ownership is fixed at first bind, checkout attribution is captured when checkout starts, and webhooks update by subscription id regardless of membership (B1).
+6. **B2 charged expired-session ends to the wrong account.** The attribution record now lives for the whole 30-day retry window; an end with no attribution is recorded as unresolved and charges nobody (B2; baseline, not a decision).
+7. **B2's seeding, reconciliation and rollback had no consistent baseline.** Seeding is now atomic per account and happens before that account's dual-write starts; reconciliation compares against attributable records; rollback is limited to accounts not yet seeded (B2).
+
+Two corrections: the backend already calls `kv.eval` (`lib/cloud.ts:111`), so "no Lua anywhere" was wrong and B2 needs a test of the metering script, not a spike on availability; and the B3 deletion row had subscriptions "cancelled upstream where possible", which contradicts the shipped contract (`04-api-reference.md:158`: deletion does not cancel Polar or Apple). Billing stays separate; that is baseline, not a decision.
+
+## Review 2026-10-26, third pass (Track B)
+
+Astra reviewed the night revision. Five findings, all checked against the code and accepted, plus two contradictions in the sequencing text.
+
+1. **B0 could still lose increments without a race.** Uppercase 100, lowercase 0, a new 10-minute increment routed to lowercase, then a max-merge → 100. Fixed by adopting the twin's counters into the canonical record atomically at its first write and adding from there (B0 step 1).
+2. **B1's device fallback let Pro follow a transferred device.** Fixed: mirrored device fields grant entitlement only when no `sub:` record exists for that subscription or its owner is the account being evaluated; the rollback path carries the same filter.
+3. **The origin index as written would have re-pointed A's rows and trusted 30-day membership as authority.** Replaced by a copy under a single-use grant bound to the installation key and minted while still a member of the source; source rows untouched; grandfathering for ids already under several accounts.
+4. **The old-client description was wrong.** Verified: an unknown 409 becomes a revision conflict with one retry and a dirty row (`MinitiAPIService+Cloud.swift:252`); batches are oldest-first and bounded (`CloudSyncEngine.swift:396-402`); a non-409 status throws and fails the pass; only 413 is terminal. Enforcement is now version-gated and the previous release is run against the refusal in staging before the gate is set.
+5. **Reconciliation summed cumulative totals.** Fixed with per-operation charge records, 90-day retention, opening balance plus charges.
+6. **Sequencing still described the old B0 order and called every slice independently rollbackable.** Corrected; rollback is now stated per slice.
+
+Decision list trimmed on the same advice: the device cap, platform policy and billing-on-deletion are the unchanged baseline, not decisions; unattributable usage is never charged; the orphaned-accounts question waits for a count.
+
+## Review 2026-10-26, fourth pass (Track B migration)
+
+Astra reviewed the morning revision. Four findings and two small corrections, all accepted after checking the code.
+
+1. **B0's baseline copied the twin over a lowercase record that may hold real usage**, and took a reset date independently of the counters. The script now computes a period-aware baseline from both records (expired contributes nothing, current contributions sum) before the increment; three worked examples are in B0. The rollback paragraph wrongly allowed a redeploy before the cron; it is fix-forward from step 1.
+2. **B1 preferred `sub:` reads before compatible writers existed**, so a cancellation in the interval would have left a stale preferred record, and a device could move before its subscription had an owner. The cutover is now writers plus backfill in one deploy, ownership established before any transfer, reads last after 24 green hours.
+3. **B2's gradual seeding could seed the same device counters into two accounts** when the device moved between seeds. Each device's counters are now claimed by exactly one seed (`usageClaimedBy`), and every membership-changing path seeds both accounts under both locks before writing membership. The exact sequence is a regression test.
+4. **B4's grant had no retry or recovery contract**, offered post-transfer copies it could not authorise, and claimed revocation changes the key. Verified: `revokeInstallation` only marks the record (`clientAuthStore.ts:665-677`) and create accepts the same key for a revoked record (418-428). The grant is now server-side with per-item completion, idempotent retries, a use-time revocation check, deletion on revoke, and no post-transfer copying.
+5. B0's integration fallback tries lowercase then **uppercase**, not the raw header. B4's enforcement is disabled by a switch or by raising the threshold, never by lowering it. Stale decision references removed.
+
+## Review 2026-10-26, fifth pass (Track B transactions and ownership)
+
+Astra reviewed the 09:32 revision. Four findings, accepted after checking the code and the installed Next.js docs.
+
+1. **B1 still let a first webhook take the device's current account**, which the checkout example defeats (checkout on A, move to B, pay). One three-way owner rule now sits in both the ownership section and the cutover: checkout attribution, else a legacy device record (safe only because transfers are blocked for those), else unresolved. The backfill checkpoint is durable in KV; `instrumentation.ts` runs per instance and is not a migration barrier.
+2. **B4 described one Redis script spanning Postgres rows.** The grant and its items now live in Postgres; redemption is one Postgres transaction with the `(grant_id, source_id)` key as the idempotency constraint; the Redis pre-checks are stated as non-transactional with a one-item window.
+3. **Grants had no destination.** Bound once at the transfer; every redemption and retry checks the caller's current account against it; A → B → C is a regression test.
+4. **B0's correction replayed from session-end responses**, which are cumulative account totals. B0 now writes a mutation journal from its first write, and the correction script replays that or limits itself to counter-preserving changes. A test for two current records with different reset dates and an explicit billing-period policy were added.
+
+## Review 2026-10-26, sixth pass (Track B ownership edge cases)
+
+Astra reviewed the 09:48 revision. Two blockers, two contract gaps, one policy point, two cleanups. All accepted.
+
+1. **The transfer precondition covered active subscriptions only**, so an expired one could move with its device, be backfilled as the destination's, and grant the destination on reactivation. Ownership is now established for every identifiable subscription id on the device record before a transfer, and the backfill scope matches.
+2. **Grant revocation could fail between Redis and Postgres**, after which same-key re-enrollment would revive old grants. Grants now carry the installation's authorisation generation, bumped in the same Redis write as every revoke and every enrollment write; the Postgres expiry is hygiene.
+3. **"At most one in-flight item" was not enforced.** Redemptions per grant are serialised by a lock with the checks re-run after acquiring it; the real guarantee is stated.
+4. **Destination binding had no retry rule.** The bind is idempotent for the same destination and refuses a different one; partial-failure and lost-response retries resume; the "can never redeem" claim is corrected.
+5. **Over-counting on merge was the default.** Replaced by a migration credit equal to the smaller counter for the current period (D10 for confirmation).
+6. Checkout attribution TTL unified at 7 days; the non-goals now admit B4's three additive tables.
+
+## Review 2026-10-26, seventh pass (Track B interactions)
+
+Astra reviewed the 09:54 revision. Three findings, two checked in code, all accepted.
+
+1. **Attach bumped the generation the grant needed right after attach**, so the ordinary copy flow would always fail. The generation is now a credential generation: bumped on revoke and credential replacement, never on attach or email join. The plain success path is a named test.
+2. **The migration credit stopped at the backend gate.** Verified: the client computes "limit reached" from `minutes_used` against `minutes_limit` itself (`MinitiAPIService.swift:208`). One effective-usage rule now feeds API responses, server gates, account aggregation and B2's seed, with gross kept separately. The "more generous record" claim was wrong: sum minus smaller equals the larger, and the text says so.
+3. **A 30-second lease could not serialise redemptions**, and the existing lock helper deletes unconditionally on exit (`clientAuthStore.ts:95`). The per-grant lock is gone; the contract is that requests past the checks may finish and later ones fail.
+
+## Review 2026-10-26, eighth pass (the incident's slices)
+
+Astra reviewed A2d, A2e, A0a and the B6 additions. All accepted; three claims checked in code.
+
+1. **A2d did not recover the email-joined Mac.** The repair ran only with a stored recovery key; the incident credential had none, and automatic enrollment would have run again. A2d now suppresses creation in the unusable-key state, offers email and key directly, restores the same installation with a fresh key, and gives an explicit outcome when the email belongs to another account.
+2. **A2d replaced credentials on any enclave error.** Now an allow-list of codes that establish a foreign key; locked, denied, cancelled and unknown pause and retry. One shared repair task; the original operation is retried; the cached-bearer case is named.
+3. **A2e changed sentences without a backend contract.** `polar.ts:206` folds 404 and 422 into `invalid_key`; the route now distinguishes input, configuration, refusal, provider failure and throttling, the client keeps the code (`MinitiAPIService.swift:2022`), and email sign-in gets separate start, poll and complete mappings (`AppState+CloudSync.swift:252` swallowed poll failures).
+4. **B6's Home choice contradicted A4's silent first use.** First use now waits in `awaitingChoice`; a Switch account action stays separate from the shown email.
+5. **The Polar probe proved only a rejection.** Narrowed; an authenticated read-only ownership check and restore outcome monitoring added; no hourly activation (ops plan).
+6. Corrections: refresh grants are unsigned, so "heals on first launch" became "on the first signing attempt"; the throwaway account's state is unverified; Ian's subscription collision is a reviewed-mapping case for B1; the generation update is one transaction, not a pipeline.
+
+## Review 2026-10-26, ninth pass (readiness)
+
+Astra judged A2d, A2e and A0a ready to implement and test, with three corrections, all applied: the incident paragraph no longer lists the token refresh among signed calls; the allow-list matches `TKErrorDomain` and `TKErrorCodeInvalidatedDeviceKey` (-10), confirmed in the installed SDK, with the older-OS caveat; the configuration-fault copy no longer promises an email to Ian. The design summary from the same review is folded into "Product direction": permanent account, replaceable ways of accessing it, no mandatory email on either platform, existing users untouched, explicit sign-in or switch when an email belongs elsewhere, Sign in with Apple and `appAccountToken` as later options.
+
+## Review 2026-10-26, eleventh pass (temporary failures)
+
+Applied: a temporary signing failure keeps the credential and ordinary retry, offers Try again and Sign in again at once, and replaces the credential only after an explicit, completed email or recovery-key authentication or the allow-listed automatic repair; the failure count only raises the offer's prominence and is cleared on the first successful signing. Regression test added: locked key across three launches, unlock, original credential works with nothing restored, replaced or created.
+
+## Review 2026-10-26, tenth pass (two clarifications)
+
+Applied: the opening labels silent creation as current and 3.3.1 behaviour and states that A4 introduces the Home choice; the macOS 26 QA line now requires a recovered outcome (allow-list entry with verified repair, or the reauthentication path working without the broken key), and a repeated temporary failure falls into the choice state instead of retrying for ever; the 3.3.1 order says the backend error contract ships before the client messages that depend on it.
+
+## Non-goals and decisions
+
+- **No silent rotation and no silent re-creation, once A4 ships.** Conflict, signed out, revoked and damaged are choice states. Until A4, today's rotation on conflict stays and is counted by A1.
+- **Never auto-rotate out of unreadable.** A locked or denied Keychain is paused, not lost.
+- **The conflict response carries no account facts.**
+- **Keep the installation-key protocol.** P-256 installation keys, ES256 proofs, recovery-key digests, the token grant and the auth vectors shared with Linux stay as they are. Nothing in Track B needs a new auth provider, an SDK, a runtime change or a Postgres migration of the auth records; every new record is a KV hash, a Postgres column on an existing table, or one of the three small additive tables B4 adds to the existing cloud schema (`export_grants`, `export_grant_items`, `meeting_origin`), all behind read-both compatibility. If a slice turns out to need more than that, it is written up separately before it is built.
+- **Keep the Keychain accessibility classes.** Device id survives a backup restore; the credential does not.
+- **Keep Polar cross-platform and Apple iOS-only** unless Ian changes it. B1 computes eligibility per consuming device platform exactly as `sponsorEligible` does today.
+- **No remote flag channel.**
+- **Diagnostics stay within P1.4's rules**: bounded fields, 8-character id prefixes, no raw ids, keys or tokens.
+- **Copy rules:** lowercase miniti, no em dashes, "Settings, Account" in user-facing text.
+
+## Track A: client protection
+
+### A0: server logs the conflict (miniti-api, any deploy)
+
+In `createAccount` and `migrateLegacyDevice`, before throwing `device_already_enrolled`, log `[client_auth] event=client_auth_create_conflict path=create|migrate platform=… version=… existing_age_days=… same_account=bool existing_revoked=false`. No ids, no digests, nothing about the existing account's subscription or email. The 409 body is unchanged. Tests: log line on both paths, body shape unchanged.
+
+### A1: client counts what it cannot see today (miniti, 3.3.1)
+
+- Event sink on `ClientAuthManager`: `(name, level, details) -> Void`. Until attached, events go into a bounded buffer (16) inside the manager; attaching replays in order and clears. `AppState` attaches right after construction. Never called while holding the manager's lock.
+- Events: `client_auth_device_rotated` (warning; `from`/`to` 8-char prefixes, `path`), `client_auth_credential_unreadable` (warning; `status` integer, `store: primary|login`, `phase: launch|retry`), `client_auth_credential_undecodable` (error; byte count), `client_auth_create_conflict` (info; `rotator: yes|no`), `client_auth_draft_write_failed` (warning; status), `client_auth_silent_recreate` (warning; `after: signout|revoke|unknown`, emitted when enrollment runs with a device id that already existed locally and no credential; this is the count of fragility 7). Deduplicated per launch.
+- Tests: each event through an injected sink in the existing rotation and conflict tests; a store stub returning undecodable bytes; pre-sink buffering replays once, in order.
+- **Observability limits, stated plainly:** events leave only from a device that enrols somewhere with Share Diagnostics on. The blind spots are listed in review finding 5. A0's server line is the only signal for a device that never comes back.
+
+### A2: make the policy testable without changing it (miniti, 3.3.1)
+
+Extract `ManagedEnrollmentCoordinator` (main actor) holding the migrate → create fallback, the session-only deferral, the shared-task de-duplication, the `isEnrollingManagedDevice` and `managedEnrollmentError` updates and the events. Inject the manager, a `DeviceIdentityState` protocol, the sink. The screenshot guard, XCTest guard and singleton wiring stay in `AppState`. Guard order and published-property update order preserved exactly.
+
+Tests, with the stubbed URL session from `ClientAuthTests`: migrate success; `device_not_eligible` → create; `device_already_enrolled` on migrate → create; create 409 → rotate once → success; `alreadyEnrolled` from migrate leaves no error; session-only device id → no network call; concurrent callers share one task; failure sets the error and a later call retries; enrolled → true with no network call. Written first against the current `AppState` code through a temporary seam, green, then the code moves, still green. Then a real launch on Mac and iPhone: enrolled install launches enrolled with no enrollment call; fresh install enrols once; Settings retry works. The pre-2.6.0 legacy path (migrate first, carrying legacy Pro) is the first test case and is preserved.
+
+### A2a: Keychain two-store classification (miniti, 3.3.1)
+
+`KeychainSlot.read()`: an `unreadable` answer from either store wins over a `missing` answer from the other; `missing` only when both say so (or the single store does on iOS). The `-34018` read special case keeps its meaning. Tests: every primary answer (found, missing, unreadable(-25308), unreadable(-25293), unreadable(-34018)) crossed with every login answer (found, missing, unreadable) on macOS; the move-to-primary and delete-legacy behaviour unchanged where it applies. Because the data protection store's read answer in the release build is unverified, both read models are in the table and both must produce the right classification.
+
+### A2b: compatibility fixtures (miniti, 3.3.1)
+
+Fixtures under `MinitiTests/Fixtures/ClientAuth/`: `credentials-3.3.0-enrolled.json`, `credentials-3.3.0-draft.json`, `credentials-3.3.0-email-joined.json` (empty recovery key), with fake key material and real field names. Tests decode each and assert every field and the derived `isDraft`, `isEnrolled`. Rule at the top of `ClientAuthCredentials`: fixtures are never edited, only added; every format change adds a fixture for the new format and a test that the old fixtures still decode and migrate to the expected values. A3's draft marker is the first such change.
+
+### A2c: a draft the Keychain refused is not a draft (miniti, 3.3.1)
+
+`writeDraft` returns success; `createAccount` and `migrateLegacyDevice` throw `ClientAuthError.storage` before any request when it fails, surfaced as "miniti could not save its sign-in on this device. Try again." Event `client_auth_draft_write_failed`. Tests: failing store → no request, error surfaced, nothing cached; a later call with a working store proceeds. Why stop rather than continue: see review finding 9.
+
+### A2d: a key this machine cannot use is re-bound, not abandoned (miniti, 3.3.1)
+
+**Seen live on 2026-10-26.** Ian moved his work Mac to a new MacBook with Migration Assistant. Both Keychain items came across (login keychain, old dates), the credential decodes, `isEnrolled` is true, but the installation key is a Secure Enclave key (`InstallationKey.Stored.kind == "se"`) wrapped by the old Mac's enclave, so on the new one either `InstallationKey(stored:)` returns nil (`ClientAuth.swift:204`) or, as on Ian's Mac, the key object loads but the enclave refuses to sign with it (`key.signature(for:)` at 257 throws CryptoTokenKit error -10, surfaced as "CryptoTokenKit error -10 (managed session failed) (start)"). Every signed call then fails, either with `notEnrolled` from `installationKey()` (623 to 630) or with the raw CryptoTokenKit error from the signature call: the session grant's request proof, the challenge token grant (refresh grants are unsigned, `ClientAuth.swift:1024`, so a valid refresh token hides the fault until the first proof), the `invalid_proof` re-bind (1055) and `signOut` itself, which does not catch `notEnrolled` and so never reaches `clearLocal()` (1175 to 1189). Restore refuses because `isEnrolled` is true. The person sees "Managed mode needs an account on this device…" and has no way out inside the app. Today's manual escape (delete the credential item by hand) leads through `create` → `409 device_already_enrolled` → device id rotation → a new account, unless another device on the account removes this Mac first.
+
+**Fix, in four parts.**
+
+*Classification, not guesswork.* `InstallationKey(stored:)` and the signing path stop collapsing errors through `try?`; the underlying `CryptoKit` or CryptoTokenKit error is kept. Only errors on a documented allow-list mean "this key is foreign to this machine": the Secure Enclave refusing the stored data representation at load, and, matched on **domain and code**, `TKErrorDomain` / `TKErrorCodeInvalidatedDeviceKey` (-10), which is what the SDK calls the code seen on 2026-10-26 and which the SDK marks available from macOS 27 and iOS 27. On older systems a migrated key may surface a different code; until one is observed and added, such a Mac falls into the temporary branch and keeps retrying rather than replacing anything, and the A5 QA list gains a line to migrate a credential onto a macOS 26 machine and record the code. The list lives in code with the date and reason for each entry. Everything else, locked (`errSecInteractionNotAllowed`), denied or cancelled by the person (`errSecAuthFailed`, `errSecUserCanceled`), and any unknown code, is **temporary**: the operation fails with `keyUnavailable(status)`, nothing is replaced, and the next signing attempt retries. Only the allow-list produces `keyUnusable`. A temporary failure never changes the credential's classification and never disables ordinary retry: the credential is kept, and normal signing recovers by itself once the Keychain is unlocked or the person allows access. What a temporary failure does is show the person a way forward at once: the error carries **Try again** and **Sign in again** (email or recovery key, neither needing a signature from the stored key). Choosing Sign in again and completing it is the only way a temporary failure leads to a replaced credential, and it is an explicit, authenticated choice. A failure count makes that offer more prominent after repeated launches (three, or 24 hours), nothing more; the count is cleared by the first successful signing. Three launches with a locked Keychain do not establish that the credential is broken.
+
+*When it is detected.* A load failure is visible at manager init. A signing failure is visible only at the first signing operation: a challenge token grant or a request proof. Refresh grants are unsigned (`ClientAuth.swift:1024`), so a device with a valid refresh token and an unusable key fails at the first proof, not at launch. The repair therefore runs **on the first signing attempt**, and `ensureManagedEnrollment` also probes the key once per launch so the Account section can show the state before the person presses record.
+
+*One shared repair.* On `keyUnusable` the manager starts one repair task that concurrent callers await, like the enrollment task. With a stored recovery key: generate a fresh key, `/auth/account/restore` with that key and the stored recovery key (same device id, same account → `bindRestoredInstallation` re-binds without a cap slot), store the new credential, then **retry the whole original operation** with the new key and tokens, including the case where a valid cached bearer skipped refresh and only the proof failed. A lost restore response is replayed by the server's same-key rule on retry. A credential-save failure after a successful restore keeps the `keyUnusable` state, surfaces `storage`, and the next attempt restores again (the server replaces the key a second time; no cap slot, no new account).
+
+*Without a recovery key (the 2026-10-26 case).* An email-joined credential has none, so the repair cannot run on its own. The manager enters `keyUnusable` with the account id still known, `isEnrolled` false for every gate, and **automatic enrollment suppressed** in the coordinator: no migrate, no create, no rotation, until the state is resolved. Settings, Account and the recording error show "This Mac can no longer sign in with its saved key. Sign in by email or with your recovery key to keep this Mac on its account." with **Sign in by email**, **Use recovery key** and, in A4, Set up as new. Email approval runs `restoreAccount(loginLinkID:)` with a fresh key, not attach, because attach would need the dead key: same device id, same installation, no slot. If the approved email belongs to a **different** account than the stored one, the server answers `device_already_enrolled` for the still-active installation and the client says so explicitly: "That email belongs to another miniti account. This Mac is still on its current one. Remove it from that account on another device or the web, then sign in again." Nothing is abandoned silently. `signOut` catches `keyUnusable` and clears locally. Event `client_auth_key_unusable` with the status code (A1). Linux keeps software keys in a file and is not affected.
+
+**Tests:** stored `se` key with bytes the enclave rejects at load → re-bind with a new key, same device id, tokens stored, no `create` call; a key that loads but whose signing throws an allow-listed code → the same re-bind; a signing failure with a locked, cancelled or unknown code → nothing replaced, operation fails, next attempt retries, the error offers Try again and Sign in again; **locked key across three launches → unlock → the original credential signs, with no restore, no replacement and no new account**, and the failure count is cleared; Sign in again from a temporary failure → explicit email or key authentication → credential replaced only then; valid cached bearer, proof fails → repair, then the original request succeeds with the new key; three concurrent callers → one restore; lost restore response → retry replays; credential save fails after restore → state kept, next attempt restores again; **email-joined credential, empty recovery key, signing fails → no create, no rotation, Account offers email; approval restores the same account and device id with no second device and no anonymous account; approval for an email on a different account → the explicit message, original credential untouched**; same with an empty recovery key → surfaced, no network; `signOut` with an unusable key clears locally; a healthy `se` key is untouched.
+
+**User impact:** only a Mac restored or migrated from another Mac. Today it is stuck; after this it heals on the first signing attempt when it holds a recovery key, and otherwise asks for email or key without creating anything. Secure Enclave keys stay the default because they are the right protection on the machine that made them.
+
+**What the manual recovery on 2026-10-26 taught, beyond the fix itself:** the way out needed a second device to remove the Mac from the account first, which nobody would know; the device list the person had to pick from showed enrolment-time versions and no labels (A0a); the Mac's own credential held no recovery key because it had joined by email, so "Create one" was the only offer and it needs a signature the Mac could not make; the email sign-in landed on a different, free account because two of Ian's accounts have emails and nothing shows which is which (B6); the throwaway account created in between is in an unverified state: a sign-out leaves it active and empty today, an attach that emptied it would have tombstoned it, and B3's dormant handling is not deployed, so it is a cleanup item for B3's listing; and the license key restore that should have rescued Pro had never worked in production (A2e, ops plan). A4's choice states and B6's Home card are the product answer; A2d and A2e are the 3.3.1 answer.
+
+### A2e: restore and sign-in errors tell the truth (miniti, 3.3.1)
+
+**Seen live on 2026-10-26.** License key restore on the work Mac failed with "Invalid or expired license key" while the key validated fine against Polar (granted, zero activations). The real cause was the production `POLAR_ORGANIZATION_ID` carrying a literal backslash-n pasted into the Vercel dashboard, so Polar answered 404 to every activation since the value was set. `restoreSubscription` maps every failure, including a 429 from the 5-a-minute restore limit, a 500, and a connection error, to that one sentence (`SettingsView.swift:384`, `AppState.swift:10926`), and nothing reaches the diagnostics queue, so the only trace was a `console.error` in Vercel logs that the CLI could not surface from this machine.
+
+**Fix, backend first.** `lib/polar.ts:206` turns both a 404 and a 422 into `invalid_key`, so the incident would still have read as a bad key. The restore route gains an error contract: `invalid_key` (Polar names the key in a structured 404 or 422 detail), `polar_config` (Polar rejects `organization_id`, or the format check fails; logged as a server fault and counted by ops-health, answered to the client as a 503 `provider_config`), `activation_refused` (limit reached, key revoked, with Polar's reason), `provider_unavailable` (network, 5xx, timeout), and `rate_limited` from the local limiter. Polar's structured error body is inspected for the field it names; an unrecognised 422 is `provider_unavailable`, never `invalid_key`. **Client:** `MinitiAPIService` keeps the server's `error` code on `ServiceError` (today it reduces most to a message string, `MinitiAPIService.swift:2022`), and `restoreSubscription` maps codes to copy: "That license key is not valid for miniti" (`invalid_key`), "This key has no active subscription" (`no_active_subscription`), "Too many attempts. Wait a minute." (`rate_limited`), "miniti's servers could not reach Polar" (5xx), "There is a configuration problem on our side. Try again later." (`provider_config`; the alert to Ian is the ops check's job and is not promised to the customer), and the connection error as today. Email sign-in gets three separate mappings: starting (send failed, rate limited, email unavailable), polling (a failed status check is shown as "could not check yet" and retried; today `emailSignInStatus` swallows every failure through `try?` (`AppState+CloudSync.swift:252`) so an outage ends as an expired link), and completing (cap reached, conflict, the different-account outcome from A2d). Each failure queues `restore_failed` or `email_signin_failed` with the code only. The backend side of this incident is in [ops-alerting-plan.md](ops-alerting-plan.md): the org id is trimmed of a literal `\n`, validated as a UUID at startup, and probed hourly.
+
+**Tests:** each status maps to its copy; a 429 is not "invalid key"; the event carries the code and nothing else.
+
+### A3: a credential the app cannot read is not a credential it does not have (miniti, release after 3.3.1)
+
+- `ClientAuthCredentialStore.load()` → `found(credentials) | missing | unreadable(reason)`; undecodable → `unreadable(.undecodable)`.
+- Manager keeps `credentialState`. While unreadable, `isEnrolled` is false, and every `ensureManagedEnrollment` and Settings refresh re-reads once before deciding. `isEnrolled` stays synchronous.
+- The coordinator defers on unreadable with its own copy: macOS "miniti's saved sign-in is in a locked keychain. Unlock it and try again."; iOS "miniti could not read its saved sign-in. Unlock your device and try again."; damaged "miniti could not read its saved sign-in. Restore with your recovery key or email in Settings, Account, or set this device up again." Settings, Account shows the state with **Restore**, **Sign in by email** and **Set up this device again** (confirmed).
+- Rotation precondition: at the start of `createAccount`, before the draft, the store state is read. Only `missing` permits rotation later in that call, and the draft written in that call carries `absenceConfirmed: true`. A resumed draft permits rotation only if it carries the marker. Anything else surfaces `deviceAlreadyEnrolled` to the coordinator.
+- Tests: fake backend returning -25308 and -25293 at launch then success in the same process (no network, then a normal grant); corrupt bytes → unreadable, no rotation, no creation; draft with marker rotates once on conflict; legacy draft without marker does not; `MinitiAPIService.send` on unreadable throws `notEnrolled` as before; coordinator tests extended.
+- Risk: a healthy Keychain misclassified as unreadable blocks managed mode until Settings. Mitigations: the classification is A2a's, tested; the Settings action always exists; A1 events show unexpected statuses. Rollback is a release with the old store semantics; the stored format gains one optional field only.
+
+### A4: explicit choice states (miniti, after A3)
+
+Defines every state and what the app does. "Healthy launch" is the first row and is unchanged.
+
+| State | Detected by | App does |
+|---|---|---|
+| **First use** | no credential item, no device id item, no local marker | show B6's Home choice (sign in to an existing account by email or recovery key, or continue without signing in) **before** anything is created; the coordinator holds `awaitingChoice`, persisted so it survives relaunch; Start fresh is today's silent creation made explicit |
+| **Draft** | found, `accountID` empty, no token | resume the draft on the next trigger, as today |
+| **Enrolled** | found, decodes, account or token present | nothing; the launch path is one Keychain read |
+| **Temporarily unreadable** | `unreadable(status)` other than decode failure | defer with the A3 message; re-read on each trigger; never create |
+| **Damaged or lost** | `unreadable(.undecodable)`, or a device id with no credential and no local marker on a device the server knows (`409 device_already_enrolled`) | choice sheet: Restore (recovery key), Sign in by email, Set up as new |
+| **Signed out** | `clearLocal()` after the user chose Sign out; a local `signedOutAt` marker is written in `UserDefaults` | Account shows signed out with the three choices; recording in managed mode prompts the same sheet; **no automatic account creation** |
+| **Revoked** | `401 installation_revoked` or `device_auth_required`; local marker `revokedAt` | as signed out, with copy "This device was removed from its account."; `clientAuthStatus` refreshed at once |
+| **Explicitly starting fresh** | the person tapped Set up as new and confirmed | rotate the device id if the server knows the current one, create, event `client_auth_device_rotated chosen: yes`; marker cleared |
+
+Conflict on create (`409 device_already_enrolled`) with no marker is "damaged or lost" and shows the sheet; it does not rotate. The sheet copy: "This device already belongs to a miniti account. Restore it with your recovery key, sign in by email, or set it up as new." The pre-2.6.0 legacy migration path is unchanged: migrate still runs first for a device with no credential and no marker, and only a conflict reaches the sheet.
+
+Tests: each state row through the coordinator with the stub; sign out writes the marker and the next trigger makes no network call; revoke refreshes status and writes the marker; each choice through the stub (recovery key re-binds, email link restores or attaches, set up as new rotates once and creates); marker cleared after a successful restore, sign-in or fresh start.
+
+### A5: device QA on release-signed builds
+
+Run on real devices with the actual Developer ID and App Store signing before the release that carries A3, and again before A4. Ticked here when done.
+
+Before 3.3.1 (A1, A2, A2a, A2b, A2c): enrolled Mac and iPhone launch enrolled, second launch too, no enrollment call, no warning events; fresh install on each enrols once; Settings retry works; with Share Diagnostics on, a forced rotation in a test build shows `client_auth_device_rotated` in admin events once the device is enrolled again; on the Mac, lock the login keychain (`security lock-keychain`) and launch: the event `client_auth_credential_unreadable store=login` appears and the app behaves as today (this is the measurement that settles the unverified read model: note the status in this file).
+
+Before 3.3.1, A2d: migrate a credential with a Secure Enclave key onto another Mac with Migration Assistant (the real path) on the newest macOS and on macOS 26; record the CryptoTokenKit domain and code each produces; confirm the newest heals on the first signing attempt and that an email-joined copy of the same credential lands in the choice state with nothing created. **macOS 26 must also end recovered, not merely observed:** either its code is added to the allow-list after it is seen and the same automatic repair is verified there, or the unknown-error branch's Try again / Sign in again offer must be verified on that machine to complete an email or recovery-key reauthentication without the broken key. An unknown error still never replaces a credential automatically; what it must not do is leave the Mac retrying with Restore inaccessible. 3.3.1 does not ship for macOS until one of the two is ticked.
+
+Before A3: locked login keychain → message, no new account, record works after unlock without relaunch; re-signed build that triggers the ACL prompt, denied → message, no new account; allowed → normal; plain upgrade from the previous release on Mac and iPhone, first and second launch → account id identical, no warning events; corrupt the credential item in a test build → damaged sheet, no account created.
+
+Before A4: iPhone restored from an iCloud backup → sheet; Set up as new → works, one rotation event with `chosen: yes`; same, old account Pro → Sign in by email → Pro present, device id unchanged (compare in admin); sign out → Account shows signed out, next launch creates nothing, Restore works; remove the device from another device → revoked state on the next call, status refreshed, Restore works; Share Diagnostics on → each scenario's event arrives with only the allowed fields.
+
+## Track B: account ownership
+
+Each slice states: the authoritative record after the slice; how it is backfilled idempotently; how old clients and the new server coexist; how reconciliation detects drift; the cutover; the rollback. Slices are ordered by dependency, not by value; B0 is first because every later record is keyed by a device id that today has two spellings.
+
+### B0: one device record per device (miniti-api first, clients after)
+
+**Today:** two `device:` records per Apple device; reads in `deviceTier`, `findSponsor`, `otherDevicesUsage`, `webAccount` try both; `usage.ts`, `costs.ts`, `apple.ts`, `session/*`, `admin/devices` use the header spelling; admin lists both rows. Many other namespaces embed the header spelling too.
+
+**Namespace inventory.** Every key that embeds a device id, with its rule during and after B0:
+
+| Namespace | Written by | Spelling today | Rule |
+|---|---|---|---|
+| `device:{id}` | usage, auth mirror | both | canonical lowercase; merged (below) |
+| `auth:installation:{id}`, membership sets, replay guards, refresh records | auth store | lowercase | unchanged |
+| `polar_sub:{sub}:devices`, `apple_sub:{otx}:devices`, `apple_sub_state`, `apple_sub_events` | webhooks, verify | header | members rewritten lowercase in the merge pass; readers lowercase before lookup |
+| Polar `customer.external_id` | checkout | header (uppercase for Apple) | webhook lowercases before lookup; existing checkouts keep working |
+| `session:{id}` body `deviceId` | session create | header | end compares case-insensitively; new sessions store lowercase |
+| `session_end:{deviceId}:{sid}` | session end | header | read under both spellings for 30 days after deploy; write lowercase |
+| rate-limit buckets keyed by device | `lib/ratelimit.ts` | header | lowercase from deploy; a device may get one fresh window, acceptable |
+| `{google,attio,twenty}:token:{id}`, `*:oauth:state:*` payload `deviceId` | integration routes | header | **not renamed by B0**; readers try the lowercase key, then the **uppercase** key (not the raw header, which becomes lowercase once Swift changes and would hide old uppercase tokens) until B5 adopts them; OAuth state in flight keeps its spelling (10-minute TTL) |
+| `cloud:seq:{accountId}` and Postgres `created_by_device` | cloud | account / lowercase uuid | unchanged |
+| admin labels, diagnostics `device` filter | admin | header | admin reads through the canonical helper |
+
+If an audit of the repo finds a namespace missing from this table, B0 does not deploy until it is added.
+
+**Proposed:** `getDeviceId` keeps returning the raw header; a new `canonicalDeviceId(raw)` lowercases, and every route uses it for keys, with `readDevice(id)` returning the canonical record merged with its uppercase twin while the twin exists.
+
+**Order of operations:**
+1. Deploy read-merge and canonical write routing together, where "canonical write" means: every write to `device:{lower}` goes through one Lua script, `adoptThenWrite`, that first checks a `baseline` field on the lowercase hash. If absent and an uppercase twin exists, the script copies the twin's counters and fields into the lowercase hash under the merge rules (subscription fields from the record with an active one, conflict → abort the write with `twin_conflict` and log; `accountId` and enrollment fields from lowercase; `createdAt` the earlier), computes a **period-aware baseline for the counters from both records inside the script**: a record whose `resetDate` is in the past contributes 0 to `minutesUsed` and `docsLookupsUsed` (its period is over), a record whose `resetDate` is current contributes its full counters, and the two current contributions are **summed**, because before this moment each record received its own distinct increments and neither is a copy of the other; `minutesUsedLifetime` is always summed. **Billing-period policy when both are current with different reset dates** (one record on a Polar or Apple billing day, the other on the 1st): the merged `resetDate` and period are those of the record that holds the active subscription, else the later date; the other record's current counters are still summed in, because both windows overlap the merged period and neither record can say when its minutes were incurred. Because that sum can over-count by up to the smaller counter and stop someone recording before their real allowance is used, the script also writes `migrationCredit = the smaller current counter` on the merged record for the current period. **One effective-usage rule, everywhere:** `minutesUsedGross` is the stored sum; `effectiveMinutesUsed = max(0, minutesUsedGross − migrationCredit)`; every API response puts the effective value in `minutes_used` (the field old clients compare against `minutes_limit` themselves, `MinitiAPIService.swift:208`, so an old client with gross 600, credit 200 and a 500-minute allowance sees `minutes_used: 400` and 100 remaining, not a refusal) and adds `minutes_used_gross` for accounting; the server gates (`isAtLimit`, `/api/session`), the account aggregation (`otherDevicesUsage`) and B2's seed all read the effective value, and B2 records the credit it seeded through as `seedCredit` on the account period hash so gross can still be reconstructed. The credit is cleared at the next reset. In numbers: effective usage equals the **larger** of the two current counters (sum minus the smaller), which is what the person would have used had only one record existed; the digest lists each such pair (`merged_two_windows`). Decision D10 asks Ian to confirm this default over the plain sum. The script also appends every counter mutation from this moment, including the baseline itself, to a **journal** `device_journal:{lower}` (op, field, delta, period, at; 90-day TTL), which is what any later correction replays. The script then sets `baseline`, `mergedFrom` and `mergedAt`, renames the twin to `device:merged:{ID}` with a 90-day TTL, and only then applies the write. All in one script, so "uppercase 100, lowercase 0, increment 10" ends at 110; "uppercase 100, lowercase 120, increment 10" ends at 230; "uppercase 100 with an expired reset, lowercase 0, increment 10" ends at 10. A device whose twin has no conflict is therefore merged at its first write after deploy.
+2. Run the merge cron (`GET /api/cron/device-merge`, cron auth, heartbeat) for devices that have not written since deploy: the same script with a no-op write. Rerunnable; a hash with `baseline` is skipped, and nothing can have written to its twin since the rename.
+3. The same pass rewrites the subscription reverse sets to lowercase. Pairs that aborted with `twin_conflict` are listed for Ian and keep reading through the merge view until resolved by hand.
+
+**Mixed versions:** old Apple clients keep sending uppercase; the server canonicalises, so their writes land on the canonical record from step 1. Linux already sends lowercase. No client change is required for correctness; Swift lowercases `X-Device-ID` in a later release for tidiness.
+
+**Reconciliation:** ops-health gains `device_twins` (uppercase `device:` keys with a live lowercase twin; warn above zero after step 2) and `session_end_dual_reads` (count of idempotency hits found only under the raw spelling; informational).
+
+**Rollback:** fix-forward from the moment step 1 is deployed, because live devices merge at their first write and a build that writes uppercase again would re-create the split and lose the increments written to the canonical record since. There is no redeploy-safe window after step 1 starts serving traffic. A correction script is written and tested **before** step 1 for the case where a merge rule turns out wrong; it restores the pre-merge values from `device:merged:*` and replays the journal from the merge onward, field by field, and never deletes the canonical record. Nothing is reconstructed from `session_end` stored responses: they carry cumulative account totals that include other devices (`session/end/route.ts:115`), not per-operation charges. A correction that the journal cannot support (a journal expired past 90 days) is limited to changes that keep the current counters. Deploy step 1 on a weekday morning with that script staged.
+
+**Tests:** the three worked baselines above (110, 230, 10); both records current with different reset dates (Pro record on the 14th, free record on the 1st: period from the Pro record, counters summed, `migrationCredit` equals the smaller, `minutes_used` in the response is the effective value, `minutes_used_gross` the sum, the session gate and the account aggregation use the effective value this period and not the next, `merged_two_windows` recorded); **an old client receiving credited usage records normally at gross 600 and credit 200 on a 500 allowance; the account is then seeded and its remaining allowance is unchanged**; journal entries for the baseline and every later increment; merge rules per field including the conflict abort; first write after deploy merges, second write does not re-merge; idempotency across restarts mid-batch; header in either case reads and writes one record; webhook with uppercase `external_id`; session created uppercase before deploy and ended after; idempotency hit under the raw spelling; integration status for a device with an uppercase token key; admin report shows one row per device and `pro_devices` applies the sponsor overlay.
+
+### B1: subscriptions owned by the account (miniti-api)
+
+**Today:** Polar and Apple fields on the device record; `findSponsor` overlays at read time; restore and verify bind to any device; attach refuses same-rail conflicts at move time.
+
+**Proposed authoritative record:** `sub:{rail}:{externalId}` hash: `accountId` (the owner, fixed at first bind), `purchasedByDevice`, `purchasePlatform`, `status`, `currentPeriodStart`, `currentPeriodEnd`, `polarCustomerId` or `appleEnvironment`, `productId`, `updatedAt`, `boundAt`, `boundVia` (checkout, verify, restore, backfill). Index `auth:account:{id}:subscriptions`. The device record keeps its mirror fields during migration.
+
+**Ownership rules:**
+- **Owner of a new `sub:` record, one rule everywhere:** checkout attribution if the webhook names a checkout we recorded; else, for a subscription id already on a pre-B1 device record, that device's current account (transfers of such devices are blocked until the record exists, cutover step 2); else `unresolved_owner`, which grants nothing and is listed. Current membership is never used for a new purchase.
+- **Checkout attribution at start.** `POST /api/subscribe` puts the presenting installation's `accountId` into the Polar checkout metadata alongside the device id (**unverified:** that the Polar checkout API accepts arbitrary metadata on the checkout session; if not, the pending attribution is stored server side as `checkout_attr:{checkoutId}` with a 7-day TTL and looked up from the first webhook). The first webhook for a new subscription binds the `sub:` record to that account, not to wherever the device is by then. Apple: `/api/apple/verify` binds to the presenting installation's account at first verification.
+- **Renewals, cancellations, refunds, grace, billing retry** update the `sub:` record by `(rail, externalId)` and never consult installation membership. A subscription whose buying device has since moved keeps renewing for its owner account.
+- **Binding a subscription that already has an owner** from a device on a different account (restore with a license key, verify with a restored receipt, a webhook for a known subscription arriving with a different attribution) is refused: `409 subscription_owned_elsewhere`, generic message "This subscription belongs to another miniti account. Sign in to that account to use it." No transfer happens here (D3).
+- **Duplicates:** `/api/subscribe` keeps refusing a Pro account; verify and restore refuse a second active subscription on the same rail for the same account (`409 already_subscribed`); cross-rail stays allowed unless D4 changes it. With two active records on one rail, the earlier `boundAt` wins deterministically and ops-health warns `duplicate_subscriptions`.
+- **Entitlement:** `accountEntitlement` reads the account's subscription set first. During migration it may still read a device's mirrored Polar or Apple fields, but only when **no `sub:` record exists for that subscription id**, or the record's owner is the account being evaluated. A device that bought on account A and now sits on account B therefore grants nothing to B, because `sub:{rail}:{id}` names A. The same rule governs the rollback path: reverting the read order is allowed only as "device fields, filtered by owner", never raw device fields. Per-consuming-device eligibility keeps `sponsorEligible` (Apple on iOS only, Polar anywhere).
+- **Polar webhooks** gain `event.id` idempotency (`polar_event:{id}` SET NX 14 days, the Apple pattern).
+- **Attach** no longer moves or checks subscriptions.
+
+**Backfill:** cron walks canonical `device:*` and writes `sub:` records for every device with an active or recently active subscription, `accountId` from the installation record, `boundVia: backfill`. Idempotent on `(rail, externalId)`. A device with a subscription and no installation (never enrolled) is written with `accountId: ""` and listed. Two devices on different accounts claiming one subscription: logged, left unbound, listed for D3. **Ian's own case is one of these** (one Polar subscription linked to Mac records on two of his accounts, found 2026-10-26): before the B1 cutover a reviewed mapping file names the intended owner for every listed collision, and the backfill applies it; it will not pick the owner on its own.
+
+**Mixed versions:** routes and `/api/usage` keep their shapes; `entitlement_via_account` keeps its meaning.
+
+**Reconciliation:** nightly, every active `sub:` has an owner that exists (active or dormant); every device-field subscription has a `sub:` twin with the same status and period.
+
+**Cutover, in this order and no other:**
+1. **Writers first, correct while the backfill is incomplete.** Deploy webhooks, verify and restore writing both the device fields and the `sub:` record. When the `sub:` record does not exist yet, the owner is chosen by **one rule, the same here and in "Ownership rules"**: (a) a webhook that names a checkout we recorded at `/api/subscribe` (`checkout_attr:{checkoutId}` = account at checkout start, 7-day TTL; **unverified** whether Polar's subscription webhooks carry the checkout id, else the client-side `external_id` plus a per-checkout nonce we generate is the join key) takes **that** account, whatever the device's membership is now; (b) a subscription id that already exists on a canonical device record from before B1 (a legacy renewal) takes the device's current account, which is safe only because step 2, deployed in the same build, blocks that device from moving until the record exists; (c) anything else is written as `unresolved_owner`, grants nothing, and is listed by ops-health for Ian. "Use current membership" is never the answer for a new purchase: checkout on A, move to B before payment completes, first webhook → owner A by (a). Apple: the first `/api/apple/verify` of a never-seen original transaction id binds to the presenting installation's account; the purchase and that call are one client flow, and a later verify from another account is `subscription_owned_elsewhere`. The backfill runs from the cron with a **durable checkpoint** `migration:sub_backfill` in KV (`pending` → `complete`, with progress), not from an instance-start hook; writers do not depend on it, only step 3 does.
+2. **Ownership before any transfer, for every identifiable subscription.** `attach`, email join and restore into another account gain a precondition: a device whose canonical record names **any** Polar subscription id or Apple original transaction id, active, expired, cancelled or in grace, with no `sub:` record yet, **cannot move** until the route has created that record with owner = the device's current (source) account, inside the `account:{source}` lock. Ownership and entitlement are separate: an expired subscription still has an owner, so a later reactivation grants the account that held it, never the account the device moved to. The backfill's "recently active" scope is widened to the same set (every identifiable subscription id on a device record).
+3. **Reads last.** Only when `migration:sub_backfill` is `complete` and the reconciliation check has been green for 24 hours does `accountEntitlement` start preferring `sub:`. A cancellation or renewal before that point updates device fields (which are still authoritative) and the `sub:` record together, so no stale record can be preferred.
+4. Stop writing device fields after one full billing cycle without warnings.
+
+**Rollback:** before step 3, a redeploy that keeps the writers; the `sub:` records are then just a mirror. After step 3, reads revert only to "device fields filtered by owner"; a build that reads raw device fields is not a valid rollback target once any `sub:` record exists.
+
+**Tests:** checkout attribution survives an attach between checkout and webhook; renewal for a moved buying device; the moved buying device grants nothing to its new account through the fallback; owner-filtered rollback read; **cancellation arriving during the backfill** leaves device fields and `sub:` in agreement and entitlement off; **transfer attempted before the backfill** creates the record with the source as owner and the destination gets no Pro from it; **expired subscription on A → device moves to B → backfill → reactivation webhook** grants A, not B; checkout on A, transfer to B, first webhook → owner A; webhook with no checkout and no legacy record → `unresolved_owner`, no entitlement; backfill checkpoint survives an instance restart; `subscription_owned_elsewhere` on restore and verify; `already_subscribed`; Polar event replay; Apple iOS-only eligibility through the account record; attach no longer touching subscriptions; deterministic duplicate choice; backfill idempotency and the two legacy cases; MRR unchanged across the cutover.
+
+### B2: usage charged to the account (miniti-api)
+
+**Today:** per-device counters and reset dates, account total summed at read, non-atomic end-of-session metering, sessions carry no account.
+
+**Proposed authoritative record:** `usage:account:{acct}:{period}` hash (`minutesUsed`, `docsLookupsUsed`, `sessions`, `prerecordedMinutes`, `updatedAt`); `period` is `YYYY-MM` for free accounts or `{rail}:{externalId}:{periodStartISO}` for Pro, derived from the account's `sub:` record (B1). `auth:account:{id}` gains `currentPeriod`, `periodEndsAt` and `usageLedgerSince`.
+
+**Attribution:** session create and prerecorded create write `session_attr:{sessionId}` = `{accountId, period, deviceId}` with a **30-day TTL**, the same window as the idempotency key, independent of the 4- or 24-hour session record. End charges the attribution's account and period. An end with no attribution record (older than 30 days, or a session created before this deploy) is **unresolved**: recorded under `usage:unresolved` with the device id prefix, session id, minutes and timestamp, counted in ops-health and the digest, and **not charged to anyone** (baseline). The response to the client is still success. Docs lookups charge the account the device is on at request time, with an idempotency key per lookup id.
+
+**Atomicity:** one Lua script per end: if the idempotency key exists, return the stored response; else `HINCRBYFLOAT` on the account period hash and, while that account is dual-writing, on the device record; `SET` the idempotency key with TTL; return. Tested with the fake KV used by the existing route tests plus one run against a real Upstash database in CI (`SYNC_TEST_DATABASE_URL`-style gating) because script semantics are what matter.
+
+**Limit check:** `isAtLimit` reads the account period hash when `usageLedgerSince` is set, else today's device sum.
+
+**Seeding, per account, atomic, and claimed per device:** one script under the `account:{id}` lock reads the current members' device counters (canonical records, B0 is a prerequisite), **skips any device whose record already carries `usageClaimedBy`**, writes the current period hash with the members' **effective** usage (gross minus any migration credit), `seedCredit` as the sum of credits applied, `seededFrom: devices` and `seededAt`, sets `usageLedgerSince` on the account, and stamps every device it counted with `usageClaimedBy = {accountId}` and `usageClaimedAt`, all in the same script. A device's historical counters can therefore be seeded into exactly one account, ever. From that moment ends for this account take the ledger path; increments before the seed were in device counters only and are inside it; increments after go to the ledger (and, for one cycle, the device record for legacy readers, which the claim marker tells every reader to ignore for account totals).
+
+**Membership changes during the rollout.** Every path that changes membership (`attach`, email join, restore into another account, revoke of a last device) runs **inside the seeding protocol**: before the membership write, it seeds the source account if unseeded and the destination account if unseeded, under both account locks in a fixed order (lexical by account id, to avoid deadlock). The worked sequence "A seeded with the device's 100 minutes; device moves to B, unseeded; B's seed reads the same 100" cannot occur: B is seeded before the move, and even if it were seeded later the device's `usageClaimedBy = A` excludes it. Late charges go to the attribution's account (above), never to a device mirror; the device-sum fallback used by unseeded accounts also excludes claimed devices, so a mirror cannot leak claimed minutes into an unseeded destination. Seeding of idle accounts runs from a cron, idempotent on `usageLedgerSince`.
+
+**Reconciliation:** not against device sums, which are expected to diverge once devices move, and not against stored `session_end` responses, whose `minutes_used` is a cumulative account total rather than the session's charge. The metering script also appends one **charge record** per operation, `usage_charge:{acct}:{period}` hash keyed by session or lookup id → minutes charged, with the same 90-day retention as the period hash (long enough for the longest billing period plus the 30-day late window). Reconciliation per account and period is: `seededFrom` opening balance + sum of charge records = ledger, within one minute. Unresolved entries are reported separately and are not in either side.
+
+**Rollback:** limited. Before an account is seeded, nothing changes for it. After seeding, the ledger is authoritative; reverting reads to device sums would reintroduce the attribution bug, so rollback for seeded accounts means fixing forward. The dual-write to device records continues for one cycle only so that admin and the old summation keep working, not as a rollback path.
+
+**Tests:** session on A, device attached to B, end charges A; end 20 days later still charges A; end with no attribution is unresolved and uncharged; two concurrent ends charge once and write one charge record; retry after the script ran returns the stored response and writes no second charge; prerecorded minutes; docs lookup idempotency; period rollover changes the key without zeroing; seeding script with concurrent ends before and after; **the A-seeded, device-moves-to-unseeded-B sequence charges 100 minutes once**; a device claimed by A is excluded from B's seed and from B's device-sum fallback; attach seeds both accounts before the membership write, in lock order; reconciliation of opening balance plus charges (two 10-minute sessions reconcile to 20, not 30); limit check on both paths.
+
+### B3: account lifecycle (miniti-api)
+
+**Today:** attach moves a device and tombstones an emptied source; revoke leaves an empty account alive; one recovery digest; deletion purges cloud data and does not cancel subscriptions (`04-api-reference.md:158`).
+
+**Proposed definitions and behaviour:**
+
+| Operation | What it is | Account record | Recovery methods | Subscriptions (B1) | Cloud data | Tokens, sessions | Connections (B5) |
+|---|---|---|---|---|---|---|---|
+| **Guest-account upgrade** | adding the first recovery method to the anonymous account this device created | same id, unchanged | added | unchanged | unchanged | unchanged | unchanged |
+| **Sign in to an existing account** | this device joins account X while it belongs to account Y | device transfer Y → X; Y stays | Y keeps its own | Y keeps its own | Y keeps its own; B4 asks about recorded-here meetings | Y keeps its own | B5 rules |
+| **Device transfer** | installation re-pointed from Y to X (`attach`) | Y: installation removed, **not tombstoned**; dormant if empty | unchanged | unchanged | unchanged | untouched | the installation's chosen connection follows it |
+| **Account merge** | fold Y into X | **not built** (D5) | | | | | |
+| **Account deletion** | explicit, confirmed | tombstoned 30 days, then gone | digest and email removed | **unchanged: not cancelled**, as today; `sub:` records marked `accountDeleted` so they stop granting anything; cancelling upstream is not part of this plan | purged | revoked | removed, upstream revoke where supported |
+| **Dormant account** | zero installations, still holding a recovery method, a subscription, cloud data, an email, tokens or connections | stays `active`; `dormantSince` set | kept | kept, keeps renewing (D6) | kept | kept | kept |
+| **Empty account** | zero installations and nothing else | tombstoned after 30 days dormant by the maintenance cron | | | | | |
+
+`attach` stops calling `tombstoneAccount`. The maintenance cron gains a dormancy pass with the "holds anything" test in code. Admin lists dormant accounts with what they hold.
+
+**Backfill:** none for live accounts. Accounts tombstoned by past attaches whose Postgres rows survive are listed (account ids in `account_emails`, `meetings`, `api_tokens` with no KV record) for D9.
+
+**Tests:** attach leaves the source alive and dormant; dormant account restores by key or email; dormancy pass tombstones only truly empty accounts; deletion's effects asserted item by item, including that no billing call is made; revoke of the last device sets dormant; cap counts live installations only.
+
+### B4: cloud data ownership and consent (miniti, miniti-linux, miniti-api)
+
+**Today:** meetings carry no account; any account change zeroes revisions and uploads everything local, including downloaded meetings, to the new account. Old clients will keep doing this after any server change.
+
+**Client model:** `Meeting` gains `cloudAccountID: String?` and `provenance: recordedHere | downloaded | unknown`. `MeetingTombstone` gains `cloudAccountID`. New recordings (including Granola and watch imports) are `recordedHere` with `cloudAccountID` nil until first pushed; pulled meetings are `downloaded` with the pulling account. The engine uploads a meeting only when `cloudAccountID` is nil or equals the current account. Tombstones go only to their own account. On any account change the engine cancels in-flight work, drops the old cursor, and sets `needsOwnershipReview`.
+
+**Legacy rows, on first launch after the update:** a meeting is assigned `cloudAccountID = current account` only if it is **present in the current account's manifest** at the first sync (matched by id), whatever its local revision says. Every other finished meeting gets `cloudAccountID = nil`, `provenance = unknown`. Nothing is inferred from `cloudRevision`, because every past account switch zeroed it. Idempotent by a per-store marker.
+
+**Behaviour for unknown rows:** under a stable account they keep uploading to the current account exactly as today, so an existing user sees no change. After an account change, unknown rows are **never** uploaded automatically. The one-time review shows two counts: "N meetings recorded on this device" (`recordedHere`, offered with **Copy N meetings to this account** / **Leave them**) and "M older meetings of unknown origin" listed by title with a checkbox each, so the person can include individual ones **now**. `downloaded` rows are never offered. Copying creates a new id under the new account (below) and sets `cloudAccountID` to it; leaving keeps them local-only and readable. The whole choice is made **before the transfer completes**, because the grant needs the source account's authority and that authority is gone afterwards. There is no later "copy from History" for rows left behind: they stay local-only unless the device rejoins the source account, and the review says so in one line.
+
+**Bringing meetings along is a copy, never a move.** The source account's rows are never re-pointed, so A keeps every meeting and every right over it. The flow: while the device is **still a member of A**, before the transfer completes, the client collects the chosen ids (recorded-here rows, plus any unknown rows the person picked individually) and calls `POST /api/sync/export-grant` with device auth and proof for A. The grant lives in **Postgres**, next to the data it governs: `export_grants (id PK, source_account, minting_installation, key_thumbprint, auth_generation, destination_account NULL, created_at, expires_at)` and `export_grant_items (grant_id, source_id, destination_id NULL, copied_at NULL, PRIMARY KEY (grant_id, source_id))`. Minting inserts both in one transaction and returns the grant id; `destination_account` is null until bound. `auth_generation` is copied from a new integer field on `auth:installation:{id}`, `authGeneration`, which means **credential generation**, not membership: it is incremented atomically (`HINCRBY`, monotonic, never reused) in **one Lua script or `MULTI` block** with every `revokedAt` write and every credential replacement, never a non-transactional pipeline, (`writeInstallation` from create, migrate, restore and re-bind). It is **not** incremented by `attach` or the email join, which re-point the same credential at another account; the ordinary flow is mint at generation 5 on A, attach to B, redeem at generation 5 on B. Redemption from the wrong account is stopped by the destination check, not by the generation. A grant is valid only while the installation's current generation equals the grant's. Revocation therefore invalidates every outstanding grant **by the Redis write alone**; the Postgres expiry update on revoke is hygiene, and a failed Postgres update followed by re-enrollment with the same installation id and key still leaves the old grants unusable, because re-enrollment replaced the credential and bumped the generation.
+
+**Binding the destination.** The transfer that the grant was minted for (`attach` or the email join) takes `grant_id` and, as part of the same request, sets `destination_account` to the account the device just joined. The membership write is in Redis and the grant is in Postgres, so the order is: Postgres `UPDATE … SET destination_account = X WHERE id = ? AND (destination_account IS NULL OR destination_account = X) AND minting_installation = ?` first, then the Redis membership change. The update is idempotent for the same destination and refuses a different one (`409 grant_bound_elsewhere`). **Retry rules:** if binding succeeded and the membership write failed, the client retries the same transfer with the same grant; the bind is a no-op and the membership write resumes. A lost response is the same retry. Until the device actually joins X, no item can redeem (the caller's account check below fails); once it does, redemption works, which is the intended outcome of the retry. A grant is bound to one destination for its life.
+
+**Redeeming an item.** The client pushes each chosen meeting as a **new id it proposes** with `copied_from: {account: A, id, grant}`. Before touching Postgres the server checks in Redis: the caller's installation id and current key thumbprint equal the grant's; the installation's current `authGeneration` equals the grant's `auth_generation`; the caller's **current account equals `destination_account`**. Then one Postgres transaction: `SELECT … FROM export_grant_items WHERE grant_id = ? AND source_id = ? FOR UPDATE`; if `destination_id` is set, commit nothing and return that row's current meeting state (**lost-response retry returns the same copy, creates nothing**, and only to a caller on the destination account); else insert the destination meeting row, insert `meeting_origin (destination_id → destination_account)`, update the item with `destination_id` and `copied_at`, commit. The `(grant_id, source_id)` primary key is the durable idempotency constraint; a crash between any two of those writes rolls all of them back, so there is no half-copied state to recover. The Redis pre-checks are not transactional with Postgres, and the plan says so. The contract is the simple one: **a request that has passed the checks may finish; every request that starts after the revoke or account change fails the checks.** Several items in flight at the moment of a revoke may all complete. No per-grant lock is used to narrow that, because a 30-second Redis lease cannot establish it: a stalled holder outlives its lease, a successor acquires the expired key, and both finish after the revoke; the existing `withLock` helper in `clientAuthStore.ts:95` also deletes the key unconditionally on exit, so a delayed holder would delete its successor's lock, and it must not be copied for any serialisation guarantee. There is no product requirement for a one-item bound: the items a revoked device can still finish are ones its owner chose to copy minutes earlier.
+
+**A → B → C.** A device copies some items into B, then joins C within the 7 days. `destination_account` is B, the caller is now on C: every further redemption and every retry is refused, so neither B's edited copies nor the unfinished items can reach C. Bringing meetings to C needs a new review while still a member of B, which mints a new grant for B's rows. Unfinished items at expiry stay local with a one-line notice in the review's log ("N meetings were not copied in time; they stay on this device"). Revoking an installation bumps its `authGeneration` in the same Redis write as `revokedAt`, which is what invalidates its grants; it also marks the Postgres rows expired as best-effort hygiene. A fresh enrollment that reuses a revoked device id, with the same key or a new one, bumps the generation again and holds no usable grant. No membership history is consulted.
+
+**Origin index, enforcement and backfill:** `meeting_origin (meeting_id PK, account_id, first_seen_at)` is written on the first successful push of an id. A push of an id already owned by a different account, without a valid copy grant, is refused with `409 owned_elsewhere`. Backfill assigns each existing id to the account whose row has the earliest `created_at`; ids that already exist under more than one account are **grandfathered**: each account keeps syncing its own row, the index records the earliest and lists the rest, and nothing is deleted or re-pointed. Enforcement is **version-gated**: refusals are sent only to clients at or above the version that ships the B4 client slice on that platform, read from `X-App-Version`; older clients keep today's behaviour until they update, because the current client turns an unknown 409 into a revision conflict, retries, leaves the row dirty and, with oldest-first batches of fixed size, can starve newer recordings (`MinitiAPIService+Cloud.swift:252`, `CloudSyncEngine.swift:396-402`), and a non-409 status fails the whole pass. The force-update gate in `/api/version` is the lever if Ian wants to close that window sooner. The `(account_id, external_source, external_id)` dedupe stays per account.
+
+**Tests:** engine uploads only matching-owner rows; downloaded and unknown rows never upload after an account change; unknown rows still upload under a stable account; tombstones scoped; in-flight cancelled; review shown once with both counts; copy and leave; A's rows untouched after a copy; manifest-based legacy assignment with zeroed revisions; private-mode exclusion unchanged; export grant minted only by a current member, refused after expiry and from a different installation key; **mint on A → attach to B → redeem succeeds** (generation unchanged by attach); grant bound at transfer, refused unbound; **bind succeeded and membership failed → retry resumes**; lost response → retry resumes; retry with a different destination refused; **A → B → C**: items and retries refused from C, B's copies never returned to C; **failed Postgres expiry on revoke, then re-enrollment with the same installation id and key → grant refused by generation**; **concurrent redemptions of different items with a revoke in between → the ones past the checks complete, the ones that start after fail**; per-item completion: the second upload of the same source id returns the same destination copy; other items still copy after one has; **a simulated failure between each of the three Postgres writes leaves no destination row, no origin entry and an open item**; revoke bumps the generation and the pre-check refuses every later request, while requests already past the checks complete, asserted explicitly with several concurrent items; a 7-day expiry leaves the remaining items local with the notice; origin index on first push; refusal for a foreign id from a new client; **no refusal for an old client** (version gate); grandfathered duplicate ids keep syncing; the existing `resetBookkeeping` tests rewritten. Before the version gate is set for a platform, the actual previous release is run against a staging server with the refusal enabled to confirm the starvation behaviour described above, so the gate value is chosen from evidence.
+
+**Linux:** same fields, rules and copy.
+
+### B5: integrations as account connections (miniti-api, clients)
+
+**Today:** `{provider}:token:{deviceId}`, no account view, no TTL, no Attio or Twenty disconnect.
+
+**Proposed authoritative record:** `conn:{accountId}:{provider}:{connectionId}` hash (tokens, upstream identity label, `connectedByDevice`, `connectedAt`, `scope`), index `conn:{accountId}:{provider}`. Each installation keeps a routing choice per provider: `auth:installation:{id}.routing.{provider} = connectionId | legacy | none`, written by the client when the person chooses, by migration otherwise. Device-side `@AppStorage` keeps auto-export and routing preferences, never tokens.
+
+**Resolution order on every status, search and send:** (1) explicit `connection_id` in the request; (2) the installation's stored routing; (3) if the account has exactly one connection for the provider **and** the installation has no legacy token, that one; (4) otherwise `409 connection_required` with the list, and the client asks. An installation that has a legacy device token resolves to it (2 = `legacy`) until the person picks something else; the account connection never pre-empts it.
+
+**Migration:** on the first status call after deploy, if the installation has a legacy token and the account has no connection for the provider, the token is adopted as an account connection **and** the installation's routing is set to that `connectionId`. If the account already has a connection to a different upstream identity, the legacy token is wrapped as a second account connection (so it can be shared and cleaned up) and the installation's routing points to it; nothing is overwritten and the other devices' routing is untouched. Legacy keys are renamed `…:adopted` with a 30-day TTL.
+
+**Lifecycle:** disconnect routes for all three providers remove the connection, clear every installation routing that pointed to it, and revoke upstream where the API offers it (Google yes; Twenty if its revocation endpoint exists, **unverified**; Attio **unverified**). Rotation, revoke and transfer leave account connections alone; a transferred installation keeps its routing only if the destination account holds that connection, else `none`. Account deletion removes them.
+
+**Tests:** resolution order including the Mac-X / phone-Y scenario (phone keeps Y); adopt when empty; wrap when different; shared use from a second device after an explicit choice; `connection_required`; disconnect clears routing; legacy TTL; transfer resets routing to the destination's connections; account deletion cleanup.
+
+### B6: protect your account (miniti, miniti-linux, miniti-api)
+
+**Today:** the server allows email on free accounts with cloud off; the client puts the UI inside the Cloud tab behind the Pro-only cloud toggle; one recovery digest; the recovery-key nudge on Home.
+
+**Proposed:** Settings, Account gains **Protect your account**: "Recovery key" (saved or not, reveal, rotate) and "Email" (add, verify, remove), each described as a way back in, both available to anonymous free accounts with cloud off. When the account has an email, both platforms **show the address** in that group (masked after the first two characters) instead of offering "Join by email" as if there were none; a device that joined by email and holds no recovery key says so in the same place, with the one-tap way to create one from a device that can sign. Nudges once after a Pro purchase or restore and once when cloud is turned on, with Not now. The Home recovery-key card stays.
+
+**Server:** `POST /api/account/email` drops the `CLOUD_SYNC_ALLOWLIST` gate (D8) and keeps device auth, proof, the server kill switch, `email_in_use`, rate limits, single-use links, generic 202 responses. Recovery methods stay two (one key digest, one email).
+
+**Home, not Settings.** Ian's feedback after the 2026-10-26 incident: nobody should have to find Settings, Account to get back onto their account. This is wired into the enrollment coordinator as the `awaitingChoice` state (A4), which precedes account creation on first use, appears immediately after sign-out, and survives relaunch. On first launch of a managed install, and after a sign-out, Home shows one card with two choices: **"Sign in to an existing account"** and **"Continue without signing in"** (which is today's silent anonymous account, made explicit). Sign in by email from that card runs the same approval flow and lands on Home with the plan showing; "Use a recovery key" sits under it, since email stays optional. Settings, Account keeps a separate **Switch account** action next to the shown email, because having an email attached does not mean the person is on the account they meant. Later, when the account has no recovery method, the existing Home card becomes "Protect your account" with the two methods. Settings, Account keeps the full controls; Home carries the two moments that matter: coming back, and protecting what you have.
+
+**Honest copy:** "If you lose this device and have not saved your recovery key or added an email, nobody can get your account back. The account stays on miniti's servers, but there is no way to prove it is yours."
+
+**Tests:** email add on a free account with cloud off; UI visible without Pro; nudge once per trigger; existing web-signin tests unchanged.
+
+### B7: Linux handoff and admin
+
+- `../miniti-linux/PLAN.md`: withdraw the "to mirror" items for rotation on `device_already_enrolled` and re-bind-then-sign-out (473 to 474); add A4 choice states (Linux already surfaces `EnrolledElsewhere`; it needs the sheet and the signed-out marker), fixtures for its credential file format, B4 fields, provenance and the review, B5 connection selection, B6 Protect your account. Linux sends lowercase ids already. The auth vectors stay identical.
+- Admin: dormant accounts; `sub:` conflicts; device twins remaining; unresolved usage; reconciliation counts; connection adoption counts; all in `admin-stats.mjs summary` and the Monday digest.
+
+## Cross-cutting tests
+
+Beyond each slice's list, the following scenarios run end to end in the backend test suite and, where the client is involved, in `ClientAuthTests` and `CloudSyncEngineTests` with the stubbed session:
+
+- **Device removal:** remove device 2 of 2 from device 1 → account dormant (B3), Pro and minutes unchanged on the account (B1, B2), cloud data present, device 2 shows revoked and offers Restore (A4).
+- **Account switching:** device on A with 10 meetings (6 recorded here, 4 pulled from A) joins B → the review runs before the transfer; Copy → 6 copied into B under new ids, 4 stay local; A keeps all 10 and can still edit them (B4). A's minutes unchanged (B2). A dormant, not tombstoned (B3).
+- **Lost responses:** create succeeds server-side, client never gets the answer → next launch resumes the draft and replays (today) ; end-of-session response lost → retry charged once (B2); attach response lost → idempotent attach (today, tested).
+- **Failed writes:** draft write fails → no request (A2c); final store fails after create → the orphan installation is detectable in A0's log and listed by the reconciliation (B3); backfill interrupted mid-batch → rerun completes with no double counting (B0, B1, B2).
+- **Backup restore:** iPhone restored from backup, old account Pro by Apple → A4 sheet; Sign in by email → device re-bound, subscription still on the account (B1), minutes intact (B2).
+- **Billing events:** Polar renewal, cancel, late `active` after cancel, duplicate delivery; Apple renewal, grace, revoke; each against `sub:` and the account period (B1, B2).
+- **Old clients:** a 3.3.0 client (uppercase ids, no owner claim, no `connectionId`) against the B0 to B5 server: enrol, record, end, restore, attach, sync, calendar status all succeed and land on canonical records; a sync after an account change behaves exactly as it does today (no refusal) because the origin gate is below its version.
+- **Mixed case:** every auth and usage path with an uppercase header id after B0 writes exactly one record.
+
+## Decisions that need Ian's input
+
+- **D1. 3.3.1 scope.** Confirm: Granola, Sending tab, A1, A2, A2a, A2b, A2c, A2d, A2e. A0 deploys separately. (Recommended yes.)
+- **D2. A4 for sign-out.** After the person signs out, the next launch today creates a new anonymous account silently. A4 proposes showing a choice instead (Restore, Sign in by email, Set up as new). This adds one tap for anyone who signs out and wants a fresh account. (Recommended: the choice; silent creation is the invariant's main leak.)
+- **D3. Moving a subscription between accounts.** B1 refuses a restore or receipt that belongs to another account. Should there be an explicit "move my subscription to this account" action (confirmed from a device that can prove the old account), or is "sign in to the old account" the only answer? (Recommended: sign in only for now; revisit if support asks.)
+- **D4. Two rails on one account.** Today Polar plus Apple on one account is allowed. Keep, or refuse the second rail with guidance to cancel one? (Recommended: keep; refusing a paying customer is worse than a duplicate.)
+- **D5. Account merge.** Not built in this plan. Confirm that "move the meetings" (B4) plus "sign in to the account that has Pro" is enough. (Recommended yes.)
+- **D6. Dormant Pro accounts.** An account with zero installations and an active subscription keeps renewing. Email the person if they have an email, do nothing if not, or cancel after N months? (Recommended: email monthly where possible, never auto-cancel.)
+- **D8. Email without the allowlist.** `POST /api/account/email` is gated by `CLOUD_SYNC_ALLOWLIST` today. B6 opens it to every managed account. (Recommended yes, with the existing per-email and per-network limits.)
+- **D9. Orphaned source accounts** (was D7): B3's query counts them first. No blanket restore or purge until the count and what they hold are known.
+- **D10. Migration credit for ambiguous device pairs.** When both spellings of a device record hold current usage in different billing windows, B0 sums them and grants a credit equal to the smaller counter for the current period, so nobody is stopped early by the merge. Confirm, or choose the plain sum (over-counts, listed) instead. (Recommended: the credit.)
+
+**Baseline, not decisions.** The device cap (5, frozen at creation), the Polar cross-platform and Apple iOS-only policy, and "deleting an account does not cancel billing" stay exactly as shipped. Changing any of them is its own proposal, not a blocker here. Unattributable usage (an end with no attribution record) is never charged to anyone and is kept observable; charging a guessed account is not an option. The old-client question is settled by the version gate in B4: old clients keep today's behaviour until they update.
+
+## Recommended architecture, in one paragraph
+
+Keep the installation-key protocol and the anonymous recovery key exactly as they are. Make the account record the owner of four things it does not own today: subscriptions (`sub:` records with an owner), consumed usage (an account period ledger written atomically at session end, attributed by the session not the device), cloud meetings (already account-scoped; add client-side owner tags and a consent step), and integration connections (`conn:` records with a device-scoped fallback). Make the installation a pure access object: attach becomes a transfer that moves nothing but the device, revoke and sign out stop at "this device has no credential" and ask the person what to do, and accounts stay alive while they hold anything. Collapse the two device records into one before any of that. On the client, treat an unreadable or undecodable credential as a paused state with a way out, never as absence.
+
+## Minimum next release (3.3.1) and the slices after
+
+- **3.3.1:** Granola fix, Sending tab, A1, A2, A2a, A2b, A2c, A2d, A2e. Backend first, before the client relies on it: the organisation-id normalisation and validation, **and A2e's structured error contract on `/api/restore` and the email routes**; A0 and A0a can deploy with them.
+- **Next client release:** A3, with A5's second QA pass. Backend meanwhile: B0 (canonical write routing with adopt-at-first-write, then the merge cron for idle devices), then B1 steps 1 and 2 (writers plus backfill in one deploy, ownership-before-transfer).
+- **Then:** A4, with A5's third pass. Backend: B1 step 3 (reads), B2 (after the metering script test, with the membership-change seeding), B3.
+- **Then:** B4 (client on both platforms first, then the version-gated server enforcement), B5, B6, B7 as capacity allows, each with its own tests and QA lines.
+
+Rollback is not uniform. A0, A1, A2, B6 and B7 revert by redeploy or release. B0 after its first merge, B1 once any `sub:` record exists, and B2 once any account is seeded are fix-forward: their slices say why and what the narrowest safe revert is. B4's server enforcement is turned off with an explicit switch (`CLOUD_ORIGIN_ENFORCEMENT=off`) or by **raising** the version threshold above every shipped client; lowering it would enforce for more clients, not fewer.
+
+## Corrections
+
+2026-10-26, seventh pass:
+
+- The grant generation was bumped on attach, which would have failed every ordinary copy; credential events only now.
+- The credit was applied only in the backend gate; the client gates on `minutes_used` itself, so the effective value is what every response carries.
+- "Never worse off than the more generous record" was wrong; effective usage is the larger counter.
+- The per-grant lock promised a bound a Redis lease cannot deliver; removed, contract stated.
+
+2026-10-26, ninth pass:
+
+- The A2d incident paragraph listed the token refresh among the calls the dead key broke; refresh is unsigned.
+- The allow-list named a bare -10; it names the domain and symbol, and notes the code is new in macOS 27.
+- A2e's copy promised "Ian has been emailed"; replaced.
+
+2026-10-26, eighth pass:
+
+- A2d claimed the migrated Mac "heals on first launch"; refresh grants are unsigned, so it heals on the first signing attempt, and only when a recovery key is stored; the email-joined case needed its own path.
+- A2d treated every Secure Enclave error as permanent; allow-list now.
+- A2e's copy would still have said "not valid" for a configuration fault; backend contract now.
+- B6 and A4 disagreed about first use; the Home choice precedes creation.
+- "The throwaway account is now a dormant orphan" was unverified; stated as such.
+- B4 said "pipeline" for the generation update; one transaction.
+
+2026-10-26, sixth pass:
+
+- B1's transfer precondition applied to active subscriptions only; every identifiable subscription id now.
+- B4 relied on a Postgres expiry on revoke; the Redis authorisation generation is the protection.
+- B4 claimed at most one in-flight item without enforcing it; per-grant lock with re-check.
+- B4's bind accepted only an unbound grant and said a mis-bound grant could never redeem; idempotent bind, retry rules, claim corrected.
+- B0 adopted "never under-count"; migration credit instead (D10).
+- Checkout attribution said 24 hours in one place and 7 days in another; the non-goals said no new tables.
+
+2026-10-26, fifth pass:
+
+- B1's writer took the device's current account for an unknown subscription; the three-way rule replaces it, identical in both places.
+- B1 called `instrumentation.ts` a deployment barrier; it is an instance-start hook. Durable checkpoint instead.
+- B4 claimed one Redis script wrote Postgres rows; the copy is one Postgres transaction and the grant lives there too.
+- B4 grants had no destination; bound at transfer, checked on every redemption.
+- B0's correction replayed `session_end` responses, which are cumulative; journal instead.
+
+2026-10-26, later (fourth-pass revision of Track B):
+
+- B0 copied twin counters over a lowercase record and allowed a redeploy "before the cron"; period-aware summed baseline and fix-forward from step 1.
+- B1 ordered reads before writers; writers plus backfill first, ownership before transfer, reads last.
+- B2 let a device's counters seed two accounts; one claim per device, seeding inside every membership change.
+- B4 said a revoked device has a different key; it does not. Grants are deleted on revoke and checked at use.
+- B4 offered copying unknown rows after the transfer, when the authority to mint a grant is gone; removed.
+- The B4 rollback line said "lower the version gate", which widens enforcement; switch or raise.
+
+2026-10-26 (third-pass revision of Track B):
+
+- B0's merge used max() after routing had already moved increments; adopt-then-add replaces it.
+- B1's fallback read raw device fields; owner-filtered now.
+- B4 re-pointed source rows and used membership history as authority; copy under a grant now.
+- The old-client paragraph claimed an ownership-specific error; the client shows a conflict and retries. Enforcement is version-gated.
+- B2 reconciled against cumulative totals; charge records now.
+- The sequencing section still carried the first-draft B0 order and an "independently rollbackable" claim; both corrected.
+
+2026-10-25, night (second-pass revision of Track B):
+
+- "No MULTI, pipeline or Lua anywhere in the repo" was wrong: `kv.eval` runs the cloud sequence cache in `lib/cloud.ts:111`.
+- B3's deletion row contradicted the shipped contract; deletion does not cancel subscriptions (`04-api-reference.md:158`).
+- B4's backfill inferred ownership from `cloudRevision`, which every account switch zeroes; legacy rows are now `unknown`.
+- B0 lowercased the id before taking stock of the other namespaces that embed it; the inventory is now part of the slice.
+- B0 merged before stopping legacy writers; the order is reversed and the merge is one script.
+- B1 resolved renewals through current membership; ownership is now fixed at first bind.
+- B2 charged late ends to the current account and reconciled against device sums; both replaced.
+
+2026-10-25, evening:
+
+- "The two-store combination cannot occur in production yet" was wrong under the recorded read model; see "Client states" and finding 1.
+- "A failed draft save means the final save fails too" overclaimed; A2c's justification is durable recovery, finding 9.
+- "A week of phase 1 data counts the harm after the fact" overclaimed; finding 5 lists the blind spots.
+- "A resumed draft counts as permission carried over" was unsafe; finding 2 and the A3 marker.
+- "Every new field optional with a default" is not a compatibility guarantee; A2b.
+
+2026-10-25, morning: rotation fires on `409 device_already_enrolled` only; phases 3 and 4 no longer wait on a week of data.
+
+2026-10-23: the 3.3.0 device spike was 23 rows for 12 devices (two spellings per Apple install); the CI test host attribution was wrong (`isRunningUnderXCTest` has guarded enrollment since 2.9.0); the admin MRR fix is unrelated (miniti-api 178ec2e).

@@ -446,12 +446,24 @@ final class ClientAuthTests: XCTestCase {
         }
         defer { StubURLProtocol.handler = nil }
 
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+
         _ = try await manager.createAccount()
         XCTAssertEqual(rotations, 1)
         XCTAssertEqual(createIDs, ["550e8400-e29b-41d4-a716-446655440000", "11111111-2222-4333-8444-555555555555"])
         XCTAssertTrue(manager.isEnrolled)
         XCTAssertEqual(manager.status.accountID, "acct_fresh")
         XCTAssertEqual(manager.status.enrollmentPath, "create")
+
+        // A1: the conflict and the rotation are counted, with prefixes only.
+        XCTAssertEqual(events.names, ["client_auth_create_conflict", "client_auth_device_rotated"])
+        XCTAssertEqual(events.all[0].details, ["path": "create", "rotator": "yes"])
+        XCTAssertEqual(events.all[1].level, .warning)
+        XCTAssertEqual(events.all[1].details, ["from": "550e8400", "to": "11111111", "path": "create"])
+        for event in events.all {
+            for value in event.details.values { XCTAssertLessThan(value.count, 12, "no full identifiers in event details") }
+        }
     }
 
     /// Without a rotator (tests, or an install that must keep its identity) the conflict is
@@ -466,6 +478,8 @@ final class ClientAuthTests: XCTestCase {
             }
         }
         defer { StubURLProtocol.handler = nil }
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
         do {
             _ = try await manager.createAccount()
             XCTFail("expected deviceAlreadyEnrolled")
@@ -473,6 +487,100 @@ final class ClientAuthTests: XCTestCase {
             XCTAssertEqual(error as? ClientAuthError, .deviceAlreadyEnrolled)
         }
         XCTAssertFalse(manager.isEnrolled)
+        XCTAssertEqual(events.names, ["client_auth_create_conflict"], "no rotation event when nothing rotated")
+        XCTAssertEqual(events.all[0].details["rotator"], "no")
+    }
+
+    // MARK: - A1 diagnostics events
+
+    func testEventsRaisedBeforeTheSinkIsAttachedArriveOnceInOrder() async {
+        // The credential is read in `init`, before AppState can attach anything: an
+        // undecodable item must still reach the queue once the sink exists.
+        let store = DiagnosticClientAuthStore(diagnostic: .undecodable(bytes: 42))
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        XCTAssertEqual(events.names, ["client_auth_credential_undecodable"])
+        XCTAssertEqual(events.all[0].level, .error)
+        XCTAssertEqual(events.all[0].details, ["bytes": "42", "phase": "launch"])
+
+        // Attaching again replays nothing; the same event is not raised twice in one process.
+        let second = EventCollector()
+        manager.attachEventSink { second.append($0) }
+        XCTAssertEqual(second.names, [])
+        XCTAssertEqual(events.names.count, 1)
+    }
+
+    func testAnUnreadableCredentialIsReportedWithItsStatus() {
+        let store = DiagnosticClientAuthStore(diagnostic: .unreadable(status: -25308))
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        XCTAssertFalse(manager.isEnrolled, "unchanged in A1: unreadable still reads as not enrolled; A3 changes that")
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        XCTAssertEqual(events.names, ["client_auth_credential_unreadable"])
+        XCTAssertEqual(events.all[0].level, .warning)
+        XCTAssertEqual(events.all[0].details, ["status": "-25308", "phase": "launch"])
+    }
+
+    func testAFailedDraftWriteIsCounted() async {
+        let store = DiagnosticClientAuthStore(diagnostic: nil, saveSucceeds: false)
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" })
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"client_auth_unavailable","message":"x"}"#.utf8)) }
+        defer { StubURLProtocol.handler = nil }
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        _ = try? await manager.createAccount()
+        XCTAssertTrue(events.names.contains("client_auth_draft_write_failed"))
+        XCTAssertEqual(events.all.first { $0.name == "client_auth_draft_write_failed" }?.details, ["path": "create"])
+    }
+
+    func testEnrollingOnAnOldDeviceIDWithNoCredentialIsCountedWithItsReason() async {
+        // The id existed before this launch and there is no credential: a sign-out, a
+        // revoke, or a wiped item, never a fresh install.
+        let store = InMemoryClientAuthStore()
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, deviceIDIsNewThisLaunch: { false })
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"client_auth_unavailable","message":"x"}"#.utf8)) }
+        defer { StubURLProtocol.handler = nil }
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        _ = try? await manager.createAccount()
+        XCTAssertEqual(events.all.first?.name, "client_auth_silent_recreate")
+        XCTAssertEqual(events.all.first?.details, ["after": "unknown", "path": "create"])
+
+        // After a sign-out in this process the reason is known.
+        manager.clearLocal(reason: "signout")
+        _ = try? await manager.migrateLegacyDevice()
+        XCTAssertTrue(events.all.contains { $0.name == "client_auth_silent_recreate" && $0.details == ["after": "signout", "path": "migrate"] })
+
+        // A new install (id minted this launch) is not counted.
+        let fresh = ClientAuthManager(store: InMemoryClientAuthStore(), baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, deviceIDIsNewThisLaunch: { true })
+        let freshEvents = EventCollector()
+        fresh.attachEventSink { freshEvents.append($0) }
+        _ = try? await fresh.createAccount()
+        XCTAssertFalse(freshEvents.names.contains("client_auth_silent_recreate"))
+    }
+
+    func testEventsBufferIsBoundedBeforeTheSinkExists() async {
+        let store = InMemoryClientAuthStore()
+        nonisolated(unsafe) var counter = 0
+        let manager = ClientAuthManager(
+            store: store, baseURL: "https://api.test/api", session: stubbedSession(),
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" },
+            deviceIDRotator: { counter += 1; return String(format: "%08d-0000-4000-8000-000000000000", counter) }
+        )
+        // Every create answers conflict, so each attempt rotates once and raises distinct events.
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            default: return (409, Data(#"{"error":"device_already_enrolled","message":"x"}"#.utf8))
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        for _ in 0..<12 { _ = try? await manager.createAccount() }
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        XCTAssertLessThanOrEqual(events.all.count, ClientAuthManager.pendingEventLimit)
+        XCTAssertTrue(events.all.count > 0)
     }
 
     func testAttachRejectsBadKeysLocallyAndMapsServerConflicts() async {
@@ -734,4 +842,35 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNil(store.load())
     }
     #endif
+}
+
+// MARK: - A1 fixtures
+
+/// Collects `ClientAuthEvent`s from a sink; thread-safe because the sink may run off the test thread.
+private final class EventCollector: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var all: [ClientAuthEvent] = []
+    var names: [String] { lock.lock(); defer { lock.unlock() }; return all.map(\.name) }
+    func append(_ event: ClientAuthEvent) { lock.lock(); defer { lock.unlock() }; all.append(event) }
+}
+
+/// A store that reports a load diagnostic (unreadable or undecodable) and may refuse saves.
+private final class DiagnosticClientAuthStore: ClientAuthCredentialStore, @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: ClientAuthCredentials?
+    private let diagnostic: ClientAuthStoreDiagnostic?
+    private let saveSucceeds: Bool
+
+    init(diagnostic: ClientAuthStoreDiagnostic?, saveSucceeds: Bool = true) {
+        self.diagnostic = diagnostic
+        self.saveSucceeds = saveSucceeds
+    }
+
+    var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { diagnostic }
+    func load() -> ClientAuthCredentials? { lock.lock(); defer { lock.unlock() }; return diagnostic == nil ? value : nil }
+    func save(_ credentials: ClientAuthCredentials) -> Bool {
+        guard saveSucceeds else { return false }
+        lock.lock(); defer { lock.unlock() }; value = credentials; return true
+    }
+    func clear() { lock.lock(); defer { lock.unlock() }; value = nil }
 }

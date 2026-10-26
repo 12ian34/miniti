@@ -396,10 +396,27 @@ struct ClientAuthDeviceList: Decodable, Sendable {
 }
 
 /// Where credentials live. Keychain in the app; an in-memory store in tests.
+/// What a `load()` could not deliver. Absence (`.missing`) is not a diagnostic: it is the
+/// normal first-use state. These two are the cases that today look like absence to the
+/// rest of the app and must not (docs/enrollment-identity-plan.md, fragilities 1 and 2).
+enum ClientAuthStoreDiagnostic: Equatable, Sendable {
+    /// The Keychain answered something other than "found" or "not found" (locked, denied, prompting).
+    case unreadable(status: OSStatus)
+    /// An item was found but its bytes do not decode as `ClientAuthCredentials`.
+    case undecodable(bytes: Int)
+}
+
 protocol ClientAuthCredentialStore: AnyObject, Sendable {
     func load() -> ClientAuthCredentials?
     func save(_ credentials: ClientAuthCredentials) -> Bool
     func clear()
+    /// What the most recent `load()` could not deliver, or nil when it found an item or
+    /// found nothing. Read right after `load()`; stores that cannot fail return nil.
+    var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { get }
+}
+
+extension ClientAuthCredentialStore {
+    var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { nil }
 }
 
 /// The managed credential in one `KeychainSlot` (`DeviceIdentifier.swift`): the data protection
@@ -408,6 +425,18 @@ protocol ClientAuthCredentialStore: AnyObject, Sendable {
 /// must never travel through iCloud Keychain.
 final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Sendable {
     private let slot: KeychainSlot
+    private let diagnosticLock = NSLock()
+    private var diagnostic: ClientAuthStoreDiagnostic?
+
+    var lastLoadDiagnostic: ClientAuthStoreDiagnostic? {
+        diagnosticLock.lock(); defer { diagnosticLock.unlock() }
+        return diagnostic
+    }
+
+    private func setDiagnostic(_ value: ClientAuthStoreDiagnostic?) {
+        diagnosticLock.lock(); defer { diagnosticLock.unlock() }
+        diagnostic = value
+    }
 
     init(backend: KeychainBackend = SecurityKeychainBackend()) {
         slot = KeychainSlot(
@@ -422,13 +451,25 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
     func load() -> ClientAuthCredentials? {
         switch slot.read() {
         case .found(let data):
-            return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
+            if let decoded = try? JSONDecoder().decode(ClientAuthCredentials.self, from: data) {
+                setDiagnostic(nil)
+                return decoded
+            }
+            // Found but not ours to read: a format we no longer decode would turn every
+            // upgraded user into "not enrolled". The manager reports it; A3 will stop
+            // treating it as absence.
+            DebugLogger.shared.log(.app, "Device auth keychain item does not decode (\(data.count) bytes)")
+            setDiagnostic(.undecodable(bytes: data.count))
+            return nil
         case .missing:
+            setDiagnostic(nil)
             return nil
         case .unreadable(let status):
             // A locked or prompting keychain looks like "not enrolled" to the rest of
-            // the app; the status makes that distinguishable in the debug log.
+            // the app; the status makes that distinguishable in the debug log and, through
+            // the manager's events, in admin client events.
             DebugLogger.shared.log(.app, "Device auth keychain read failed: status=\(status)")
+            setDiagnostic(.unreadable(status: status))
             return nil
         }
     }
@@ -497,6 +538,15 @@ enum ClientAuthError: LocalizedError, Equatable {
 // MARK: Manager
 
 /// Owns the installation key, the recovery key, and the token lifecycle. Enrollment and
+/// One thing the manager wants counted in admin client events (opt-in diagnostics, same
+/// queue as every other event). Bounded fields only: status codes, paths, 8-character id
+/// prefixes; never a device id, key or token (roadmap P1.4; enrollment-identity-plan A1).
+struct ClientAuthEvent: Equatable, Sendable {
+    let name: String
+    let level: MinitiAPIService.ClientEventPayload.EventLevel
+    let details: [String: String]
+}
+
 /// token grants talk to `/api/auth/*` directly (no bearer); `MinitiAPIService` asks this
 /// object for a fresh access token and a request proof per authenticated call.
 final class ClientAuthManager: @unchecked Sendable {
@@ -504,8 +554,19 @@ final class ClientAuthManager: @unchecked Sendable {
         store: KeychainClientAuthStore(),
         deviceLabelProvider: { AppState.managedDeviceLabel },
         deviceIDRotator: { DeviceIdentifier.rotate() },
-        deviceIDAdopter: { DeviceIdentifier.adopt($0, reason: "credentials") }
+        deviceIDAdopter: { DeviceIdentifier.adopt($0, reason: "credentials") },
+        deviceIDIsNewThisLaunch: { DeviceIdentifier.createdThisLaunch }
     )
+
+    typealias EventSink = @Sendable (ClientAuthEvent) -> Void
+    /// Events raised before `AppState` exists (the credential is read in `init`) wait here
+    /// and are replayed, in order, when the sink is attached.
+    static let pendingEventLimit = 16
+    private var eventSink: EventSink?
+    private var pendingEvents: [ClientAuthEvent] = []
+    private var emittedEventKeys: Set<String> = []
+    /// Why `clearLocal` last ran in this process, for the silent re-create count.
+    private var localClearReason: String?
 
     /// Refresh the access token when within this many seconds of expiry.
     static let accessRefreshMargin: Int64 = 60
@@ -530,6 +591,10 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Makes a given id this install's device identity (see `reconcileDeviceIdentity`). Returns
     /// false when the identity cannot be changed right now. `nil` means never reconcile.
     let deviceIDAdopter: (@Sendable (String) -> Bool)?
+    /// True when the device id was minted in this process (a genuinely new install). An
+    /// enrollment that starts with an older id and no credential is a device that used to
+    /// be someone, counted as `client_auth_silent_recreate`.
+    let deviceIDIsNewThisLaunch: @Sendable () -> Bool
 
     init(
         store: ClientAuthCredentialStore,
@@ -538,7 +603,10 @@ final class ClientAuthManager: @unchecked Sendable {
         deviceIDProvider: @escaping @Sendable () -> String = { DeviceIdentifier.getOrCreateDeviceId() },
         deviceLabelProvider: @escaping @Sendable () -> String? = { nil },
         deviceIDRotator: (@Sendable () -> String)? = nil,
-        deviceIDAdopter: (@Sendable (String) -> Bool)? = nil
+        deviceIDAdopter: (@Sendable (String) -> Bool)? = nil,
+        // Defaults to "new": a caller that does not track the id (tests, tools) must not report
+        // a re-create it cannot know about. The shared instance passes the real flag.
+        deviceIDIsNewThisLaunch: @escaping @Sendable () -> Bool = { true }
     ) {
         self.store = store
         self.baseURL = baseURL
@@ -547,8 +615,61 @@ final class ClientAuthManager: @unchecked Sendable {
         self.deviceLabelProvider = deviceLabelProvider
         self.deviceIDRotator = deviceIDRotator
         self.deviceIDAdopter = deviceIDAdopter
+        self.deviceIDIsNewThisLaunch = deviceIDIsNewThisLaunch
         self.credentials = store.load()
+        reportLoadDiagnostic(phase: "launch")
         reconcileDeviceIdentity()
+    }
+
+    // MARK: Events
+
+    /// Attach the diagnostics sink and replay anything raised before it existed. Later
+    /// events go straight through. Attaching again replaces the sink; nothing is replayed twice.
+    func attachEventSink(_ sink: @escaping EventSink) {
+        lock.lock()
+        eventSink = sink
+        let replay = pendingEvents
+        pendingEvents.removeAll()
+        lock.unlock()
+        for event in replay { sink(event) }
+    }
+
+    /// Raise an event. Deduplicated per process on name plus details, so a retry loop does
+    /// not flood the queue. The sink is never called while `lock` is held.
+    private func emit(_ name: String, level: MinitiAPIService.ClientEventPayload.EventLevel, details: [String: String] = [:]) {
+        let event = ClientAuthEvent(name: name, level: level, details: details)
+        let key = name + "|" + details.keys.sorted().map { "\($0)=\(details[$0] ?? "")" }.joined(separator: ",")
+        lock.lock()
+        if emittedEventKeys.contains(key) { lock.unlock(); return }
+        emittedEventKeys.insert(key)
+        let sink = eventSink
+        if sink == nil {
+            if pendingEvents.count >= Self.pendingEventLimit { pendingEvents.removeFirst() }
+            pendingEvents.append(event)
+        }
+        lock.unlock()
+        sink?(event)
+    }
+
+    /// Turn what the store could not deliver into an event. `phase` says when the read ran.
+    private func reportLoadDiagnostic(phase: String) {
+        switch store.lastLoadDiagnostic {
+        case .unreadable(let status):
+            emit("client_auth_credential_unreadable", level: .warning, details: ["status": String(status), "phase": phase])
+        case .undecodable(let bytes):
+            emit("client_auth_credential_undecodable", level: .error, details: ["bytes": String(bytes), "phase": phase])
+        case nil:
+            break
+        }
+    }
+
+    /// An enrollment is starting on a device id that existed before this launch, with no
+    /// credential: a sign-out, a server revoke, a wiped credential, or a legacy or BYOK
+    /// install enrolling for the first time. `after` says which when the manager knows.
+    private func reportEnrollmentStart(path: String) {
+        guard !deviceIDIsNewThisLaunch() else { return }
+        let reason: String = { lock.lock(); defer { lock.unlock() }; return localClearReason ?? "unknown" }()
+        emit("client_auth_silent_recreate", level: .warning, details: ["after": reason, "path": path])
     }
 
     /// The credential and the device id are two Keychain items, and 3.2.1 on macOS lost the
@@ -613,10 +734,13 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     /// Forget local credentials (after sign out / delete, or when the server says revoked).
-    func clearLocal() {
+    /// `reason` is remembered for the silent re-create count: `signout`, `delete`,
+    /// `removed` (this device removed itself) or `revoke` (the server refused the key).
+    func clearLocal(reason: String = "revoke") {
         lock.lock(); defer { lock.unlock() }
         credentials = nil
         cachedKey = nil
+        localClearReason = reason
         store.clear()
     }
 
@@ -855,7 +979,7 @@ final class ClientAuthManager: @unchecked Sendable {
     /// A draft is written before any enrollment request so a lost response cannot lose the
     /// only copy of a freshly generated recovery key. A draft has no account yet.
     private func writeDraft(key: InstallationKey, recoveryKey: String, path: ClientAuthEnrollmentPath) {
-        _ = store.save(ClientAuthCredentials(
+        let saved = store.save(ClientAuthCredentials(
             installationKey: key.stored,
             recoveryKey: recoveryKey,
             accountID: "",
@@ -866,11 +990,15 @@ final class ClientAuthManager: @unchecked Sendable {
             enrolledAt: "",
             enrollmentPath: path.rawValue
         ))
+        // A2c makes this stop the enrollment; until then it is counted.
+        if !saved { emit("client_auth_draft_write_failed", level: .warning, details: ["path": path.rawValue]) }
     }
 
     /// Resume a draft (key + recovery key generated, but the request never completed).
     private func draft() -> (InstallationKey, String)? {
-        guard let stored = store.load(), stored.accountID.isEmpty, stored.accessToken == nil,
+        let stored = store.load()
+        reportLoadDiagnostic(phase: "retry")
+        guard let stored, stored.accountID.isEmpty, stored.accessToken == nil,
               let key = InstallationKey(stored: stored.installationKey) else { return nil }
         return (key, stored.recoveryKey)
     }
@@ -881,12 +1009,14 @@ final class ClientAuthManager: @unchecked Sendable {
     @discardableResult
     func createAccount(label: String? = nil, acknowledged: Bool = false) async throws -> String {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        reportEnrollmentStart(path: "create")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
         writeDraft(key: key, recoveryKey: recoveryKey, path: .create)
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
         } catch ClientAuthError.deviceAlreadyEnrolled {
+            emit("client_auth_create_conflict", level: .info, details: ["path": "create", "rotator": deviceIDRotator == nil ? "no" : "yes"])
             // The server already has an active installation under this device id with a key
             // this Keychain does not hold: a phone restored from a backup keeps the device id
             // item but not the device-only credentials. No request from here can prove the
@@ -894,8 +1024,10 @@ final class ClientAuthManager: @unchecked Sendable {
             // connections were keyed by the old id; a person who kept the recovery key can
             // move the device back with it (2026-10-10).
             guard let deviceIDRotator else { throw ClientAuthError.deviceAlreadyEnrolled }
+            let previous = deviceIDProvider()
             let rotated = deviceIDRotator()
             DebugLogger.shared.log(.app, "Device auth: device id already enrolled with another key; rotated to \(rotated.prefix(8))... and creating a fresh account")
+            emit("client_auth_device_rotated", level: .warning, details: ["from": String(previous.prefix(8)), "to": String(rotated.prefix(8)), "path": "create"])
             tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
         }
         try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .create, acknowledged: acknowledged)
@@ -921,11 +1053,15 @@ final class ClientAuthManager: @unchecked Sendable {
     /// existing device record to a new anonymous account.
     func migrateLegacyDevice(label: String? = nil) async throws {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        reportEnrollmentStart(path: "migrate")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
         writeDraft(key: key, recoveryKey: recoveryKey, path: .migrate)
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/migrate", key: key, recoveryKey: recoveryKey, label: label)
+        } catch ClientAuthError.deviceAlreadyEnrolled {
+            emit("client_auth_create_conflict", level: .info, details: ["path": "migrate", "rotator": deviceIDRotator == nil ? "no" : "yes"])
+            throw ClientAuthError.deviceAlreadyEnrolled
         } catch ClientAuthError.server(_, let status) where status == 404 {
             // A backend without the migration route at all: the device record (usage, tier,
             // subscription) is keyed by the same UUID either way, so creating an account
@@ -1016,7 +1152,7 @@ final class ClientAuthManager: @unchecked Sendable {
             return tokens.accessToken
         } catch ClientAuthError.revoked {
             DebugLogger.shared.log(.app, "Device auth: installation revoked by the server; clearing local credentials")
-            clearLocal()
+            clearLocal(reason: "revoke")
             throw ClientAuthError.revoked
         }
     }
@@ -1122,7 +1258,7 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Remove any device on the account. Removing the current one clears local credentials.
     func removeDevice(installationID: String) async throws {
         let _: Empty = try await authorizedJSON("DELETE", "/auth/account/devices/\(installationID)")
-        if installationID.lowercased() == deviceIDProvider().lowercased() { clearLocal() }
+        if installationID.lowercased() == deviceIDProvider().lowercased() { clearLocal(reason: "removed") }
     }
 
     /// Generate a new recovery key and ask the server to accept it. Returns the formatted key.
@@ -1185,12 +1321,12 @@ final class ClientAuthManager: @unchecked Sendable {
             // The re-bind was refused because the device id now belongs to another account
             // or the stored recovery key no longer resolves: forget it locally.
         }
-        clearLocal()
+        clearLocal(reason: "signout")
     }
 
     /// Delete the anonymous account (revokes every device). Does not cancel subscriptions.
     func deleteAccount() async throws {
         let _: Empty = try await authorizedJSON("DELETE", "/auth/account")
-        clearLocal()
+        clearLocal(reason: "delete")
     }
 }

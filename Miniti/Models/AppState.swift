@@ -2222,6 +2222,13 @@ final class AppState: ObservableObject {
         updateLogRedaction()
         pendingSessionEndReports = loadPendingSessionEndReports()
         pendingClientEvents = loadPendingClientEvents()
+        // The auth manager read the credential before this object existed; whatever it could
+        // not read is waiting in its buffer and arrives now (enrollment-identity-plan A1).
+        ClientAuthManager.shared.attachEventSink { [weak self] event in
+            Task { @MainActor [weak self] in
+                self?.enqueueDiagnosticEvent(event.name, category: .app, level: event.level, details: event.details)
+            }
+        }
 
         // Screenshot mode renders from seeded state and must stay offline: skip the
         // launch-time network work and fill the published state the scene needs.

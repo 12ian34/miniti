@@ -211,6 +211,16 @@ enum DeviceIdentifier {
         return cachedDeviceId == nil && sessionOnlyDeviceId != nil
     }
 
+    nonisolated(unsafe) private static var createdThisLaunchFlag = false
+
+    /// True when this process minted the device id (nothing was stored before): a new
+    /// install. False when the id was read back from the Keychain or the defaults fallback.
+    static var createdThisLaunch: Bool {
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
+        return createdThisLaunchFlag
+    }
+
     nonisolated static func resolution(afterReadStatus status: OSStatus, hasFallback: Bool) -> MissingIDResolution {
         if hasFallback { return .useFallback }
         return status == errSecItemNotFound ? .createAndPersist : .sessionOnly
@@ -256,6 +266,7 @@ enum DeviceIdentifier {
                 DebugLogger.shared.log(.app, "Persisted fallback device ID in UserDefaults because keychain save failed")
             }
             DebugLogger.shared.log(.app, "Created new device ID (\(newId.prefix(8))...)")
+            createdThisLaunchFlag = true
             cachedDeviceId = newId
             return newId
         case .sessionOnly:
