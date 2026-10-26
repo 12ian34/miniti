@@ -1,6 +1,7 @@
 import XCTest
 import CryptoTokenKit
 import CryptoKit
+import SwiftData
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -1126,6 +1127,67 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertTrue(joined, app.managedEnrollmentError ?? "")
         XCTAssertEqual(Restore.hits, 1, "the approved link went through restore with a fresh key, not attach")
         XCTAssertNotEqual(secondStore.load()?.installationKey, second.installationKey)
+    }
+
+    @MainActor
+    func testARecoveryKeyRestoreOntoAnotherAccountResetsCloudBookkeepingAndASameAccountRepairKeepsIt() async throws {
+        // Account A's pending deletion must never run against account B (reviewer's finding).
+        let container = try TestSupport.makeInMemoryContainer()
+        let context = ModelContext(container)
+        let sharedID = UUID()
+        let meeting = Meeting(title: "shared", startTime: Date())
+        meeting.cloudRevision = 3
+        meeting.syncFingerprint = "fp"
+        context.insert(meeting)
+        context.insert(MeetingTombstone(id: sharedID, cloudRevision: 2))
+        try context.save()
+
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let revoked = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        let app = AppState()
+        app.modelContext = context
+        // Production attaches the host in configureCloudSyncIfNeeded, which the test host skips so
+        // it never syncs the real store. Attach it here against the in-memory store, no start().
+        app.cloudSync.host = app
+        app.clientAuthManager = revoked
+        app.refreshClientAuthStatus()
+        XCTAssertEqual(app.cloudAccountID, "acct_same")
+
+        // Revoked on the server; the typed key belongs to account B.
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            case "/api/auth/revoke": return (401, Data(#"{"error":"installation_revoked","message":"x"}"#.utf8))
+            case "/api/auth/account/restore": return Self.tokens("acct_b")
+            default: return Self.failure(500, "unexpected")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        let moved = await app.restoreManagedAccount(recoveryKey: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertTrue(moved, app.managedEnrollmentError ?? "")
+        XCTAssertEqual(app.cloudAccountID, "acct_b")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 0, "A's pending deletion is gone before any sync pass could send it to B")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Meeting>()).first?.cloudRevision, 0, "A's revisions do not describe B's copies")
+        XCTAssertNil(try context.fetch(FetchDescriptor<Meeting>()).first?.syncFingerprint)
+
+        // Same-account repair after a key failure: the bookkeeping is kept.
+        context.insert(MeetingTombstone(id: UUID(), cloudRevision: 1))
+        let kept = try XCTUnwrap(try context.fetch(FetchDescriptor<Meeting>()).first)
+        kept.cloudRevision = 5
+        try context.save()
+        let (second, _) = repairableCredentials()
+        let secondStore = InMemoryClientAuthStore(second)
+        let failing = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        app.clientAuthManager = failing
+        app.refreshClientAuthStatus()
+        var r = postRequest()
+        _ = try? await failing.authorize(&r)
+        restoreStub(account: "acct_same")
+        let repaired = await app.restoreManagedAccount(recoveryKey: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertTrue(repaired, app.managedEnrollmentError ?? "")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 1, "same account: pending deletions stay")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<Meeting>()).first?.cloudRevision, 5, "same account: revisions stay")
     }
 
     // MARK: - A2e error copy

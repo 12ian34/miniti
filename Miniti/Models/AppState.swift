@@ -10765,6 +10765,12 @@ final class AppState: ObservableObject {
         defer { isEnrollingManagedDevice = false }
         let manager = clientAuthManager
         let keyWasUnusable = manager.credentialState == .keyUnusable
+        // The account the cloud bookkeeping belongs to right now. A restore that lands on a
+        // different account (a revoked installation restored with another account's key)
+        // must not carry this account's revisions, fingerprints and pending deletions over:
+        // a deletion queued here could remove the other account's copy of a meeting that
+        // shares the id (review 2026-10-26). Same-account repair keeps the bookkeeping.
+        let accountBefore = cloudAccountID ?? manager.status.accountID
         do {
             if manager.keyNeedsReauthentication {
                 // The stored key failed: a fresh key proves the typed recovery key; the old
@@ -10775,6 +10781,7 @@ final class AppState: ObservableObject {
                 manager.discardDraft()
                 try await manager.restoreAccount(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
             }
+            if manager.status.accountID != accountBefore { cloudSync.resetBookkeeping() }
             refreshClientAuthStatus()
             if appMode == .managed { await refreshUsage() }
             return true
