@@ -299,6 +299,8 @@ extension AppState {
         switch error {
         case ClientAuthError.deviceAlreadyEnrolled where keyWasUnusable:
             return (recoveryBelongsElsewhereMessage, "device_already_enrolled")
+        case ClientAuthError.deviceAlreadyEnrolled:
+            return (ClientAuthError.deviceAlreadyEnrolled.localizedDescription, "device_already_enrolled")
         case ClientAuthError.deviceCapReached(let cap):
             return (ClientAuthError.deviceCapReached(cap).localizedDescription, "device_cap_reached")
         case ClientAuthError.subscriptionConflict:
@@ -322,7 +324,13 @@ extension AppState {
         let manager = ClientAuthManager.shared
         let keyWasUnusable = manager.credentialState == .keyUnusable
         do {
-            if manager.isEnrolled {
+            if manager.keyNeedsReauthentication {
+                // The stored key failed: prove the link with a fresh key through restore, and
+                // keep the old credential until the server accepts the new one.
+                isEnrollingManagedDevice = true
+                defer { isEnrollingManagedDevice = false }
+                try await manager.reauthenticate(loginLinkID: approvedLinkID, label: Self.managedDeviceLabel)
+            } else if manager.isEnrolled {
                 _ = try await manager.attachToAccount(loginLinkID: approvedLinkID)
             } else {
                 isEnrollingManagedDevice = true

@@ -597,8 +597,9 @@ final class ClientAuthTests: XCTestCase {
         }
     }
 
+    /// Bytes that cannot be a key: the one load failure that is unusable without a device code.
     private func unloadableLoader(for original: InstallationKey.Stored) -> @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> {
-        { stored in stored == original ? .failure(NSError(domain: "CryptoKit.CryptoKitError", code: 3)) : InstallationKey.load(stored: stored) }
+        { stored in stored == original ? .failure(InstallationKey.LoadError.corruptData) : InstallationKey.load(stored: stored) }
     }
 
     private enum Restore {
@@ -892,6 +893,124 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(manager.needsKeyRepair)
         XCTAssertEqual(host.errors.last ?? "unset", nil)
         XCTAssertTrue(host.enrolling.isEmpty, "a repair is not an enrollment")
+    }
+
+    // MARK: - Review 2026-10-26: load classification, reauthentication, sign-out
+
+    func testLoadFailuresAreClassifiedAsConservativelyAsSigning() {
+        let locked = InstallationKeyFailure.classify(loadError: NSError(domain: NSOSStatusErrorDomain, code: -25308))
+        XCTAssertEqual(locked, .temporary(reason: "load:\(NSOSStatusErrorDomain):-25308"))
+        let unknown = InstallationKeyFailure.classify(loadError: NSError(domain: "CryptoKit.CryptoKitError", code: 3))
+        if case .temporary = unknown {} else { XCTFail("an unknown load error must not replace a credential: \(unknown)") }
+        if case .unusable = InstallationKeyFailure.classify(loadError: InstallationKey.LoadError.corruptData) {} else { XCTFail("bytes that cannot be a key are unusable") }
+        if case .unusable = InstallationKeyFailure.classify(loadError: InstallationKey.LoadError.unknownKind("x")) {} else { XCTFail() }
+        XCTAssertTrue(InstallationKeyFailure.unusableLoadCodes.isEmpty, "no Secure Enclave load code is allow-listed until device QA records one")
+    }
+
+    func testAnUnknownLoadErrorWithARecoveryKeyIsNotRepairedAutomatically() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { s in s == stored.installationKey ? .failure(NSError(domain: NSOSStatusErrorDomain, code: -25308)) : InstallationKey.load(stored: s) })
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        XCTAssertFalse(manager.needsKeyRepair)
+        var request = postRequest()
+        do {
+            try await manager.authorize(&request)
+            XCTFail("expected keyUnavailable")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .keyUnavailable("load:\(NSOSStatusErrorDomain):-25308"))
+        }
+        XCTAssertEqual(Restore.hits, 0, "nothing restored for a load error that is not on the list")
+        XCTAssertEqual(store.load(), stored)
+        XCTAssertTrue(manager.keyNeedsReauthentication, "but Sign in again takes the fresh-key route")
+    }
+
+    func testSignInAgainAfterATemporaryFailureUsesAFreshKeyAndKeepsTheOldCredentialUntilSuccess() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        _ = try? await manager.authorize(&request)
+        XCTAssertTrue(manager.keyNeedsReauthentication)
+        XCTAssertTrue(manager.isEnrolled, "a temporary failure does not unenrol")
+
+        // A lost response leaves everything as it was.
+        Restore.answer = Self.failure(503, "client_auth_unavailable")
+        do {
+            try await manager.reauthenticate(loginLinkID: "lnk_approved", label: "Mac")
+            XCTFail("expected unavailable")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .unavailable)
+        }
+        XCTAssertEqual(store.load(), stored, "the old credential is kept until the server accepts a new key")
+        XCTAssertTrue(manager.keyNeedsReauthentication)
+
+        // Approval by email: the restore route, a fresh key, the recovery key preserved.
+        Restore.answer = Self.tokens("acct_same")
+        try await manager.reauthenticate(loginLinkID: "lnk_approved", label: "Mac")
+        let after = try XCTUnwrap(store.load())
+        XCTAssertNotEqual(after.installationKey, stored.installationKey)
+        XCTAssertEqual(after.recoveryKey, stored.recoveryKey, "an email re-authentication keeps the recovery key the credential already had")
+        XCTAssertEqual(after.accountID, "acct_same")
+        XCTAssertFalse(manager.keyNeedsReauthentication)
+        XCTAssertEqual(Restore.hits, 2)
+        var signed = postRequest()
+        try await manager.authorize(&signed)
+        XCTAssertNotNil(signed.value(forHTTPHeaderField: "X-Request-Proof"))
+
+        // The typed recovery key route, same rules; a key for another account is refused and changes nothing.
+        let (second, _) = repairableCredentials()
+        let secondStore = InMemoryClientAuthStore(second)
+        let again = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        var r = postRequest()
+        _ = try? await again.authorize(&r)
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            default: return Self.failure(409, "device_already_enrolled")
+            }
+        }
+        do {
+            try await again.reauthenticate(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()), label: "Mac")
+            XCTFail("expected deviceAlreadyEnrolled")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .deviceAlreadyEnrolled)
+        }
+        XCTAssertEqual(secondStore.load(), second, "a key for another account abandons nothing")
+        restoreStub()
+        let typed = ClientAuthCrypto.generateRecoveryKey()
+        try await again.reauthenticate(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(typed), label: "Mac")
+        XCTAssertEqual(secondStore.load()?.recoveryKey, typed, "the typed key becomes the stored one")
+        XCTAssertNotEqual(secondStore.load()?.installationKey, second.installationKey)
+    }
+
+    func testSignOutClearsLocallyAfterTheUnusableStateIsEstablished() async throws {
+        // The reviewer's sequence: email-joined, signing fails, then sign out.
+        let (stored, _) = repairableCredentials(recoveryKey: "")
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        StubURLProtocol.handler = { _ in Self.failure(500, "unexpected") }
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        _ = try? await manager.authorize(&request)
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.keyUnusable)
+        StubURLProtocol.lastRequest = nil
+        try await manager.signOut()
+        XCTAssertNil(store.load(), "the credential is gone")
+        XCTAssertNil(StubURLProtocol.lastRequest, "nothing could be proved, nothing was sent")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.notEnrolled)
+
+        // And after a temporary failure, likewise.
+        let (second, _) = repairableCredentials()
+        let secondStore = InMemoryClientAuthStore(second)
+        let temp = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        var r = postRequest()
+        _ = try? await temp.authorize(&r)
+        try await temp.signOut()
+        XCTAssertNil(secondStore.load())
     }
 
     // MARK: - A2e error copy

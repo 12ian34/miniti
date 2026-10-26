@@ -10761,13 +10761,24 @@ final class AppState: ObservableObject {
         isEnrollingManagedDevice = true
         defer { isEnrollingManagedDevice = false }
         let manager = ClientAuthManager.shared
+        let keyWasUnusable = manager.credentialState == .keyUnusable
         do {
-            if manager.isEnrolled { try await manager.signOut() }
-            manager.discardDraft()
-            try await manager.restoreAccount(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
+            if manager.keyNeedsReauthentication {
+                // The stored key failed: a fresh key proves the typed recovery key; the old
+                // credential stays until the server accepts it (review 2026-10-26).
+                try await manager.reauthenticate(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
+            } else {
+                if manager.isEnrolled { try await manager.signOut() }
+                manager.discardDraft()
+                try await manager.restoreAccount(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
+            }
             refreshClientAuthStatus()
             if appMode == .managed { await refreshUsage() }
             return true
+        } catch ClientAuthError.deviceAlreadyEnrolled where keyWasUnusable {
+            managedEnrollmentError = Self.recoveryBelongsElsewhereMessage
+            refreshClientAuthStatus()
+            return false
         } catch {
             managedEnrollmentError = error.localizedDescription
             refreshClientAuthStatus()

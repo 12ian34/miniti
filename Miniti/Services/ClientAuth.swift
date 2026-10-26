@@ -322,12 +322,21 @@ enum InstallationKeyFailure: Equatable {
         (TKErrorDomain, -10, "2026-10-26"),
     ]
 
-    /// Our keys carry no access control, so loading one needs no unlock: the enclave refusing
-    /// the stored representation, or bytes that do not parse, mean the stored key can never
-    /// sign on this machine.
+    /// Loading is classified as conservatively as signing. Only bytes that cannot be a key
+    /// (`LoadError`) are unusable. A Secure Enclave refusal at load is kept temporary until
+    /// its code has been observed on a real migrated machine and added to the list: an
+    /// unknown load error must never replace a credential on its own (review 2026-10-26).
     static func classify(loadError error: Error) -> InstallationKeyFailure {
-        .unusable(reason: "load:\(describe(error))")
+        if error is InstallationKey.LoadError { return .unusable(reason: "load:\(describe(error))") }
+        let ns = error as NSError
+        if unusableLoadCodes.contains(where: { $0.domain == ns.domain && $0.code == ns.code }) {
+            return .unusable(reason: "load:\(describe(error))")
+        }
+        return .temporary(reason: "load:\(describe(error))")
     }
+
+    /// Load errors that establish a foreign key. Empty until the A5 device QA records one.
+    static let unusableLoadCodes: [(domain: String, code: Int, added: String)] = []
 
     static func classify(signingError error: Error) -> InstallationKeyFailure {
         let ns = error as NSError
@@ -659,6 +668,9 @@ final class ClientAuthManager: @unchecked Sendable {
     /// the person must sign in again; nothing is created or rotated meanwhile.
     private var keyUnusableWithoutRecovery = false
     private var temporaryKeyFailureSeenThisLaunch = false
+    /// A key failure (either kind) happened and no signature has succeeded since: the stored
+    /// key must not be relied on, and "Sign in again" takes the fresh-key route.
+    private var keyFailureActive = false
     static let keyUnavailableLaunchesKey = "clientAuth.keyUnavailableLaunches"
     /// Server clock minus local clock, learned from `Date` response headers, so a wrong
     /// device clock does not make every proof fall outside the server's skew window.
@@ -820,6 +832,15 @@ final class ClientAuthManager: @unchecked Sendable {
     /// How many launches in a row saw a temporary key failure (prominence of the offer only).
     var keyUnavailableLaunches: Int { defaults.integer(forKey: Self.keyUnavailableLaunchesKey) }
 
+    /// True when "Sign in again" must not use the stored key: it failed (temporarily or for
+    /// good) and nothing has signed since. `reauthenticate` is the route then; attach and
+    /// the enrolled-only guards would need the key that just failed (review 2026-10-26).
+    var keyNeedsReauthentication: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials, !Self.isDraft(credentials) else { return false }
+        return keyUnusableWithoutRecovery || keyFailureActive
+    }
+
     private static func isDraft(_ credentials: ClientAuthCredentials) -> Bool {
         credentials.accountID.isEmpty && credentials.accessToken == nil
     }
@@ -880,6 +901,7 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Record a key failure and produce the error the caller propagates. Never under `lock`.
     private func keyFailure(_ failure: InstallationKeyFailure, phase: String) -> ClientAuthError {
         let hasRecovery: Bool = { lock.lock(); defer { lock.unlock() }; return !(credentials?.recoveryKey.isEmpty ?? true) }()
+        lock.lock(); keyFailureActive = true; lock.unlock()
         switch failure {
         case .unusable(let reason):
             if !hasRecovery { lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock() }
@@ -892,11 +914,45 @@ final class ClientAuthManager: @unchecked Sendable {
         }
     }
 
+    // MARK: Reauthentication with a fresh key (review 2026-10-26)
+
+    /// Sign this installation in again without using the stored key: a fresh key proves an
+    /// approved email link or a typed recovery key to the restore route, which re-binds the
+    /// same installation on the same account (no cap slot). The old credential stays until
+    /// the server has accepted the new key. An email or key for a different account is
+    /// refused by the server (`device_already_enrolled`) because this installation is still
+    /// active, and nothing changes locally.
+    func reauthenticate(loginLinkID: String, label: String? = nil) async throws {
+        let (recoveryKey, path, acknowledged) = try reauthenticationBasis()
+        let key = InstallationKey.generate()
+        let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: nil, loginLinkID: loginLinkID, label: label ?? deviceLabelProvider())
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: path, acknowledged: acknowledged)
+        DebugLogger.shared.log(.app, "Device auth: installation re-authenticated by email with a fresh key")
+        emit("client_auth_key_repaired", level: .info, details: ["via": "email"])
+    }
+
+    func reauthenticate(recoveryKeyInput: String, label: String? = nil) async throws {
+        guard let typed = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else { throw ClientAuthError.invalidRecoveryKey }
+        let (_, path, _) = try reauthenticationBasis()
+        let key = InstallationKey.generate()
+        let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: typed, label: label ?? deviceLabelProvider())
+        try storeEnrollment(key: key, recoveryKey: typed, tokens: tokens, path: path, acknowledged: true)
+        DebugLogger.shared.log(.app, "Device auth: installation re-authenticated with a recovery key and a fresh key")
+        emit("client_auth_key_repaired", level: .info, details: ["via": "recovery_key"])
+    }
+
+    private func reauthenticationBasis() throws -> (String, ClientAuthEnrollmentPath, Bool) {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
+        return (credentials.recoveryKey, ClientAuthEnrollmentPath(rawValue: credentials.enrollmentPath) ?? .restore, credentials.recoveryKeyAcknowledged)
+    }
+
     /// Run a signature with the key; a thrown signing error is classified like a load error.
     private func signing<T>(_ body: () throws -> T) throws -> T {
         do {
             let value = try body()
             clearTemporaryKeyFailures()
+            lock.lock(); keyFailureActive = false; lock.unlock()
             return value
         } catch let error as ClientAuthError {
             throw error
@@ -968,6 +1024,7 @@ final class ClientAuthManager: @unchecked Sendable {
         credentials = newValue
         cachedKey = nil
         keyUnusableWithoutRecovery = false
+        keyFailureActive = false
     }
 
     private func update(_ change: (inout ClientAuthCredentials) -> Void) {
@@ -1540,6 +1597,14 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// Sign this installation out server-side, then forget it locally.
     func signOut() async throws {
+        if keyNeedsReauthentication {
+            // The stored key failed and nothing has signed since: the revoke cannot be proved.
+            // Signing out is how the person leaves that state, so it clears locally at once
+            // (review 2026-10-26: after the unusable state is established, every authorized
+            // call throws notEnrolled, which the catches below never saw).
+            clearLocal(reason: "signout")
+            return
+        }
         do {
             let _: Empty = try await authorizedJSON("POST", "/auth/revoke", body: [:])
         } catch ClientAuthError.revoked {
