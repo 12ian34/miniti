@@ -3,9 +3,9 @@ NEW
 
 IMPROVED
 - Granola import takes the zip Granola emails, or several CSV files at once.
-- Signing in by email says what went wrong: the email could not be sent, too many attempts, no connection, or a link that expired. A dropped connection while waiting for the link no longer reads as an expired link.
 
 FIXED
 - Granola import refused the export Granola makes today and said every row was missing a date. The columns changed. miniti reads them again.
 - An imported Granola transcript arrived as one block with no length. Each sentence is its own turn now, and the length is estimated from the words spoken, about 150 a minute.
 - A device whose saved sign-in key can no longer be used asks you to sign in by email or recovery key instead of failing every request.
+- Signing in by email said expired link when the connection dropped. It now says what actually went wrong.
