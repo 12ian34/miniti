@@ -22,7 +22,7 @@ Within a priority, order is intentional unless a production incident changes it.
 Current order, reconciled 2026-10-26:
 
 1. Use the recorded 3.4.0 QA in P1.4a: Mac build 137 on macOS 27 and iPhone build 138 passed the recorded scenarios; macOS 26 is unmeasured with Ian's explicit release waiver. Built, deployed, tested and released remain distinct states.
-2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review; no version is assigned yet.
+2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review; no version is assigned yet. On 2026-10-26 Ian assigned U2, U1 and B6a to 3.4.0 (build 139, release held); the implementation plan is [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series stays unversioned.
 3. Continue enrollment A3/A4 and Track B only under the slice-specific decisions, compatibility tests and cutover rules in the enrollment plan.
 4. Keep the unresolved long-session, device QA, measurement and platform work below. Historical implementation phases document why the code exists; do not restart completed auth, persistence or CI work.
 

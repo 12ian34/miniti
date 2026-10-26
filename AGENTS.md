@@ -55,6 +55,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Change cloud sync, the sync document, Settings → Cloud, web sign-in, tokens, the REST API or the MCP server | [docs/cloud-sync-plan.md](docs/cloud-sync-plan.md) (built 2026-10-15 for 3.0.0, status table) + [`../miniti-api/docs/agents/08-cloud.md`](../miniti-api/docs/agents/08-cloud.md) (the contract) + [docs/patterns.md](docs/patterns.md) § "Cloud sync" |
 | Change settings navigation, categories, or search | [docs/settings-redesign-plan.md](docs/settings-redesign-plan.md) (2.12.0 hierarchy: Setup, Meetings, Connections, Privacy, Support; Cloud joined Setup in 3.0.0; Sending joins Setup in the 3.4.0 QA build; API joined Connections in 3.2.1; single-word tabs; `SettingsGroup`) |
 | Work on enrollment, broken keys, account recovery or billing identity | [docs/enrollment-identity-plan.md](docs/enrollment-identity-plan.md) (3.4.0 Mac 137 / iPhone 138 QA recorded; macOS 26 unmeasured with a recorded waiver; A2f/A3/A4 and ownership work planned; B6a optional email-first Account UX approved for an early future slice) |
+| Change the consent screen, the Sending tab's groups and status words, or Settings, Account (email, recovery key wording, the Home access card, plan and billing) | [docs/account-sending-consent-ux-plan.md](docs/account-sending-consent-ux-plan.md) (U2, U1, B6a implementation plan for 3.4.0 build 139, planned 2026-10-26; specs stay in the reliability and enrollment plans) |
 | Fix consent gaps, account-switch races, retries, Sending organization or first-run consent layout | [docs/reliability-follow-up-plan.md](docs/reliability-follow-up-plan.md) (eight behavioral fixes plus U1 Sending/U2 concise consent, approved and not implemented; roadmap P0.11; account UX links to enrollment B6a) |
 | See what shipped in which version | [CHANGELOG.md](CHANGELOG.md) (+ `fastlane/metadata/en-US/release_notes.txt` per release) |
 | Understand visual language / tokens | [design.md](design.md) |
@@ -164,6 +165,7 @@ docs/
   admin-stats-access-plan.md       # Admin stats from the terminal (script + skill, built) and Grok Bot (read token, deployed 2026-10-15); no MCP
   ops-alerting-plan.md             # Operator alerts: hourly checks, weekly digest, thresholds (built 2026-10-23 in miniti-api)
   granola-import-plan.md           # Granola import: current export columns, zip, sentence turns, length estimate (built 2026-10-23)
+  account-sending-consent-ux-plan.md # U2 consent, U1 Sending, B6a account and email: implementation plan for 3.4.0 build 139 (planned 2026-10-26)
   enrollment-identity-plan.md      # Enrollment identity and account ownership: Track A client protection (3.4.0 onward), Track B ownership migration and B6a optional email-first Account UX (planned; QA and decisions updated 2026-10-26)
 Miniti/                            # macOS target source
 MinitiMobile/                      # iOS target source
