@@ -242,7 +242,7 @@ extension AppState {
     func startEmailSignIn(email: String) async -> String? {
         managedEnrollmentError = nil
         do {
-            return try await ClientAuthManager.shared.startEmailSignIn(email: email)
+            return try await clientAuthManager.startEmailSignIn(email: email)
         } catch {
             let (message, code) = Self.emailStartFailure(for: error)
             managedEnrollmentError = message
@@ -282,7 +282,7 @@ extension AppState {
     /// Poll the link. A failed check is reported as such, never as an expired link (A2e).
     func emailSignInStatus(linkID: String) async -> EmailSignInPoll {
         do {
-            switch try await ClientAuthManager.shared.emailSignInStatus(linkID: linkID) {
+            switch try await clientAuthManager.emailSignInStatus(linkID: linkID) {
             case .pending: return .pending
             case .approved: return .approved
             case .expired: return .expired
@@ -321,7 +321,7 @@ extension AppState {
     func joinAccount(approvedLinkID: String) async -> Bool {
         guard !ScreenshotMode.isActive else { return true }
         managedEnrollmentError = nil
-        let manager = ClientAuthManager.shared
+        let manager = clientAuthManager
         let keyWasUnusable = manager.credentialState == .keyUnusable
         do {
             if manager.keyNeedsReauthentication {
@@ -364,6 +364,6 @@ extension AppState {
 
     /// True when this device joined by email and holds no recovery key of its own.
     var managedDeviceHasNoRecoveryKey: Bool {
-        clientAuthStatus.isEnrolled && (ClientAuthManager.shared.revealRecoveryKey()?.isEmpty ?? true)
+        clientAuthStatus.isEnrolled && (clientAuthManager.revealRecoveryKey()?.isEmpty ?? true)
     }
 }

@@ -923,17 +923,22 @@ final class ClientAuthManager: @unchecked Sendable {
     /// refused by the server (`device_already_enrolled`) because this installation is still
     /// active, and nothing changes locally.
     func reauthenticate(loginLinkID: String, label: String? = nil) async throws {
-        let (recoveryKey, path, acknowledged) = try reauthenticationBasis()
+        let (recoveryKey, path, acknowledged, accountID) = try reauthenticationBasis()
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: nil, loginLinkID: loginLinkID, label: label ?? deviceLabelProvider())
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: path, acknowledged: acknowledged)
-        DebugLogger.shared.log(.app, "Device auth: installation re-authenticated by email with a fresh key")
-        emit("client_auth_key_repaired", level: .info, details: ["via": "email"])
+        // The server may land a revoked installation in the link's account rather than the
+        // one this credential names. The old recovery key proves the old account only, so
+        // it stays solely when the account is the same; otherwise this is an ordinary switch
+        // by email, which holds no key of its own (review 2026-10-26).
+        let sameAccount = tokens.accountId == nil || tokens.accountId == accountID
+        try storeEnrollment(key: key, recoveryKey: sameAccount ? recoveryKey : "", tokens: tokens, path: sameAccount ? path : .restore, acknowledged: sameAccount ? acknowledged : true)
+        DebugLogger.shared.log(.app, "Device auth: installation re-authenticated by email with a fresh key\(sameAccount ? "" : " and moved to the link's account")")
+        emit("client_auth_key_repaired", level: .info, details: ["via": "email", "switched": sameAccount ? "no" : "yes"])
     }
 
     func reauthenticate(recoveryKeyInput: String, label: String? = nil) async throws {
         guard let typed = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else { throw ClientAuthError.invalidRecoveryKey }
-        let (_, path, _) = try reauthenticationBasis()
+        let (_, path, _, _) = try reauthenticationBasis()
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: typed, label: label ?? deviceLabelProvider())
         try storeEnrollment(key: key, recoveryKey: typed, tokens: tokens, path: path, acknowledged: true)
@@ -941,10 +946,10 @@ final class ClientAuthManager: @unchecked Sendable {
         emit("client_auth_key_repaired", level: .info, details: ["via": "recovery_key"])
     }
 
-    private func reauthenticationBasis() throws -> (String, ClientAuthEnrollmentPath, Bool) {
+    private func reauthenticationBasis() throws -> (String, ClientAuthEnrollmentPath, Bool, String) {
         lock.lock(); defer { lock.unlock() }
         guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
-        return (credentials.recoveryKey, ClientAuthEnrollmentPath(rawValue: credentials.enrollmentPath) ?? .restore, credentials.recoveryKeyAcknowledged)
+        return (credentials.recoveryKey, ClientAuthEnrollmentPath(rawValue: credentials.enrollmentPath) ?? .restore, credentials.recoveryKeyAcknowledged, credentials.accountID)
     }
 
     /// Run a signature with the key; a thrown signing error is classified like a load error.
@@ -1023,6 +1028,13 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         credentials = newValue
         cachedKey = nil
+    }
+
+    /// A credential replacement (a new key the server accepted) is what ends a key failure;
+    /// a token-only update through `persist` is not (review 2026-10-26: an unsigned refresh
+    /// used to clear the flag and send "Sign in again" back through the broken key).
+    private func clearKeyFailure() {
+        lock.lock(); defer { lock.unlock() }
         keyUnusableWithoutRecovery = false
         keyFailureActive = false
     }
@@ -1228,6 +1240,7 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool) throws {
+        defer { if credentialsHold(key: key) { clearKeyFailure() } }
         try persist(ClientAuthCredentials(
             installationKey: key.stored,
             recoveryKey: recoveryKey,
@@ -1240,6 +1253,11 @@ final class ClientAuthManager: @unchecked Sendable {
             enrollmentPath: path.rawValue,
             recoveryKeyAcknowledged: acknowledged
         ))
+    }
+
+    private func credentialsHold(key: InstallationKey) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return credentials?.installationKey == key.stored
     }
 
     /// A draft is written before any enrollment request so a lost response cannot lose the

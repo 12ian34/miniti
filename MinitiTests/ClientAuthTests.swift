@@ -1013,6 +1013,121 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNil(secondStore.load())
     }
 
+    // MARK: - Re-review 2026-10-26: refresh keeps the flag, real callers, email switch semantics
+
+    func testAnUnsignedRefreshDoesNotClearTheKeyFailure() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        StubURLProtocol.handler = { [self] request in
+            let body = requestBody(request)
+            if request.url?.path == "/api/auth/token", body["grant_type"] as? String == "refresh" { return Self.tokens("acct_same") }
+            return Self.failure(500, "unexpected")
+        }
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        _ = try? await manager.authorize(&request)
+        XCTAssertTrue(manager.keyNeedsReauthentication)
+        _ = try await manager.forceRefresh()
+        XCTAssertEqual(store.load()?.accessToken, "tok", "the unsigned refresh went through")
+        XCTAssertTrue(manager.keyNeedsReauthentication, "fresh tokens do not fix a key that cannot sign")
+        XCTAssertEqual(store.load()?.installationKey, stored.installationKey)
+    }
+
+    func testEmailReauthenticationKeepsTheRecoveryKeyOnlyForTheSameAccount() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        var r = postRequest()
+        _ = try? await manager.authorize(&r)
+        restoreStub(account: "acct_other")
+        defer { StubURLProtocol.handler = nil }
+        try await manager.reauthenticate(loginLinkID: "lnk_other", label: "Mac")
+        let moved = try XCTUnwrap(store.load())
+        XCTAssertEqual(moved.accountID, "acct_other")
+        XCTAssertEqual(moved.recoveryKey, "", "the old account's key must not sit beside the new account")
+        XCTAssertEqual(moved.enrollmentPath, "restore")
+        XCTAssertFalse(manager.keyNeedsReauthentication)
+
+        let (again, _) = repairableCredentials()
+        let againStore = InMemoryClientAuthStore(again)
+        let same = managerFor(again, store: againStore, loader: signingFaultLoader(for: again.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        var r2 = postRequest()
+        _ = try? await same.authorize(&r2)
+        restoreStub(account: "acct_same")
+        try await same.reauthenticate(loginLinkID: "lnk_same", label: "Mac")
+        XCTAssertEqual(againStore.load()?.recoveryKey, again.recoveryKey, "same account: the key the credential already had is kept")
+    }
+
+    @MainActor
+    func testTheEnrolledRecoveryKeyActionReauthenticatesWithAFreshKeyAfterAKeyFailure() async throws {
+        // The real caller: Settings opens the recovery-key sheet in move mode for an enrolled
+        // device, which calls attachManagedDevice (reviewer's finding 2).
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        let app = AppState()
+        app.clientAuthManager = manager
+        var r = postRequest()
+        _ = try? await manager.authorize(&r)
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        Paths.hits = []
+        let typed = ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey())
+        let ok = await app.attachManagedDevice(recoveryKey: typed)
+        XCTAssertTrue(ok, app.managedEnrollmentError ?? "")
+        XCTAssertEqual(Restore.hits, 1, "restore with a fresh key, not attach with the failed one")
+        XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey)
+        XCTAssertFalse(manager.keyNeedsReauthentication)
+
+        // Another account's key: refused, nothing abandoned, the explicit copy shown.
+        let (second, _) = repairableCredentials()
+        let secondStore = InMemoryClientAuthStore(second)
+        let failing = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        app.clientAuthManager = failing
+        var r2 = postRequest()
+        _ = try? await failing.authorize(&r2)
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/api/auth/challenge" { return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8)) }
+            return Self.failure(409, "device_already_enrolled")
+        }
+        let refused = await app.attachManagedDevice(recoveryKey: typed)
+        XCTAssertFalse(refused)
+        XCTAssertEqual(app.managedEnrollmentError, AppState.recoveryBelongsElsewhereMessage)
+        XCTAssertEqual(secondStore.load(), second)
+    }
+
+    @MainActor
+    func testTheRestoreAndEmailActionsReauthenticateThroughAppStateAfterAKeyFailure() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        let app = AppState()
+        app.clientAuthManager = manager
+        var r = postRequest()
+        _ = try? await manager.authorize(&r)
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        let typed = ClientAuthCrypto.generateRecoveryKey()
+        let restored = await app.restoreManagedAccount(recoveryKey: ClientAuthCrypto.formatRecoveryKey(typed))
+        XCTAssertTrue(restored, app.managedEnrollmentError ?? "")
+        XCTAssertEqual(Restore.hits, 1)
+        XCTAssertFalse(Paths.hits.contains("/api/auth/revoke"), "no sign-out, the credential was kept until the server accepted the new key")
+        XCTAssertEqual(store.load()?.recoveryKey, typed)
+
+        let (second, _) = repairableCredentials()
+        let secondStore = InMemoryClientAuthStore(second)
+        let viaEmail = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        app.clientAuthManager = viaEmail
+        var r2 = postRequest()
+        _ = try? await viaEmail.authorize(&r2)
+        restoreStub()
+        let joined = await app.joinAccount(approvedLinkID: "lnk_approved")
+        XCTAssertTrue(joined, app.managedEnrollmentError ?? "")
+        XCTAssertEqual(Restore.hits, 1, "the approved link went through restore with a fresh key, not attach")
+        XCTAssertNotEqual(secondStore.load()?.installationKey, second.installationKey)
+    }
+
     // MARK: - A2e error copy
 
     func testRestoreFailuresAreMappedByCodeNotByOneSentence() {

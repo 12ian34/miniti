@@ -1048,6 +1048,9 @@ final class AppState: ObservableObject {
     // Device-bound authorization (managed mode). The account is an anonymous recovery key;
     // see Miniti/Services/ClientAuth.swift. Screenshot mode fakes an enrolled state.
     @Published var clientAuthStatus: ClientAuthStatus = ClientAuthManager.shared.status
+    /// The manager behind every account action below. Tests inject one wired to a stub so
+    /// the real actions (attach, restore, join, sign out) are exercised end to end.
+    var clientAuthManager: ClientAuthManager = ClientAuthManager.shared
     @Published var isEnrollingManagedDevice = false
     @Published var managedEnrollmentError: String?
     /// Show the "save your recovery key" nudge: enrolled, key never acknowledged, not snoozed this launch.
@@ -10715,7 +10718,7 @@ final class AppState: ObservableObject {
     // MARK: - Device-bound authorization (managed account)
 
     func refreshClientAuthStatus() {
-        let status = ClientAuthManager.shared.status
+        let status = clientAuthManager.status
         clientAuthStatus = status
         showRecoveryKeyNotice = status.isEnrolled && !status.recoveryKeyAcknowledged && !recoveryKeyNoticeSnoozed
     }
@@ -10760,7 +10763,7 @@ final class AppState: ObservableObject {
         managedEnrollmentError = nil
         isEnrollingManagedDevice = true
         defer { isEnrollingManagedDevice = false }
-        let manager = ClientAuthManager.shared
+        let manager = clientAuthManager
         let keyWasUnusable = manager.credentialState == .keyUnusable
         do {
             if manager.keyNeedsReauthentication {
@@ -10792,14 +10795,27 @@ final class AppState: ObservableObject {
     func attachManagedDevice(recoveryKey: String) async -> Bool {
         guard !ScreenshotMode.isActive else { return true }
         managedEnrollmentError = nil
+        let keyHadFailed = clientAuthManager.keyNeedsReauthentication
         do {
-            _ = try await ClientAuthManager.shared.attachToAccount(recoveryKeyInput: recoveryKey)
+            if keyHadFailed {
+                // The enrolled Settings screen opens this sheet in move mode; after a key failure
+                // attach would sign with the key that just failed. Prove the typed key with a
+                // fresh one instead; the server re-binds the same account or refuses another
+                // (review 2026-10-26).
+                try await clientAuthManager.reauthenticate(recoveryKeyInput: recoveryKey, label: Self.managedDeviceLabel)
+            } else {
+                _ = try await clientAuthManager.attachToAccount(recoveryKeyInput: recoveryKey)
+            }
             // The device's meetings now belong to the destination account: upload them there.
             cloudSync.resetBookkeeping()
             refreshClientAuthStatus()
             await loadManagedDevices()
             if appMode == .managed { await refreshUsage() }
             return true
+        } catch ClientAuthError.deviceAlreadyEnrolled where keyHadFailed {
+            managedEnrollmentError = Self.recoveryBelongsElsewhereMessage
+            refreshClientAuthStatus()
+            return false
         } catch {
             managedEnrollmentError = error.localizedDescription
             refreshClientAuthStatus()
@@ -10811,12 +10827,12 @@ final class AppState: ObservableObject {
     var isProViaAccount: Bool { usageInfo?.isProViaAccount ?? false }
 
     func revealRecoveryKey() -> String? {
-        ClientAuthManager.shared.revealRecoveryKey()
+        clientAuthManager.revealRecoveryKey()
     }
 
     /// The person confirmed the key is saved (or chose to stop being reminded).
     func acknowledgeRecoveryKey() {
-        ClientAuthManager.shared.markRecoveryKeyAcknowledged()
+        clientAuthManager.markRecoveryKeyAcknowledged()
         refreshClientAuthStatus()
     }
 
@@ -10828,7 +10844,7 @@ final class AppState: ObservableObject {
 
     func rotateManagedRecoveryKey() async -> String? {
         do {
-            let key = try await ClientAuthManager.shared.rotateRecoveryKey()
+            let key = try await clientAuthManager.rotateRecoveryKey()
             refreshClientAuthStatus()
             return key
         } catch {
@@ -10841,7 +10857,7 @@ final class AppState: ObservableObject {
     func loadManagedDevices() async {
         guard clientAuthStatus.isEnrolled, !ScreenshotMode.isActive else { return }
         do {
-            let list = try await ClientAuthManager.shared.listDevices()
+            let list = try await clientAuthManager.listDevices()
             managedDevices = list.devices
             managedDevicesError = nil
         } catch {
@@ -10852,7 +10868,7 @@ final class AppState: ObservableObject {
 
     func removeManagedDevice(installationID: String) async -> Bool {
         do {
-            try await ClientAuthManager.shared.removeDevice(installationID: installationID)
+            try await clientAuthManager.removeDevice(installationID: installationID)
             refreshClientAuthStatus()
             if clientAuthStatus.isEnrolled { await loadManagedDevices() } else { managedDevices = [] }
             return true
@@ -10864,7 +10880,7 @@ final class AppState: ObservableObject {
     }
 
     func signOutManagedDevice() async {
-        try? await ClientAuthManager.shared.signOut()
+        try? await clientAuthManager.signOut()
         managedDevices = []
         usageInfo = nil
         cloudSync.resetBookkeeping()
@@ -10874,7 +10890,7 @@ final class AppState: ObservableObject {
     /// Delete the anonymous account. Revokes every device; subscriptions are untouched.
     func deleteManagedAccount() async -> Bool {
         do {
-            try await ClientAuthManager.shared.deleteAccount()
+            try await clientAuthManager.deleteAccount()
             managedDevices = []
             usageInfo = nil
             cloudSync.resetBookkeeping()
