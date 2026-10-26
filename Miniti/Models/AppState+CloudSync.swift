@@ -244,13 +244,74 @@ extension AppState {
         do {
             return try await ClientAuthManager.shared.startEmailSignIn(email: email)
         } catch {
-            managedEnrollmentError = error.localizedDescription
+            let (message, code) = Self.emailStartFailure(for: error)
+            managedEnrollmentError = message
+            enqueueDiagnosticEvent("email_signin_failed", category: .app, level: .warning, details: ["stage": "start", "code": code])
             return nil
         }
     }
 
-    func emailSignInStatus(linkID: String) async -> ClientAuthManager.EmailSignInStatus? {
-        try? await ClientAuthManager.shared.emailSignInStatus(linkID: linkID)
+    /// Sending the link can fail in ways that are not the person's fault; each gets its own
+    /// copy instead of the raw server code (A2e).
+    nonisolated static func emailStartFailure(for error: Error) -> (message: String, code: String) {
+        switch error {
+        case ClientAuthError.rateLimited:
+            return ("Too many attempts. Wait a few minutes and try again.", "rate_limited")
+        case ClientAuthError.unavailable:
+            return ("Email sign-in is not available right now. Try again later.", "unavailable")
+        case ClientAuthError.network(let detail):
+            return ("Could not reach miniti's servers. Check your connection and try again.", "network:\(detail.prefix(40))")
+        case ClientAuthError.server(let code, _):
+            switch code {
+            case "email_send_failed": return ("The email could not be sent. Try again in a minute.", code)
+            case "email_unavailable", "cloud_unavailable": return ("Email sign-in is not available right now. Try again later.", code)
+            case "invalid_email": return ("That does not look like an email address.", code)
+            default: return ("Could not send the link (\(code)). Try again.", code)
+            }
+        default:
+            return (error.localizedDescription, "unknown")
+        }
+    }
+
+    enum EmailSignInPoll: Equatable {
+        case pending, approved, expired
+        /// The status could not be checked (network, server); the link may still be fine.
+        case unreachable
+    }
+
+    /// Poll the link. A failed check is reported as such, never as an expired link (A2e).
+    func emailSignInStatus(linkID: String) async -> EmailSignInPoll {
+        do {
+            switch try await ClientAuthManager.shared.emailSignInStatus(linkID: linkID) {
+            case .pending: return .pending
+            case .approved: return .approved
+            case .expired: return .expired
+            }
+        } catch ClientAuthError.server(let code, _) where code.hasPrefix("login_link") {
+            return .expired
+        } catch {
+            return .unreachable
+        }
+    }
+
+    /// Why a join did not complete, in the person's words (A2e).
+    nonisolated static func joinFailure(for error: Error, keyWasUnusable: Bool) -> (message: String, code: String) {
+        switch error {
+        case ClientAuthError.deviceAlreadyEnrolled where keyWasUnusable:
+            return (recoveryBelongsElsewhereMessage, "device_already_enrolled")
+        case ClientAuthError.deviceCapReached(let cap):
+            return (ClientAuthError.deviceCapReached(cap).localizedDescription, "device_cap_reached")
+        case ClientAuthError.subscriptionConflict:
+            return (ClientAuthError.subscriptionConflict.localizedDescription, "subscription_conflict")
+        case ClientAuthError.server(let code, _) where code.hasPrefix("login_link"):
+            return ("The link expired or was already used. Send a new one.", code)
+        case ClientAuthError.network:
+            return ("Could not reach miniti's servers. Check your connection and try again.", "network")
+        case let authError as ClientAuthError:
+            return (authError.localizedDescription, String(describing: authError).prefix(40).description)
+        default:
+            return (error.localizedDescription, "unknown")
+        }
     }
 
     /// The link was approved on the web: join that account. An enrolled device moves (keeps
@@ -274,20 +335,18 @@ extension AppState {
             await loadManagedDevices()
             if appMode == .managed { await refreshUsage() }
             return true
-        } catch ClientAuthError.deviceAlreadyEnrolled where keyWasUnusable {
-            // The approved email belongs to another account while this installation is still
-            // active on its own: say so, keep the credential, abandon nothing (A2d).
-            managedEnrollmentError = Self.recoveryBelongsElsewhereMessage
-            refreshClientAuthStatus()
-            return false
         } catch {
-            managedEnrollmentError = error.localizedDescription
+            // Includes the A2d case: the approved email belongs to another account while this
+            // installation is still active on its own. Say so; keep the credential.
+            let (message, code) = Self.joinFailure(for: error, keyWasUnusable: keyWasUnusable)
+            managedEnrollmentError = message
+            enqueueDiagnosticEvent("email_signin_failed", category: .app, level: .warning, details: ["stage": "complete", "code": code])
             refreshClientAuthStatus()
             return false
         }
     }
 
-    static var recoveryBelongsElsewhereMessage: String {
+    nonisolated static var recoveryBelongsElsewhereMessage: String {
         #if os(macOS)
         return "That email belongs to another miniti account. This Mac is still on its current one. Remove it from that account on another device or the web, then sign in again."
         #else

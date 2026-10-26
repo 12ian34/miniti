@@ -10876,19 +10876,60 @@ final class AppState: ObservableObject {
         }
     }
 
-    func restoreSubscription(licenseKey: String) async -> Bool {
-        guard let minitiAPIService else { return false }
+    enum SubscriptionRestoreOutcome: Equatable {
+        case restored
+        /// `message` is what the person sees; `code` is what the diagnostics queue carries.
+        case failed(message: String, code: String)
+    }
+
+    /// Restore a Polar subscription with a license key. Every failure says what it was: a
+    /// key Polar does not know, a key with no active plan, an activation Polar refused, a
+    /// fault on our side, Polar unreachable, too many attempts, or no connection (A2e).
+    func restoreSubscription(licenseKey: String) async -> SubscriptionRestoreOutcome {
+        guard let minitiAPIService else { return .failed(message: "Managed mode is off.", code: "no_service") }
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         do {
             let result = try await minitiAPIService.restoreSubscription(deviceId: deviceId, licenseKey: licenseKey)
             if result.success {
                 await refreshUsage()
-                return true
+                return .restored
             }
+            return .failed(message: Self.restoreFailureCopy(code: "not_restored", serverMessage: nil), code: "not_restored")
         } catch {
-            DebugLogger.shared.log(.app, "Restore subscription FAILED: \(error.localizedDescription)")
+            let (message, code) = Self.restoreFailure(for: error)
+            DebugLogger.shared.log(.app, "Restore subscription FAILED: code=\(code) \(error.localizedDescription)")
+            enqueueDiagnosticEvent("restore_failed", category: .app, level: .warning, details: ["code": code])
+            return .failed(message: message, code: code)
         }
-        return false
+    }
+
+    /// Map a restore error to copy and a bounded code. Pure, so it is tested without a host.
+    nonisolated static func restoreFailure(for error: Error) -> (message: String, code: String) {
+        switch error {
+        case MinitiAPIService.ServiceError.apiError(let code, let serverMessage, _):
+            return (restoreFailureCopy(code: code, serverMessage: serverMessage), code)
+        case MinitiAPIService.ServiceError.rateLimited:
+            return (restoreFailureCopy(code: "rate_limited", serverMessage: nil), "rate_limited")
+        case MinitiAPIService.ServiceError.networkError:
+            return (restoreFailureCopy(code: "network", serverMessage: nil), "network")
+        case MinitiAPIService.ServiceError.notEnrolled:
+            return (MinitiAPIService.ServiceError.notEnrolled.localizedDescription, "not_enrolled")
+        default:
+            return (restoreFailureCopy(code: "unknown", serverMessage: error.localizedDescription), "unknown")
+        }
+    }
+
+    nonisolated static func restoreFailureCopy(code: String, serverMessage: String?) -> String {
+        switch code {
+        case "invalid_key": return "That license key is not valid for miniti. Check it against the key in your Polar email."
+        case "no_active_subscription": return "This key has no active subscription behind it."
+        case "activation_refused": return "Polar will not activate this key on another device. Check its activations in your Polar account, or contact support."
+        case "provider_config": return serverMessage ?? "There is a configuration problem on our side. Try again later."
+        case "provider_unavailable": return "miniti's servers could not reach Polar. Try again in a minute."
+        case "rate_limited": return "Too many attempts. Wait a minute and try once more."
+        case "network": return "Could not reach miniti's servers. Check your connection and try again."
+        default: return serverMessage.map { "Restore failed: \($0)" } ?? "Restore failed. Try again."
+        }
     }
     
     var formattedDuration: String {

@@ -843,12 +843,19 @@ struct EmailSignInSheet: View {
 
     private func poll(_ id: String) {
         pollTask = Task { @MainActor in
+            var lastCheckFailed = false
             for _ in 0..<300 {
                 try? await Task.sleep(nanoseconds: 3_000_000_000)
                 if Task.isCancelled { return }
-                guard let status = await appState.emailSignInStatus(linkID: id) else { continue }
+                let status = await appState.emailSignInStatus(linkID: id)
                 switch status {
+                case .unreachable:
+                    // The link may be fine; say the check failed rather than calling it expired.
+                    lastCheckFailed = true
+                    error = "Could not check yet. Still waiting for your approval."
+                    continue
                 case .pending:
+                    if lastCheckFailed { error = nil; lastCheckFailed = false }
                     continue
                 case .expired:
                     error = "The link expired or was refused. Send a new one."
@@ -867,7 +874,7 @@ struct EmailSignInSheet: View {
                     return
                 }
             }
-            error = "The link expired. Send a new one."
+            error = lastCheckFailed ? "miniti's servers could not be reached. Send a new link when you are back online." : "The link expired. Send a new one."
             linkID = nil
         }
     }

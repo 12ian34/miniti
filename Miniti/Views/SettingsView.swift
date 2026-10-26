@@ -373,13 +373,14 @@ struct AccountSettingsView: View {
                     isRestoring = true
                     restoreError = nil
                     Task {
-                        let success = await appState.restoreSubscription(licenseKey: licenseKeyInput)
+                        let outcome = await appState.restoreSubscription(licenseKey: licenseKeyInput)
                         isRestoring = false
-                        if success {
+                        switch outcome {
+                        case .restored:
                             showRestoreSheet = false
                             licenseKeyInput = ""
-                        } else {
-                            restoreError = "Invalid or expired license key"
+                        case .failed(let message, _):
+                            restoreError = message
                         }
                     }
                 },

@@ -894,6 +894,49 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertTrue(host.enrolling.isEmpty, "a repair is not an enrollment")
     }
 
+    // MARK: - A2e error copy
+
+    func testRestoreFailuresAreMappedByCodeNotByOneSentence() {
+        typealias E = MinitiAPIService.ServiceError
+        let invalid = AppState.restoreFailure(for: E.apiError(code: "invalid_key", message: "Invalid or expired license key", status: 400))
+        XCTAssertEqual(invalid.code, "invalid_key")
+        XCTAssertTrue(invalid.message.contains("not valid for miniti"))
+        let refused = AppState.restoreFailure(for: E.apiError(code: "activation_refused", message: "x", status: 409))
+        XCTAssertEqual(refused.code, "activation_refused")
+        XCTAssertTrue(refused.message.contains("will not activate"))
+        let config = AppState.restoreFailure(for: E.apiError(code: "provider_config", message: "There is a configuration problem on our side. Try again later.", status: 503))
+        XCTAssertEqual(config.code, "provider_config")
+        XCTAssertEqual(config.message, "There is a configuration problem on our side. Try again later.")
+        XCTAssertFalse(config.message.lowercased().contains("key"), "a fault on our side is never blamed on the key")
+        let down = AppState.restoreFailure(for: E.apiError(code: "provider_unavailable", message: "x", status: 503))
+        XCTAssertTrue(down.message.contains("could not reach Polar"))
+        let limited = AppState.restoreFailure(for: E.rateLimited)
+        XCTAssertEqual(limited.code, "rate_limited")
+        XCTAssertTrue(limited.message.contains("Wait a minute"))
+        let offline = AppState.restoreFailure(for: E.networkError(URLError(.notConnectedToInternet)))
+        XCTAssertEqual(offline.code, "network")
+        let none = AppState.restoreFailure(for: E.apiError(code: "no_active_subscription", message: "x", status: 400))
+        XCTAssertTrue(none.message.contains("no active subscription"))
+    }
+
+    func testEmailSignInFailuresAreMappedByStage() {
+        let send = AppState.emailStartFailure(for: ClientAuthError.server(code: "email_send_failed", status: 502))
+        XCTAssertEqual(send.code, "email_send_failed")
+        XCTAssertTrue(send.message.contains("could not be sent"))
+        XCTAssertEqual(AppState.emailStartFailure(for: ClientAuthError.rateLimited).code, "rate_limited")
+        XCTAssertTrue(AppState.emailStartFailure(for: ClientAuthError.network("offline")).message.contains("connection"))
+
+        let expired = AppState.joinFailure(for: ClientAuthError.server(code: "login_link_expired", status: 410), keyWasUnusable: false)
+        XCTAssertTrue(expired.message.contains("expired"))
+        let elsewhere = AppState.joinFailure(for: ClientAuthError.deviceAlreadyEnrolled, keyWasUnusable: true)
+        XCTAssertEqual(elsewhere.message, AppState.recoveryBelongsElsewhereMessage)
+        let stillEnrolled = AppState.joinFailure(for: ClientAuthError.deviceAlreadyEnrolled, keyWasUnusable: false)
+        XCTAssertNotEqual(stillEnrolled.message, AppState.recoveryBelongsElsewhereMessage, "the other-account copy is for the unusable-key state only")
+        let cap = AppState.joinFailure(for: ClientAuthError.deviceCapReached(5), keyWasUnusable: false)
+        XCTAssertEqual(cap.code, "device_cap_reached")
+        XCTAssertTrue(cap.message.contains("5 devices"))
+    }
+
     // MARK: - A2b credential format fixtures
 
     /// Captured shapes of the stored credential JSON, one per shipped format. Never edit a

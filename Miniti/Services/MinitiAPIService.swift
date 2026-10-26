@@ -1130,6 +1130,9 @@ final class MinitiAPIService: @unchecked Sendable {
         /// The managed Jev classifier proxy is not configured or not deployed (503/404);
         /// callers fall back to GPT or the local heuristics.
         case classifierUnavailable
+        /// A route whose error contract the client maps by code (restore, A2e). The generic
+        /// `serverError` keeps carrying only the message because four callers match on it.
+        case apiError(code: String, message: String, status: Int)
         
         var errorDescription: String? {
             switch self {
@@ -1151,6 +1154,8 @@ final class MinitiAPIService: @unchecked Sendable {
                 return "Too many requests. Please wait a moment."
             case .classifierUnavailable:
                 return "The speaker and sales classifier is not available right now."
+            case .apiError(_, let message, _):
+                return message
             }
         }
     }
@@ -1718,6 +1723,13 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["license_key": licenseKey]
         )
         let (data, response) = try await send(request)
+        // The restore contract (miniti-api docs/agents/04-api-reference.md): invalid_key,
+        // no_active_subscription, activation_refused, provider_config, provider_unavailable,
+        // rate_limited. Each reaches the caller with its code so the copy can say what happened.
+        if let http = response as? HTTPURLResponse, !(200...299).contains(http.statusCode),
+           let apiError = try? Self.decoder.decode(APIError.self, from: data) {
+            throw ServiceError.apiError(code: apiError.error, message: apiError.message ?? apiError.error, status: http.statusCode)
+        }
         try validateResponse(response, data: data)
         return try decode(RestoreResponse.self, from: data, endpoint: "/restore")
     }
