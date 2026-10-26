@@ -80,6 +80,7 @@ final class MinitiAPIService: @unchecked Sendable {
                 throw ServiceError.serverError(error.localizedDescription)
             }
         } else if requiresAuth {
+            if auth.credentialState == .keyUnusable { throw ServiceError.serverError(ClientAuthError.keyUnusable.localizedDescription) }
             throw ServiceError.notEnrolled
         }
 

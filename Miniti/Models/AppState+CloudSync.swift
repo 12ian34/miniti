@@ -259,6 +259,7 @@ extension AppState {
         guard !ScreenshotMode.isActive else { return true }
         managedEnrollmentError = nil
         let manager = ClientAuthManager.shared
+        let keyWasUnusable = manager.credentialState == .keyUnusable
         do {
             if manager.isEnrolled {
                 _ = try await manager.attachToAccount(loginLinkID: approvedLinkID)
@@ -273,11 +274,25 @@ extension AppState {
             await loadManagedDevices()
             if appMode == .managed { await refreshUsage() }
             return true
+        } catch ClientAuthError.deviceAlreadyEnrolled where keyWasUnusable {
+            // The approved email belongs to another account while this installation is still
+            // active on its own: say so, keep the credential, abandon nothing (A2d).
+            managedEnrollmentError = Self.recoveryBelongsElsewhereMessage
+            refreshClientAuthStatus()
+            return false
         } catch {
             managedEnrollmentError = error.localizedDescription
             refreshClientAuthStatus()
             return false
         }
+    }
+
+    static var recoveryBelongsElsewhereMessage: String {
+        #if os(macOS)
+        return "That email belongs to another miniti account. This Mac is still on its current one. Remove it from that account on another device or the web, then sign in again."
+        #else
+        return "That email belongs to another miniti account. This device is still on its current one. Remove it from that account on another device or the web, then sign in again."
+        #endif
     }
 
     /// True when this device joined by email and holds no recovery key of its own.

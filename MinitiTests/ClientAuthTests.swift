@@ -1,4 +1,5 @@
 import XCTest
+import CryptoTokenKit
 import CryptoKit
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
@@ -566,6 +567,333 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNil(StubURLProtocol.lastRequest)
     }
 
+    // MARK: - A2d: a key this machine cannot use
+
+    /// A credential whose software key is real, with a recovery key unless `recoveryKey` says otherwise.
+    private func repairableCredentials(recoveryKey: String? = nil) -> (ClientAuthCredentials, InstallationKey) {
+        let key = InstallationKey.generate(preferSecureEnclave: false)
+        let stored = ClientAuthCredentials(
+            installationKey: key.stored,
+            recoveryKey: recoveryKey ?? ClientAuthCrypto.generateRecoveryKey(),
+            accountID: "acct_same",
+            accessToken: "cached-bearer",
+            accessExpiresAt: Int64(Date().timeIntervalSince1970) + 3600,
+            refreshToken: "mrt_cached",
+            deviceCap: 5,
+            enrolledAt: "2026-10-21T18:25:09Z",
+            enrollmentPath: "restore",
+            recoveryKeyAcknowledged: true
+        )
+        return (stored, key)
+    }
+
+    /// A loader that applies `fault` to signatures made with the original key only, so a
+    /// repaired credential loads cleanly, as a real machine's fresh key would.
+    private func signingFaultLoader(for original: InstallationKey.Stored, domain: String, code: Int) -> @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> {
+        { stored in
+            InstallationKey.load(stored: stored).map { key in
+                stored == original ? InstallationKey(backing: key.backing, signingFault: NSError(domain: domain, code: code)) : key
+            }
+        }
+    }
+
+    private func unloadableLoader(for original: InstallationKey.Stored) -> @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> {
+        { stored in stored == original ? .failure(NSError(domain: "CryptoKit.CryptoKitError", code: 3)) : InstallationKey.load(stored: stored) }
+    }
+
+    private enum Restore {
+        nonisolated(unsafe) static var hits = 0
+        nonisolated(unsafe) static var jwkX: [String] = []
+        nonisolated(unsafe) static var answer: (Int, Data) = (200, Data())
+    }
+
+    /// Stub: challenges succeed; restore answers `Restore.answer`; everything else is unexpected.
+    private func restoreStub(account: String = "acct_same") {
+        Restore.hits = 0
+        Restore.jwkX = []
+        Restore.answer = Self.tokens(account)
+        StubURLProtocol.handler = { [self] request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            case "/api/auth/account/restore":
+                Restore.hits += 1
+                if let jwk = requestBody(request)["public_key_jwk"] as? [String: Any], let x = jwk["x"] as? String { Restore.jwkX.append(x) }
+                return Restore.answer
+            default: return Self.failure(500, "unexpected:\(request.url?.path ?? "")")
+            }
+        }
+    }
+
+    private func managerFor(_ stored: ClientAuthCredentials, store: ClientAuthCredentialStore? = nil, loader: @escaping @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error>) -> ClientAuthManager {
+        ClientAuthManager(
+            store: store ?? InMemoryClientAuthStore(stored),
+            baseURL: "https://api.test/api", session: stubbedSession(),
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" },
+            deviceLabelProvider: { "Mac" },
+            keyLoader: loader,
+            defaults: UserDefaults(suiteName: "test_auth_\(UUID().uuidString)")!
+        )
+    }
+
+    private func postRequest() -> URLRequest {
+        var request = URLRequest(url: URL(string: "https://api.test/api/session")!)
+        request.httpMethod = "POST"
+        request.httpBody = Data("{}".utf8)
+        return request
+    }
+
+    func testAKeyThatCannotLoadIsReplacedThroughRestoreOnTheSameAccountAndDeviceID() async throws {
+        let (stored, original) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+
+        XCTAssertTrue(manager.isEnrolled, "a repairable credential still counts as enrolled")
+        var request = postRequest()
+        try await manager.authorize(&request)
+
+        XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Request-Proof"), "the original request was signed after the repair")
+        XCTAssertEqual(Restore.hits, 1)
+        let after = try XCTUnwrap(store.load())
+        XCTAssertNotEqual(after.installationKey, stored.installationKey, "a fresh key")
+        XCTAssertEqual(after.recoveryKey, stored.recoveryKey, "the recovery key is kept")
+        XCTAssertEqual(after.accountID, "acct_same")
+        XCTAssertEqual(after.enrollmentPath, "restore")
+        XCTAssertTrue(after.recoveryKeyAcknowledged)
+        XCTAssertNotEqual(Restore.jwkX.first, original.publicJWK["x"], "the restore was proved with the new key")
+        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_key_repaired"])
+        XCTAssertEqual(events.all[0].details["recovery"], "yes")
+        XCTAssertEqual(events.all[0].details["phase"], "load")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.enrolled)
+
+        // The repaired key signs without any further request.
+        var second = postRequest()
+        try await manager.authorize(&second)
+        XCTAssertEqual(Restore.hits, 1)
+    }
+
+    func testAnAllowListedSigningFailureIsRepairedEvenWhenTheCachedBearerSkippedRefresh() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+
+        var request = postRequest()
+        try await manager.authorize(&request)
+        XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Request-Proof"))
+        XCTAssertEqual(Restore.hits, 1)
+        XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey)
+        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_key_repaired"])
+        XCTAssertEqual(events.all[0].details["phase"], "sign")
+        XCTAssertEqual(events.all[0].details["reason"], "sign:\(TKErrorDomain):-10")
+    }
+
+    func testATemporarySigningFailureKeepsTheKeyOffersRetryAndRecoversOnItsOwn() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let defaults = UserDefaults(suiteName: "test_auth_\(UUID().uuidString)")!
+        // Three launches with a locked key: nothing replaced, no restore, the count rises.
+        for launch in 1...3 {
+            let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "d" }, keyLoader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308), defaults: defaults)
+            let events = EventCollector()
+            manager.attachEventSink { events.append($0) }
+            restoreStub()
+            var request = postRequest()
+            do {
+                try await manager.authorize(&request)
+                XCTFail("expected keyUnavailable")
+            } catch {
+                XCTAssertEqual(error as? ClientAuthError, .keyUnavailable("sign:\(NSOSStatusErrorDomain):-25308"))
+            }
+            XCTAssertEqual(Restore.hits, 0, "launch \(launch): nothing restored for a temporary failure")
+            XCTAssertEqual(store.load()?.installationKey, stored.installationKey, "launch \(launch): the credential is untouched")
+            XCTAssertTrue(manager.isEnrolled)
+            XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.enrolled)
+            XCTAssertEqual(manager.keyUnavailableLaunches, launch)
+            XCTAssertEqual(events.names, ["client_auth_key_unavailable"])
+            XCTAssertEqual(ClientAuthError.keyUnavailable("x").errorDescription, "miniti could not use its saved sign-in right now. Try again, or sign in again from Settings, Account.")
+            StubURLProtocol.handler = nil
+        }
+        // Unlock: the original credential signs, nothing restored, the count is cleared.
+        let healed = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "d" }, defaults: defaults)
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        try await healed.authorize(&request)
+        XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Request-Proof"))
+        XCTAssertEqual(Restore.hits, 0)
+        XCTAssertEqual(store.load()?.installationKey, stored.installationKey)
+        XCTAssertEqual(healed.keyUnavailableLaunches, 0)
+    }
+
+    func testConcurrentCallersShareOneRepair() async throws {
+        let (stored, _) = repairableCredentials()
+        let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        async let a: Void = { var r = self.postRequest(); try await manager.authorize(&r) }()
+        async let b: Void = { var r = self.postRequest(); try await manager.authorize(&r) }()
+        async let c: Void = { var r = self.postRequest(); try await manager.authorize(&r) }()
+        _ = try await (a, b, c)
+        XCTAssertEqual(Restore.hits, 1, "one restore for three callers")
+    }
+
+    func testARepairRetriesAfterALostResponse() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        Restore.answer = Self.failure(503, "client_auth_unavailable")
+        var request = postRequest()
+        do {
+            try await manager.authorize(&request)
+            XCTFail("expected a failure")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .unavailable)
+        }
+        XCTAssertEqual(store.load()?.installationKey, stored.installationKey, "nothing changed while the restore failed")
+        XCTAssertTrue(manager.isEnrolled)
+
+        Restore.answer = Self.tokens("acct_same")
+        var retry = postRequest()
+        try await manager.authorize(&retry)
+        XCTAssertEqual(Restore.hits, 2)
+        XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey)
+    }
+
+    func testARepairWhoseSaveFailsKeepsTheStateAndRestoresAgainNextTime() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = DiagnosticClientAuthStore(diagnostic: nil, saveSucceeds: false, initial: stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        restoreStub()
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        do {
+            try await manager.authorize(&request)
+            XCTFail("expected storage")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .storage)
+        }
+        XCTAssertEqual(Restore.hits, 1)
+        XCTAssertEqual(store.load()?.installationKey, stored.installationKey)
+        XCTAssertTrue(manager.isEnrolled)
+
+        store.saveSucceeds = true
+        var retry = postRequest()
+        try await manager.authorize(&retry)
+        XCTAssertEqual(Restore.hits, 2, "the server replaced the key a second time; no cap slot, no new account")
+        XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey)
+    }
+
+    @MainActor
+    func testAnEmailJoinedCredentialWithAnUnusableKeyWaitsForAChoiceAndRestoresByEmail() async throws {
+        // The 2026-10-26 case: joined by email (no recovery key), Secure Enclave key refuses to sign.
+        let (stored, _) = repairableCredentials(recoveryKey: "")
+        let store = InMemoryClientAuthStore(stored)
+        let loader = signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10)
+        let (coordinator, host, manager) = coordinatorFixture(storedCredentials: stored, keyLoader: loader) { path, _ in
+            path == "/api/auth/account/restore" ? Self.tokens("acct_same") : Self.failure(500, "unexpected")
+        }
+        _ = store
+        let events = EventCollector()
+        manager.attachEventSink { events.append($0) }
+        defer { StubURLProtocol.handler = nil }
+
+        var request = postRequest()
+        do {
+            try await manager.authorize(&request)
+            XCTFail("expected keyUnusable")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .keyUnusable)
+        }
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/restore"), "no restore without a recovery key")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.keyUnusable)
+        XCTAssertFalse(manager.isEnrolled, "every gate sees not enrolled")
+        XCTAssertTrue(manager.status.keyUnusable)
+        XCTAssertEqual(manager.status.accountID, "acct_same", "the copy can still name the account")
+        XCTAssertEqual(events.all.first?.details["recovery"], "no")
+
+        // The coordinator neither migrates, creates nor rotates; it shows the way forward.
+        Paths.hits = []
+        let outcome = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(outcome)
+        XCTAssertTrue(Paths.hits.isEmpty, "no network: nothing created")
+        XCTAssertEqual(host.errors.last ?? nil, ClientAuthError.keyUnusable.errorDescription)
+        XCTAssertTrue(host.enrolling.isEmpty)
+
+        // The approved email restores the same installation with a fresh key.
+        try await manager.restoreAccount(loginLinkID: "lnk_approved", label: "Mac")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.enrolled)
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(manager.status.accountID, "acct_same")
+        var signed = postRequest()
+        try await manager.authorize(&signed)
+        XCTAssertNotNil(signed.value(forHTTPHeaderField: "X-Request-Proof"))
+        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/restore" }.count, 1)
+    }
+
+    func testAnEmailForAnotherAccountLeavesTheUnusableCredentialUntouched() async throws {
+        let (stored, _) = repairableCredentials(recoveryKey: "")
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        StubURLProtocol.handler = { request in
+            switch request.url?.path ?? "" {
+            case "/api/auth/challenge": return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+            default: return Self.failure(409, "device_already_enrolled")
+            }
+        }
+        defer { StubURLProtocol.handler = nil }
+        var request = postRequest()
+        _ = try? await manager.authorize(&request)
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.keyUnusable)
+        do {
+            try await manager.restoreAccount(loginLinkID: "lnk_other", label: "Mac")
+            XCTFail("expected deviceAlreadyEnrolled")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .deviceAlreadyEnrolled)
+        }
+        XCTAssertEqual(store.load(), stored, "nothing abandoned")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.keyUnusable)
+    }
+
+    func testSignOutClearsLocallyWhenTheKeyCannotSign() async throws {
+        let (stored, _) = repairableCredentials(recoveryKey: "")
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        StubURLProtocol.lastRequest = nil
+        StubURLProtocol.handler = { _ in Self.failure(500, "unexpected") }
+        defer { StubURLProtocol.handler = nil }
+        try await manager.signOut()
+        XCTAssertNil(store.load(), "the credential is gone")
+        XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.notEnrolled)
+        XCTAssertNil(StubURLProtocol.lastRequest, "the revoke could not be proved; nothing was sent")
+    }
+
+    @MainActor
+    func testCoordinatorRepairsAnUnloadableKeyBeforeAnythingElse() async throws {
+        let (stored, _) = repairableCredentials()
+        let (coordinator, host, manager) = coordinatorFixture(storedCredentials: stored, keyLoader: unloadableLoader(for: stored.installationKey)) { path, _ in
+            path == "/api/auth/account/restore" ? Self.tokens("acct_same") : Self.failure(500, "unexpected")
+        }
+        defer { StubURLProtocol.handler = nil }
+        XCTAssertTrue(manager.needsKeyRepair)
+        let outcome = await coordinator.ensure(trigger: "usage")
+        XCTAssertTrue(outcome)
+        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/restore" }.count, 1)
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"))
+        XCTAssertFalse(Paths.hits.contains("/api/auth/migrate"))
+        XCTAssertFalse(manager.needsKeyRepair)
+        XCTAssertEqual(host.errors.last ?? "unset", nil)
+        XCTAssertTrue(host.enrolling.isEmpty, "a repair is not an enrollment")
+    }
+
     // MARK: - A2b credential format fixtures
 
     /// Captured shapes of the stored credential JSON, one per shipped format. Never edit a
@@ -1061,16 +1389,20 @@ final class ClientAuthTests: XCTestCase {
     @MainActor
     private func coordinatorFixture(
         enrolled: Bool = false,
+        storedCredentials: ClientAuthCredentials? = nil,
         rotator: (@Sendable () -> String)? = nil,
+        keyLoader: @escaping @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> = { InstallationKey.load(stored: $0) },
         answers: @escaping @Sendable (String, [String: Any]) -> (Int, Data)
     ) -> (ManagedEnrollmentCoordinator, CoordinatorHost, ClientAuthManager) {
-        let store = InMemoryClientAuthStore(enrolled ? credentials() : nil)
+        let store = InMemoryClientAuthStore(storedCredentials ?? (enrolled ? credentials() : nil))
         // The provider follows the rotator, as DeviceIdentifier does for the real manager.
         nonisolated(unsafe) var currentID = "550e8400-e29b-41d4-a716-446655440000"
         let manager = ClientAuthManager(
             store: store, baseURL: "https://api.test/api", session: stubbedSession(),
             deviceIDProvider: { currentID },
-            deviceIDRotator: rotator.map { rotate in { currentID = rotate(); return currentID } }
+            deviceIDRotator: rotator.map { rotate in { currentID = rotate(); return currentID } },
+            keyLoader: keyLoader,
+            defaults: UserDefaults(suiteName: "test_auth_\(UUID().uuidString)")!
         )
         Paths.hits = []
         StubURLProtocol.handler = { [self] request in
@@ -1277,9 +1609,10 @@ private final class DiagnosticClientAuthStore: ClientAuthCredentialStore, @unche
         set { lock.lock(); defer { lock.unlock() }; saveAllowed = newValue }
     }
 
-    init(diagnostic: ClientAuthStoreDiagnostic?, saveSucceeds: Bool = true) {
+    init(diagnostic: ClientAuthStoreDiagnostic?, saveSucceeds: Bool = true, initial: ClientAuthCredentials? = nil) {
         self.diagnostic = diagnostic
         self.saveAllowed = saveSucceeds
+        self.value = initial
     }
 
     var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { diagnostic }

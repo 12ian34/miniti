@@ -1,5 +1,6 @@
 import Foundation
 import CryptoKit
+import CryptoTokenKit
 import Security
 
 // MARK: - Device-bound client authorization
@@ -185,6 +186,14 @@ struct InstallationKey {
     }
 
     let backing: Backing
+    /// Test seam: a key that loads but whose every signature throws this error, the shape
+    /// of a Secure Enclave key copied to another machine. Never set in production.
+    let signingFault: Error?
+
+    enum LoadError: Error, Equatable {
+        case corruptData
+        case unknownKind(String)
+    }
 
     static func generate(preferSecureEnclave: Bool = true) -> InstallationKey {
         if preferSecureEnclave, SecureEnclave.isAvailable, let key = try? SecureEnclave.P256.Signing.PrivateKey() {
@@ -193,21 +202,29 @@ struct InstallationKey {
         return InstallationKey(backing: .software(P256.Signing.PrivateKey()))
     }
 
-    init(backing: Backing) {
+    init(backing: Backing, signingFault: Error? = nil) {
         self.backing = backing
+        self.signingFault = signingFault
     }
 
     init?(stored: Stored) {
-        guard let data = ClientAuthCrypto.b64urlDecode(stored.data) else { return nil }
+        guard case .success(let key) = Self.load(stored: stored) else { return nil }
+        self = key
+    }
+
+    /// Load a stored key and keep the underlying error, so the caller can tell a key that
+    /// belongs to another machine from one that cannot be used right now (A2d).
+    static func load(stored: Stored) -> Result<InstallationKey, Error> {
+        guard let data = ClientAuthCrypto.b64urlDecode(stored.data) else { return .failure(LoadError.corruptData) }
         switch stored.kind {
         case "se":
-            guard let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data) else { return nil }
-            backing = .secureEnclave(key)
+            do { return .success(InstallationKey(backing: .secureEnclave(try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data)))) }
+            catch { return .failure(error) }
         case "sw":
-            guard let key = try? P256.Signing.PrivateKey(rawRepresentation: data) else { return nil }
-            backing = .software(key)
+            do { return .success(InstallationKey(backing: .software(try P256.Signing.PrivateKey(rawRepresentation: data)))) }
+            catch { return .failure(error) }
         default:
-            return nil
+            return .failure(LoadError.unknownKind(stored.kind))
         }
     }
 
@@ -252,6 +269,7 @@ struct InstallationKey {
         let header = ClientAuthCrypto.b64url(Data("{\"alg\":\"ES256\",\"typ\":\"\(ClientAuthCrypto.proofType)\"}".utf8))
         let body = ClientAuthCrypto.b64url(try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
         let signingInput = "\(header).\(body)"
+        if let signingFault { throw signingFault }
         let signature: P256.Signing.ECDSASignature
         switch backing {
         case .secureEnclave(let key): signature = try key.signature(for: Data(signingInput.utf8))
@@ -285,6 +303,45 @@ struct InstallationKey {
 }
 
 // MARK: Credentials + storage
+
+/// What a failure to load or use the stored installation key means (enrollment-identity-plan A2d).
+/// Only the allow-list below replaces a credential; everything else keeps it and retries.
+enum InstallationKeyFailure: Equatable {
+    /// The key belongs to another machine (a Secure Enclave blob moved by Migration Assistant or
+    /// a backup). The stored recovery key, when there is one, can replace it.
+    case unusable(reason: String)
+    /// Locked, denied, cancelled, or a code we have not seen. Nothing is replaced.
+    case temporary(reason: String)
+
+    /// Signing errors that establish a foreign key, each with the date and reason it was added.
+    /// Matched on domain and code, never on the message.
+    static let unusableSigningCodes: [(domain: String, code: Int, added: String)] = [
+        // 2026-10-26: Ian's work Mac after Migration Assistant. The SDK names this
+        // TKErrorCodeInvalidatedDeviceKey (available from macOS 27 and iOS 27); an older
+        // system may surface another code, which stays temporary until it is seen and added.
+        (TKErrorDomain, -10, "2026-10-26"),
+    ]
+
+    /// Our keys carry no access control, so loading one needs no unlock: the enclave refusing
+    /// the stored representation, or bytes that do not parse, mean the stored key can never
+    /// sign on this machine.
+    static func classify(loadError error: Error) -> InstallationKeyFailure {
+        .unusable(reason: "load:\(describe(error))")
+    }
+
+    static func classify(signingError error: Error) -> InstallationKeyFailure {
+        let ns = error as NSError
+        if unusableSigningCodes.contains(where: { $0.domain == ns.domain && $0.code == ns.code }) {
+            return .unusable(reason: "sign:\(describe(error))")
+        }
+        return .temporary(reason: "sign:\(describe(error))")
+    }
+
+    private static func describe(_ error: Error) -> String {
+        let ns = error as NSError
+        return "\(ns.domain):\(ns.code)"
+    }
+}
 
 /// Stored as JSON in the Keychain. **Format rule (enrollment-identity-plan A2b):** a blob written
 /// by any shipped version must keep decoding. Every new field is optional with a default in
@@ -361,6 +418,9 @@ struct ClientAuthStatus: Equatable, Sendable {
     var enrollmentPath: String?
     var recoveryKeyAcknowledged: Bool
     var isHardwareBacked: Bool
+    /// The credential is present but its key cannot sign here and no recovery key can replace it
+    /// (A2d). `isEnrolled` is false; `accountID` still names the account for the copy.
+    var keyUnusable: Bool = false
 
     static let notEnrolled = ClientAuthStatus(isEnrolled: false, accountID: nil, deviceCap: nil, enrolledAt: nil, enrollmentPath: nil, recoveryKeyAcknowledged: false, isHardwareBacked: false)
 }
@@ -520,6 +580,10 @@ enum ClientAuthError: LocalizedError, Equatable {
     case network(String)
     case server(code: String, status: Int)
     case storage
+    /// The stored key cannot sign on this machine and nothing can replace it automatically.
+    case keyUnusable
+    /// The stored key could not be used right now (locked, denied, unknown); nothing replaced.
+    case keyUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -537,6 +601,13 @@ enum ClientAuthError: LocalizedError, Equatable {
         case .network(let message): return "Network error: \(message)"
         case .server(let code, let status): return "Server error (\(status)): \(code)"
         case .storage: return "miniti could not save its sign-in on this device. Try again."
+        case .keyUnusable:
+            #if os(macOS)
+            return "This Mac can no longer sign in with its saved key. Sign in by email or with your recovery key to keep this Mac on its account."
+            #else
+            return "This device can no longer sign in with its saved key. Sign in by email or with your recovery key to keep it on its account."
+            #endif
+        case .keyUnavailable: return "miniti could not use its saved sign-in right now. Try again, or sign in again from Settings, Account."
         }
     }
 }
@@ -582,6 +653,13 @@ final class ClientAuthManager: @unchecked Sendable {
     private var credentials: ClientAuthCredentials?
     private var cachedKey: InstallationKey?
     private var refreshTask: Task<String, Error>?
+    /// One repair at a time; concurrent callers await it (A2d).
+    private var repairTask: Task<Void, Error>?
+    /// Set when the stored key is unusable here and the credential holds no recovery key:
+    /// the person must sign in again; nothing is created or rotated meanwhile.
+    private var keyUnusableWithoutRecovery = false
+    private var temporaryKeyFailureSeenThisLaunch = false
+    static let keyUnavailableLaunchesKey = "clientAuth.keyUnavailableLaunches"
     /// Server clock minus local clock, learned from `Date` response headers, so a wrong
     /// device clock does not make every proof fall outside the server's skew window.
     private var serverTimeOffset: TimeInterval = 0
@@ -601,6 +679,10 @@ final class ClientAuthManager: @unchecked Sendable {
     /// enrollment that starts with an older id and no credential is a device that used to
     /// be someone, counted as `client_auth_silent_recreate`.
     let deviceIDIsNewThisLaunch: @Sendable () -> Bool
+    /// Loads the stored key; the default keeps the underlying error for classification.
+    let keyLoader: @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error>
+    /// Where the temporary-failure launch count lives (prominence only, never classification).
+    private let defaults: UserDefaults
 
     init(
         store: ClientAuthCredentialStore,
@@ -612,7 +694,9 @@ final class ClientAuthManager: @unchecked Sendable {
         deviceIDAdopter: (@Sendable (String) -> Bool)? = nil,
         // Defaults to "new": a caller that does not track the id (tests, tools) must not report
         // a re-create it cannot know about. The shared instance passes the real flag.
-        deviceIDIsNewThisLaunch: @escaping @Sendable () -> Bool = { true }
+        deviceIDIsNewThisLaunch: @escaping @Sendable () -> Bool = { true },
+        keyLoader: @escaping @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> = { InstallationKey.load(stored: $0) },
+        defaults: UserDefaults = .standard
     ) {
         self.store = store
         self.baseURL = baseURL
@@ -622,6 +706,8 @@ final class ClientAuthManager: @unchecked Sendable {
         self.deviceIDRotator = deviceIDRotator
         self.deviceIDAdopter = deviceIDAdopter
         self.deviceIDIsNewThisLaunch = deviceIDIsNewThisLaunch
+        self.keyLoader = keyLoader
+        self.defaults = defaults
         self.credentials = store.load()
         reportLoadDiagnostic(phase: "launch")
         reconcileDeviceIdentity()
@@ -705,8 +791,34 @@ final class ClientAuthManager: @unchecked Sendable {
     var isEnrolled: Bool {
         lock.lock(); defer { lock.unlock() }
         guard let credentials else { return false }
-        return !Self.isDraft(credentials)
+        return !Self.isDraft(credentials) && !keyUnusableWithoutRecovery
     }
+
+    enum CredentialState: Equatable {
+        case notEnrolled, draft, enrolled
+        /// Credential present, key unusable on this machine, no recovery key to replace it.
+        case keyUnusable
+    }
+
+    var credentialState: CredentialState {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials else { return .notEnrolled }
+        if Self.isDraft(credentials) { return .draft }
+        return keyUnusableWithoutRecovery ? .keyUnusable : .enrolled
+    }
+
+    /// True when the stored key cannot load here and the stored recovery key can replace it
+    /// (the coordinator repairs eagerly so the person never sees the failure).
+    var needsKeyRepair: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials, !Self.isDraft(credentials), !credentials.recoveryKey.isEmpty, cachedKey == nil else { return false }
+        guard case .failure(let error) = keyLoader(credentials.installationKey) else { return false }
+        if case .unusable = InstallationKeyFailure.classify(loadError: error) { return true }
+        return false
+    }
+
+    /// How many launches in a row saw a temporary key failure (prominence of the offer only).
+    var keyUnavailableLaunches: Int { defaults.integer(forKey: Self.keyUnavailableLaunchesKey) }
 
     private static func isDraft(_ credentials: ClientAuthCredentials) -> Bool {
         credentials.accountID.isEmpty && credentials.accessToken == nil
@@ -716,13 +828,14 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard let credentials, !Self.isDraft(credentials) else { return .notEnrolled }
         return ClientAuthStatus(
-            isEnrolled: true,
+            isEnrolled: !keyUnusableWithoutRecovery,
             accountID: credentials.accountID.isEmpty ? nil : credentials.accountID,
             deviceCap: credentials.deviceCap,
             enrolledAt: credentials.enrolledAt.isEmpty ? nil : credentials.enrolledAt,
             enrollmentPath: credentials.enrollmentPath,
             recoveryKeyAcknowledged: credentials.recoveryKeyAcknowledged,
-            isHardwareBacked: credentials.installationKey.kind == "se"
+            isHardwareBacked: credentials.installationKey.kind == "se",
+            keyUnusable: keyUnusableWithoutRecovery
         )
     }
 
@@ -751,13 +864,102 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     private func installationKey() throws -> InstallationKey {
-        lock.lock(); defer { lock.unlock() }
-        if let cachedKey { return cachedKey }
-        guard let credentials, let key = InstallationKey(stored: credentials.installationKey) else {
-            throw ClientAuthError.notEnrolled
+        let loaded: Result<InstallationKey, Error>
+        lock.lock()
+        if let cachedKey { lock.unlock(); return cachedKey }
+        guard let credentials else { lock.unlock(); throw ClientAuthError.notEnrolled }
+        loaded = keyLoader(credentials.installationKey)
+        if case .success(let key) = loaded { cachedKey = key }
+        lock.unlock()
+        switch loaded {
+        case .success(let key): return key
+        case .failure(let error): throw keyFailure(InstallationKeyFailure.classify(loadError: error), phase: "load")
         }
-        cachedKey = key
-        return key
+    }
+
+    /// Record a key failure and produce the error the caller propagates. Never under `lock`.
+    private func keyFailure(_ failure: InstallationKeyFailure, phase: String) -> ClientAuthError {
+        let hasRecovery: Bool = { lock.lock(); defer { lock.unlock() }; return !(credentials?.recoveryKey.isEmpty ?? true) }()
+        switch failure {
+        case .unusable(let reason):
+            if !hasRecovery { lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock() }
+            emit("client_auth_key_unusable", level: .error, details: ["reason": reason, "phase": phase, "recovery": hasRecovery ? "yes" : "no"])
+            return .keyUnusable
+        case .temporary(let reason):
+            noteTemporaryKeyFailure()
+            emit("client_auth_key_unavailable", level: .warning, details: ["reason": reason, "phase": phase])
+            return .keyUnavailable(reason)
+        }
+    }
+
+    /// Run a signature with the key; a thrown signing error is classified like a load error.
+    private func signing<T>(_ body: () throws -> T) throws -> T {
+        do {
+            let value = try body()
+            clearTemporaryKeyFailures()
+            return value
+        } catch let error as ClientAuthError {
+            throw error
+        } catch {
+            throw keyFailure(InstallationKeyFailure.classify(signingError: error), phase: "sign")
+        }
+    }
+
+    private func noteTemporaryKeyFailure() {
+        lock.lock()
+        let first = !temporaryKeyFailureSeenThisLaunch
+        temporaryKeyFailureSeenThisLaunch = true
+        lock.unlock()
+        if first { defaults.set(defaults.integer(forKey: Self.keyUnavailableLaunchesKey) + 1, forKey: Self.keyUnavailableLaunchesKey) }
+    }
+
+    private func clearTemporaryKeyFailures() {
+        if defaults.object(forKey: Self.keyUnavailableLaunchesKey) != nil { defaults.removeObject(forKey: Self.keyUnavailableLaunchesKey) }
+    }
+
+    private var canRepairKey: Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials, !Self.isDraft(credentials) else { return false }
+        return !credentials.recoveryKey.isEmpty
+    }
+
+    // MARK: Key repair (A2d)
+
+    /// Replace a key this machine cannot use with a fresh one, proving the account with the
+    /// stored recovery key: same device id, same installation, no cap slot, no new account.
+    /// Concurrent callers share one repair. Without a recovery key the credential enters
+    /// `keyUnusable` and the person signs in again instead.
+    func repairUnusableKey() async throws {
+        try await sharedRepairTask().value
+    }
+
+    private func sharedRepairTask() -> Task<Void, Error> {
+        lock.lock()
+        defer { lock.unlock() }
+        if let repairTask { return repairTask }
+        let task = Task { [self] in
+            defer { lock.lock(); repairTask = nil; lock.unlock() }
+            try await performRepair()
+        }
+        repairTask = task
+        return task
+    }
+
+    private func performRepair() async throws {
+        let (recoveryKey, path, acknowledged): (String, String, Bool) = try {
+            lock.lock(); defer { lock.unlock() }
+            guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
+            return (credentials.recoveryKey, credentials.enrollmentPath, credentials.recoveryKeyAcknowledged)
+        }()
+        guard !recoveryKey.isEmpty else {
+            lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock()
+            throw ClientAuthError.keyUnusable
+        }
+        let key = InstallationKey.generate()
+        let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: deviceLabelProvider())
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: ClientAuthEnrollmentPath(rawValue: path) ?? .restore, acknowledged: acknowledged)
+        DebugLogger.shared.log(.app, "Device auth: the stored installation key cannot be used on this machine; re-bound with a fresh key")
+        emit("client_auth_key_repaired", level: .info, details: [:])
     }
 
     private func persist(_ newValue: ClientAuthCredentials) throws {
@@ -765,6 +967,7 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         credentials = newValue
         cachedKey = nil
+        keyUnusableWithoutRecovery = false
     }
 
     private func update(_ change: (inout ClientAuthCredentials) -> Void) {
@@ -1164,6 +1367,12 @@ final class ClientAuthManager: @unchecked Sendable {
             DebugLogger.shared.log(.app, "Device auth: installation revoked by the server; clearing local credentials")
             clearLocal(reason: "revoke")
             throw ClientAuthError.revoked
+        } catch ClientAuthError.keyUnusable where canRepairKey {
+            // The challenge grant needed the stored key and this machine cannot use it: the
+            // repair restores with a fresh key and brings its own tokens (A2d).
+            try await repairUnusableKey()
+            guard let (token, _) = cachedToken() else { throw ClientAuthError.notEnrolled }
+            return token
         }
     }
 
@@ -1174,7 +1383,7 @@ final class ClientAuthManager: @unchecked Sendable {
     private func grantChallenge() async throws -> TokenResponse {
         let key = try installationKey()
         let challenge = try await challenge(purpose: "token")
-        let proof = try key.challengeProof(nonce: challenge.nonce, purpose: "token", deviceID: deviceIDProvider(), now: now())
+        let proof = try signing { try key.challengeProof(nonce: challenge.nonce, purpose: "token", deviceID: deviceIDProvider(), now: now()) }
         return try await postPublic("/auth/token", body: [
             "grant_type": "challenge", "device_id": deviceIDProvider(),
             "challenge_id": challenge.challengeId, "proof": proof,
@@ -1212,19 +1421,31 @@ final class ClientAuthManager: @unchecked Sendable {
     /// `X-Request-Proof` for an authenticated write.
     func requestProof(accessToken: String, method: String, url: URL, body: Data) throws -> String {
         let key = try installationKey()
-        return try key.requestProof(
-            accessToken: accessToken,
-            method: method,
-            target: ClientAuthCrypto.requestTarget(url),
-            body: body,
-            now: now(),
-            jti: ClientAuthCrypto.newJTI()
-        )
+        return try signing {
+            try key.requestProof(
+                accessToken: accessToken,
+                method: method,
+                target: ClientAuthCrypto.requestTarget(url),
+                body: body,
+                now: now(),
+                jti: ClientAuthCrypto.newJTI()
+            )
+        }
     }
 
     /// Attach bearer + proof to a request. Throws `notEnrolled` when there is no account.
     func authorize(_ request: inout URLRequest) async throws {
-        let token = try await accessToken()
+        do {
+            try authorizeOnce(&request, token: try await accessToken())
+        } catch ClientAuthError.keyUnusable where canRepairKey {
+            // A valid cached bearer skipped the refresh and only the proof failed: repair,
+            // then sign the same request with the new key and token (A2d).
+            try await repairUnusableKey()
+            try authorizeOnce(&request, token: try await accessToken())
+        }
+    }
+
+    private func authorizeOnce(_ request: inout URLRequest, token: String) throws {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let method = request.httpMethod ?? "GET"
         if method != "GET", method != "HEAD", let url = request.url {
@@ -1330,6 +1551,9 @@ final class ClientAuthManager: @unchecked Sendable {
         } catch ClientAuthError.deviceAlreadyEnrolled, ClientAuthError.recoveryKeyUnknown {
             // The re-bind was refused because the device id now belongs to another account
             // or the stored recovery key no longer resolves: forget it locally.
+        } catch ClientAuthError.keyUnusable, ClientAuthError.keyUnavailable {
+            // The stored key cannot sign here, so the revoke cannot be proved. Signing out is
+            // how the person leaves that state; it must not depend on the key (A2d).
         }
         clearLocal(reason: "signout")
     }
@@ -1393,7 +1617,26 @@ final class ManagedEnrollmentCoordinator {
     /// network anyway. Concurrent callers share one attempt.
     @discardableResult
     func ensure(trigger: String) async -> Bool {
+        if manager.credentialState == .keyUnusable {
+            // Credential present, key unusable here, nothing to replace it with: the person
+            // signs in again. Nothing is migrated, created or rotated meanwhile (A2d).
+            hooks.setError(ClientAuthError.keyUnusable.errorDescription)
+            hooks.log("enrollment_blocked_key_unusable trigger=\(trigger)")
+            hooks.refreshStatus()
+            return false
+        }
         if manager.isEnrolled {
+            if manager.needsKeyRepair {
+                do {
+                    try await manager.repairUnusableKey()
+                    hooks.setError(nil)
+                } catch {
+                    hooks.setError(error.localizedDescription)
+                    hooks.log("Managed enrollment: key repair FAILED (trigger=\(trigger)): \(error.localizedDescription)")
+                    hooks.refreshStatus()
+                    return false
+                }
+            }
             if !hooks.statusIsEnrolled() { hooks.refreshStatus() }
             return true
         }

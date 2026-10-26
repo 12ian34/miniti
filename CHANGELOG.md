@@ -6,6 +6,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ### Unreleased - v3.3.1
 
+- fix: (macOS and iOS) a Mac set up from another Mac with Migration Assistant could not record and could not sign out, because its saved sign-in key only works on the Mac that made it. miniti now notices on the first signed request and re-signs the same device with a fresh key, or asks you to sign in by email or recovery key when it has nothing to re-sign with
 - improvement: (macOS and iOS) Granola import takes the zip Granola emails, or several CSV files at once
 - fix: (macOS and iOS) Granola import refused the export Granola makes today and said every row was missing a date. The columns changed. miniti reads them again
 - fix: (macOS and iOS) an imported Granola transcript arrived as one block with no length. Each sentence is its own turn now, and the length is estimated from the words spoken, about 150 a minute
