@@ -87,6 +87,8 @@ Do not blindly replace device-enrollment's inspect/bind/consume sequence: its Re
 
 ## User experience additions, approved 2026-10-26
 
+U1 and U2 were pulled into 3.4.0 (build 139) on 2026-10-26; the implementation plan, file list, tests and QA lines are in [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series items below stay future work.
+
 These are future-update changes. The current 3.4.0 build and its QA results are not changed by this document. B6a in the enrollment plan owns email/account/billing UX; do not implement a second account state machine here.
 
 ### U1: Sending is readable at a glance
