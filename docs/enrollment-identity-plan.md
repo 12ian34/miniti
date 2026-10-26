@@ -260,6 +260,19 @@ Applied: a temporary signing failure keeps the credential and ordinary retry, of
 
 Applied: the opening labels silent creation as current and 3.4.0 behaviour and states that A4 introduces the Home choice; the macOS 26 QA line now requires a recovered outcome (allow-list entry with verified repair, or the reauthentication path working without the broken key), and a repeated temporary failure falls into the choice state instead of retrying for ever; the 3.4.0 order says the backend error contract ships before the client messages that depend on it.
 
+## What the evening of 2026-10-26 taught (recorded for Track B)
+
+Ian's words after three hours of recovery: "this whole recovery key and license key thing is confusing, and there's a device id too." The sequence, with the slice that removes each step:
+
+- Removing two stale-looking entries from the iPhone's device list revoked both Macs and took Pro away from every device on the account, because the subscription lived on those two device records. B1 (the account owns the subscription; a device leaving takes nothing) and A0a (the list shows what each device runs, so entries are recognisable).
+- Each Mac, revoked, silently tried to create a new account; one succeeded and became a throwaway, the other hit the create route's 5-a-day network limit and sat on "still setting up, check your connection" for the evening. A4 (no silent creation; a revoked device shows a choice) and a new item for the backend: a revoked installation re-enrolling under its own device id must not count against the network's create bucket, and the limit error must say "too many new accounts from this network today", never blame the connection.
+- "Sign in with email" sent nothing because the email was attached to the other, free account. B6 (the connected address is shown; Switch account is explicit; email is the way back in, the recovery key the fallback).
+- The recovery key had to be fetched from the iPhone because the Macs never held one. B6 again; and B1 means a recovered account brings its subscription with it, so the license key is never needed a second time.
+- The license key then had to be typed on one Mac to re-attach a subscription that was still active in Polar the whole time. B1 (first webhook binds the subscription to the account at checkout; restore and verify refuse a second owner; nothing to re-attach after a device change).
+- Nobody should ever see a device id. The only place it leaks today is the device list without labels; A0a fixes versions, and the list needs the device's own name (new, small: the Mac's `localizedName` and the iPhone's name as the label at enrolment, replacing "Mac" and "iPhone or iPad").
+
+Track A, shipped in 3.4.0, makes these failures explain themselves and stops a device from silently becoming someone else. It does not remove the three concepts. Track B does: one account that owns the subscription and the meetings, a sign-in method to get back to it, devices as replaceable access. Until B1 and B6 ship, the honest answer to "is this easier" is "it fails loudly now; it is not yet simple."
+
 ## Non-goals and decisions
 
 - **No silent rotation and no silent re-creation, once A4 ships.** Conflict, signed out, revoked and damaged are choice states. Until A4, today's rotation on conflict stays and is counted by A1.
