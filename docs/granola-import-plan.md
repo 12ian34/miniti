@@ -13,7 +13,7 @@
 | The zip itself | **Built 2026-10-23** | Granola emails a zip holding `granola-export-<date>/granola-export-<date>-000.csv` (more parts for big accounts). The file picker takes the zip, or several CSV files at once; a 120-line reader opens stored and deflated entries, skips folders and `__MACOSX`, refuses zip64 or encrypted archives with "unzip it and import the CSV files inside" |
 | Tests | **Built 2026-10-23** | `MinitiTests/MeetingModelTests.swift`, Granola section: the export's columns end to end (sentences, estimate, word-placed timestamps, summary cleanup), labelled lines with continuations, plain-text summary cases, a zip with two parts (one stored, one deflated) plus noise entries, a zip without a CSV. A one-off run against the real export parsed all 33 rows (see "Checked against the real export") |
 | Linux | header fix committed 2026-10-23, rest owed | `../miniti-linux/src-tauri/src/import/granola.rs` had the same alias lists; `canonical_header` and the three aliases are in with a test. Sentence joining, the length estimate, summary cleanup and the zip are listed in `../miniti-linux/PLAN.md` "To mirror (2026-10-23)" |
-| Release | owed | Changelog entry under Unreleased v3.3.1. Ships with the next Mac and iOS release |
+| Release | owed | Changelog entry under Unreleased v3.4.0. Ships with the next Mac and iOS release |
 
 ## What the export looks like
 

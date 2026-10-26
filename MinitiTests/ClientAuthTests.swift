@@ -1278,7 +1278,7 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertTrue(enrolledManager.isEnrolled)
         XCTAssertFalse(enrolledManager.status.isHardwareBacked)
         XCTAssertEqual(enrolledManager.revealRecoveryKey(), ClientAuthCrypto.formatRecoveryKey("M1ABCDEFGHJKMNPQRSTVWXYZ0123456789AB"))
-        // Round trip: what 3.3.1 writes for this blob decodes to the same values.
+        // Round trip: what 3.4.0 writes for this blob decodes to the same values.
         XCTAssertEqual(try JSONDecoder().decode(ClientAuthCredentials.self, from: JSONEncoder().encode(enrolled)), enrolled)
 
         let draft = try decodeFixture(CredentialFixtures.draft_3_3_0)

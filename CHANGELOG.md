@@ -4,7 +4,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### Unreleased - v3.3.1
+### Unreleased - v3.4.0
 
 - improvement: (macOS and iOS) restoring Pro with a license key and signing in by email now say what went wrong: a key Polar does not know, a key with no active plan, an activation Polar refused, a problem on our side, Polar unreachable, too many attempts, or no connection. Before, every one of these read as an invalid key, and a dropped connection while waiting for an email link read as an expired link
 - fix: (macOS and iOS) a Mac set up from another Mac with Migration Assistant could not record and could not sign out, because its saved sign-in key only works on the Mac that made it. miniti now notices on the first signed request and re-signs the same device with a fresh key, or asks you to sign in by email or recovery key when it has nothing to re-sign with
