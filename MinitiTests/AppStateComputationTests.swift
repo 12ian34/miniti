@@ -2,6 +2,10 @@ import XCTest
 import SwiftData
 import Combine
 import UserNotifications
+import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -3066,6 +3070,60 @@ final class ThirdPartyAIConsentTests: XCTestCase {
             XCTAssertTrue(state.hasAnsweredThirdPartyAIConsent, "without bringing the first screen back")
         }
     }
+
+    // MARK: U2, the concise consent screen (docs/account-sending-consent-ux-plan.md)
+
+    func testTheDisclosureStillNamesEveryRecipientAndDataCategory() {
+        let text = TermsAcceptanceView.disclosureText.lowercased()
+        for required in ["deepgram", "openai", "audio", "meeting title", "attendee names", "transcript", "your notes", "not now", "settings, privacy"] {
+            XCTAssertTrue(text.contains(required), "the consent screen no longer says \"\(required)\"; the disclosure must name every recipient and data category or the terms version has to change")
+        }
+        for banned in ["never stored", "nothing leaves", "two companies", "—"] {
+            XCTAssertFalse(text.contains(banned), "\"\(banned)\" is a claim the code does not keep")
+        }
+        #if os(iOS)
+        XCTAssertTrue(text.contains("watch"), "the iPhone names the watch recordings Deepgram transcribes")
+        #else
+        XCTAssertFalse(text.contains("watch"), "the Mac has no recorded-audio route")
+        XCTAssertTrue(text.contains("private mode"))
+        #endif
+        XCTAssertEqual(TermsAcceptanceView.providerLines.map(\.name), ["Deepgram", "OpenAI"])
+    }
+
+    func testTheConsentVersionIsUnchangedByTheShorterWording() {
+        XCTAssertEqual(AppState.currentTermsVersion, 2, "U2 rewrote the consent screen without changing recipients, data or purposes, so nobody is asked again; bump this only for a material change and say why in docs/account-sending-consent-ux-plan.md")
+    }
+
+    func testCancelOnTheSheetLeavesTheStoredAnswerAlone() {
+        XCTAssertTrue(TermsAcceptanceView.declineRecordsAnswer(.firstScreen), "not now on the first screen is a recorded answer")
+        XCTAssertFalse(TermsAcceptanceView.declineRecordsAnswer(.sheet), "cancel on the sheet only closes it")
+        withCleanConsentDefaults {
+            let state = AppState()
+            state.setThirdPartyAIConsent(true)
+            // The sheet's cancel never reaches the state; a second allow is idempotent.
+            state.setThirdPartyAIConsent(true)
+            XCTAssertTrue(state.hasAcceptedTerms)
+            XCTAssertEqual(UserDefaults.standard.integer(forKey: "acceptedTermsVersion"), AppState.currentTermsVersion)
+            XCTAssertEqual(UserDefaults.standard.integer(forKey: "declinedTermsVersion"), 0, "allow writes the acceptance once and no decline")
+        }
+    }
+
+    #if os(macOS)
+    func testPresentingTheScreenAnswersNothing() {
+        withCleanConsentDefaults {
+            let state = AppState()
+            let host = NSHostingView(rootView: TermsAcceptanceView().environmentObject(state))
+            host.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+            host.layoutSubtreeIfNeeded()
+            XCTAssertFalse(state.hasAnsweredThirdPartyAIConsent, "showing the screen is not an answer")
+            XCTAssertFalse(state.hasAcceptedTerms)
+            let sheet = NSHostingView(rootView: TermsAcceptanceView(presentation: .sheet).environmentObject(state))
+            sheet.frame = NSRect(x: 0, y: 0, width: 520, height: 480)
+            sheet.layoutSubtreeIfNeeded()
+            XCTAssertFalse(state.hasAnsweredThirdPartyAIConsent)
+        }
+    }
+    #endif
 }
 
 final class MicFinalDedupTests: XCTestCase {

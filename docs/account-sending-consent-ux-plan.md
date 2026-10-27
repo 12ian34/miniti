@@ -6,7 +6,7 @@ Implementation plan for the three user-experience slices Ian chose to hold 3.4.0
 
 | Slice | What | Repo | Status | Release |
 |---|---|---|---|---|
-| U2 | Consent screen: compact disclosure, Allow and Not now outside the scroll, truthful copy, same consent version | miniti | planned 2026-10-26, revised 2026-10-27 | 3.4.0 build 139 |
+| U2 | Consent screen: compact disclosure, Allow and Not now outside the scroll, truthful copy, same consent version | miniti | **built 2026-10-27**: `TermsAcceptanceView` rewritten (scrolling disclosure, action bar outside it, `ViewThatFits` stacks the buttons under 420 pt, Reduce Motion honoured, Escape only on the sheet), copy per platform, `AppState.currentTermsVersion` static and pinned at 2 by a test; six consent tests green on macOS, iOS bundle compiles; rendered at 600 by 400, 1000 by 650, 520 by 480 sheet and 380 wide: the disclosure and both buttons fit the minimum window without scrolling. Device QA lines open | 3.4.0 build 139 |
 | U1 model | `DataFlowSummary` gains groups, a status word per row, one Configure jump, details text, a "not in use" set | miniti | planned 2026-10-26, revised 2026-10-27 | 3.4.0 build 139 |
 | U1 views | `DataFlowRowsView` rewritten for Mac and iOS; iOS rows navigate to the owning setting | miniti | planned 2026-10-26 | 3.4.0 build 139 |
 | B6a api | Email routes guarded for any managed account: no Pro, no cloud allowlist, no user cloud switch; existing read and remove contracts kept | miniti-api | planned 2026-10-26, revised 2026-10-27, deploy before the client | any deploy |

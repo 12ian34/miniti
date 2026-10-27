@@ -974,7 +974,8 @@ final class AppState: ObservableObject {
     @AppStorage("declinedTermsVersion") private var declinedTermsVersion: Int = 0
     /// 2 (3.3.0): the first screen now names Deepgram and OpenAI, says what each receives, and
     /// asks for permission before anything is sent. Everyone sees it once.
-    private let currentTermsVersion = 2
+    /// Exposed so a test can pin it: bumping it re-asks everyone, which is deliberate or wrong.
+    nonisolated static let currentTermsVersion = 2
     /// Set when a recording is attempted without permission; the main view presents the
     /// disclosure as a sheet so the person can allow it at that moment.
     @Published var showThirdPartyAIConsent = false
@@ -982,10 +983,10 @@ final class AppState: ObservableObject {
     /// Permission to send meeting audio and text to Deepgram and OpenAI (App Review 5.1.2(i)).
     /// Gates every recording start and every network insight.
     var hasAcceptedTerms: Bool {
-        get { acceptedTermsVersion >= currentTermsVersion }
+        get { acceptedTermsVersion >= Self.currentTermsVersion }
         set {
             if newValue {
-                acceptedTermsVersion = currentTermsVersion
+                acceptedTermsVersion = Self.currentTermsVersion
                 legacyHasAcceptedTerms = true
                 declinedTermsVersion = 0
             } else {
@@ -1001,7 +1002,7 @@ final class AppState: ObservableObject {
         Self.thirdPartyAIConsentAnswered(
             acceptedVersion: acceptedTermsVersion,
             declinedVersion: declinedTermsVersion,
-            currentVersion: currentTermsVersion
+            currentVersion: Self.currentTermsVersion
         )
     }
 
@@ -1015,7 +1016,7 @@ final class AppState: ObservableObject {
     func setThirdPartyAIConsent(_ allowed: Bool) {
         hasAcceptedTerms = allowed
         if !allowed {
-            declinedTermsVersion = currentTermsVersion
+            declinedTermsVersion = Self.currentTermsVersion
         }
         DebugLogger.shared.log(.app, allowed ? "Deepgram and OpenAI: allowed" : "Deepgram and OpenAI: not allowed, nothing is sent")
     }
