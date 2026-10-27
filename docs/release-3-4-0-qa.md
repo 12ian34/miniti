@@ -1,6 +1,6 @@
-# 3.4.0 build 140 release QA
+# 3.4.0 build 141 release QA
 
-Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Tick each line with the device, date and result. Automated state before QA: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
+Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Moved to build 141 after 3ee13bb's Privacy and Sending wording; Ian's build-140 audio results stand, with a short recording smoke test on 141. Tick each line with the device, date and result. Automated state before QA: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
 
 Sources: enrollment plan A5 lines, [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md) U2/U1/B6a QA, [reliability-follow-up-plan.md](reliability-follow-up-plan.md) R1–R3 device checks, [audio.md](audio.md) "Initial microphone failure".
 
