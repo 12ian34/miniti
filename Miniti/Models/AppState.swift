@@ -10965,8 +10965,7 @@ final class AppState: ObservableObject {
         // The row for this device is the same action as Sign out below: it must work with a
         // key that cannot sign, through the local-clear fallback (review 2026-10-27).
         if clientAuthManager.isCurrentDevice(installationID) {
-            await signOutManagedDevice()
-            return true
+            return await signOutManagedDevice()
         }
         do {
             try await clientAuthManager.removeDevice(installationID: installationID)
@@ -10980,12 +10979,37 @@ final class AppState: ObservableObject {
         }
     }
 
-    func signOutManagedDevice() async {
-        try? await clientAuthManager.signOut()
+    /// Sign this device out. With a usable key the server revoke must succeed; a connection
+    /// failure keeps the device signed in and says so, never reporting success while the
+    /// credential remains (review 2026-10-27). A key that cannot sign clears locally.
+    @discardableResult
+    func signOutManagedDevice() async -> Bool {
+        do {
+            try await clientAuthManager.signOut()
+        } catch {
+            managedDevicesError = Self.signOutFailureMessage(for: error)
+            refreshClientAuthStatus()
+            return false
+        }
+        managedDevicesError = nil
         managedDevices = []
         usageInfo = nil
         cloudSync.resetBookkeeping()
         refreshClientAuthStatus()
+        return true
+    }
+
+    nonisolated static func signOutFailureMessage(for error: Error) -> String {
+        let offline: Bool
+        switch error {
+        case let urlError as URLError: offline = isConnectionFailure(urlError)
+        case ClientAuthError.network: offline = true
+        default: offline = false
+        }
+        if offline {
+            return "No connection. Signing out tells miniti's servers to forget this device, so it needs the network. Try again when you are online."
+        }
+        return "Could not sign out: \(error.localizedDescription)"
     }
 
     /// Delete the anonymous account. Revokes every device; subscriptions are untouched.

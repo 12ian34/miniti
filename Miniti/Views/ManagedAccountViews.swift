@@ -1014,12 +1014,20 @@ struct ManagedAccountDangerSection: View {
     @State private var isConfirmingDelete = false
     @State private var isBusy = false
 
+    @State private var signOutFailure: String?
+
     private var model: AccountSectionModel { AccountSectionModel.make(appState.accountSectionInputs) }
     private var accountIsPresent: Bool { appState.clientAuthStatus.isEnrolled || appState.clientAuthStatus.keyUnusable }
 
     var body: some View {
         if accountIsPresent {
             Section {
+                if let signOutFailure {
+                    Text(signOutFailure)
+                        .font(.caption)
+                        .foregroundStyle(ColorPalette.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 HStack {
                     if model.accountActions.contains(.signOut) {
                         Button("Sign out this device") { isConfirmingSignOut = true }
@@ -1052,7 +1060,8 @@ struct ManagedAccountDangerSection: View {
     private func signOut() {
         isBusy = true
         Task { @MainActor in
-            await appState.signOutManagedDevice()
+            let ok = await appState.signOutManagedDevice()
+            signOutFailure = ok ? nil : appState.managedDevicesError
             isBusy = false
         }
     }

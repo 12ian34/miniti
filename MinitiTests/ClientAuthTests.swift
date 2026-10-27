@@ -868,6 +868,48 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(app.clientAuthStatus.isEnrolled)
     }
 
+    func testASignOutDuringTheCredentialCommitCannotBeUndone() async throws {
+        // Review 2026-10-27: the restore answer passed the epoch check; its store write is
+        // outstanding when the local clear lands. The commit is ordered against the clear.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = SaveGateStore(stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        restoreStub()
+        let repairing = Task { try await manager.repairUnusableKey() }
+        let entered = await Task.detached { store.entered.wait(timeout: .now() + 3) == .success }.value
+        XCTAssertTrue(entered)
+        let clearing = Task.detached { manager.clearLocal(reason: "signout") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        store.release.signal()
+        await clearing.value
+        _ = try? await repairing.value
+        XCTAssertFalse(manager.isEnrolled, "the commit must be ordered atomically against a local clear")
+        XCTAssertNil(store.load(), "the persistent credential must stay cleared")
+    }
+
+    @MainActor
+    func testOwnDeviceSignOutOfflineReportsFailureAndStaysSignedIn() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        StubURLProtocol.script = { _ in throw URLError(.notConnectedToInternet) }
+        let app = AppState()
+        app.clientAuthManager = manager
+        app.refreshClientAuthStatus()
+        let success = await app.removeManagedDevice(installationID: "550e8400-e29b-41d4-a716-446655440000")
+        XCTAssertFalse(success, "offline: the revoke could not be proved, so no success")
+        XCTAssertTrue(manager.isEnrolled, "and the device stays signed in")
+        XCTAssertNotNil(store.load())
+        XCTAssertTrue(app.clientAuthStatus.isEnrolled)
+        XCTAssertEqual(app.managedDevicesError, "No connection. Signing out tells miniti's servers to forget this device, so it needs the network. Try again when you are online.")
+        let direct = await app.signOutManagedDevice()
+        XCTAssertFalse(direct)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
@@ -2729,5 +2771,20 @@ private extension URLRequest {
     /// `authorize` through the manager, for the probe test's final proof that the key signs again.
     mutating func setValueForTesting(_ manager: ClientAuthManager) async throws {
         try await manager.authorize(&self)
+    }
+}
+
+/// A store whose save blocks until released, to order a credential commit against a clear.
+final class SaveGateStore: ClientAuthCredentialStore, @unchecked Sendable {
+    let backing: InMemoryClientAuthStore
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    init(_ value: ClientAuthCredentials) { backing = InMemoryClientAuthStore(value) }
+    func load() -> ClientAuthCredentials? { backing.load() }
+    func clear() { backing.clear() }
+    func save(_ value: ClientAuthCredentials) -> Bool {
+        entered.signal()
+        guard release.wait(timeout: .now() + 5) == .success else { return false }
+        return backing.save(value)
     }
 }

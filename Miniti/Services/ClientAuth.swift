@@ -902,17 +902,7 @@ final class ClientAuthManager: @unchecked Sendable {
         store.clear()
     }
 
-    /// The epoch to capture before a credential replacement request.
-    private var currentCredentialEpoch: Int {
-        lock.lock(); defer { lock.unlock() }
-        return credentialEpoch
-    }
 
-    /// True when the credentials were cleared or replaced since `epoch` was captured.
-    private func credentialsChanged(since epoch: Int) -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return credentialEpoch != epoch
-    }
 
     private func installationKey() throws -> InstallationKey {
         let loaded: Result<InstallationKey, Error>
@@ -976,37 +966,34 @@ final class ClientAuthManager: @unchecked Sendable {
     /// refused by the server (`device_already_enrolled`) because this installation is still
     /// active, and nothing changes locally.
     func reauthenticate(loginLinkID: String, label: String? = nil) async throws {
-        let (recoveryKey, path, acknowledged, accountID) = try reauthenticationBasis()
-        let epoch = currentCredentialEpoch
+        let (recoveryKey, path, acknowledged, accountID, epoch) = try reauthenticationBasis()
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: nil, loginLinkID: loginLinkID, label: label ?? deviceLabelProvider())
-        if credentialsChanged(since: epoch) { throw ClientAuthError.notEnrolled }
         // The server may land a revoked installation in the link's account rather than the
         // one this credential names. The old recovery key proves the old account only, so
         // it stays solely when the account is the same; otherwise this is an ordinary switch
         // by email, which holds no key of its own (review 2026-10-26).
         let sameAccount = tokens.accountId == nil || tokens.accountId == accountID
-        try storeEnrollment(key: key, recoveryKey: sameAccount ? recoveryKey : "", tokens: tokens, path: sameAccount ? path : .restore, acknowledged: sameAccount ? acknowledged : true)
+        try storeEnrollment(key: key, recoveryKey: sameAccount ? recoveryKey : "", tokens: tokens, path: sameAccount ? path : .restore, acknowledged: sameAccount ? acknowledged : true, expectedEpoch: epoch)
         DebugLogger.shared.log(.app, "Device auth: installation re-authenticated by email with a fresh key\(sameAccount ? "" : " and moved to the link's account")")
         emit("client_auth_key_repaired", level: .info, details: ["via": "email", "switched": sameAccount ? "no" : "yes"])
     }
 
     func reauthenticate(recoveryKeyInput: String, label: String? = nil) async throws {
         guard let typed = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else { throw ClientAuthError.invalidRecoveryKey }
-        let (_, path, _, _) = try reauthenticationBasis()
-        let epoch = currentCredentialEpoch
+        let (_, path, _, _, epoch) = try reauthenticationBasis()
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: typed, label: label ?? deviceLabelProvider())
-        if credentialsChanged(since: epoch) { throw ClientAuthError.notEnrolled }
-        try storeEnrollment(key: key, recoveryKey: typed, tokens: tokens, path: path, acknowledged: true)
+        try storeEnrollment(key: key, recoveryKey: typed, tokens: tokens, path: path, acknowledged: true, expectedEpoch: epoch)
         DebugLogger.shared.log(.app, "Device auth: installation re-authenticated with a recovery key and a fresh key")
         emit("client_auth_key_repaired", level: .info, details: ["via": "recovery_key"])
     }
 
-    private func reauthenticationBasis() throws -> (String, ClientAuthEnrollmentPath, Bool, String) {
+    /// The credential snapshot a reauthentication replaces, with the epoch it was read under.
+    private func reauthenticationBasis() throws -> (String, ClientAuthEnrollmentPath, Bool, String, Int) {
         lock.lock(); defer { lock.unlock() }
         guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
-        return (credentials.recoveryKey, ClientAuthEnrollmentPath(rawValue: credentials.enrollmentPath) ?? .restore, credentials.recoveryKeyAcknowledged, credentials.accountID)
+        return (credentials.recoveryKey, ClientAuthEnrollmentPath(rawValue: credentials.enrollmentPath) ?? .restore, credentials.recoveryKeyAcknowledged, credentials.accountID, credentialEpoch)
     }
 
     /// Run a signature with the key; a thrown signing error is classified like a load error.
@@ -1064,25 +1051,22 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     private func performRepair() async throws {
-        let (recoveryKey, path, acknowledged): (String, String, Bool) = try {
+        // The snapshot and its epoch are read together: the commit below replaces exactly
+        // this credential, or nothing.
+        let (recoveryKey, path, acknowledged, epoch): (String, String, Bool, Int) = try {
             lock.lock(); defer { lock.unlock() }
             guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
-            return (credentials.recoveryKey, credentials.enrollmentPath, credentials.recoveryKeyAcknowledged)
+            return (credentials.recoveryKey, credentials.enrollmentPath, credentials.recoveryKeyAcknowledged, credentialEpoch)
         }()
         guard !recoveryKey.isEmpty else {
             lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock()
             throw ClientAuthError.keyUnusable
         }
-        let epoch = currentCredentialEpoch
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: deviceLabelProvider())
-        if credentialsChanged(since: epoch) {
-            // Signed out (or switched) while the restore was in flight: the answer belongs to
-            // a credential the person no longer holds. Nothing is written back.
-            DebugLogger.shared.log(.app, "Device auth: key repair finished after a sign-out; discarded")
-            throw ClientAuthError.notEnrolled
-        }
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: ClientAuthEnrollmentPath(rawValue: path) ?? .restore, acknowledged: acknowledged)
+        // Signed out (or switched) while the restore was in flight: the answer belongs to a
+        // credential the person no longer holds, and the atomic commit refuses it.
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: ClientAuthEnrollmentPath(rawValue: path) ?? .restore, acknowledged: acknowledged, expectedEpoch: epoch)
         DebugLogger.shared.log(.app, "Device auth: the stored installation key cannot be used on this machine; re-bound with a fresh key")
         emit("client_auth_key_repaired", level: .info, details: [:])
     }
@@ -1092,6 +1076,22 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         credentials = newValue
         cachedKey = nil
+    }
+
+    /// Commit a credential replacement as one operation ordered against `clearLocal`: the
+    /// epoch is checked, the store written and memory updated under the same lock, so a
+    /// sign-out that lands before the write wins and one that lands after it clears what was
+    /// written (review 2026-10-27). The epoch moves on with the new credential.
+    private func persistReplacement(_ newValue: ClientAuthCredentials, expectedEpoch: Int) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard credentialEpoch == expectedEpoch else {
+            DebugLogger.shared.log(.app, "Device auth: a credential replacement finished after a sign-out; discarded")
+            throw ClientAuthError.notEnrolled
+        }
+        guard store.save(newValue) else { throw ClientAuthError.storage }
+        credentials = newValue
+        cachedKey = nil
+        credentialEpoch += 1
     }
 
     /// A credential replacement (a new key the server accepted) is what ends a key failure;
@@ -1303,10 +1303,11 @@ final class ClientAuthManager: @unchecked Sendable {
         DebugLogger.shared.log(.app, "Device auth: account restored by email")
     }
 
-    private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool) throws {
+    /// `expectedEpoch` makes the write a replacement of the credential that was current when
+    /// the request started (repair, reauthentication); a first enrolment passes nil.
+    private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool, expectedEpoch: Int? = nil) throws {
         defer { if credentialsHold(key: key) { clearKeyFailure() } }
-        lock.lock(); credentialEpoch += 1; lock.unlock()
-        try persist(ClientAuthCredentials(
+        let value = ClientAuthCredentials(
             installationKey: key.stored,
             recoveryKey: recoveryKey,
             accountID: tokens.accountId ?? "",
@@ -1317,7 +1318,13 @@ final class ClientAuthManager: @unchecked Sendable {
             enrolledAt: ISO8601DateFormatter().string(from: Date()),
             enrollmentPath: path.rawValue,
             recoveryKeyAcknowledged: acknowledged
-        ))
+        )
+        if let expectedEpoch {
+            try persistReplacement(value, expectedEpoch: expectedEpoch)
+        } else {
+            lock.lock(); credentialEpoch += 1; lock.unlock()
+            try persist(value)
+        }
     }
 
     private func credentialsHold(key: InstallationKey) -> Bool {
