@@ -1052,6 +1052,65 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertTrue(manager.isEnrolled)
     }
 
+    func testRotationAfterAutomaticRepairKeepsTheAcceptedRecoveryKey() async throws {
+        // Review 2026-10-27: the migrated key fails its first signature inside the rotation
+        // request; the repair that follows is this request's own lineage, not a stale write.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        restoreStub(account: stored.accountID)
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/recovery-key/rotate") == true { return (200, Data("{}".utf8)) }
+            return restoreHandler(request)
+        }
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertFalse(manager.keyNeedsReauthentication, "the migrated key has not failed its first signature yet")
+        var failure: Error?
+        do { _ = try await manager.rotateRecoveryKey() } catch { failure = error }
+        let rotation = try XCTUnwrap(StubURLProtocol.requests.first { $0.url?.path.hasSuffix("/recovery-key/rotate") == true })
+        let acceptedKey = try XCTUnwrap(requestBody(rotation)["new_recovery_key"] as? String)
+        XCTAssertNotEqual(acceptedKey, stored.recoveryKey)
+        XCTAssertEqual(store.load()?.recoveryKey, acceptedKey, "the server accepted this key; the old stored key no longer works")
+        XCTAssertNil(failure, "same-account repair must allow the accepted rotation to commit")
+        XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey, "and the repaired key is the one kept")
+    }
+
+    func testAttachAfterAutomaticRepairCommitsAndASignOutAfterTheSendStillMakesItStale() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        restoreStub(account: stored.accountID)
+        let restoreHandler = StubURLProtocol.handler!
+        let attach = #"{"moved":true,"access_token":"att","expires_in":3600,"refresh_token":"mrt_att","account_id":"acct_other","device_cap":5}"#
+        StubURLProtocol.handler = { request in
+            request.url?.path.hasSuffix("/auth/account/attach") == true ? (200, Data(attach.utf8)) : restoreHandler(request)
+        }
+        // Repair inside the attach request: the accepted move commits.
+        let moved = try await manager.attachToAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertTrue(moved)
+        XCTAssertEqual(store.load()?.accountID, "acct_other")
+        XCTAssertEqual(store.load()?.accessToken, "att")
+
+        // The email variant, with a sign-out landing while the answer is in flight: stale.
+        StubURLProtocol.delay = 0.3
+        let attaching = Task { try await manager.attachToAccount(loginLinkID: "link_1") }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/auth/account/attach") == true }.count == 2 }
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        do {
+            _ = try await attaching.value
+            XCTFail("an attach answered after a sign-out must not commit")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .notEnrolled)
+        }
+        XCTAssertNil(store.load())
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))

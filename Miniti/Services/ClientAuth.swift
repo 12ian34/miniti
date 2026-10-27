@@ -1336,8 +1336,8 @@ final class ClientAuthManager: @unchecked Sendable {
     /// (`POST /api/auth/account/attach` with the link instead of a recovery key). The device
     /// ends up without a recovery key of its own; Settings offers to rotate one.
     func attachToAccount(loginLinkID: String) async throws -> Bool {
-        guard isEnrolled, let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
-        let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["login_link_id": loginLinkID])
+        guard isEnrolled else { throw ClientAuthError.notEnrolled }
+        let (response, epoch): (AttachResponse, Int) = try await authorizedJSONTracking("POST", "/auth/account/attach", body: ["login_link_id": loginLinkID])
         let written = update(expectedEpoch: epoch, replaces: true) { credentials in
             credentials.recoveryKey = ""
             credentials.accessToken = response.accessToken
@@ -1663,14 +1663,23 @@ final class ClientAuthManager: @unchecked Sendable {
     // MARK: Account management (authenticated)
 
     private func authorizedJSON<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> T {
+        try await authorizedJSONTracking(method, path, body: body).value
+    }
+
+    /// The same request, also returning the credential generation it was actually signed
+    /// under. That is read after `authorize`, so an automatic same-account key repair inside
+    /// it (new key, same account and recovery key) is part of the request's own lineage, while
+    /// a sign-out or account change after the send still makes the answer stale (review
+    /// 2026-10-27). Mutations commit against this generation.
+    private func authorizedJSONTracking<T: Decodable>(_ method: String, _ path: String, body: [String: Any]? = nil) async throws -> (value: T, generation: Int) {
         guard let url = URL(string: "\(baseURL)\(path)") else { throw ClientAuthError.network("bad URL") }
         var request = URLRequest(url: url)
         request.httpMethod = method
         request.timeoutInterval = 20
         identityHeaders(&request)
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
-        let generation = credentialGeneration
         try await authorize(&request)
+        let generation = credentialGeneration
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
@@ -1686,7 +1695,7 @@ final class ClientAuthManager: @unchecked Sendable {
             }
             throw mapped
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        return (try JSONDecoder().decode(T.self, from: data), generation)
     }
 
     private struct Empty: Decodable {}
@@ -1704,10 +1713,10 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Generate a new recovery key and ask the server to accept it. Returns the formatted key.
     func rotateRecoveryKey() async throws -> String {
         let newKey = ClientAuthCrypto.generateRecoveryKey()
-        guard let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
-        let _: Empty = try await authorizedJSON("POST", "/auth/account/recovery-key/rotate", body: ["new_recovery_key": newKey])
-        // The server now knows only the new key; a credential that is no longer current cannot
-        // take it, and nothing else may keep the old one as if it still worked.
+        guard isEnrolled else { throw ClientAuthError.notEnrolled }
+        let (_, epoch): (Empty, Int) = try await authorizedJSONTracking("POST", "/auth/account/recovery-key/rotate", body: ["new_recovery_key": newKey])
+        // The server now knows only the new key. The write belongs to the credential the request
+        // was signed under (after any automatic repair); a sign-out or switch since makes it stale.
         guard update(expectedEpoch: epoch, replaces: true, { $0.recoveryKey = newKey; $0.recoveryKeyAcknowledged = false }) else {
             throw ClientAuthError.notEnrolled
         }
@@ -1724,8 +1733,7 @@ final class ClientAuthManager: @unchecked Sendable {
         guard let recoveryKey = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else {
             throw ClientAuthError.invalidRecoveryKey
         }
-        guard let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
-        let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["recovery_key": recoveryKey])
+        let (response, epoch): (AttachResponse, Int) = try await authorizedJSONTracking("POST", "/auth/account/attach", body: ["recovery_key": recoveryKey])
         let written = update(expectedEpoch: epoch, replaces: true) { credentials in
             credentials.recoveryKey = recoveryKey
             credentials.accessToken = response.accessToken

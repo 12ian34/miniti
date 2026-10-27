@@ -71,10 +71,6 @@ final class MinitiAPIService: @unchecked Sendable {
     /// (`/version`) go out without an account.
     func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
         var request = original
-        // The credential this request is made with. A retry and a revocation answer belong to
-        // it alone: after a sign-out or a switch, neither may touch the credential enrolled
-        // since (review 2026-10-27).
-        let generation = auth.credentialGeneration
         if auth.isEnrolled {
             do {
                 try await auth.authorize(&request)
@@ -88,6 +84,11 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.notEnrolled
         }
 
+        // The credential this request was signed under, read after `authorize` so an automatic
+        // same-account key repair inside it counts as this request's own. A retry and a
+        // revocation answer belong to it alone: after a sign-out or a switch, neither may touch
+        // the credential enrolled since (review 2026-10-27).
+        let generation = auth.credentialGeneration
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
