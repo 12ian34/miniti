@@ -1105,6 +1105,12 @@ final class ClientAuthManager: @unchecked Sendable {
         if replaces { credentialEpoch += 1 }
     }
 
+    /// The credential generation, for hosts that fence work on it (cloud sync, R3).
+    var credentialGeneration: Int {
+        lock.lock(); defer { lock.unlock() }
+        return credentialEpoch
+    }
+
     /// The current credential and the generation it was read under, for a writer that is
     /// about to await something.
     private func snapshot() -> (credentials: ClientAuthCredentials, epoch: Int)? {

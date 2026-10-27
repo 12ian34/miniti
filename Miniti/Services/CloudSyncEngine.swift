@@ -147,6 +147,43 @@ final class CloudSyncEngine: ObservableObject {
     private var running = false
     private var rerunRequested = false
     private var needsReconcile = false
+
+    // MARK: Pass authority (R3, 2026-10-27)
+
+    /// What a pass runs under: the account it started for and a generation that moves on
+    /// every account or credential change, sign-out, revoke and explicit reset. Captured once
+    /// per pass and compared after every await, before anything learned is applied.
+    struct PassContext: Equatable {
+        let accountID: String?
+        let generation: Int
+    }
+    private var generation = 0
+
+    /// Discard the authority of every pass in flight. Called by `resetBookkeeping` and by the
+    /// host on account or credential changes.
+    func invalidatePasses(reason: String) {
+        generation += 1
+        DebugLogger.shared.log(.app, "Cloud sync: passes invalidated (\(reason))")
+    }
+
+    private func currentContext() -> PassContext {
+        PassContext(accountID: host?.cloudAccountID, generation: generation)
+    }
+
+    private func isCurrent(_ context: PassContext) -> Bool {
+        context == currentContext()
+    }
+
+    /// After an await: the pass may continue only if nothing took its authority away.
+    private func check(_ context: PassContext) throws {
+        guard isCurrent(context) else { throw CloudSyncError.superseded }
+    }
+
+    /// Cursor writes belong to the captured account, and only while that context holds.
+    private func setCursor(_ value: Int, for context: PassContext) {
+        guard isCurrent(context), let account = context.accountID else { return }
+        defaults.set(value, forKey: Self.cursorKey(account))
+    }
     private var debounceTask: Task<Void, Never>?
     private var pollTimer: Timer?
     private var deviceRemoved = false
@@ -220,6 +257,7 @@ final class CloudSyncEngine: ObservableObject {
     /// Forget every cloud relationship on this device (sign out, move to another account,
     /// account deleted). Local meetings stay; they upload to whatever account comes next.
     func resetBookkeeping() {
+        invalidatePasses(reason: "reset")
         guard let host, let context = host.cloudModelContext else { return }
         let meetings = host.cloudFetchMeetings(FetchDescriptor<Meeting>()) ?? []
         let tombstones = host.cloudFetchTombstones() ?? []
@@ -291,6 +329,7 @@ final class CloudSyncEngine: ObservableObject {
             return
         }
         lastError = nil
+        let context = currentContext()
         do {
             // Stamp local edits before anything compares timestamps with the cloud. The poll
             // skips the scan when nothing committed since the last one.
@@ -304,21 +343,37 @@ final class CloudSyncEngine: ObservableObject {
             }
             if cursor == 0 || needsReconcile {
                 phase = .reconciling
-                try await reconcile(host: host, transport: transport)
+                try await reconcile(host: host, transport: transport, context: context)
+                try check(context)
                 needsReconcile = false
             }
-            if shouldScan { try await push(host: host, transport: transport) }
-            try await pushTombstones(host: host, transport: transport)
+            if shouldScan { try await push(host: host, transport: transport, context: context) }
+            try await pushTombstones(host: host, transport: transport, context: context)
             guard stillAllowed else { refreshPause(); return }
             phase = .pulling
-            try await pull(host: host, transport: transport)
+            try await pull(host: host, transport: transport, context: context)
             if refreshStatus || status == nil {
-                status = try await transport.status()
+                let fresh = try await transport.status()
+                try check(context)
+                status = fresh
             }
+            try check(context)
             lastSyncedAt = now()
             phase = .idle
             DebugLogger.shared.log(.app, "Cloud sync done reason=\(reason)")
+        } catch CloudSyncError.superseded {
+            // Another account or credential owns the engine now: nothing from this pass is
+            // applied, and the new owner gets its own pass.
+            DebugLogger.shared.log(.app, "Cloud sync pass superseded reason=\(reason)")
+            rerunRequested = true
         } catch let error as CloudSyncError {
+            // An answer for an account that is no longer current says nothing about this one:
+            // it must not pause, fail or mark anything here.
+            guard isCurrent(context) else {
+                DebugLogger.shared.log(.app, "Cloud sync: stale error dropped (\(error))")
+                rerunRequested = true
+                return
+            }
             handle(error)
         } catch {
             phase = .failed("Sync failed")
@@ -355,6 +410,8 @@ final class CloudSyncEngine: ObservableObject {
         case .server(let code, _):
             phase = .failed("Sync failed (\(code))")
             lastError = code
+        case .superseded:
+            break
         }
         if case .paused(let reason) = phase { note(.paused, reason.label) } else if case .failed(let text) = phase { note(.error, text) }
         DebugLogger.shared.log(.app, "Cloud sync paused: \(error)", level: .warning)
@@ -398,7 +455,7 @@ final class CloudSyncEngine: ObservableObject {
 
     // MARK: Push
 
-    private func push(host: CloudSyncHost, transport: CloudSyncTransport) async throws {
+    private func push(host: CloudSyncHost, transport: CloudSyncTransport, context: PassContext) async throws {
         let dirty = Array(scan(host: host).prefix(Self.pushBatch))
         guard !dirty.isEmpty else { return }
         var done = 0
@@ -407,20 +464,21 @@ final class CloudSyncEngine: ObservableObject {
         for (id, meeting) in dirty.map({ ($0.id, $0) }) {
             guard stillAllowed else { return }
             guard meeting.modelContext != nil, !host.isMeetingDeleted(id) else { continue }
-            try await push(meeting, id: id, host: host, transport: transport, retrying: false)
+            try await push(meeting, id: id, host: host, transport: transport, retrying: false, context: context)
             done += 1
             phase = .pushing(done: done, total: dirty.count)
         }
         if dirty.count == Self.pushBatch { rerunRequested = true }
     }
 
-    private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool) async throws {
+    private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool, context pass: PassContext) async throws {
         let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
         let document = try MeetingSyncDocument.encodeData(meeting, segments: meeting.segments)
         let base = meeting.cloudRevision
         let localUpdatedAt = meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting)
         let localTranscriptRevision = meeting.transcriptRevision
         let result = try await transport.putMeeting(id: id, baseRevision: base, document: document)
+        try check(pass)
         if host.isMeetingDeleted(id) || meeting.modelContext == nil {
             // Deleted while the upload was in flight: the cloud now has a copy nobody wants.
             if case .ok(let revision) = result, let context = host.cloudModelContext {
@@ -491,10 +549,10 @@ final class CloudSyncEngine: ObservableObject {
                     meeting.cloudRevision = state.revision
                 }
                 host.cloudDidChangeMeetings([meeting])
-                try await push(meeting, id: id, host: host, transport: transport, retrying: true)
+                try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass)
             } else if !retrying {
                 _ = host.cloudCommit { meeting.cloudRevision = state.revision }
-                try await push(meeting, id: id, host: host, transport: transport, retrying: true)
+                try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass)
             } else {
                 // Twice refused without a document to apply: wait for the pull.
                 _ = host.cloudCommit { meeting.cloudRevision = state.revision }
@@ -502,11 +560,12 @@ final class CloudSyncEngine: ObservableObject {
         }
     }
 
-    private func pushTombstones(host: CloudSyncHost, transport: CloudSyncTransport) async throws {
+    private func pushTombstones(host: CloudSyncHost, transport: CloudSyncTransport, context pass: PassContext) async throws {
         guard let context = host.cloudModelContext else { return }
         for (id, base, tombstone) in (host.cloudFetchTombstones() ?? []).map({ ($0.id, $0.cloudRevision, $0) }) {
             guard stillAllowed else { return }
             let result = try await transport.deleteMeeting(id: id, baseRevision: base)
+            try check(pass)
             guard tombstone.modelContext != nil else { continue }
             switch result {
             case .ok:
@@ -518,6 +577,7 @@ final class CloudSyncEngine: ObservableObject {
                 } else {
                     // Another device edited it after this one deleted it: the delete still wins.
                     let again = try await transport.deleteMeeting(id: id, baseRevision: state.revision)
+                    try check(pass)
                     guard tombstone.modelContext != nil else { continue }
                     if case .ok = again { _ = host.cloudCommit { context.delete(tombstone) } }
                     else if case .conflict(let s) = again, s.deleted { _ = host.cloudCommit { context.delete(tombstone) } }
@@ -528,15 +588,16 @@ final class CloudSyncEngine: ObservableObject {
 
     // MARK: Pull
 
-    private func pull(host: CloudSyncHost, transport: CloudSyncTransport) async throws {
+    private func pull(host: CloudSyncHost, transport: CloudSyncTransport, context: PassContext) async throws {
         guard cursor > 0 else { return }
         var pages = 0
         while pages < 200 {
             pages += 1
             guard stillAllowed else { return }
             let page = try await transport.changes(since: cursor, limit: Self.pullPageSize)
+            try check(context)
             try apply(page.changes, host: host)
-            cursor = max(cursor, page.nextSince)
+            setCursor(max(cursor, page.nextSince), for: context)
             if !page.hasMore { break }
         }
     }
@@ -587,9 +648,10 @@ final class CloudSyncEngine: ObservableObject {
 
     // MARK: Reconcile
 
-    private func reconcile(host: CloudSyncHost, transport: CloudSyncTransport) async throws {
+    private func reconcile(host: CloudSyncHost, transport: CloudSyncTransport, context pass: PassContext) async throws {
         guard let context = host.cloudModelContext else { return }
         let manifest = try await transport.manifest()
+        try check(pass)
         note(.info, "Checked the cloud", "\(manifest.entries.filter { !$0.deleted }.count) meetings there")
         let live = host.liveMeetingID
         let pendingDeletes = Set((host.cloudFetchTombstones() ?? []).map(\.id))
@@ -636,6 +698,7 @@ final class CloudSyncEngine: ObservableObject {
             let batch = Array(toFetch[index..<min(index + Self.reconcileBatch, toFetch.count)])
             index += batch.count
             let states = try await transport.fetchMeetings(ids: batch)
+            try check(pass)
             _ = host.cloudCommit {
                 for state in states where !state.deleted && !host.isMeetingDeleted(state.id) && state.id != host.liveMeetingID {
                     guard let document = state.document, let decoded = MeetingSyncDocument.decode(document) else { continue }
@@ -659,7 +722,7 @@ final class CloudSyncEngine: ObservableObject {
                 }
             }
         }
-        cursor = max(manifest.latestSeq, 1)
+        setCursor(max(manifest.latestSeq, 1), for: pass)
         if !inserted.isEmpty { host.cloudDidInsertMeetings(inserted) }
         if changed { host.cloudDidChangeMeetings(updated.filter { $0.modelContext != nil }) }
     }

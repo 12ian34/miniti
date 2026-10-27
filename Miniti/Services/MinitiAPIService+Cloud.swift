@@ -124,6 +124,9 @@ enum CloudSyncError: Error, Equatable {
     case revoked
     case offline
     case server(code: String, status: Int)
+    /// The pass lost its authority (account or credential changed, bookkeeping reset) while a
+    /// request was in flight: nothing it learned may be applied (R3).
+    case superseded
 }
 
 /// Sendable so the main-actor engine can call it across isolation; `MinitiAPIService` is

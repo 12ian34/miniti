@@ -1089,6 +1089,8 @@ final class AppState: ObservableObject {
     @Published var settingsNavigationRequest: SettingsNavigationRequest?
     /// The account id the generation currently belongs to.
     private var accountEmailAnchorID: String?
+    /// The manager's credential generation last seen by `refreshClientAuthStatus` (R3).
+    private var lastSeenCredentialGeneration = -1
     @Published private(set) var managedDevices: [ClientAuthDevice] = []
     @Published private(set) var managedDevicesError: String?
     /// Set when the on-disk meeting store could not be opened at launch (roadmap P0.2).
@@ -10787,6 +10789,13 @@ final class AppState: ObservableObject {
         let status = clientAuthManager.status
         clientAuthStatus = status
         noteAccountIdentity(status.accountID)
+        // A replaced or cleared credential, even for the same account, takes the authority of
+        // any cloud pass in flight (R3).
+        let credentialGeneration = clientAuthManager.credentialGeneration
+        if credentialGeneration != lastSeenCredentialGeneration {
+            lastSeenCredentialGeneration = credentialGeneration
+            cloudSync.invalidatePasses(reason: "credential changed")
+        }
         refreshAccessCard()
     }
 
@@ -10802,6 +10811,7 @@ final class AppState: ObservableObject {
         accountEmailAnchorID = accountID
         accountGeneration += 1
         accountEmailSequence += 1
+        cloudSync.invalidatePasses(reason: "account changed")
         accountEmailLastLoaded = nil
         accountEmailState = .loading
         if accountID != nil, appMode == .managed {

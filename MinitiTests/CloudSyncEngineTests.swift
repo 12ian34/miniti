@@ -9,7 +9,30 @@ import XCTest
 
 /// A server in memory with the same rules as `/api/sync/*`: revision CAS, tombstones, the
 /// trim guard, external-id uniqueness, a change feed with a retained window.
+/// Holds named transport calls until released, so a test can act while a request is in flight.
+final class CallGate: @unchecked Sendable {
+    var holdNames: Set<String> = []
+    private(set) var held = 0
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait(_ name: String) async {
+        guard holdNames.contains(name) else { return }
+        held += 1
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        let waiting = waiters
+        waiters = []
+        held = 0
+        holdNames = []
+        waiting.forEach { $0.resume() }
+    }
+}
+
 final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
+    let gate = CallGate()
+
     struct Row {
         var revision: Int
         var deleted: Bool
@@ -56,12 +79,12 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     func manifest() async throws -> CloudManifest {
-        calls.append("manifest"); try throwIfArmed()
+        calls.append("manifest"); await gate.wait("manifest"); try throwIfArmed()
         return CloudManifest(entries: rows.map { CloudManifestEntry(id: $0.key, revision: $0.value.revision, updatedAt: $0.value.updatedAt, deleted: $0.value.deleted) }, latestSeq: seq)
     }
 
     func changes(since: Int, limit: Int) async throws -> CloudChangesPage {
-        calls.append("changes:\(since)"); try throwIfArmed()
+        calls.append("changes:\(since)"); await gate.wait("changes"); try throwIfArmed()
         if since == 0 || since < oldestRetainedSeq - 1 { throw CloudSyncError.cursorExpired }
         let page = changes.filter { $0.seq > since }.prefix(limit + 1)
         let hasMore = page.count > limit
@@ -86,7 +109,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     func putMeeting(id: UUID, baseRevision: Int, document data: Data) async throws -> CloudPutResult {
-        calls.append("put"); try throwIfArmed()
+        calls.append("put"); await gate.wait("put"); try throwIfArmed()
         let document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         if tier != "pro" { throw CloudSyncError.proRequired }
         if let title = document["title"] as? String, tooLargeTitles.contains(title) { return .tooLarge }
@@ -114,7 +137,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     func deleteMeeting(id: UUID, baseRevision: Int) async throws -> CloudDeleteResult {
-        calls.append("delete"); try throwIfArmed()
+        calls.append("delete"); await gate.wait("delete"); try throwIfArmed()
         guard var row = rows[id] else { return .ok(revision: 0) }
         if row.deleted { return .ok(revision: row.revision) }
         if row.revision != baseRevision { return .conflict(state(id, row)) }
@@ -125,7 +148,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     func status() async throws -> CloudStatus {
-        calls.append("status"); try throwIfArmed()
+        calls.append("status"); await gate.wait("status"); try throwIfArmed()
         let live = rows.values.filter { !$0.deleted }
         return CloudStatus(tier: tier, syncAllowed: tier == "pro", bytes: live.count * 1000, meetingCount: live.count, latestSeq: seq, email: nil, connectedApps: 0, tokens: 0)
     }
@@ -622,6 +645,93 @@ extension CloudSyncEngineTests {
         let id = transport.seed(doc, updatedAt: clock)
         await tick()
         XCTAssertNil(host.meeting(id))
+    }
+
+    // MARK: Pass authority (R3, 2026-10-27)
+
+    private func cursor(for account: String) -> Int { engine.defaults.integer(forKey: CloudSyncEngine.cursorKey(account)) }
+
+    func testAnAccountSwitchDuringAPullDiscardsTheOldAccountsAnswer() async throws {
+        _ = transport.seed(remoteDocument(title: "A1", updatedAt: clock), updatedAt: clock)
+        await tick()
+        XCTAssertEqual(host.allMeetings().map(\.title), ["A1"])
+        let cursorA = cursor(for: "acct_test")
+        XCTAssertGreaterThan(cursorA, 0)
+
+        // A second meeting appears on A; its pull is held while the device switches to B.
+        _ = transport.seed(remoteDocument(title: "A2", updatedAt: clock), updatedAt: clock)
+        transport.gate.holdNames = ["changes"]
+        let syncing = Task { await engine.sync(reason: "test") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        let transportB = FakeCloudTransport()
+        host.cloudAccountID = "acct_b"
+        engine.transport = transportB
+        engine.resetBookkeeping()
+        transport.gate.release()
+        await syncing.value
+        await settle()
+
+        XCTAssertFalse(host.allMeetings().contains { $0.title == "A2" }, "A's page must not land under B")
+        XCTAssertEqual(cursor(for: "acct_test"), cursorA, "A's cursor is not advanced by a stale pass")
+        XCTAssertEqual(transportB.calls.first, "manifest", "B's own reconciliation ran after the stale pass left")
+        XCTAssertGreaterThan(cursor(for: "acct_b"), 0, "B's cursor comes from B's manifest")
+        if case .failed = engine.phase { XCTFail("a superseded pass is not a failure") }
+        if case .paused = engine.phase { XCTFail("nor a pause") }
+    }
+
+    func testAStaleErrorAfterAToBToADoesNotPauseOrMarkTheDevice() async throws {
+        _ = transport.seed(remoteDocument(title: "A1", updatedAt: clock), updatedAt: clock)
+        await tick()
+        for stale in [CloudSyncError.proRequired, .revoked] {
+            transport.gate.holdNames = ["changes"]
+            transport.failNext = stale
+            let syncing = Task { await engine.sync(reason: "test") }
+            try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+            // A to B and back to A while A's first request is outstanding.
+            let transportB = FakeCloudTransport()
+            host.cloudAccountID = "acct_b"; engine.transport = transportB; engine.resetBookkeeping()
+            host.cloudAccountID = "acct_test"; engine.transport = transport; engine.resetBookkeeping()
+            transport.gate.release()
+            await syncing.value
+            await settle()
+            if case .paused(let reason) = engine.phase { XCTFail("the stale \(stale) paused the current account: \(reason)") }
+            XCTAssertTrue(host.tierChanges.isEmpty, "no tier verdict from a stale answer")
+            XCTAssertEqual(engine.phase, .idle)
+        }
+    }
+
+    func testACredentialReplacementDuringAnUploadDoesNotMarkTheMeetingSyncedFromTheStaleAnswer() async throws {
+        let meeting = finished("Local")
+        transport.gate.holdNames = ["put"]
+        let syncing = Task { await engine.sync(reason: "test") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        // Same account, new credential (a key repair or a reauthentication): the pass loses its authority.
+        engine.invalidatePasses(reason: "credential changed")
+        transport.gate.release()
+        await syncing.value
+        await settle()
+
+        XCTAssertFalse(engine.log.contains { $0.kind == .uploaded }, "the stale .ok was not applied as an upload")
+        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 2, "the rerun pushed again under the new authority")
+        XCTAssertEqual(meeting.cloudRevision, 1, "and settled on the cloud copy it found there")
+        XCTAssertNotNil(meeting.syncFingerprint)
+    }
+
+    func testAStaleStatusAnswerIsNotKept() async throws {
+        _ = transport.seed(remoteDocument(title: "A1", updatedAt: clock), updatedAt: clock)
+        await tick()
+        transport.gate.holdNames = ["status"]
+        let syncing = Task { await engine.sync(reason: "test", refreshStatus: true) }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        let transportB = FakeCloudTransport()
+        _ = transportB.seed(remoteDocument(title: "B1", updatedAt: clock), updatedAt: clock)
+        _ = transportB.seed(remoteDocument(title: "B2", updatedAt: clock), updatedAt: clock)
+        host.cloudAccountID = "acct_b"; engine.transport = transportB; engine.resetBookkeeping()
+        transport.gate.release()
+        await syncing.value
+        await settle()
+        // B holds its two meetings plus A1, which the reset made local and B's pass uploaded.
+        XCTAssertEqual(engine.status?.meetingCount, 3, "the status shown is B's own, never A's stale answer")
     }
 }
 
