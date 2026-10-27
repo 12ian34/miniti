@@ -8,6 +8,8 @@ struct SettingsView_iOS: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var searchText = ""
     @State private var selectedDestination: SettingsDestination? = .general
+    /// Compact iPhone: the pushed detail, value based so a request can replace it (F4).
+    @State private var path: [SettingsRoute] = []
 
     private var searchResults: [SettingsSearchItem] {
         SettingsSearchCatalog.availableItems(on: .iOS, appMode: appState.appMode)
@@ -26,19 +28,53 @@ struct SettingsView_iOS: View {
         .onAppear {
             let restored = SettingsDestination.fromLegacyID(appState.selectedSettingsTab)
             selectedDestination = SettingsDestination.available(on: .iOS).contains(restored) ? restored : .general
+            consumeNavigationRequest()
+        }
+        .onChange(of: appState.settingsNavigationRequest) { _, _ in
+            consumeNavigationRequest()
+        }
+        .onChange(of: horizontalSizeClass) { _, newClass in
+            // Keep the intended destination across a size-class change: the compact stack
+            // becomes the sidebar selection and back.
+            if newClass == .regular {
+                if let last = path.last { selectedDestination = last.destination }
+                path = []
+            } else if let destination = selectedDestination, destination != .general, path.isEmpty {
+                path = [SettingsRoute(destination: destination, target: nil)]
+            }
+        }
+    }
+
+    /// Consume one navigation request (Home card, Cloud and API buttons, `jumpToSetting`):
+    /// push or select the destination, then let the detail scroll to the target. A request for
+    /// the destination already shown reuses it; an unavailable destination is dropped.
+    private func consumeNavigationRequest() {
+        guard let request = appState.settingsNavigationRequest else { return }
+        appState.settingsNavigationRequest = nil
+        let available = Set(SettingsDestination.available(on: .iOS))
+        if horizontalSizeClass == .regular {
+            guard let destination = SettingsNavigationPlan.sidebarSelection(for: request, available: available) else { return }
+            selectedDestination = destination
+        } else {
+            guard let next = SettingsNavigationPlan.path(for: request, current: path, available: available) else { return }
+            path = next
+            selectedDestination = request.destination
+        }
+        appState.selectedSettingsTab = request.destination.rawValue
+        appState.pendingSettingsSearchTarget = nil
+        if let target = request.target {
+            DispatchQueue.main.async { appState.pendingSettingsSearchTarget = target }
         }
     }
 
     private var compactSettings: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 if searchText.isEmpty {
                     ForEach(SettingsGroup.allCases) { group in
                         Section(group.title) {
                             ForEach(group.destinations.filter { SettingsDestination.available(on: .iOS).contains($0) }) { destination in
-                                NavigationLink {
-                                    SettingsDetailView_iOS(category: destination)
-                                } label: {
+                                NavigationLink(value: SettingsRoute(destination: destination, target: nil)) {
                                     destinationLabel(destination)
                                 }
                             }
@@ -48,9 +84,7 @@ struct SettingsView_iOS: View {
                     ContentUnavailableView.search(text: searchText)
                 } else {
                     ForEach(searchResults) { item in
-                        NavigationLink {
-                            SettingsDetailView_iOS(category: item.destination, initialSearchTarget: item.id)
-                        } label: {
+                        NavigationLink(value: SettingsRoute(destination: item.destination, target: item.id)) {
                             searchResultLabel(item)
                         }
                     }
@@ -61,6 +95,9 @@ struct SettingsView_iOS: View {
             .searchable(text: $searchText, prompt: "Search settings")
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
+            .navigationDestination(for: SettingsRoute.self) { route in
+                SettingsDetailView_iOS(category: route.destination, initialSearchTarget: route.target)
+            }
         }
     }
 
@@ -140,6 +177,31 @@ struct SettingsView_iOS: View {
         DispatchQueue.main.async {
             appState.pendingSettingsSearchTarget = item.id
         }
+    }
+}
+
+/// One pushed Settings detail on compact iPhone: the destination and, for a search hit or a
+/// navigation request, the row to scroll to (F4).
+struct SettingsRoute: Hashable {
+    let destination: SettingsDestination
+    let target: String?
+}
+
+/// Pure navigation decisions for the iOS Settings, so the rules are tested without views.
+enum SettingsNavigationPlan {
+    /// Compact: the path that shows the request. The displayed destination is reused (the
+    /// detail scrolls to the new target itself); anything else replaces the stack with one
+    /// route. Nil when the destination is not available on iOS.
+    static func path(for request: SettingsNavigationRequest, current: [SettingsRoute], available: Set<SettingsDestination>) -> [SettingsRoute]? {
+        guard available.contains(request.destination) else { return nil }
+        if let last = current.last, last.destination == request.destination { return current }
+        return [SettingsRoute(destination: request.destination, target: request.target)]
+    }
+
+    /// Regular (iPad): the sidebar selection for the request; the detail stack is fresh per
+    /// selection. Nil when unavailable.
+    static func sidebarSelection(for request: SettingsNavigationRequest, available: Set<SettingsDestination>) -> SettingsDestination? {
+        available.contains(request.destination) ? request.destination : nil
     }
 }
 
@@ -434,6 +496,7 @@ private struct SettingsDetailView_iOS: View {
                     }
                     .id("account.usage")
 
+                    ManagedAccountDangerSection()
                 }
 
                 Section("Mode") {

@@ -349,22 +349,11 @@ struct AccountSettingsView: View {
                 }
                 .id("account.usage")
 
+                ManagedAccountDangerSection()
             }
 
             if appState.appMode == .byok {
                 APISettingsView()
-            }
-            
-            Section("Device") {
-                HStack {
-                    Text("Device ID")
-                    Spacer()
-                    Text(DeviceIdentifier.getOrCreateDeviceId())
-                        .foregroundStyle(.secondary)
-                        .font(.system(.caption, design: .default))
-                        .textSelection(.enabled)
-                }
-                .id("account.deviceID")
             }
         }
         .formStyle(.grouped)

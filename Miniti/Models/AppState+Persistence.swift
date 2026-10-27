@@ -134,6 +134,9 @@ extension AppState {
             try persistenceSaveHandler(context)
             clearPersistenceIssue(for: operation)
             if operation != .cloudSync { cloudSync.noteLocalChange() }
+            // F6: a finalisation or import that produced a finished meeting can make the Home
+            // card eligible; the recompute checks the cheap conditions before fetching.
+            if operation != .cloudSync, operation != .liveTranscript, !showAccessCard { refreshAccessCard() }
             return true
         } catch {
             revert?()

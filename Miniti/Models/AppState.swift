@@ -342,7 +342,7 @@ enum SettingsSearchCatalog {
         .init("account.apiMode", "API Mode", section: "Mode", destination: .account, keywords: ["managed", "BYOK", "bring your own keys"]),
         .init("account.deepgramKey", "Deepgram API Key", section: "API Keys", destination: .account, keywords: ["transcription key"], requiresBYOK: true),
         .init("account.openAIKey", "OpenAI API Key", section: "API Keys", destination: .account, keywords: ["insights key"], requiresBYOK: true),
-        .init("account.deviceID", "Device ID", section: "Device", destination: .account, keywords: ["identifier", "UUID"]),
+        .init("account.deviceID", "Device ID", section: "Your account, Support details", destination: .account, keywords: ["identifier", "UUID", "support"]),
 
         .init("recording.microphone", "Capture Microphone", section: "Audio Sources", destination: .recording, keywords: ["mic", "audio input"], platforms: [.macOS]),
         .init("recording.systemAudio", "Capture System Audio", section: "Audio Sources", destination: .recording, keywords: ["screen audio", "video calls"], platforms: [.macOS]),
@@ -1076,6 +1076,13 @@ final class AppState: ObservableObject {
     var accountEmailSequence = 0
     var accountEmailLastLoaded: Date?
     var accountEmailInFlight = false
+    /// One coalesced refresh waiting for the in-flight read or mutation to finish (F2).
+    var accountEmailPending: AccountEmailRefreshRequest?
+    /// Mutations are serialized from this client; reads wait while one runs (F1).
+    var accountEmailMutationInFlight = false
+    var accountEmailMutationTask: Task<Void, Never>?
+    /// One consumable navigation request for the iOS Settings (F4): destination and target.
+    @Published var settingsNavigationRequest: SettingsNavigationRequest?
     /// The account id the generation currently belongs to.
     private var accountEmailAnchorID: String?
     @Published private(set) var managedDevices: [ClientAuthDevice] = []
@@ -7944,6 +7951,8 @@ final class AppState: ObservableObject {
             try persistenceSaveHandler(modelContext)
             didSave = true
             clearPersistenceIssue(for: .liveTranscript)
+            // F6: the first finished meeting on this installation makes the Home card eligible.
+            if payload.meeting.endTime != nil, !showAccessCard { refreshAccessCard() }
         } catch {
             clearPeriodicSaveFingerprintIfCurrent(payload.periodicFingerprint)
             DebugLogger.shared.log(.app, "Save FAILED: \(error.localizedDescription)")
@@ -10766,17 +10775,34 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Recompute the Home card from the current status, email state and saved meetings.
+    /// Recompute the Home card from the current status, email state and saved meetings. The
+    /// cheap conditions go first; the one-row fetch runs only when everything else says yes.
+    /// Called on auth and email changes, on dismissal, and after a successful commit (F6).
     func refreshAccessCard() {
         let status = clientAuthStatus
-        let dismissed = status.accountID.map { UserDefaults.standard.bool(forKey: Self.accessCardDismissedKey(accountID: $0)) } ?? false
-        showAccessCard = Self.accessCardVisible(
-            enrolled: status.isEnrolled,
+        guard let accountID = status.accountID, status.isEnrolled, !status.recoveryKeyAcknowledged,
+              case .loaded(let email) = accountEmailState, !email.isProtected,
+              !UserDefaults.standard.bool(forKey: Self.accessCardDismissedKey(accountID: accountID)) else {
+            if showAccessCard { showAccessCard = false }
+            return
+        }
+        let visible = Self.accessCardVisible(
+            enrolled: true,
             emailState: accountEmailState,
             hasSavedMeeting: hasSavedMeetingOnThisInstallation,
-            recoveryKeyAcknowledged: status.recoveryKeyAcknowledged,
-            dismissed: dismissed
+            recoveryKeyAcknowledged: false,
+            dismissed: false
         )
+        if showAccessCard != visible { showAccessCard = visible }
+    }
+
+    /// Try again after a temporary key failure: a local signing probe with the existing
+    /// credential, then the status refresh (F3). Never enrols, replaces, rotates or re-binds.
+    @discardableResult
+    func retrySigning() -> Bool {
+        let ok = clientAuthManager.retrySigningProbe()
+        refreshClientAuthStatus()
+        return ok
     }
 
     static func accessCardDismissedKey(accountID: String) -> String { "accessCard.dismissed.\(accountID)" }

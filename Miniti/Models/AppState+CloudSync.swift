@@ -409,6 +409,35 @@ enum AccountEmailAddOutcome: Equatable {
     case inUse
     /// Delivery or the server failed; the previous state stands and the action can be retried.
     case failed(String)
+    /// The account changed while the request ran: nothing was applied or shown (F1).
+    case staleAccount
+}
+
+enum AccountEmailRemoveOutcome: Equatable {
+    case removed
+    case failed(String)
+    /// The account changed while the request ran: nothing was applied or shown (F1).
+    case staleAccount
+}
+
+/// A refresh that could not run at once and waits for the in-flight work (F2).
+struct AccountEmailRefreshRequest: Equatable {
+    var reason: String
+    var force: Bool
+}
+
+/// One consumable request to show a Settings destination and scroll to a row (F4). iOS
+/// consumes it once; the Mac goes through `jumpToSetting` directly.
+struct SettingsNavigationRequest: Equatable {
+    let id: UUID
+    let destination: SettingsDestination
+    let target: String?
+
+    init(destination: SettingsDestination, target: String?) {
+        self.id = UUID()
+        self.destination = destination
+        self.target = target
+    }
 }
 
 extension AppState {
@@ -432,13 +461,27 @@ extension AppState {
     /// clears the stamp so the next refresh always goes out.
     static let accountEmailFreshness: TimeInterval = 60
 
-    /// Load the account's email. Coalesced (one in flight), freshness-limited unless `force`,
-    /// and ordered: a response applies only if the account generation is unchanged and no
-    /// newer read or mutation was issued meanwhile.
+    /// Load the account's email (F2). One read in flight at a time; a refresh that arrives
+    /// while a read or a mutation runs is kept as one pending request (force merged with OR)
+    /// and run once the in-flight work ends, for the account current at that time. A forced
+    /// request bypasses the freshness check. A response applies only if the account generation
+    /// is unchanged and no newer read or mutation was issued meanwhile.
     func refreshAccountEmail(reason: String, force: Bool = false) async {
-        guard appMode == .managed, clientAuthStatus.isEnrolled, let api = minitiAPIService else { return }
+        guard appMode == .managed, clientAuthStatus.isEnrolled, minitiAPIService != nil else {
+            accountEmailPending = nil
+            return
+        }
+        if accountEmailInFlight || accountEmailMutationInFlight {
+            accountEmailPending = AccountEmailRefreshRequest(reason: reason, force: force || (accountEmailPending?.force ?? false))
+            return
+        }
         if !force, let last = accountEmailLastLoaded, Date().timeIntervalSince(last) < Self.accountEmailFreshness, case .loaded = accountEmailState { return }
-        guard !accountEmailInFlight else { return }
+        await performAccountEmailRead(reason: reason)
+        await runPendingAccountEmailRefresh()
+    }
+
+    private func performAccountEmailRead(reason: String) async {
+        guard let api = minitiAPIService else { return }
         accountEmailInFlight = true
         defer { accountEmailInFlight = false }
         let generation = accountGeneration
@@ -460,39 +503,88 @@ extension AppState {
         }
     }
 
-    /// Send a confirmation link for `raw`. The verified address, if any, stays until the link
-    /// is opened; the state shows the replacement as pending.
+    /// Consume the pending request, if any, and run it for the current account. Completion
+    /// alone never requeues work: only a new event during the replacement can.
+    private func runPendingAccountEmailRefresh() async {
+        guard let next = accountEmailPending else { return }
+        accountEmailPending = nil
+        guard appMode == .managed, clientAuthStatus.isEnrolled, !accountEmailMutationInFlight else { return }
+        await refreshAccountEmail(reason: next.reason, force: next.force)
+    }
+
+    /// Send a confirmation link for `raw` (F1). Mutations from this client run one at a time;
+    /// the account context is captured before dispatch, revalidated when the turn comes, and
+    /// checked again after the server answers. A result for an account that is no longer
+    /// current is `.staleAccount`: nothing applied, nothing shown. After any completed
+    /// mutation a forced read reconciles the state with the server.
     func addAccountEmail(_ raw: String) async -> AccountEmailAddOutcome {
-        guard let api = minitiAPIService else { return .failed("Not signed in.") }
         let address = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard address.contains("@"), address.count >= 3 else { return .failed("Enter an email address.") }
         if case .loaded(let current) = accountEmailState, current.verified == address { return .alreadyVerified }
-        accountEmailSequence += 1
-        do {
-            try await api.setCloudEmail(address)
-            let verified = accountEmailState.email?.verified
-            accountEmailState = .loaded(AccountEmail(verified: verified, pending: address))
-            accountEmailLastLoaded = Date()
-            return .sent(address)
-        } catch CloudSyncError.server(let code, _) where code == "email_in_use" {
-            return .inUse
-        } catch {
-            return .failed(Self.accountEmailMessage(for: error))
+        return await withAccountEmailMutation(stale: .staleAccount) { [weak self] generation in
+            guard let self, let api = self.minitiAPIService else { return .failed("Not signed in.") }
+            do {
+                try await api.setCloudEmail(address)
+                guard generation == self.accountGeneration else { return .staleAccount }
+                let verified = self.accountEmailState.email?.verified
+                self.accountEmailState = .loaded(AccountEmail(verified: verified, pending: address))
+                self.accountEmailLastLoaded = nil
+                return .sent(address)
+            } catch CloudSyncError.server(let code, _) where code == "email_in_use" {
+                guard generation == self.accountGeneration else { return .staleAccount }
+                return .inUse
+            } catch {
+                guard generation == self.accountGeneration else { return .staleAccount }
+                return .failed(Self.accountEmailMessage(for: error))
+            }
         }
     }
 
-    /// Remove the email. Every web session and connected app on the account goes with it.
-    func removeAccountEmail() async -> String? {
-        guard let api = minitiAPIService else { return "Not signed in." }
-        accountEmailSequence += 1
-        do {
-            try await api.removeCloudEmail()
-            accountEmailState = .loaded(AccountEmail())
-            accountEmailLastLoaded = Date()
-            return nil
-        } catch {
-            return Self.accountEmailMessage(for: error)
+    /// Remove the email (F1 rules as for add). Every web session and connected app on the
+    /// account goes with it.
+    func removeAccountEmail() async -> AccountEmailRemoveOutcome {
+        await withAccountEmailMutation(stale: .staleAccount) { [weak self] generation in
+            guard let self, let api = self.minitiAPIService else { return .failed("Not signed in.") }
+            do {
+                try await api.removeCloudEmail()
+                guard generation == self.accountGeneration else { return .staleAccount }
+                self.accountEmailState = .loaded(AccountEmail())
+                self.accountEmailLastLoaded = nil
+                return .removed
+            } catch {
+                guard generation == self.accountGeneration else { return .staleAccount }
+                return .failed(Self.accountEmailMessage(for: error))
+            }
         }
+    }
+
+    /// Serialize one mutation behind the previous one, revalidate the account before dispatch,
+    /// invalidate older reads, and reconcile afterwards through the F2 queue.
+    private func withAccountEmailMutation<T>(stale: T, _ body: @escaping @MainActor (Int) async -> T) async -> T {
+        let previous = accountEmailMutationTask
+        let generation = accountGeneration
+        let result = Task<T, Never> { @MainActor [weak self] in
+            _ = await previous?.value
+            guard let self else { return stale }
+            guard generation == self.accountGeneration, self.appMode == .managed, self.clientAuthStatus.isEnrolled else { return stale }
+            self.accountEmailMutationInFlight = true
+            self.accountEmailSequence += 1
+            let value = await body(generation)
+            self.accountEmailMutationInFlight = false
+            if generation == self.accountGeneration {
+                // The server's completed change must not be forgotten by any read that ran
+                // alongside: read it back now, for this account.
+                self.accountEmailLastLoaded = nil
+                let queued = self.accountEmailPending
+                self.accountEmailPending = nil
+                await self.refreshAccountEmail(reason: queued?.reason ?? "after mutation", force: true)
+            } else {
+                await self.runPendingAccountEmailRefresh()
+            }
+            return value
+        }
+        accountEmailMutationTask = Task { _ = await result.value }
+        return await result.value
     }
 
     /// Refresh on the browser handoff (the link was opened) and on activation (a link may have

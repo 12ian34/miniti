@@ -115,6 +115,9 @@ struct DataFlowSummary: Equatable {
         var details: String?
         /// The one setting that decides this row.
         var configure: Jump?
+        /// While recording, the preference for the next recording when it differs from the
+        /// active route (F5). Shown without opening Details.
+        var nextRecording: String?
         /// Deepgram and OpenAI stay in their group even when off, so they are easy to find.
         var alwaysVisible = false
 
@@ -167,6 +170,9 @@ struct DataFlowSummary: Equatable {
         var rows: [Row] = []
 
         // Deepgram: audio, straight from the app (miniti only hands out the token in managed mode).
+        // The preference row describes the next recording; while recording, the row describes
+        // the active audio route from the latched session and names the preference when it
+        // differs (F5). The engine of a running session never follows a preference change.
         let deepgramTitle = managed ? "Deepgram" : "Deepgram, with your key"
         let deepgramPath = managed
             ? "Audio goes straight from this device to Deepgram; miniti only supplies the session token."
@@ -177,10 +183,14 @@ struct DataFlowSummary: Equatable {
         let recordedAudio = ""
         #endif
         let speakers = i.onDeviceSpeakers ? " Speakers are told apart on \(i.deviceName)." : " It also tells speakers apart."
+        let preference: Row
+        let preferenceRoute: String
         if let gateStatus, let gateReason {
-            rows.append(Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: gateStatus, summary: gateReason, details: nil, configure: gateJump, alwaysVisible: true))
+            preference = Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: gateStatus, summary: gateReason, details: nil, configure: gateJump, alwaysVisible: true)
+            preferenceRoute = i.sendingAllowed ? "paused, private mode" : "off, permission not given"
         } else if i.onDeviceTranscription && !i.onDeviceTranscriptionCloudFallback {
-            rows.append(Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .off, summary: "Transcription runs on \(i.deviceName); no audio is sent.", details: "A meeting whose language model is not ready on \(i.deviceName) cannot start unless Deepgram fallback is allowed for it.", configure: Jump(label: "Transcription", target: "transcription.model"), alwaysVisible: true))
+            preference = Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .off, summary: "Transcription runs on \(i.deviceName); no audio is sent.", details: "A meeting whose language model is not ready on \(i.deviceName) cannot start unless Deepgram fallback is allowed for it.", configure: Jump(label: "Transcription", target: "transcription.model"), alwaysVisible: true)
+            preferenceRoute = "transcription on \(i.deviceName), no audio sent"
         } else {
             let summary = i.onDeviceTranscription
                 ? "Audio only for a meeting whose language model is not ready on \(i.deviceName), with the meeting title and attendee names."
@@ -188,7 +198,23 @@ struct DataFlowSummary: Equatable {
             let details = (i.onDeviceTranscription
                 ? "Transcription normally runs on \(i.deviceName); Deepgram is the fallback you allowed. "
                 : "") + deepgramPath + " The title and names help it spell them right." + speakers + recordedAudio
-            rows.append(Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .usedForRecordings, summary: summary, details: details, configure: Jump(label: "Transcription", target: i.onDeviceTranscription ? "transcription.fallback" : "transcription.model"), alwaysVisible: true))
+            preference = Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .usedForRecordings, summary: summary, details: details, configure: Jump(label: "Transcription", target: i.onDeviceTranscription ? "transcription.fallback" : "transcription.model"), alwaysVisible: true)
+            preferenceRoute = i.onDeviceTranscription ? "transcription on \(i.deviceName), audio to Deepgram only when the model is not ready" : "audio to Deepgram"
+        }
+        if i.isRecording {
+            var active: Row
+            let sameAsActive: Bool
+            if i.sessionTranscribesOnDevice {
+                active = Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .off, summary: "This recording is transcribed on \(i.deviceName); no audio is sent.", details: preference.details, configure: preference.configure, alwaysVisible: true)
+                sameAsActive = preferenceRoute.hasPrefix("transcription on \(i.deviceName)")
+            } else {
+                active = Row(id: "deepgram", group: .transcriptionAndAI, title: deepgramTitle, status: .usedForRecordings, summary: "Audio from this recording, the meeting title and attendee names, for the transcript.", details: deepgramPath + " The title and names help it spell them right." + speakers + recordedAudio, configure: preference.configure, alwaysVisible: true)
+                sameAsActive = preferenceRoute == "audio to Deepgram"
+            }
+            if !sameAsActive { active.nextRecording = "Next recording: \(preferenceRoute)." }
+            rows.append(active)
+        } else {
+            rows.append(preference)
         }
 
         // OpenAI: text, through the miniti backend in managed mode.
@@ -317,9 +343,14 @@ extension AppState {
         guard let item = SettingsSearchCatalog.items.first(where: { $0.id == id }) else { return }
         selectedSettingsTab = item.destination.rawValue
         pendingSettingsSearchTarget = nil
+        #if os(iOS)
+        // The iOS Settings consumes one request: push or select the destination, then scroll.
+        settingsNavigationRequest = SettingsNavigationRequest(destination: item.destination, target: id)
+        #else
         DispatchQueue.main.async { [weak self] in
             self?.pendingSettingsSearchTarget = id
         }
+        #endif
     }
 
     /// The current settings as `DataFlowSummary` inputs. Read-only; nothing here touches the network.
@@ -428,6 +459,12 @@ private struct DataFlowRowView<Configure: View>: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let next = row.nextRecording {
+                Text(next)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if row.details != nil || row.configure != nil {
                 HStack(spacing: MinitiDesignSystem.Spacing.section) {
                     if let jump = row.configure {
@@ -451,7 +488,7 @@ private struct DataFlowRowView<Configure: View>: View {
         }
         .padding(.vertical, MinitiDesignSystem.Spacing.hairline)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(row.title). \(row.status.text). \(row.summary)")
+        .accessibilityLabel("\(row.title). \(row.status.text). \(row.summary)\(row.nextRecording.map { " \($0)" } ?? "")")
     }
 
     private var statusText: some View {

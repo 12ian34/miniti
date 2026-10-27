@@ -234,10 +234,15 @@ final class DataFlowSummaryTests: XCTestCase {
         i.sessionTranscribesOnDevice = false
         XCTAssertEqual(DataFlowSummary.build(i).headline, "This recording: audio to Deepgram, transcript to OpenAI.")
 
-        // Private mode switched on during a Deepgram session: the audio half stays, the AI half pauses.
+        // Private mode switched on during a Deepgram session: the audio half stays, the AI half pauses,
+        // and the Deepgram row describes the active route with the preference on its own line (F5).
         i.privateMode = true
-        XCTAssertEqual(DataFlowSummary.build(i).headline, "This recording: audio to Deepgram. Cloud AI is paused, so no insights are requested.")
-        XCTAssertEqual(row(DataFlowSummary.build(i), "deepgram").status, .paused("private mode"), "the row describes the next recording's policy")
+        let paused = DataFlowSummary.build(i)
+        XCTAssertEqual(paused.headline, "This recording: audio to Deepgram. Cloud AI is paused, so no insights are requested.")
+        XCTAssertEqual(row(paused, "deepgram").status, .usedForRecordings, "the running session still sends audio")
+        XCTAssertEqual(row(paused, "deepgram").summary, "Audio from this recording, the meeting title and attendee names, for the transcript.")
+        XCTAssertEqual(row(paused, "deepgram").nextRecording, "Next recording: paused, private mode.")
+        XCTAssertEqual(row(paused, "openai").status, .paused("private mode"), "the insight loop reads the policy live")
 
         // Switched back: the AI half resumes, the engine was never in question.
         i.privateMode = false
@@ -250,6 +255,50 @@ final class DataFlowSummaryTests: XCTestCase {
 
         i.isRecording = false
         XCTAssertEqual(DataFlowSummary.build(i).headline, DataFlowSummary.idleHeadline)
+    }
+
+    func testWhileRecordingTheDeepgramRowFollowsTheSessionAndNamesTheNextRecording() {
+        var i = macDefaults
+        i.isRecording = true
+
+        // Cloud session, preference flipped to on-device without fallback mid-recording.
+        i.sessionTranscribesOnDevice = false
+        i.onDeviceTranscription = true
+        var s = DataFlowSummary.build(i)
+        XCTAssertEqual(row(s, "deepgram").status, .usedForRecordings)
+        XCTAssertEqual(row(s, "deepgram").nextRecording, "Next recording: transcription on this Mac, no audio sent.")
+        XCTAssertEqual(s.headline, "This recording: audio to Deepgram, transcript to OpenAI.")
+
+        // On-device session, preference flipped back to Deepgram mid-recording.
+        i.sessionTranscribesOnDevice = true
+        i.onDeviceTranscription = false
+        s = DataFlowSummary.build(i)
+        XCTAssertEqual(row(s, "deepgram").status, .off)
+        XCTAssertEqual(row(s, "deepgram").summary, "This recording is transcribed on this Mac; no audio is sent.")
+        XCTAssertEqual(row(s, "deepgram").nextRecording, "Next recording: audio to Deepgram.")
+        XCTAssertEqual(s.headline, "This recording: transcribing on this Mac, transcript to OpenAI.")
+
+        // A session that fell back to Deepgram under an on-device preference with fallback allowed.
+        i.sessionTranscribesOnDevice = false
+        i.onDeviceTranscription = true
+        i.onDeviceTranscriptionCloudFallback = true
+        s = DataFlowSummary.build(i)
+        XCTAssertEqual(row(s, "deepgram").status, .usedForRecordings, "the fallback is the active route")
+        XCTAssertEqual(row(s, "deepgram").nextRecording, "Next recording: transcription on this Mac, audio to Deepgram only when the model is not ready.")
+
+        // Preference and session agree: no next-recording line.
+        i.onDeviceTranscription = false
+        i.onDeviceTranscriptionCloudFallback = false
+        XCTAssertNil(row(DataFlowSummary.build(i), "deepgram").nextRecording)
+        i.sessionTranscribesOnDevice = true
+        i.onDeviceTranscription = true
+        XCTAssertNil(row(DataFlowSummary.build(i), "deepgram").nextRecording)
+
+        // Idle rows keep the current-settings meaning.
+        i.isRecording = false
+        i.sessionTranscribesOnDevice = false
+        XCTAssertEqual(row(DataFlowSummary.build(i), "deepgram").status, .off)
+        XCTAssertNil(row(DataFlowSummary.build(i), "deepgram").nextRecording)
     }
 
     func testIdleProcessingAndQueuedExportsDoNotChangeTheRows() {
@@ -310,6 +359,7 @@ final class DataFlowSummaryTests: XCTestCase {
             for row in s.rows {
                 texts.append(row.summary)
                 if let d = row.details { texts.append(d) }
+                if let n = row.nextRecording { texts.append(n) }
             }
             for text in texts {
                 let lower = text.lowercased()

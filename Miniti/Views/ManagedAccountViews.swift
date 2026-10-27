@@ -222,7 +222,6 @@ struct AccountSectionModel: Equatable {
         var hasLocalRecoveryKey = true
         var keyState: KeyState = .usable
         var isPro = false
-        var isProViaAccount = false
         var isMac = true
     }
 
@@ -308,7 +307,9 @@ struct AccountSectionModel: Equatable {
             accountActions = [.signInAgain, .signOut]
         }
 
-        let planLine = i.isPro ? (i.isProViaAccount ? "Pro, from another device on this account" : "Pro") : "Free"
+        // Your account keeps the plan word only; Plan and billing holds the limit, the source
+        // and the controls (L3).
+        let planLine = i.isPro ? "Pro" : "Free"
         let restoreTitle = i.isMac ? "Restore Pro purchase with a license key" : "Restore App Store purchases"
         let restoreCaption = i.isMac
             ? "This restores a purchase. It does not sign you into an account. Bought Pro already? Sign in to that account first."
@@ -333,6 +334,12 @@ struct AccountSectionModel: Equatable {
         )
     }
 
+    /// Search targets that live inside the Support details disclosure (L2): opening one
+    /// expands the disclosure before the scroll.
+    static func revealsSupportDetails(target: String?) -> Bool {
+        target == "account.deviceID"
+    }
+
     /// Whether an action sends a signed request (and so is disabled on a temporary failure).
     static func needsSignature(_ action: Action) -> Bool {
         switch action {
@@ -355,7 +362,6 @@ extension AppState {
             inputs.keyState = .temporarilyUnavailable
         }
         inputs.isPro = isPro
-        inputs.isProViaAccount = isProViaAccount
         #if os(macOS)
         inputs.isMac = true
         #else
@@ -428,7 +434,11 @@ struct AccountAccessCard: View {
                     Button {
                         Task { @MainActor in
                             let outcome = await appState.addAccountEmail(pendingAddress)
-                            resendNotice = outcome == .sent(pendingAddress) ? "sent again" : "could not send; try again in a minute"
+                            switch outcome {
+                            case .sent: resendNotice = "sent again"
+                            case .staleAccount: resendNotice = nil
+                            default: resendNotice = "could not send; try again in a minute"
+                            }
                         }
                     } label: {
                         primaryLabel("resend", systemImage: "arrow.clockwise")
@@ -536,14 +546,13 @@ struct ManagedAccountSettingsSection: View {
     @State private var isConfirmingReveal = false
     @State private var isConfirmingReplace = false
     @State private var isConfirmingRemoveEmail = false
-    @State private var isConfirmingSignOut = false
-    @State private var isConfirmingDelete = false
     @State private var pendingRemoval: ClientAuthDevice?
     @State private var isBusy = false
     @State private var notice: String?
     @State private var isEditingEmail = false
     @State private var emailDraft = ""
     @State private var emailNotice: String?
+    @State private var supportDetailsExpanded = false
     @FocusState private var emailFieldFocused: Bool
 
     private var status: ClientAuthStatus { appState.clientAuthStatus }
@@ -556,7 +565,6 @@ struct ManagedAccountSettingsSection: View {
                 yourAccountSection
                 waysToSignInSection
                 devicesSection
-                destructiveSection
             } else {
                 Section("Account") {
                     unenrolledRows
@@ -575,6 +583,10 @@ struct ManagedAccountSettingsSection: View {
                 isEditingEmail = true
                 emailFieldFocused = true
             }
+            if AccountSectionModel.revealsSupportDetails(target: target) { supportDetailsExpanded = true }
+        }
+        .onAppear {
+            if AccountSectionModel.revealsSupportDetails(target: appState.pendingSettingsSearchTarget) { supportDetailsExpanded = true }
         }
         .sheet(isPresented: $isPresentingRestore) {
             RestoreRecoveryKeySheet()
@@ -613,18 +625,6 @@ struct ManagedAccountSettingsSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(removeEmailMessage)
-        }
-        .confirmationDialog("Sign this device out?", isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
-            Button("Sign out", role: .destructive) { signOut() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(model.signOutMessage)
-        }
-        .confirmationDialog("Delete this account?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
-            Button("Delete account", role: .destructive) { deleteAccount() }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Every device loses access, and the email and recovery key stop working. This does not cancel a Pro subscription; manage that from the App Store or the Polar customer portal first. Meetings stored on your devices are not deleted.")
         }
         .confirmationDialog(
             pendingRemoval?.current == true ? "Sign this device out?" : "Remove this device?",
@@ -673,9 +673,10 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup("Support details") {
+            DisclosureGroup("Support details", isExpanded: $supportDetailsExpanded) {
                 detailRow("Account id", status.accountID ?? "none")
                 detailRow("Device id", DeviceIdentifier.getOrCreateDeviceId())
+                    .id("account.deviceID")
                 detailRow("Sign-in key", status.isHardwareBacked ? "Secure Enclave" : "Software")
                 detailRow("App", "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
             }
@@ -837,26 +838,6 @@ struct ManagedAccountSettingsSection: View {
         }
     }
 
-    // MARK: Sign out and delete
-
-    private var destructiveSection: some View {
-        Section {
-            HStack {
-                if model.accountActions.contains(.signOut) {
-                    Button("Sign out this device") { isConfirmingSignOut = true }
-                        .disabled(isBusy)
-                }
-                Spacer()
-                if model.accountActions.contains(.deleteAccount) {
-                    Button("Delete account") { isConfirmingDelete = true }
-                        .disabled(isBusy || model.signedActionsDisabled)
-                        .foregroundStyle(ColorPalette.Status.error)
-                }
-            }
-            .id("account.delete")
-        }
-    }
-
     // MARK: Actions
 
     @ViewBuilder
@@ -889,11 +870,12 @@ struct ManagedAccountSettingsSection: View {
                 Button("With recovery key…") { isPresentingRestore = true }
             }
         case .tryAgain:
-            Button("Try again") { Task { await appState.ensureManagedEnrollment(trigger: "settings") } }
-        case .signOut:
-            Button("Sign out this device") { isConfirmingSignOut = true }.disabled(isBusy)
-        case .deleteAccount:
-            Button("Delete account") { isConfirmingDelete = true }.disabled(disabled)
+            Button("Try again") {
+                if appState.retrySigning() { notice = "The sign-in key works again." }
+            }
+        case .signOut, .deleteAccount:
+            // Rendered by ManagedAccountDangerSection below Plan and billing (L1).
+            EmptyView()
         }
     }
 
@@ -912,6 +894,9 @@ struct ManagedAccountSettingsSection: View {
             let outcome = await appState.addAccountEmail(emailDraft)
             isBusy = false
             switch outcome {
+            case .staleAccount:
+                isEditingEmail = false
+                emailDraft = ""
             case .sent(let address):
                 isEditingEmail = false
                 emailDraft = ""
@@ -934,14 +919,22 @@ struct ManagedAccountSettingsSection: View {
         Task { @MainActor in
             let outcome = await appState.addAccountEmail(pending)
             isBusy = false
-            emailNotice = outcome == .sent(pending) ? "Sent again to \(pending)." : "Could not send. Try again in a minute."
+            switch outcome {
+            case .sent: emailNotice = "Sent again to \(pending)."
+            case .staleAccount: emailNotice = nil
+            default: emailNotice = "Could not send. Try again in a minute."
+            }
         }
     }
 
     private func removeEmail() {
         isBusy = true
         Task { @MainActor in
-            emailNotice = await appState.removeAccountEmail()
+            switch await appState.removeAccountEmail() {
+            case .removed: emailNotice = nil
+            case .failed(let message): emailNotice = message
+            case .staleAccount: emailNotice = nil
+            }
             isBusy = false
         }
     }
@@ -1006,6 +999,50 @@ struct ManagedAccountSettingsSection: View {
         Task { @MainActor in
             _ = await appState.removeManagedDevice(installationID: device.installationID)
             isBusy = false
+        }
+    }
+}
+
+
+/// Sign out and Delete account, rendered below Plan and billing on both platforms (L1).
+struct ManagedAccountDangerSection: View {
+    @EnvironmentObject var appState: AppState
+    @State private var isConfirmingSignOut = false
+    @State private var isConfirmingDelete = false
+    @State private var isBusy = false
+
+    private var model: AccountSectionModel { AccountSectionModel.make(appState.accountSectionInputs) }
+    private var accountIsPresent: Bool { appState.clientAuthStatus.isEnrolled || appState.clientAuthStatus.keyUnusable }
+
+    var body: some View {
+        if accountIsPresent {
+            Section {
+                HStack {
+                    if model.accountActions.contains(.signOut) {
+                        Button("Sign out this device") { isConfirmingSignOut = true }
+                            .disabled(isBusy)
+                    }
+                    Spacer()
+                    if model.accountActions.contains(.deleteAccount) {
+                        Button("Delete account") { isConfirmingDelete = true }
+                            .disabled(isBusy || model.signedActionsDisabled)
+                            .foregroundStyle(ColorPalette.Status.error)
+                    }
+                }
+                .id("account.delete")
+            }
+            .confirmationDialog("Sign this device out?", isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
+                Button("Sign out", role: .destructive) { signOut() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(model.signOutMessage)
+            }
+            .confirmationDialog("Delete this account?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
+                Button("Delete account", role: .destructive) { deleteAccount() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every device loses access, and the email and recovery key stop working. This does not cancel a Pro subscription; manage that from the App Store or the Polar customer portal first. Meetings stored on your devices are not deleted.")
+            }
         }
     }
 

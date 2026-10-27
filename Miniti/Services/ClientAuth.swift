@@ -675,6 +675,9 @@ final class ClientAuthManager: @unchecked Sendable {
     /// A key failure (either kind) happened and no signature has succeeded since: the stored
     /// key must not be relied on, and "Sign in again" takes the fresh-key route.
     private var keyFailureActive = false
+    /// The active failure was classified permanent (allow-listed or malformed key). The status
+    /// reports a temporary failure only when this is false (F3).
+    private var keyFailurePermanent = false
     static let keyUnavailableLaunchesKey = "clientAuth.keyUnavailableLaunches"
     /// Server clock minus local clock, learned from `Date` response headers, so a wrong
     /// device clock does not make every proof fall outside the server's skew window.
@@ -861,7 +864,7 @@ final class ClientAuthManager: @unchecked Sendable {
             recoveryKeyAcknowledged: credentials.recoveryKeyAcknowledged,
             isHardwareBacked: credentials.installationKey.kind == "se",
             keyUnusable: keyUnusableWithoutRecovery,
-            keyTemporarilyUnavailable: keyFailureActive && !keyUnusableWithoutRecovery
+            keyTemporarilyUnavailable: keyFailureActive && !keyFailurePermanent && !keyUnusableWithoutRecovery
         )
     }
 
@@ -906,7 +909,7 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Record a key failure and produce the error the caller propagates. Never under `lock`.
     private func keyFailure(_ failure: InstallationKeyFailure, phase: String) -> ClientAuthError {
         let hasRecovery: Bool = { lock.lock(); defer { lock.unlock() }; return !(credentials?.recoveryKey.isEmpty ?? true) }()
-        lock.lock(); keyFailureActive = true; lock.unlock()
+        lock.lock(); keyFailureActive = true; keyFailurePermanent = { if case .unusable = failure { return true }; return false }(); cachedKey = nil; lock.unlock()
         switch failure {
         case .unusable(let reason):
             if !hasRecovery { lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock() }
@@ -916,6 +919,24 @@ final class ClientAuthManager: @unchecked Sendable {
             noteTemporaryKeyFailure()
             emit("client_auth_key_unavailable", level: .warning, details: ["reason": reason, "phase": phase])
             return .keyUnavailable(reason)
+        }
+    }
+
+    // MARK: Signing probe (F3, docs/account-sending-consent-ux-plan.md)
+
+    /// Local key-usability check behind Try again: load the stored key and sign a labelled
+    /// probe through the same classification as a real signature. No request leaves, no token
+    /// or credential changes; a success clears the temporary failure through the ordinary
+    /// successful-signature rule, a failure is classified as usual. It says the key can sign
+    /// here, not that the server still accepts this installation.
+    @discardableResult
+    func retrySigningProbe() -> Bool {
+        do {
+            let key = try installationKey()
+            _ = try signing { try key.signJWS(payload: ["probe": "miniti-signing-probe", "iat": Int(Date().timeIntervalSince1970)]) }
+            return true
+        } catch {
+            return false
         }
     }
 
