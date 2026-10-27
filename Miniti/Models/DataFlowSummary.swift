@@ -322,7 +322,7 @@ struct DataFlowSummary: Equatable {
         #else
         let files = ""
         #endif
-        let footer = "Kept on \(i.deviceName): \(joined(kept)).\(files) Granola imports are text and stay here. Exports and cloud copies are the rows above."
+        let footer = "Available on \(i.deviceName): \(joined(kept)).\(files) Granola imports are saved as text. Cloud sync and configured exports can copy meetings, including imports. Exports and cloud copies are the rows above."
 
         return DataFlowSummary(rows: rows, headline: headline, footer: footer)
     }

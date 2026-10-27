@@ -29,6 +29,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | I need to… | Read |
 |---|---|
 | Ship a new version | [RELEASE.md](RELEASE.md) (the 10-step runbook) |
+| Run the current 3.4.0 release QA | [docs/release-3-4-0-qa.md](docs/release-3-4-0-qa.md) (build 140 artifacts verified; partial Mac render/navigation QA recorded; three copy findings corrected in source for the next build; device QA remains open) |
 | Regenerate App Store / marketing screenshots for iOS, iPad, and macOS | [scripts/screenshots/README.md](scripts/screenshots/README.md) (real-app captures via the `-MinitiScreenshotScene` launch argument, framed by `render_frames.py`) |
 | Understand a specific file | [docs/architecture.md](docs/architecture.md) |
 | Understand a cross-file pattern (hot paths, watchdogs, save queues, recovery) | [docs/patterns.md](docs/patterns.md) |

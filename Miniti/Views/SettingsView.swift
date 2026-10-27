@@ -2017,8 +2017,8 @@ private struct ThirdPartyAIConsentRow: View {
                 .foregroundStyle(.secondary)
         }
         Text(appState.hasAcceptedTerms
-             ? "While you record, the live audio, meeting title and attendee names go to Deepgram for transcription, and the transcript, your notes and the title go to OpenAI for summaries, action items, questions and speaker names. Nothing is stored by either."
-             : "Recording and AI features are off and nothing is sent. You can still read, import and export your meetings.")
+             ? "When you use these services, Deepgram receives live audio, the meeting title and attendee names for transcription. OpenAI receives the transcript, your notes, the meeting title and attendee names for summaries, action items, questions and speaker names. On the managed plan, text goes to OpenAI through miniti."
+             : "You have not allowed Deepgram transcription or OpenAI meeting insights. Recording asks for permission again. You can still read, import and export your meetings.")
             .font(.caption)
             .foregroundStyle(.secondary)
         if appState.hasAcceptedTerms {

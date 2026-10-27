@@ -98,9 +98,9 @@ enum OnDeviceTranscriptionCopy {
 /// Private mode copy, shared by Settings and the insights pane.
 enum PrivateModeCopy {
     static let title = "Private mode"
-    static let description = "Your meeting stays on this Mac. Transcription and speakers run here, and nothing is sent to miniti, Deepgram, OpenAI or TypeSafe. You lose summaries, questions, Sales, templates, catch-up, speaker names, Playbook and investigations. Coaching, history, search, export and calendar still work."
+    static let description = "Transcription and speaker separation run on this Mac. Cloud AI and cloud sync are paused, and meetings started in private mode stay excluded from sync. Summaries, questions, Sales, templates, catch-up, speaker names, Playbook and investigations are off. Coaching, history and search still work. Configured exports, calendar, account checks and diagnostics follow their own settings."
     static let languagesNote = "Needs the model for your language on this Mac. " + OnDeviceTranscriptionCopy.joined(OnDeviceTranscriptionSupport.cloudOnlyLanguageNames) + " cannot be recorded in private mode yet."
-    static let insightsNotice = "Private mode is on. This meeting stays on your Mac, so there are no summaries, questions or specialist views. Coaching still runs here."
+    static let insightsNotice = "Private mode is on. Cloud AI is off, so there are no summaries, questions or specialist views. Coaching runs on this Mac. Configured exports still apply."
     static let unavailable = "Private mode needs a Mac with Apple silicon."
     /// Shown under the switch while it is locked (R1).
     static let lockedWhileRecording = "Stop the recording first. Private mode chooses the engine for the next recording; it cannot move a running one."

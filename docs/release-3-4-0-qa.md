@@ -1,6 +1,6 @@
 # 3.4.0 build 140 release QA
 
-Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Tick each line with the device, date and result. Automated state before QA: macOS 1,037 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
+Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Tick each line with the device, date and result. Automated state before QA: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
 
 Sources: enrollment plan A5 lines, [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md) U2/U1/B6a QA, [reliability-follow-up-plan.md](reliability-follow-up-plan.md) R1–R3 device checks, [audio.md](audio.md) "Initial microphone failure".
 
@@ -8,7 +8,7 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 
 ## 1. Builds
 
-- [ ] `fastlane mac test` and `fastlane ios test` green on the combined tree.
+- [x] 2026-10-27: reviewed the build-140 Fastlane scan logs: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This is log verification, not a fresh rerun.
 - [ ] Mac DMG built by `fastlane mac release`, `scripts/release-info.sh` reports 3.4.0 build 140; installed over 3.3.0 on the personal account (reads only) and launched.
 - [ ] iOS build 140 on TestFlight, installed over 3.3.0 on the personal iPhone.
 
@@ -59,11 +59,11 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 - [ ] R1: start a cloud recording, open Settings, Privacy: the private mode switch is disabled with "Stop the recording first"; stop, switch it on, the next recording transcribes on the Mac; start a private recording, the switch cannot be turned off until stop.
 - [ ] R2 History: Settings, Privacy, withdraw permission; History, Update on a saved meeting shows the permission sheet and the debug log shows no insights request; allow, Update works.
 - [ ] R2 Watch (iPhone): withdraw permission, record on the watch, let it transfer: History shows the recording waiting for permission, the audio stays, no grant in the log; allow in Settings, Privacy: it transcribes once, without a tap.
-- [ ] R3: on a Mac with cloud on, start a sync by pressing Sync now and immediately Switch account (throwaway accounts): no meeting from the old account appears under the new one, the Cloud tab shows the new account's status, no pause from the old account's answer.
+- [ ] R3: use disposable accounts and synthetic meetings only. Start sync, then Switch account while a response is outstanding: no late response from the old pass is applied, no old cursor/status/error is written under the new account, and the new pass proceeds. The deterministic held-transport tests provide the race evidence; a quick manual switch alone cannot prove it. Existing local meetings remain and may upload to the new account under today's behavior; preventing that is deferred B4 ownership work, not R3. Do not run this on a personal library.
 
 ## 7. Audio, the microphone failure path (Mac)
 
-- [ ] AirPods Max (or any Bluetooth headset) microphone selected in the Home mic pill, mic plus system audio, a call app also using the headset: start recording. If the mic fails to start, remote speech keeps transcribing, the warning names the microphone, and the mic recovers within the three retries; own speech returns on the left channel without doubling the remote speech.
+- [ ] AirPods Max (or any Bluetooth headset) microphone selected in the Home mic pill, mic plus system audio, a call app also using the headset: start recording. If the mic fails to start, remote speech keeps transcribing, the warning names the microphone, and at most three automatic retries run. If the microphone becomes available, own speech returns on the left channel without doubling remote speech. If it remains unavailable, the warning persists and offers recovery; system audio must keep flowing. A permanent hardware refusal is not expected to heal merely because retries ran.
 - [ ] Stop during the retry window: stops cleanly, no late warning, no second meeting.
 - [ ] Switch output between Mac speakers and the headset mid-recording: transcription continues, counters keep moving.
 - [ ] Built-in microphone selected: both sides transcribe.
@@ -71,15 +71,34 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 - [ ] Transcript health lines in the debug log show converted buffers from every requested source within two seconds of start.
 - [ ] Floating surface during a recording with a calendar handoff due: all four actions show their full names on two lines (Jose's report, 2026-10-27).
 
-## 9. Settings polish (Mac and iPhone)
+## 8. Settings polish (Mac and iPhone)
 
 - [ ] Support details and Sending's Not in use open with the round chevron control, not a bare arrow; hover highlight on the Mac.
 - [ ] Every support detail copies with its button; Copy all puts the four lines on the clipboard.
 - [ ] Add email: after Send link the row shows the green "Link sent to address. Open it in that email to finish" line with Resend, and the field is gone (Charlie's report, 2026-10-27).
 
-## 8. iPhone TestFlight 140
+## 9. iPhone TestFlight 140
 
 - [ ] Upgrade over 3.3.0 keeps the Pro account and records.
 - [ ] Restore App Store purchases wording and sentence under Plan and billing.
 - [ ] Email sign-in error copy: a dropped connection while waiting for the link says so, not "expired link".
 - [ ] Live Activity and watch transfer unchanged.
+
+
+## Independent QA evidence, 2026-10-27, build 140
+
+- Artifact checks passed: root release app, app inside the read-only mounted DMG, installed `/Applications/Miniti.app`, and iOS IPA all report 3.4.0 (140). Both release-app and DMG-contained app nested signatures verify. Sandbox, microphone, network and Sparkle Mach lookup entitlements are present. DMG staple validates; Gatekeeper accepts the app as Notarized Developer ID. The temporary DMG mount was detached.
+- Latest Fastlane report contains a completed `upload_to_testflight` step without a failure. This does not prove processing/distribution or installation on the phone; verify build 140 in TestFlight on the device.
+- Public macOS `/api/version` and Sparkle appcast still advertise 3.3.0 at inspection. The prepared build is not yet the public Sparkle release.
+- Installed Mac UI inspected at its current approximately 900 × 550 Settings window: Account shows a verified address and Pro, full email visible; Support details expands/collapses and exposes labelled copy controls. Sending has readable groups, Configure and Details links, and collapsed Not in use. Privacy → Sending, Sending → Configure Cloud, and Cloud → Manage email reach their intended content. Cloud shows Up to date. No account, consent, recording or cloud preferences were changed. This is partial visual/navigation QA, not a pass for every state, minimum size, keyboard, VoiceOver or iOS.
+- No hardware recording, first-run consent, account mutations, migrated-key, Watch or iPhone/iPad device scenario was run during this inspection. Those checkboxes stay open.
+
+### Build-140 copy findings, corrected in source after QA
+
+1. `Miniti/Services/OnDeviceTranscriptionService.swift`, `PrivateModeCopy.description`: the installed Privacy screen still says “nothing is sent to miniti”. This conflicts with the documented allowance for ordinary account/diagnostic traffic and configured exports. Describe local transcription and disabled cloud AI/sync specifically, while keeping configured exports explicit. No behavior expansion requested.
+2. `Miniti/Models/DataFlowSummary.swift`, footer: “Granola imports are text and stay here” implies they cannot sync; finished imported meetings are eligible unless excluded. Describe local storage and processing, then state that cloud sync and configured exports can copy meetings, including imports. The preceding “Kept on this Mac” must not imply exclusive storage either.
+3. `Miniti/Views/SettingsView.swift`, consent summary: the installed Privacy screen still says “Nothing is stored by either.” The revised consent work intentionally removed unsupported absolute retention claims. Reuse the reviewed data/purpose copy without this absolute, rather than inventing a new provider-retention guarantee.
+
+All three areas are corrected in source: private-mode copy names local transcription, paused cloud AI/sync and separately configured exports/metadata; Sending explicitly allows cloud/export copies of imported meetings; the Privacy summary describes recipient/data/purpose without a retention guarantee. The related private-mode insight notice and consent-denied summary no longer make absolute local-only/no-send claims either. Behavior and consent version are unchanged.
+
+Functional audio QA on installed build 140 can continue. The Mac Debug build passes. Targeted iOS simulator tests passed: 26 tests across DataFlowSummaryTests, PrivateModeTests and ThirdPartyAIConsentTests, zero failures. Mac-hosted tests are deliberately deferred while Ian records, because the test host shares the personal app settings. Fable must include the copy commit in a new build (141 if unused), run the usual release checks after Ian finishes recording, and inspect the changed text at minimum window/large text. Do not overwrite build 140 or treat these source edits as installed. No push, publication or App Store submission is authorized by this QA record.
