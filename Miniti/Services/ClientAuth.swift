@@ -1071,27 +1071,46 @@ final class ClientAuthManager: @unchecked Sendable {
         emit("client_auth_key_repaired", level: .info, details: [:])
     }
 
+    // MARK: Credential commit contract (review 2026-10-27)
+    //
+    // Every credential write goes through `commit`: under the one lock that `clearLocal`
+    // also holds, the generation is checked against the value captured when the writer
+    // started, the store is written and memory updated. A write whose generation has moved
+    // (a sign-out, a revoke, a replacement) is refused, so a late answer can never resurrect
+    // a cleared credential or land on a newer one. Writers that replace the credential's
+    // identity (a new key, a new account, a new recovery key, a clear) bump the generation;
+    // token-only updates keep it, so they never invalidate unrelated valid work and never
+    // touch the key-failure state (that is `storeEnrollment`'s job alone).
+
+    /// A first enrolment: no credential to replace, so no expectation; bumps the generation.
     private func persist(_ newValue: ClientAuthCredentials) throws {
-        guard store.save(newValue) else { throw ClientAuthError.storage }
         lock.lock(); defer { lock.unlock() }
+        guard store.save(newValue) else { throw ClientAuthError.storage }
         credentials = newValue
         cachedKey = nil
+        credentialEpoch += 1
     }
 
-    /// Commit a credential replacement as one operation ordered against `clearLocal`: the
-    /// epoch is checked, the store written and memory updated under the same lock, so a
-    /// sign-out that lands before the write wins and one that lands after it clears what was
-    /// written (review 2026-10-27). The epoch moves on with the new credential.
-    private func persistReplacement(_ newValue: ClientAuthCredentials, expectedEpoch: Int) throws {
+    /// Commit `newValue` if the generation is still `expectedEpoch`. `replaces` says whether
+    /// the write changes the credential's identity and so moves the generation on.
+    private func commit(_ newValue: ClientAuthCredentials, expectedEpoch: Int, replaces: Bool) throws {
         lock.lock(); defer { lock.unlock() }
         guard credentialEpoch == expectedEpoch else {
-            DebugLogger.shared.log(.app, "Device auth: a credential replacement finished after a sign-out; discarded")
+            DebugLogger.shared.log(.app, "Device auth: a credential write finished after a sign-out or replacement; discarded")
             throw ClientAuthError.notEnrolled
         }
         guard store.save(newValue) else { throw ClientAuthError.storage }
         credentials = newValue
         cachedKey = nil
-        credentialEpoch += 1
+        if replaces { credentialEpoch += 1 }
+    }
+
+    /// The current credential and the generation it was read under, for a writer that is
+    /// about to await something.
+    private func snapshot() -> (credentials: ClientAuthCredentials, epoch: Int)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let credentials else { return nil }
+        return (credentials, credentialEpoch)
     }
 
     /// A credential replacement (a new key the server accepted) is what ends a key failure;
@@ -1103,12 +1122,24 @@ final class ClientAuthManager: @unchecked Sendable {
         keyFailureActive = false
     }
 
-    private func update(_ change: (inout ClientAuthCredentials) -> Void) {
-        lock.lock()
-        guard var value = credentials else { lock.unlock(); return }
-        lock.unlock()
+    /// Mutate the stored credential as one committed operation. `expectedEpoch` is the
+    /// generation the caller captured before its await (nil for a synchronous change: the
+    /// current generation is used). Returns false when nothing was written: no credential, a
+    /// stale generation, or a storage failure.
+    @discardableResult
+    private func update(expectedEpoch: Int? = nil, replaces: Bool = false, _ change: (inout ClientAuthCredentials) -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard var value = credentials else { return false }
+        if let expectedEpoch, expectedEpoch != credentialEpoch {
+            DebugLogger.shared.log(.app, "Device auth: a credential update finished after a sign-out or replacement; discarded")
+            return false
+        }
         change(&value)
-        try? persist(value)
+        guard store.save(value) else { return false }
+        credentials = value
+        cachedKey = nil
+        if replaces { credentialEpoch += 1 }
+        return true
     }
 
     private func now() -> Int64 {
@@ -1279,9 +1310,9 @@ final class ClientAuthManager: @unchecked Sendable {
     /// (`POST /api/auth/account/attach` with the link instead of a recovery key). The device
     /// ends up without a recovery key of its own; Settings offers to rotate one.
     func attachToAccount(loginLinkID: String) async throws -> Bool {
-        guard isEnrolled else { throw ClientAuthError.notEnrolled }
+        guard isEnrolled, let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
         let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["login_link_id": loginLinkID])
-        update { credentials in
+        let written = update(expectedEpoch: epoch, replaces: true) { credentials in
             credentials.recoveryKey = ""
             credentials.accessToken = response.accessToken
             credentials.accessExpiresAt = now() + (response.expiresIn ?? 3600)
@@ -1290,6 +1321,7 @@ final class ClientAuthManager: @unchecked Sendable {
             if let account = response.accountId { credentials.accountID = account }
             credentials.recoveryKeyAcknowledged = true
         }
+        guard written else { throw ClientAuthError.notEnrolled }
         DebugLogger.shared.log(.app, "Device auth: installation \(response.moved == true ? "moved to another account by email" : "already on that account")")
         return response.moved ?? true
     }
@@ -1320,9 +1352,8 @@ final class ClientAuthManager: @unchecked Sendable {
             recoveryKeyAcknowledged: acknowledged
         )
         if let expectedEpoch {
-            try persistReplacement(value, expectedEpoch: expectedEpoch)
+            try commit(value, expectedEpoch: expectedEpoch, replaces: true)
         } else {
-            lock.lock(); credentialEpoch += 1; lock.unlock()
             try persist(value)
         }
     }
@@ -1487,10 +1518,8 @@ final class ClientAuthManager: @unchecked Sendable {
         if !force, let (token, exp) = cachedToken(), exp - now() > Self.accessRefreshMargin {
             return token
         }
-        let refreshToken: String? = {
-            lock.lock(); defer { lock.unlock() }
-            return credentials?.refreshToken
-        }()
+        guard let (snapshotCredentials, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
+        let refreshToken: String? = snapshotCredentials.refreshToken
         do {
             let tokens: TokenResponse
             if let refreshToken {
@@ -1502,13 +1531,16 @@ final class ClientAuthManager: @unchecked Sendable {
             } else {
                 tokens = try await grantChallengeOrRebind()
             }
-            update { credentials in
+            let written = update(expectedEpoch: epoch) { credentials in
                 credentials.accessToken = tokens.accessToken
                 credentials.accessExpiresAt = now() + (tokens.expiresIn ?? 3600)
                 if let refresh = tokens.refreshToken { credentials.refreshToken = refresh }
                 if let cap = tokens.deviceCap { credentials.deviceCap = cap }
                 if let account = tokens.accountId { credentials.accountID = account }
             }
+            // Signed out, revoked or replaced while the grant was in flight: the token belongs
+            // to a credential this device no longer holds, so it is not a usable result.
+            guard written else { throw ClientAuthError.notEnrolled }
             return tokens.accessToken
         } catch ClientAuthError.revoked {
             DebugLogger.shared.log(.app, "Device auth: installation revoked by the server; clearing local credentials")
@@ -1642,8 +1674,13 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Generate a new recovery key and ask the server to accept it. Returns the formatted key.
     func rotateRecoveryKey() async throws -> String {
         let newKey = ClientAuthCrypto.generateRecoveryKey()
+        guard let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
         let _: Empty = try await authorizedJSON("POST", "/auth/account/recovery-key/rotate", body: ["new_recovery_key": newKey])
-        update { $0.recoveryKey = newKey; $0.recoveryKeyAcknowledged = false }
+        // The server now knows only the new key; a credential that is no longer current cannot
+        // take it, and nothing else may keep the old one as if it still worked.
+        guard update(expectedEpoch: epoch, replaces: true, { $0.recoveryKey = newKey; $0.recoveryKeyAcknowledged = false }) else {
+            throw ClientAuthError.notEnrolled
+        }
         return ClientAuthCrypto.formatRecoveryKey(newKey)
     }
 
@@ -1657,8 +1694,9 @@ final class ClientAuthManager: @unchecked Sendable {
         guard let recoveryKey = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else {
             throw ClientAuthError.invalidRecoveryKey
         }
+        guard let (_, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
         let response: AttachResponse = try await authorizedJSON("POST", "/auth/account/attach", body: ["recovery_key": recoveryKey])
-        update { credentials in
+        let written = update(expectedEpoch: epoch, replaces: true) { credentials in
             credentials.recoveryKey = recoveryKey
             credentials.accessToken = response.accessToken
             credentials.accessExpiresAt = now() + (response.expiresIn ?? 3600)
@@ -1668,6 +1706,7 @@ final class ClientAuthManager: @unchecked Sendable {
             // The person typed this key from their other device; no save-your-key nudge.
             credentials.recoveryKeyAcknowledged = true
         }
+        guard written else { throw ClientAuthError.notEnrolled }
         DebugLogger.shared.log(.app, "Device auth: installation \(response.moved == true ? "moved to another account" : "already on that account")")
         return response.moved ?? true
     }

@@ -910,6 +910,84 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(direct)
     }
 
+    func testATokenRefreshCommitCannotUndoALocalClear() async throws {
+        // Review of f3ee4d9: the refresh answer is being written when the clear lands.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = SaveGateStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        StubURLProtocol.handler = { _ in Self.tokens("acct_same") }
+        let refreshing = Task { try await manager.forceRefresh() }
+        let entered = await Task.detached { store.entered.wait(timeout: .now() + 3) == .success }.value
+        XCTAssertTrue(entered)
+        let clearing = Task.detached { manager.clearLocal(reason: "signout") }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        store.release.signal()
+        await clearing.value
+        _ = try? await refreshing.value
+        XCTAssertFalse(manager.isEnrolled, "a token-only commit must not resurrect cleared credentials")
+        XCTAssertNil(store.load(), "the persistent credential must stay cleared")
+    }
+
+    func testARefreshAnswerAfterAClearAndReEnrolmentIsRefusedAndNeverLandsOnTheNewCredential() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        // The old account's refresh is slow; meanwhile the device signs out and signs in to another account.
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/api/auth/token" { return Self.tokens("acct_old") }
+            return (404, Data())
+        }
+        StubURLProtocol.delay = 0.4
+        let refreshing = Task { try await manager.forceRefresh() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        restoreStub(account: "acct_new")
+        // The restore stub answers the re-enrolment; the slow refresh still gets the old account's tokens.
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            request.url?.path == "/api/auth/token" ? Self.tokens("acct_old") : restoreHandler(request)
+        }
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        let newToken = store.load()?.accessToken
+        do {
+            _ = try await refreshing.value
+            XCTFail("a stale refresh must not return a usable token")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .notEnrolled)
+        }
+        XCTAssertEqual(store.load()?.accountID, "acct_new", "the old account's tokens never overwrite the new credential")
+        XCTAssertEqual(store.load()?.accessToken, newToken)
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+    }
+
+    func testAKeyRotationAnswerAfterAClearIsRefused() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        StubURLProtocol.handler = { _ in (200, Data("{}".utf8)) }
+        StubURLProtocol.delay = 0.3
+        let rotating = Task { try await manager.rotateRecoveryKey() }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        do {
+            _ = try await rotating.value
+            XCTFail("the rotation landed after the clear")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .notEnrolled)
+        }
+        XCTAssertNil(store.load())
+        XCTAssertFalse(manager.isEnrolled)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
