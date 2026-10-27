@@ -5,7 +5,9 @@ Two XCTest targets share the same shared test and support sources in `MinitiTest
 - `MinitiTests` — tests the macOS `Miniti` host app
 - `MinitiMobileTests` — tests the iOS `MinitiMobile` host app. It runs fewer cases because audio-source ring/RMS, export helpers, the system-callback watchdog, native long-transcript layout, and main-window navigation tests are macOS-only, partly offset by iOS-only Live Activity privacy and StoreKit-state tests
 
-Covers JSON decoding, data models, pure computation, payload construction, the persistence policy with injected failures, the managed API transport with a stubbed `URLSession`, and the post-audio meeting journeys at the `AppState` level. No XCUITest target: view wiring is covered by the launch smoke gate (`scripts/screenshots/smoke.sh`) and the manual matrices below. Audio capture and the live Deepgram socket stay manual.
+Covers JSON decoding, data models, pure computation, payload construction, the persistence policy with injected failures, the managed API transport with a stubbed `URLSession`, and the post-audio meeting journeys at the `AppState` level. No XCUITest target: the launch smoke gate (`scripts/screenshots/smoke.sh`) checks scene readiness and rendering; interaction and layout still need the manual matrices below. Audio capture and the live Deepgram socket stay manual.
+
+The [test quality and coverage plan](test-quality-and-coverage-plan.md) (2026-10-27, planned; roadmap P0.12) captures the full app/backend audit and T01–T17: misleading assertions, isolated helpers, real storage, billing/privacy races, complete journeys, UI/design, model quality and performance. Its audit baseline is separate from the historical test results below. No new tests or fixes are implemented by that plan.
 
 ## Test files
 

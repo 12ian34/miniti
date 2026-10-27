@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Planned, approved by Ian on 2026-10-26 for a future update. No implementation or release number is assigned by this document. The audit examined app `0a0961d` and backend through `3512172`; the enrollment incident notes were then reviewed at app `963b236`. The cross-repository tracker is [roadmap.md](roadmap.md), P0.11. This work is separate from the ownership migrations in [enrollment-identity-plan.md](enrollment-identity-plan.md), Track B. On 2026-10-26 Ian also approved the Sending and consent UX slices U1/U2 below. Optional email-first account protection is specified once in that plan, B6a; it can ship ahead of the ownership migrations.
+Planned, approved by Ian on 2026-10-26. The R-series items have no release number; U1 and U2 were assigned to 3.4.0 build 139 the same day (see [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md)). The audit examined app `0a0961d` and backend through `3512172`; the enrollment incident notes were then reviewed at app `963b236`. The cross-repository tracker is [roadmap.md](roadmap.md), P0.11. This work is separate from the ownership migrations in [enrollment-identity-plan.md](enrollment-identity-plan.md), Track B. On 2026-10-26 Ian also approved the Sending and consent UX slices U1/U2 below. Optional email-first account protection is specified once in that plan, B6a; it can ship ahead of the ownership migrations.
 
 Ian accepted audit findings 1, 3, 4, 5 and the four other findings. Finding 2, disabling configured webhooks/CRM in private mode, was **rejected**: private mode means keeping meeting data under the person's control. Deliberately configured exports remain permitted. Do not add an export ban, erase outbox items, or change export defaults under this plan. Sending copy must distinguish external AI processing from user-controlled exports and describe the running session accurately.
 
@@ -89,7 +89,7 @@ Do not blindly replace device-enrollment's inspect/bind/consume sequence: its Re
 
 U1 and U2 were pulled into 3.4.0 (build 139) on 2026-10-26; the implementation plan, file list, tests and QA lines are in [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series items below stay future work.
 
-These are future-update changes. The current 3.4.0 build and its QA results are not changed by this document. B6a in the enrollment plan owns email/account/billing UX; do not implement a second account state machine here.
+U1 and U2 ship in 3.4.0 build 139; the 137 and 138 builds and their QA results are superseded and the A5 QA is repeated on 139. B6a in the enrollment plan owns email/account/billing UX; do not implement a second account state machine here.
 
 ### U1: Sending is readable at a glance
 

@@ -22,9 +22,11 @@ Within a priority, order is intentional unless a production incident changes it.
 Current order, reconciled 2026-10-26:
 
 1. Use the recorded 3.4.0 QA in P1.4a: Mac build 137 on macOS 27 and iPhone build 138 passed the recorded scenarios; macOS 26 is unmeasured with Ian's explicit release waiver. Built, deployed, tested and released remain distinct states.
-2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review; no version is assigned yet. On 2026-10-26 Ian assigned U2, U1 and B6a to 3.4.0 (build 139, release held); the implementation plan is [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series stays unversioned.
+2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review. On 2026-10-26 Ian assigned U2, U1 and B6a to 3.4.0 (build 139, release held); the implementation plan is [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series stays unversioned.
 3. Continue enrollment A3/A4 and Track B only under the slice-specific decisions, compatibility tests and cutover rules in the enrollment plan.
 4. Keep the unresolved long-session, device QA, measurement and platform work below. Historical implementation phases document why the code exists; do not restart completed auth, persistence or CI work.
+
+Testing follow-up added 2026-10-27: P0.12 captures the full app/backend test review. Start with isolated helpers and exact billing/delivery regressions, then purchase, insights, consent/account and real-storage coverage. Pair regressions with their existing P0.1/P0.11 implementation owners; this adds no release assignment or change to the build 139 scope above.
 
 ## P0 — protect users and releases
 
@@ -559,11 +561,21 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.11 Fix permission, account-switch and delivery races; clarify Sending and consent
 
-**Status (2026-10-26):** approved for a future update, not implemented and no release number assigned. [reliability-follow-up-plan.md](reliability-follow-up-plan.md) holds the evidence, eight behavioral slices plus U1 Sending/U2 consent UX, regression requirements, dependencies and compatibility gates. Optional email-first account protection is B6a in the enrollment plan, an early slice independent of the ownership migration.
+**Status (2026-10-26):** approved; U1 and U2 assigned to 3.4.0 build 139, the R-series not yet versioned; nothing implemented. [reliability-follow-up-plan.md](reliability-follow-up-plan.md) holds the evidence, eight behavioral slices plus U1 Sending/U2 consent UX, regression requirements, dependencies and compatibility gates. Optional email-first account protection is B6a in the enrollment plan, an early slice independent of the ownership migration.
 
 Scope: private-mode transitions during capture; consistent AI-content consent; account/generation fencing for cloud work; bounded Watch import retries; safe webhook coalescing; current-state resend after terminal webhook failure; History response revision guards; atomic web/confirmation link consumption. Deliberately configured webhook/CRM exports remain allowed in private mode, per Ian. U1 groups Sending into concise transcription/AI, sync/exports and account/connections sections with accurate states and a single Configure action per row. U2 shortens first-run disclosure and keeps Allow/Not now visible outside the scroll body, including small-window and accessibility QA. This does not authorize ownership migrations or claim current QA closes these issues.
 
 **Complete when:** each slice's real-action regression passes, both Apple bundles pass on the combined tree, backend store/route tests pass where affected, and the named device scenarios are recorded. Existing account IDs, credentials, data and user-configured exports are preserved.
+
+### P0.12 Strengthen app and backend test quality and coverage
+
+**Status (2026-10-27):** planned at Ian's request, not implemented; no release assigned. [test-quality-and-coverage-plan.md](test-quality-and-coverage-plan.md) holds the audit evidence and T01–T17 implementation slices across macOS, iOS, Watch integration and `miniti-api`.
+
+The review reproduced concurrent double billing with the backend test double and showed that the whole suite stayed green after reducing the four-hour cap to two or removing revoked-device filtering. It also found a manual webhook retry test whose sender ignores a missing payload, missing purchase/insights handler coverage, optional real-storage checks, and gaps in UI interaction, recovery, async transitions and model quality.
+
+**Sequence:** repair test isolation/failure reporting; strengthen billing, delivery and purchase regressions; add insights and real-storage contracts with the P0.11 permission/account fixes; then recording/Watch journeys, migrations, UI/accessibility, model quality, cross-repository fixtures and sustained performance. Remove brittle constant/prose checks after protecting the intended behavior. P0.1 phase 3 and P0.11 retain ownership of their production fixes; P0.6/P0.7 remain the related UI/performance contracts.
+
+**Complete when:** all T01–T17 acceptance criteria have recorded evidence, known failure reproductions pass with their owning fixes, required storage/UI checks execute rather than skip, and hardware/provider-only boundaries are explicit. Existing useful tests stay; test count and aggregate coverage are not acceptance gates.
 
 ## P1 — reliable at scale
 
