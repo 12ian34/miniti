@@ -12,6 +12,9 @@ struct WatchImportJob: Codable, Identifiable, Equatable {
         case queued
         case transcribing
         case waitingForMinutes = "waiting_for_minutes"
+        /// Deepgram and OpenAI are not allowed yet: audio and job kept, nothing sent, resumed
+        /// once when permission is granted (narrowed R2, 2026-10-27).
+        case waitingForPermission = "waiting_for_permission"
         case insights
         case done
         case failed
@@ -48,6 +51,7 @@ struct WatchImportJob: Codable, Identifiable, Equatable {
         case .queued: return "waiting to transcribe"
         case .transcribing: return "transcribing"
         case .waitingForMinutes: return "waiting for minutes"
+        case .waitingForPermission: return "waiting for permission"
         case .insights: return "writing the summary"
         case .done: return "ready"
         case .failed: return message ?? "failed"
@@ -156,7 +160,7 @@ final class WatchImportService: ObservableObject {
 
     func retry(_ id: UUID) {
         guard var job = jobs.first(where: { $0.id == id }) else { return }
-        guard job.status == .failed || job.status == .waitingForMinutes else { return }
+        guard job.status == .failed || job.status == .waitingForMinutes || job.status == .waitingForPermission else { return }
         job.status = job.isComplete ? .queued : .receiving
         job.message = nil
         job.updatedAt = Date()
@@ -180,7 +184,8 @@ final class WatchImportService: ObservableObject {
     func kick() {
         guard !isRunning else { return }
         guard let appState, appState.modelContext != nil else { return }
-        guard let next = jobs.first(where: { $0.status == .queued || $0.status == .waitingForMinutes }) else { return }
+        let permitted = appState.aiContentPermitted
+        guard let next = jobs.first(where: { $0.status == .queued || $0.status == .waitingForMinutes || ($0.status == .waitingForPermission && permitted) }) else { return }
         isRunning = true
         Task { @MainActor in
             await run(next)
@@ -217,11 +222,26 @@ final class WatchImportService: ObservableObject {
             DebugLogger.shared.log(.app, "Watch import deferred \(job.id): \(reason)")
         }
 
+        /// Permission for Deepgram and OpenAI is absent: keep the audio and the job, send
+        /// nothing, and let the worker pick it up once when the answer is yes. Not a failure,
+        /// not done, not retried on its own.
+        func waitForPermission(_ stage: String) {
+            job.status = .waitingForPermission
+            job.message = "Needs permission for Deepgram and OpenAI. Allow it in Settings, Privacy."
+            job.updatedAt = Date()
+            upsert(job)
+            DebugLogger.shared.log(.app, "Watch import waiting for permission \(job.id) at \(stage)")
+        }
+
         // Already a meeting? (A crash between save and ledger write, or during insights.)
         if let existing = existingMeeting(for: job.id, in: appState) {
             job.meetingID = existing.id
             let hasInsights = !(existing.summaryText ?? "").isEmpty
             if !hasInsights, !existing.fullTranscript.isEmpty {
+                guard appState.aiContentPermitted else {
+                    waitForPermission("insights")
+                    return
+                }
                 job.status = .insights
                 upsert(job)
                 await appState.generateFinalInsightsAndSave(
@@ -237,6 +257,12 @@ final class WatchImportService: ObservableObject {
         }
         guard appState.privateModeEnabled == false else {
             fail("Private mode is on. Watch recordings are transcribed by Deepgram, so turn it off to continue.")
+            return
+        }
+        // Checked at dispatch, and again before the upload and before the insights: a request
+        // already in flight may finish, the next one needs the answer.
+        guard appState.aiContentPermitted else {
+            waitForPermission("dispatch")
             return
         }
 
@@ -310,6 +336,13 @@ final class WatchImportService: ObservableObject {
             }
         }
 
+        // Permission withdrawn while the grant or the file was being prepared: no upload.
+        guard appState.aiContentPermitted else {
+            if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
+            waitForPermission("upload")
+            return
+        }
+
         // 4. Transcribe. A dropped connection (or the app being suspended mid-upload) is not a
         // failure of the recording: it goes back to the queue.
         let result: WatchTranscriptionClient.Result
@@ -360,7 +393,12 @@ final class WatchImportService: ObservableObject {
             await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: result.duration / 60)
         }
 
-        // 6. Insights, through the same path a live meeting takes at the end.
+        // 6. Insights, through the same path a live meeting takes at the end. Withdrawn
+        // meanwhile: the meeting is saved and the job waits; the resume generates them.
+        guard appState.aiContentPermitted else {
+            waitForPermission("insights")
+            return
+        }
         await appState.generateFinalInsightsAndSave(
             for: meeting, transcript: meeting.fullTranscript, language: job.language,
             existingTitle: "", includeSales: false

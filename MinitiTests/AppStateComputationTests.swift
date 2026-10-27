@@ -3108,6 +3108,59 @@ final class ThirdPartyAIConsentTests: XCTestCase {
         }
     }
 
+    func testHistoryUpdateSendsNothingWithoutPermissionAndNeedsItAgainForTheNextRequest() async throws {
+        // Narrowed R2 (2026-10-27): History's Update is a real external AI send and must ask first.
+        let defaults = UserDefaults.standard
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer { for (key, value) in saved { if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let session = TestSupport.stubbedSession()
+        let manager = TestSupport.enrolledAuthManager(session: session)
+        let state = AppState()
+        state.appModeRaw = AppMode.managed.rawValue
+        state.clientAuthManager = manager
+        state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        state.refreshClientAuthStatus()
+        state.insightsMode = .standard
+        state.privateModeEnabled = false
+        let meeting = Meeting(title: "saved")
+        meeting.segments = [TranscriptSegment(text: "we agreed to ship on Friday", speaker: 0, timestamp: 1, isFinal: true)]
+        StubURLProtocol.handler = { _ in (500, Data("{}".utf8)) }
+        func insightsRequests() -> Int { StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/insights") == true }.count }
+
+        // Unanswered: nothing sent, the permission sheet is the answer.
+        await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(insightsRequests(), 0)
+        XCTAssertTrue(state.showThirdPartyAIConsent)
+
+        // Declined: the same.
+        state.showThirdPartyAIConsent = false
+        state.setThirdPartyAIConsent(false)
+        await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(insightsRequests(), 0)
+        XCTAssertTrue(state.showThirdPartyAIConsent)
+
+        // Allowed: the normal action sends.
+        state.showThirdPartyAIConsent = false
+        state.setThirdPartyAIConsent(true)
+        await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(insightsRequests(), 1)
+        XCTAssertFalse(state.showThirdPartyAIConsent)
+
+        // Withdrawn while a request is in flight: that one finishes, the next needs permission.
+        StubURLProtocol.delay = 0.3
+        let inFlight = Task { await state.generateInsightsForMeeting(meeting) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        StubURLProtocol.delay = 0
+        state.setThirdPartyAIConsent(false)
+        await inFlight.value
+        XCTAssertEqual(insightsRequests(), 2, "a dispatched request may finish")
+        await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(insightsRequests(), 2, "the next request needed permission again")
+    }
+
     #if os(macOS)
     func testPresentingTheScreenAnswersNothing() {
         withCleanConsentDefaults {

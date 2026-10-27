@@ -1,4 +1,5 @@
 import AVFoundation
+import SwiftData
 import XCTest
 #if os(iOS)
 @testable import MinitiMobile
@@ -163,6 +164,119 @@ final class WatchImportTests: XCTestCase {
         service.retry(id)
         XCTAssertEqual(service.jobs[0].status, .receiving, "no manifest yet, so it waits for files")
         XCTAssertTrue(service.jobs[0].isRemovable)
+    }
+
+    // MARK: Permission (narrowed R2, 2026-10-27)
+
+    private let consentKeys = ["acceptedTermsVersion", "declinedTermsVersion", "hasAcceptedTerms"]
+    /// Kept for the test's lifetime: a temporary container tears its context down under the worker.
+    private var container: ModelContainer?
+
+    private func withCleanConsent(_ body: () async throws -> Void) async rethrows {
+        let defaults = UserDefaults.standard
+        let saved = consentKeys.map { ($0, defaults.object(forKey: $0)) }
+        defer { for (key, value) in saved { if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        consentKeys.forEach { defaults.removeObject(forKey: $0) }
+        try await body()
+    }
+
+    /// An enrolled managed `AppState` with an in-memory store whose network goes through the stub.
+    private func stubbedState(session: URLSession) throws -> AppState {
+        let manager = TestSupport.enrolledAuthManager(session: session)
+        let state = AppState()
+        state.appModeRaw = AppMode.managed.rawValue
+        state.clientAuthManager = manager
+        state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        state.refreshClientAuthStatus()
+        let container = try TestSupport.makeInMemoryContainer()
+        self.container = container
+        state.modelContext = container.mainContext
+        return state
+    }
+
+    /// One 30 s recording: its segment file and the manifest, which makes the job runnable.
+    private func dropOnePartRecording() throws -> (id: UUID, segment: URL) {
+        let id = UUID()
+        let started = Date()
+        let seg0 = WatchSegmentTransfer(recordingID: id, index: 0, offset: 0, duration: 30, startedAt: started, language: "en", isManifest: false)
+        let url = drop(seg0, contents: Data([1]))
+        service.noteArrival(seg0, at: url)
+        let manifest = WatchRecordingManifest(
+            id: id, protocolVersion: 1, startedAt: started, endedAt: started.addingTimeInterval(30), language: "en", state: .stopped,
+            segments: [WatchRecordingSegment(index: 0, offset: 0, duration: 30, byteCount: 1, filename: "segment-000.m4a")]
+        )
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let manifestTransfer = WatchSegmentTransfer(recordingID: id, index: -1, offset: 0, duration: 30, startedAt: started, language: "en", isManifest: true)
+        service.noteArrival(manifestTransfer, at: drop(manifestTransfer, contents: try encoder.encode(manifest)))
+        return (id, url)
+    }
+
+    private func grantRequests() -> Int {
+        StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/session/prerecorded") == true }.count
+    }
+
+    func testArrivalWithoutPermissionKeepsTheJobAndAudioAndResumesOnceWhenGranted() async throws {
+        try await withCleanConsent {
+            StubURLProtocol.reset()
+            defer { StubURLProtocol.reset() }
+            let session = TestSupport.stubbedSession()
+            let state = try stubbedState(session: session)
+            state.setThirdPartyAIConsent(false)
+            service.appState = state
+            StubURLProtocol.handler = { _ in (200, Data("{}".utf8)) }
+
+            let (_, segment) = try dropOnePartRecording()
+            try await TestSupport.waitUntil { self.service.jobs.first?.status == .waitingForPermission }
+            XCTAssertTrue(FileManager.default.fileExists(atPath: segment.path), "the audio is kept")
+            XCTAssertEqual(grantRequests(), 0, "no grant, no upload, no insights without permission")
+            XCTAssertEqual(service.jobs.first?.message, "Needs permission for Deepgram and OpenAI. Allow it in Settings, Privacy.")
+
+            // Kicks without permission change nothing: no retry loop.
+            service.kick()
+            try await Task.sleep(nanoseconds: 150_000_000)
+            XCTAssertEqual(service.jobs.first?.status, .waitingForPermission)
+            XCTAssertEqual(grantRequests(), 0)
+
+            // Granted: the worker resumes once and asks for the grant. The grant is refused for
+            // cause here, so the job ends failed and nothing reaches Deepgram. (An offline grant
+            // would requeue and spin: that is R4, outside this slice, and must not be used as the
+            // stop in this test.)
+            StubURLProtocol.handler = { request in
+                request.url?.path.hasSuffix("/session/prerecorded") == true ? (500, Data(#"{"error":"boom"}"#.utf8)) : (200, Data("{}".utf8))
+            }
+            state.setThirdPartyAIConsent(true)
+            service.kick()
+            try await TestSupport.waitUntil { self.service.jobs.first?.status == .failed }
+            XCTAssertEqual(grantRequests(), 1, "resumed once")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: segment.path))
+        }
+    }
+
+    func testWithdrawalWhileTheGrantIsInFlightPreventsTheUpload() async throws {
+        try await withCleanConsent {
+            StubURLProtocol.reset()
+            defer { StubURLProtocol.reset() }
+            let session = TestSupport.stubbedSession()
+            let state = try stubbedState(session: session)
+            state.setThirdPartyAIConsent(true)
+            service.appState = state
+            let grant = #"{"access_token":"dg-token","token_type":"Bearer","expires_in":600,"expires_at":"2099-01-01T00:00:00Z","session_id":"s1"}"#
+            StubURLProtocol.handler = { request in
+                request.url?.path.hasSuffix("/session/prerecorded") == true ? (200, Data(grant.utf8)) : (200, Data("{}".utf8))
+            }
+            StubURLProtocol.delay = 0.3
+
+            let (_, segment) = try dropOnePartRecording()
+            try await TestSupport.waitUntil { self.grantRequests() == 1 }
+            StubURLProtocol.delay = 0
+            // Withdrawn while the grant answer is on its way: the grant may finish, the upload may not start.
+            state.setThirdPartyAIConsent(false)
+            try await TestSupport.waitUntil { self.service.jobs.first?.status == .waitingForPermission }
+            XCTAssertNil(service.jobs.first?.meetingID, "nothing was transcribed")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: segment.path))
+            XCTAssertEqual(grantRequests(), 1)
+        }
     }
 
     func testStitchSkipsUnreadablePartsAndCopiesASingleGoodOne() async throws {

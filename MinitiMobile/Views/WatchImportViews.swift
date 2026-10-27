@@ -23,7 +23,7 @@ struct WatchImportRows: View {
                         Spacer()
                         if job.status == .transcribing || job.status == .insights {
                             ProgressView().controlSize(.small)
-                        } else if job.status == .failed || job.status == .waitingForMinutes {
+                        } else if job.status == .failed || job.status == .waitingForMinutes || job.status == .waitingForPermission {
                             Button("Try again") { imports.retry(job.id) }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)

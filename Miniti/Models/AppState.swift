@@ -1019,6 +1019,10 @@ final class AppState: ObservableObject {
         if !allowed {
             declinedTermsVersion = Self.currentTermsVersion
         }
+        #if os(iOS)
+        // A watch recording that waited for this answer resumes once, through the worker.
+        if allowed { WatchImportService.shared.kick() }
+        #endif
         DebugLogger.shared.log(.app, allowed ? "Deepgram and OpenAI: allowed" : "Deepgram and OpenAI: not allowed, nothing is sent")
     }
     
@@ -6894,9 +6898,21 @@ final class AppState: ObservableObject {
         deletedMeetingIDs.contains(id)
     }
     
-    /// Generate only the currently selected insight view for a saved meeting.
+    /// Permission for Deepgram and OpenAI, checked at the moment an external AI-content request
+    /// is about to leave (narrowed R2, 2026-10-27). A request already dispatched may finish;
+    /// the next one needs the answer again, so callers re-check after their preparatory awaits.
+    var aiContentPermitted: Bool { hasAcceptedTerms }
+
+    /// Generate only the currently selected insight view for a saved meeting. History's Update
+    /// action: with permission unanswered, declined or withdrawn it sends nothing and shows the
+    /// permission sheet instead.
     func generateInsightsForMeeting(_ meeting: Meeting) async {
         if insightsMode == .training || privateModeEnabled {
+            return
+        }
+        guard aiContentPermitted else {
+            DebugLogger.shared.log(.app, "History insights refused: Deepgram and OpenAI not allowed")
+            showThirdPartyAIConsent = true
             return
         }
         if insightsMode == .docs {
@@ -6928,6 +6944,7 @@ final class AppState: ObservableObject {
         let model = OpenAIModel.gpt5Mini
         
         if requestedMode == .standard {
+            guard aiContentPermitted else { return }
             do {
                 if appMode == .managed, let minitiAPIService {
                     let deviceId = DeviceIdentifier.getOrCreateDeviceId()
@@ -6962,6 +6979,7 @@ final class AppState: ObservableObject {
         }
         
         if requestedMode == .meddpicc {
+            guard aiContentPermitted else { return }
             do {
                 let meddpiccInsights: InsightsService.LiveInsights
                 if appMode == .managed, minitiAPIService != nil {
@@ -6997,6 +7015,7 @@ final class AppState: ObservableObject {
         }
         
         if requestedMode == .questions {
+            guard aiContentPermitted else { return }
             do {
                 let questionsInsights: InsightsService.LiveInsights
                 if appMode == .managed, minitiAPIService != nil {
@@ -7024,6 +7043,7 @@ final class AppState: ObservableObject {
         }
 
         if requestedMode == .template {
+            guard aiContentPermitted else { return }
             let template = meeting.insightTemplate ?? selectedInsightTemplate
             let baseline = meeting.insightTemplateID == template.id ? meeting.templateSections : [:]
             do {
