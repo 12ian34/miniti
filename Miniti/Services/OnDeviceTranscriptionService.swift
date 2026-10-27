@@ -102,6 +102,8 @@ enum PrivateModeCopy {
     static let languagesNote = "Needs the model for your language on this Mac. " + OnDeviceTranscriptionCopy.joined(OnDeviceTranscriptionSupport.cloudOnlyLanguageNames) + " cannot be recorded in private mode yet."
     static let insightsNotice = "Private mode is on. This meeting stays on your Mac, so there are no summaries, questions or specialist views. Coaching still runs here."
     static let unavailable = "Private mode needs a Mac with Apple silicon."
+    /// Shown under the switch while it is locked (R1).
+    static let lockedWhileRecording = "Stop the recording first. Private mode chooses the engine for the next recording; it cannot move a running one."
 }
 
 // MARK: - Utterance assembly

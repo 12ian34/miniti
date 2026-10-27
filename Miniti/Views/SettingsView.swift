@@ -2056,8 +2056,13 @@ private struct PrivateModeToggle: View {
             set: { appState.setPrivateMode($0) }
         ))
         .id("privacy.privateMode")
-        .disabled(!appState.privateModeAvailable)
+        .disabled(!appState.privateModeAvailable || appState.privateModeLocked)
         if appState.privateModeAvailable {
+            if appState.privateModeLocked {
+                Text(PrivateModeCopy.lockedWhileRecording)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Text(PrivateModeCopy.description)
                 .font(.caption)
                 .foregroundStyle(.secondary)

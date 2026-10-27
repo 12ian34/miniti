@@ -1597,9 +1597,22 @@ final class AppState: ObservableObject {
 
     /// Turn private mode on (snapshot the current choices, force the local ones, switch every
     /// cloud AI feature off) or off (restore the snapshot). Idempotent.
-    func setPrivateMode(_ on: Bool, defaults: UserDefaults = .standard) {
+    /// Private mode cannot change while a recording is running, starting, resuming or being
+    /// finalised (R1): the engine of a running session is chosen once at start and a switch
+    /// would make Settings describe a route the session is not on. The person stops first.
+    var privateModeLocked: Bool {
+        isRecording || isStartingMeeting || isResumingRecording || isFinalizingMeeting
+    }
+
+    /// Returns false when the change was refused (unavailable, locked, or a no-op).
+    @discardableResult
+    func setPrivateMode(_ on: Bool, defaults: UserDefaults = .standard) -> Bool {
+        if privateModeLocked, on != privateModeEnabled {
+            DebugLogger.shared.log(.app, "Private mode change refused: a recording is \(isRecording ? "running" : isFinalizingMeeting ? "finalising" : "starting")")
+            return false
+        }
         if on {
-            guard privateModeAvailable else { return }
+            guard privateModeAvailable else { return false }
             if !privateModeEnabled {
                 let snapshot = PrivateModeRestore(
                     onDeviceTranscription: onDeviceTranscriptionEnabled,
@@ -1631,7 +1644,7 @@ final class AppState: ObservableObject {
             investigationSuggestion = nil
             DebugLogger.shared.log(.app, "Private mode on")
         } else {
-            guard privateModeEnabled else { return }
+            guard privateModeEnabled else { return false }
             privateModeEnabled = false
             if let data = defaults.data(forKey: Self.privateModeRestoreKey),
                let snapshot = try? JSONDecoder().decode(PrivateModeRestore.self, from: data) {
@@ -1652,6 +1665,7 @@ final class AppState: ObservableObject {
         refreshOnDeviceTranscriptionAvailability()
         refreshOnDeviceDiarizationAvailability()
         refreshCloudSyncState()
+        return true
     }
     /// Webhooks and automatic CRM sends go through here: persisted, retried with backoff,
     /// visible in Settings (roadmap P1.2, 2.11.0).

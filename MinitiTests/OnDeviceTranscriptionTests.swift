@@ -467,4 +467,51 @@ final class PrivateModeTests: XCTestCase {
         XCTAssertTrue(PrivateModeCopy.languagesNote.contains("Swedish"))
         XCTAssertFalse(PrivateModeCopy.description.contains("—"))
     }
+
+    #if os(macOS)
+    func testPrivateModeCannotChangeWhileARecordingRunsStartsResumesOrFinalises() {
+        let state = AppState()
+        guard state.privateModeAvailable else { return }
+        UserDefaults.standard.removeObject(forKey: AppState.privateModeRestoreKey)
+        state.privateModeEnabled = false
+        defer { state.isRecording = false; state.isStartingMeeting = false; state.isResumingRecording = false; state.setPrivateMode(false) }
+
+        // A cloud recording refuses private mode on.
+        state.isRecording = true
+        XCTAssertTrue(state.privateModeLocked)
+        XCTAssertFalse(state.setPrivateMode(true))
+        XCTAssertFalse(state.privateModeEnabled, "the running session keeps its route")
+        state.isRecording = false
+
+        // Starting and resuming count as recording for this rule.
+        state.isStartingMeeting = true
+        XCTAssertFalse(state.setPrivateMode(true))
+        state.isStartingMeeting = false
+        state.isResumingRecording = true
+        XCTAssertFalse(state.setPrivateMode(true))
+        state.isResumingRecording = false
+
+        // Stopped: the change goes through and the next start uses the private engine.
+        XCTAssertFalse(state.privateModeLocked)
+        XCTAssertTrue(state.setPrivateMode(true))
+        XCTAssertTrue(state.privateModeEnabled)
+        XCTAssertTrue(state.onDeviceTranscriptionEnabled)
+
+        // A private recording refuses private mode off.
+        state.isRecording = true
+        XCTAssertFalse(state.setPrivateMode(false))
+        XCTAssertTrue(state.privateModeEnabled)
+        state.isRecording = false
+        XCTAssertTrue(state.setPrivateMode(false))
+        XCTAssertFalse(state.privateModeEnabled)
+
+        // A configured export is untouched by any of it.
+        state.webhookURL = "https://hooks.example.com/x"
+        state.isRecording = true
+        _ = state.setPrivateMode(true)
+        XCTAssertEqual(state.webhookURL, "https://hooks.example.com/x")
+        XCTAssertFalse(PrivateModeCopy.lockedWhileRecording.contains("—"))
+    }
+    #endif
+
 }
