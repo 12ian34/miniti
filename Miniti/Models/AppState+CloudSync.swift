@@ -581,6 +581,9 @@ extension AppState {
             } else {
                 await self.runPendingAccountEmailRefresh()
             }
+            // The account may have changed during the reconciling read too: a result for
+            // another account is never returned to a view that now shows this one.
+            guard generation == self.accountGeneration else { return stale }
             return value
         }
         accountEmailMutationTask = Task { _ = await result.value }

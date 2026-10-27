@@ -789,6 +789,26 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.requests.count, requestsBefore)
     }
 
+    @MainActor
+    func testAPermanentProbeFailureWithARecoveryKeyStillReadsAsUnusableInAccount() throws {
+        // Review 2026-10-27: a stored recovery key keeps enrolment alive while the coordinator
+        // repairs, but the section must still offer Sign in again and hide signed actions.
+        let (stored, _) = repairableCredentials()
+        let manager = managerFor(stored, store: InMemoryClientAuthStore(stored), loader: unloadableLoader(for: stored.installationKey))
+        let app = AppState()
+        app.clientAuthManager = manager
+        XCTAssertFalse(app.retrySigning())
+        XCTAssertTrue(manager.keyNeedsReauthentication)
+        XCTAssertTrue(manager.isEnrolled, "the recovery key keeps enrolment alive")
+        XCTAssertTrue(app.clientAuthStatus.keyPermanentlyUnavailable)
+        XCTAssertFalse(app.clientAuthStatus.keyTemporarilyUnavailable)
+        XCTAssertEqual(app.accountSectionInputs.keyState, .unusable)
+        let model = AccountSectionModel.make(app.accountSectionInputs)
+        XCTAssertTrue(model.accountActions.contains(.signInAgain))
+        XCTAssertFalse(model.accountActions.contains(.switchAccount))
+        XCTAssertEqual(model.recoveryKeyActions, [.showKey])
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
@@ -2418,6 +2438,41 @@ final class AccountEmailStateTests: XCTestCase {
         XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(pending: "x@example.com")))
     }
 
+    func testASwitchDuringTheReconcilingReadMakesTheWriteStale() async throws {
+        // Review 2026-10-27: the write finished on A; the read-back is still waiting when B
+        // becomes current. A's success must not reach B's screen.
+        let app = await makeApp(account: "acct_a")
+        let originalHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            // Delay what follows a write: the reconciling read is the window under test.
+            if request.httpMethod == "POST" || request.httpMethod == "DELETE" { StubURLProtocol.delay = 0.4 }
+            return originalHandler(request)
+        }
+        let operation = Task { await app.addAccountEmail("review@example.com") }
+        for _ in 0..<200 {
+            if app.accountEmailInFlight { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(app.accountEmailInFlight, "the POST completed and its reconciliation GET is waiting")
+        StubURLProtocol.delay = 0
+        switchAccount(app, to: "acct_b")
+        let outcome = await operation.value
+        XCTAssertEqual(outcome, .staleAccount, "no success message from account A may be returned on B")
+        XCTAssertEqual(server.account("acct_a").pending, "review@example.com", "the server kept A's write")
+        // The same for a remove and for a failed write.
+        switchAccount(app, to: "acct_a")
+        await app.refreshAccountEmail(reason: "settle", force: true)
+        let removal = Task { await app.removeAccountEmail() }
+        for _ in 0..<200 {
+            if app.accountEmailInFlight { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        StubURLProtocol.delay = 0
+        switchAccount(app, to: "acct_b")
+        let removeOutcome = await removal.value
+        XCTAssertEqual(removeOutcome, .staleAccount)
+    }
+
     // MARK: Refresh queue (F2)
 
     func testACallbackDuringAnOlderReadRunsAfterItAndShowsTheConfirmedAddress() async throws {
@@ -2564,6 +2619,10 @@ final class SettingsNavigationPlanTests: XCTestCase {
         XCTAssertEqual(SettingsNavigationPlan.path(for: account, current: elsewhere, available: available), [SettingsRoute(destination: .account, target: "account.email")], "another detail is replaced, not stacked")
         let unavailable = SettingsNavigationRequest(destination: .crm, target: "integrations.attio")
         XCTAssertNil(SettingsNavigationPlan.path(for: unavailable, current: [], available: available), "CRM is Mac only")
+        let regular = SettingsNavigationPlan.regular(for: account, available: available)
+        XCTAssertEqual(regular?.selection, .account)
+        XCTAssertEqual(regular?.detailPath, [], "an iPad request clears whatever Sending's Configure pushed under the previous selection")
+        XCTAssertNil(SettingsNavigationPlan.regular(for: unavailable, available: available))
         XCTAssertEqual(SettingsNavigationPlan.sidebarSelection(for: account, available: available), .account)
         XCTAssertNil(SettingsNavigationPlan.sidebarSelection(for: unavailable, available: available))
     }

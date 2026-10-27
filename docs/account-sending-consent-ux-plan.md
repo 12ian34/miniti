@@ -218,6 +218,16 @@ The local probe is the chosen implementation. A refresh-token grant is unsigned,
 
 F1–F6 and L1–L3 are implemented (below). Review the resulting code and regressions, then the rendered and device QA gates already listed. The follow-up planning review did not run tests or approve a release.
 
+### Second implementation review (Astra, on 41cfc18), fixed the same day
+
+| # | Finding | Fix | Test and evidence |
+|---|---|---|---|
+| R1 | P1: a permanent probe failure with a recovery key stored left `isEnrolled` true, so Account mapped the key as usable, hid Sign in again and enabled signed actions | `ClientAuthStatus.keyPermanentlyUnavailable` (failure active and classified permanent) and the mapping uses it regardless of enrolment | Astra's regression adopted: permanent failure, enrolment alive, `keyState == .unusable`, Sign in again offered, Switch account hidden, Show recovery key kept |
+| R2 | P2: a mutation whose write finished on A but whose reconciling read was still waiting when B became current returned A's `.sent` | one more generation check after the reconciling read, before the return, for add, remove and errors | Astra's regression adopted and extended to a remove: both answer `.staleAccount`, the server keeps A's write |
+| R3 | P2: regular-width Settings kept an unbound detail stack, so Sending's Configure push stayed on top of an Account request | the detail `NavigationStack` is bound to `detailPath`; Sending's Configure is a value link; a request or a sidebar selection resets the path (`SettingsNavigationPlan.regular`) | plan test (selection plus empty path, unavailable dropped); rendered on the iPad Pro 11 simulator through a hosting test: Sending with Configure Cloud pushed (navigation bar Cloud, back Sending, two items), after an Account request Account at the root (one item, no back), after a repeated request unchanged; the Account detail opened with the email field focused. `SettingsView_iOS(initialDetailPath:)` is the test and preview seam for the pushed start state |
+
+Seen in the iPad render and left for Ian's rendered review: the selected sidebar row drew as a plain highlight without its label in the test window; confirm on a real iPad or the simulator app whether the selection colours are right there.
+
 ### Fixes as built (2026-10-27)
 
 | # | Built | Tests |

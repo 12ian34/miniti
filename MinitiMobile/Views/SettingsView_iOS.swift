@@ -10,6 +10,16 @@ struct SettingsView_iOS: View {
     @State private var selectedDestination: SettingsDestination? = .general
     /// Compact iPhone: the pushed detail, value based so a request can replace it (F4).
     @State private var path: [SettingsRoute] = []
+    /// Regular iPad: screens pushed under the selected destination (Sending's Configure links);
+    /// a request or a new selection clears them.
+    @State private var detailPath: [SettingsRoute] = []
+    /// Applied once the split view is on screen: a preview or a rendered test can start with
+    /// screens pushed under the selection, as Sending's Configure does.
+    private let initialDetailPath: [SettingsRoute]
+
+    init(initialDetailPath: [SettingsRoute] = []) {
+        self.initialDetailPath = initialDetailPath
+    }
 
     private var searchResults: [SettingsSearchItem] {
         SettingsSearchCatalog.availableItems(on: .iOS, appMode: appState.appMode)
@@ -28,6 +38,9 @@ struct SettingsView_iOS: View {
         .onAppear {
             let restored = SettingsDestination.fromLegacyID(appState.selectedSettingsTab)
             selectedDestination = SettingsDestination.available(on: .iOS).contains(restored) ? restored : .general
+            if !initialDetailPath.isEmpty {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { detailPath = initialDetailPath }
+            }
             consumeNavigationRequest()
         }
         .onChange(of: appState.settingsNavigationRequest) { _, _ in
@@ -53,8 +66,9 @@ struct SettingsView_iOS: View {
         appState.settingsNavigationRequest = nil
         let available = Set(SettingsDestination.available(on: .iOS))
         if horizontalSizeClass == .regular {
-            guard let destination = SettingsNavigationPlan.sidebarSelection(for: request, available: available) else { return }
-            selectedDestination = destination
+            guard let plan = SettingsNavigationPlan.regular(for: request, available: available) else { return }
+            selectedDestination = plan.selection
+            detailPath = plan.detailPath
         } else {
             guard let next = SettingsNavigationPlan.path(for: request, current: path, available: available) else { return }
             path = next
@@ -131,12 +145,16 @@ struct SettingsView_iOS: View {
             .searchable(text: $searchText, placement: .sidebar, prompt: "Search settings")
             .onChange(of: selectedDestination) { _, destination in
                 guard let destination else { return }
+                detailPath = []
                 appState.selectedSettingsTab = destination.rawValue
                 appState.pendingSettingsSearchTarget = nil
             }
         } detail: {
-            NavigationStack {
+            NavigationStack(path: $detailPath) {
                 SettingsDetailView_iOS(category: selectedDestination ?? .general)
+                    .navigationDestination(for: SettingsRoute.self) { route in
+                        SettingsDetailView_iOS(category: route.destination, initialSearchTarget: route.target)
+                    }
             }
         }
         .navigationSplitViewStyle(.balanced)
@@ -198,10 +216,16 @@ enum SettingsNavigationPlan {
         return [SettingsRoute(destination: request.destination, target: request.target)]
     }
 
-    /// Regular (iPad): the sidebar selection for the request; the detail stack is fresh per
-    /// selection. Nil when unavailable.
+    /// Regular (iPad): the sidebar selection for the request and an empty detail stack, so
+    /// screens pushed under the previous selection (Sending's Configure) never stay on top of
+    /// the requested destination. Nil when unavailable.
+    static func regular(for request: SettingsNavigationRequest, available: Set<SettingsDestination>) -> (selection: SettingsDestination, detailPath: [SettingsRoute])? {
+        guard available.contains(request.destination) else { return nil }
+        return (request.destination, [])
+    }
+
     static func sidebarSelection(for request: SettingsNavigationRequest, available: Set<SettingsDestination>) -> SettingsDestination? {
-        available.contains(request.destination) ? request.destination : nil
+        regular(for: request, available: available)?.selection
     }
 }
 
@@ -884,10 +908,10 @@ private struct SettingsDetailView_iOS: View {
                 if category == .sending {
                 DataFlowRowsView { jump in
                     if let item = SettingsSearchCatalog.items.first(where: { $0.id == jump.target }) {
-                        NavigationLink("Configure") {
-                            SettingsDetailView_iOS(category: item.destination, initialSearchTarget: item.id)
-                        }
-                        .accessibilityLabel("Configure: \(jump.label)")
+                        // Value based, so both the compact stack and the iPad detail stack own it
+                        // and a navigation request can clear it.
+                        NavigationLink("Configure", value: SettingsRoute(destination: item.destination, target: item.id))
+                            .accessibilityLabel("Configure: \(jump.label)")
                     }
                 }
                 .id("sending.overview")

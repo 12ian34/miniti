@@ -434,6 +434,10 @@ struct ClientAuthStatus: Equatable, Sendable {
     /// has signed since: signed actions are disabled with "temporarily unavailable" rather
     /// than hidden, and nothing says the key is broken (B6a).
     var keyTemporarilyUnavailable: Bool = false
+    /// A permanent key failure is active (allow-listed or malformed key), whether or not a
+    /// recovery key can repair it. The account section shows Sign in again and hides signed
+    /// actions on this alone (review 2026-10-27).
+    var keyPermanentlyUnavailable: Bool = false
 
     static let notEnrolled = ClientAuthStatus(isEnrolled: false, accountID: nil, deviceCap: nil, enrolledAt: nil, enrollmentPath: nil, recoveryKeyAcknowledged: false, isHardwareBacked: false)
 }
@@ -864,7 +868,8 @@ final class ClientAuthManager: @unchecked Sendable {
             recoveryKeyAcknowledged: credentials.recoveryKeyAcknowledged,
             isHardwareBacked: credentials.installationKey.kind == "se",
             keyUnusable: keyUnusableWithoutRecovery,
-            keyTemporarilyUnavailable: keyFailureActive && !keyFailurePermanent && !keyUnusableWithoutRecovery
+            keyTemporarilyUnavailable: keyFailureActive && !keyFailurePermanent && !keyUnusableWithoutRecovery,
+            keyPermanentlyUnavailable: keyFailureActive && keyFailurePermanent
         )
     }
 

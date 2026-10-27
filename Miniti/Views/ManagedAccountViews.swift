@@ -356,7 +356,10 @@ extension AppState {
         inputs.status = clientAuthStatus
         inputs.emailState = accountEmailState
         inputs.hasLocalRecoveryKey = !managedDeviceHasNoRecoveryKey
-        if clientAuthStatus.keyUnusable || (clientAuthManager.keyNeedsReauthentication && !clientAuthStatus.keyTemporarilyUnavailable && !clientAuthStatus.isEnrolled) {
+        // Permanent failures count whether or not enrolment survives them (a stored recovery
+        // key keeps `isEnrolled` true while the coordinator repairs); the person still needs
+        // Sign in again and must not be offered signed actions that would fail.
+        if clientAuthStatus.keyUnusable || clientAuthStatus.keyPermanentlyUnavailable {
             inputs.keyState = .unusable
         } else if clientAuthStatus.keyTemporarilyUnavailable {
             inputs.keyState = .temporarilyUnavailable
