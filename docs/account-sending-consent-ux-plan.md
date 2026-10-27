@@ -228,6 +228,16 @@ F1–F6 and L1–L3 are implemented (below). Review the resulting code and regre
 
 | R4 | P2: the size-class handler ignored the detail path, so Sending, Configure Cloud, then a narrow window rebuilt the compact stack from the Sending selection and lost Cloud, and the retained detail path could resurface later | `SettingsNavigationPlan.toCompact` (the top of the detail stack, else the selection, becomes the one compact route) and `toRegular` (the top of the compact stack becomes the selection with a fresh detail stack and its target scrolled to); the inactive stack is cleared on every change | regression: regular with Cloud pushed to compact keeps Cloud; an Account request while compact replaces it; back to regular selects Account with an empty detail path and the email target; General and plain selections |
 
+### Broader review of the unreleased tree (Astra, 2026-10-27), fixed the same day
+
+| # | Finding | Fix | Test |
+|---|---|---|---|
+| B1 | P1: a key repair whose restore answer arrived after a sign-out wrote the old account's credentials back and re-enrolled the device | `ClientAuthManager.credentialEpoch`, bumped by every local clear and every stored enrolment; `performRepair` and both `reauthenticate` paths capture it before the request and throw `notEnrolled` instead of storing when it moved | Astra's regression adopted: sign out while the restore is delayed; the device stays signed out and the store stays empty |
+| B2 | P2: the Devices row's Sign out for this device called the signed removal endpoint, so with a broken key it failed while the bottom-of-page Sign out worked | `removeManagedDevice` routes the current installation (`isCurrentDevice`) through `signOutManagedDevice`, which clears locally when the key cannot sign | Astra's regression adopted: broken key, current-device row, credential cleared, status not enrolled |
+| B3 | P2: an offline license restore reached the mapper as a bare `URLError`, which only knew the wrapped form, so it reported "unknown" | `restoreFailure(for:)` maps connection-class `URLError`s (`isConnectionFailure`) to the network message and code | Astra's regression adopted with the message asserted |
+
+Not in this batch, by Ian's decision still to be taken: the R-series items in [reliability-follow-up-plan.md](reliability-follow-up-plan.md), of which the consent gaps (R1, R2) and cloud responses crossing account changes (R3) are the ones the reviewer called most consequential.
+
 Seen in the iPad render and left for Ian's rendered review: the selected sidebar row drew as a plain highlight without its label in the test window; confirm on a real iPad or the simulator app whether the selection colours are right there.
 
 ### Fixes as built (2026-10-27)

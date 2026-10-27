@@ -809,6 +809,65 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(model.recoveryKeyActions, [.showKey])
     }
 
+    func testADelayedRepairCannotUndoASignOut() async throws {
+        // Review 2026-10-27: sign out while the repair's restore answer is in flight.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        restoreStub()
+        StubURLProtocol.delay = 0.3
+        let repairing = Task {
+            var request = self.postRequest()
+            try await manager.authorize(&request)
+        }
+        for _ in 0..<200 {
+            if StubURLProtocol.requests.contains(where: { $0.url?.path == "/api/auth/account/restore" }) { break }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        XCTAssertTrue(StubURLProtocol.requests.contains(where: { $0.url?.path == "/api/auth/account/restore" }))
+        try await manager.signOut()
+        XCTAssertFalse(manager.isEnrolled)
+        _ = try? await repairing.value
+        XCTAssertFalse(manager.isEnrolled, "a delayed repair must not undo a completed sign-out")
+        XCTAssertNil(store.load(), "signed-out credentials must stay cleared")
+    }
+
+    func testAnOfflineLicenseRestoreReportsTheConnection() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let manager = managerFor(stored, loader: { InstallationKey.load(stored: $0) })
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        StubURLProtocol.script = { _ in throw URLError(.notConnectedToInternet) }
+        do {
+            _ = try await api.restoreSubscription(deviceId: "550e8400-e29b-41d4-a716-446655440000", licenseKey: "test-key")
+            XCTFail("expected offline")
+        } catch {
+            let failure = AppState.restoreFailure(for: error)
+            XCTAssertEqual(failure.code, "network")
+            XCTAssertEqual(failure.message, "Could not reach miniti's servers. Check your connection and try again.")
+        }
+    }
+
+    @MainActor
+    func testTheCurrentDeviceRowSignsOutLocallyWithABrokenKey() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials(recoveryKey: "")
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
+        XCTAssertFalse(manager.retrySigningProbe())
+        let app = AppState()
+        app.clientAuthManager = manager
+        app.refreshClientAuthStatus()
+        let removed = await app.removeManagedDevice(installationID: "550e8400-e29b-41d4-a716-446655440000")
+        XCTAssertTrue(removed, "the current-device Sign out action works without a usable key")
+        XCTAssertNil(store.load(), "through the local sign-out fallback")
+        XCTAssertFalse(app.clientAuthStatus.isEnrolled)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))

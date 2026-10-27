@@ -16,8 +16,8 @@ Ian accepted audit findings 1, 3, 4, 5 and the four other findings. Finding 2, d
 | R6 | Manual retry of a failed webhook has a valid payload | macOS + iOS, miniti | planned |
 | R7 | History insight responses cannot overwrite a newer transcript/template | macOS + iOS, miniti | planned |
 | R8 | Web/email confirmation link consumption is atomic | miniti-api | planned |
-| U1 | Sending becomes a concise, grouped account of data destinations and current behavior | macOS + iOS, miniti | planned, approved 2026-10-26 |
-| U2 | Shorter Deepgram/OpenAI consent with visible, accessible actions | macOS + iOS, miniti | planned, approved 2026-10-26 |
+| U1 | Sending becomes a concise, grouped account of data destinations and current behavior | macOS + iOS, miniti | built 2026-10-27 for 3.4.0 build 139 (account-sending-consent-ux-plan.md), QA open |
+| U2 | Shorter Deepgram/OpenAI consent with visible, accessible actions | macOS + iOS, miniti | built 2026-10-27 for 3.4.0 build 139 (account-sending-consent-ux-plan.md), QA open |
 
 ## Evidence and implementation contract
 

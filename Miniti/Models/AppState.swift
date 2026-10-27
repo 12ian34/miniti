@@ -10962,6 +10962,12 @@ final class AppState: ObservableObject {
     }
 
     func removeManagedDevice(installationID: String) async -> Bool {
+        // The row for this device is the same action as Sign out below: it must work with a
+        // key that cannot sign, through the local-clear fallback (review 2026-10-27).
+        if clientAuthManager.isCurrentDevice(installationID) {
+            await signOutManagedDevice()
+            return true
+        }
         do {
             try await clientAuthManager.removeDevice(installationID: installationID)
             refreshClientAuthStatus()
@@ -11034,11 +11040,19 @@ final class AppState: ObservableObject {
             return (restoreFailureCopy(code: "rate_limited", serverMessage: nil), "rate_limited")
         case MinitiAPIService.ServiceError.networkError:
             return (restoreFailureCopy(code: "network", serverMessage: nil), "network")
+        case let urlError as URLError where Self.isConnectionFailure(urlError):
+            // The transport throws URLError straight; the wrapper above is what older callers
+            // produced (review 2026-10-27).
+            return (restoreFailureCopy(code: "network", serverMessage: nil), "network")
         case MinitiAPIService.ServiceError.notEnrolled:
             return (MinitiAPIService.ServiceError.notEnrolled.localizedDescription, "not_enrolled")
         default:
             return (restoreFailureCopy(code: "unknown", serverMessage: error.localizedDescription), "unknown")
         }
+    }
+
+    nonisolated static func isConnectionFailure(_ error: URLError) -> Bool {
+        [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
     }
 
     nonisolated static func restoreFailureCopy(code: String, serverMessage: String?) -> String {
