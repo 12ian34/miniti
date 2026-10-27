@@ -351,3 +351,70 @@ struct MinitiTabStripSurface<Content: View>: View {
             )
     }
 }
+
+/// Settings disclosures: a full-width row with the title, an optional trailing summary and a
+/// chevron in a small round well that turns when open, instead of the bare ">" of the default
+/// style (Ian, 2026-10-27). Content slides in below with a left inset. Reduce Motion drops
+/// the turn and the slide.
+struct MinitiDisclosureStyle: DisclosureGroupStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                if reduceMotion {
+                    configuration.isExpanded.toggle()
+                } else {
+                    withAnimation(.easeInOut(duration: 0.18)) { configuration.isExpanded.toggle() }
+                }
+            } label: {
+                HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                    configuration.label
+                    Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .rotationEffect(.degrees(configuration.isExpanded ? 180 : 0))
+                        .frame(width: 22, height: 22)
+                        .background(Circle().fill(ColorPalette.Background.card))
+                        .overlay(Circle().stroke(ColorPalette.Border.primary, lineWidth: 1))
+                }
+                .contentShape(Rectangle())
+                .padding(.vertical, MinitiDesignSystem.Spacing.hairline)
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityValue(configuration.isExpanded ? "expanded" : "collapsed")
+            #if os(macOS)
+            .onHover { hovering = $0 }
+            .background(
+                RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                    .fill(ColorPalette.Text.dim.opacity(hovering ? 0.08 : 0))
+                    .padding(.horizontal, -MinitiDesignSystem.Spacing.small)
+            )
+            #endif
+            if configuration.isExpanded {
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                    configuration.content
+                }
+                .padding(.leading, MinitiDesignSystem.Spacing.compact)
+                .padding(.top, MinitiDesignSystem.Spacing.standard)
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+/// One clipboard helper for every copy button.
+enum MinitiPasteboard {
+    static func copy(_ text: String) {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        #else
+        UIPasteboard.general.string = text
+        #endif
+    }
+}
+

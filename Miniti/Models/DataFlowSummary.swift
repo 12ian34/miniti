@@ -418,11 +418,19 @@ struct DataFlowRowsView<Configure: View>: View {
         }
         if !summary.notInUse.isEmpty {
             Section {
-                DisclosureGroup("Not in use: \(summary.notInUse.count)") {
+                DisclosureGroup {
                     ForEach(summary.notInUse) { row in
                         DataFlowRowView(row: row, configure: configure)
                     }
+                } label: {
+                    HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                        Text("Not in use")
+                        Text("\(summary.notInUse.count)")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .disclosureGroupStyle(MinitiDisclosureStyle())
             }
         }
         Section {

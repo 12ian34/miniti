@@ -92,12 +92,7 @@ struct RecoveryKeyDisplay: View {
     }
 
     private func copyToPasteboard(_ text: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #else
-        UIPasteboard.general.string = text
-        #endif
+        MinitiPasteboard.copy(text)
     }
 }
 
@@ -555,7 +550,10 @@ struct ManagedAccountSettingsSection: View {
     @State private var isEditingEmail = false
     @State private var emailDraft = ""
     @State private var emailNotice: String?
+    /// True while `emailNotice` confirms a sent link; it reads as a status, not an error.
+    @State private var emailNoticeIsConfirmation = false
     @State private var supportDetailsExpanded = false
+    @State private var copiedSupportDetails = false
     @FocusState private var emailFieldFocused: Bool
 
     private var status: ClientAuthStatus { appState.clientAuthStatus }
@@ -676,25 +674,57 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup("Support details", isExpanded: $supportDetailsExpanded) {
-                detailRow("Account id", status.accountID ?? "none")
-                detailRow("Device id", DeviceIdentifier.getOrCreateDeviceId())
-                    .id("account.deviceID")
-                detailRow("Sign-in key", status.isHardwareBacked ? "Secure Enclave" : "Software")
-                detailRow("App", "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
+            DisclosureGroup(isExpanded: $supportDetailsExpanded) {
+                ForEach(supportDetails, id: \.label) { item in
+                    detailRow(item.label, item.value)
+                        .id(item.label == "Device id" ? "account.deviceID" : "support.\(item.label)")
+                }
+                HStack {
+                    Spacer()
+                    Button(copiedSupportDetails ? "Copied" : "Copy all") {
+                        MinitiPasteboard.copy(supportDetails.map { "\($0.label): \($0.value)" }.joined(separator: "\n"))
+                        copiedSupportDetails = true
+                    }
+                    .font(.caption)
+                }
+            } label: {
+                Text("Support details")
             }
+            .disclosureGroupStyle(MinitiDisclosureStyle())
             .font(.callout)
         }
     }
 
+    /// The ids support asks for, in copyable form (Ian, 2026-10-27).
+    private var supportDetails: [(label: String, value: String)] {
+        [
+            ("Account id", status.accountID ?? "none"),
+            ("Device id", DeviceIdentifier.getOrCreateDeviceId()),
+            ("Sign-in key", status.isHardwareBacked ? "Secure Enclave" : "Software"),
+            ("App", "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))"),
+        ]
+    }
+
     private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack {
+        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
             Text(label)
             Spacer()
             Text(value)
                 .foregroundStyle(.secondary)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button {
+                MinitiPasteboard.copy(value)
+            } label: {
+                Image(systemName: "doc.on.doc")
+                    .font(.system(size: 11))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(ColorPalette.Text.secondary)
+            .help("Copy \(label.lowercased())")
+            .accessibilityLabel("Copy \(label.lowercased())")
         }
     }
 
@@ -744,9 +774,12 @@ struct ManagedAccountSettingsSection: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if let emailNotice {
-                    Text(emailNotice)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    // A sent link is the one thing the person must act on next, so it is a
+                    // plain status line with the address, not a dim caption (Charlie, 2026-10-27:
+                    // the field cleared and nothing said to go and open the email).
+                    Label(emailNotice, systemImage: emailNoticeIsConfirmation ? "envelope.badge" : "exclamationmark.circle")
+                        .font(.callout)
+                        .foregroundStyle(emailNoticeIsConfirmation ? ColorPalette.Status.success : ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -903,14 +936,18 @@ struct ManagedAccountSettingsSection: View {
             case .sent(let address):
                 isEditingEmail = false
                 emailDraft = ""
-                emailNotice = "Check \(address) for the link. It works for 15 minutes."
+                emailNoticeIsConfirmation = true
+                emailNotice = "Link sent to \(address). Open it in that email to finish; it works for 15 minutes. Nothing more to do here."
             case .alreadyVerified:
                 isEditingEmail = false
                 emailDraft = ""
+                emailNoticeIsConfirmation = true
                 emailNotice = "That address is already verified on this account."
             case .inUse:
+                emailNoticeIsConfirmation = false
                 emailNotice = "That email is on another miniti account. Use Switch account to sign this device in to it, or remove the email there first."
             case .failed(let message):
+                emailNoticeIsConfirmation = false
                 emailNotice = message
             }
         }
@@ -923,9 +960,13 @@ struct ManagedAccountSettingsSection: View {
             let outcome = await appState.addAccountEmail(pending)
             isBusy = false
             switch outcome {
-            case .sent: emailNotice = "Sent again to \(pending)."
+            case .sent:
+                emailNoticeIsConfirmation = true
+                emailNotice = "Sent again to \(pending). Open the newest email to finish."
             case .staleAccount: emailNotice = nil
-            default: emailNotice = "Could not send. Try again in a minute."
+            default:
+                emailNoticeIsConfirmation = false
+                emailNotice = "Could not send. Try again in a minute."
             }
         }
     }

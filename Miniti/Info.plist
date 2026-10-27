@@ -64,7 +64,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>139</string>
+	<string>140</string>
 	<key>LSMinimumSystemVersion</key>
 	<string>14.2</string>
 	<key>NSAudioCaptureUsageDescription</key>

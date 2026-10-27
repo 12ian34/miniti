@@ -1,18 +1,18 @@
-# 3.4.0 build 139 release QA
+# 3.4.0 build 140 release QA
 
-Consolidated manual QA for the 3.4.0 tree (through `28d247b`), written 2026-10-27. Tick each line with the device, date and result. Automated state before QA: macOS 1,037 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
+Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Tick each line with the device, date and result. Automated state before QA: macOS 1,037 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
 
 Sources: enrollment plan A5 lines, [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md) U2/U1/B6a QA, [reliability-follow-up-plan.md](reliability-follow-up-plan.md) R1–R3 device checks, [audio.md](audio.md) "Initial microphone failure".
 
-Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone account on TestFlight build 139, never the personal Pro account for anything destructive. Keep keys and tokens out of notes. Read the debug log from Settings, Support after each step; admin events via `node ../miniti-api/scripts/admin-stats.mjs events --name client_auth`.
+Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone account on TestFlight build 140, never the personal Pro account for anything destructive. Keep keys and tokens out of notes. Read the debug log from Settings, Support after each step; admin events via `node ../miniti-api/scripts/admin-stats.mjs events --name client_auth`.
 
 ## 1. Builds
 
 - [ ] `fastlane mac test` and `fastlane ios test` green on the combined tree.
-- [ ] Mac DMG built by `fastlane mac release`, `scripts/release-info.sh` reports 3.4.0 build 139; installed over 3.3.0 on the personal account (reads only) and launched.
-- [ ] iOS build 139 on TestFlight, installed over 3.3.0 on the personal iPhone.
+- [ ] Mac DMG built by `fastlane mac release`, `scripts/release-info.sh` reports 3.4.0 build 140; installed over 3.3.0 on the personal account (reads only) and launched.
+- [ ] iOS build 140 on TestFlight, installed over 3.3.0 on the personal iPhone.
 
-## 2. A5, enrollment and keys (throwaway Mac user, build 139)
+## 2. A5, enrollment and keys (throwaway Mac user, build 140)
 
 - [ ] Fresh user: first launch enrols once (one migrate 404, one create in the debug log), recording works.
 - [ ] Delete the credential item, relaunch: silent recreate, server conflict, one rotation, created; admin events show `client_auth_device_rotated` once.
@@ -71,7 +71,13 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 - [ ] Transcript health lines in the debug log show converted buffers from every requested source within two seconds of start.
 - [ ] Floating surface during a recording with a calendar handoff due: all four actions show their full names on two lines (Jose's report, 2026-10-27).
 
-## 8. iPhone TestFlight 139
+## 9. Settings polish (Mac and iPhone)
+
+- [ ] Support details and Sending's Not in use open with the round chevron control, not a bare arrow; hover highlight on the Mac.
+- [ ] Every support detail copies with its button; Copy all puts the four lines on the clipboard.
+- [ ] Add email: after Send link the row shows the green "Link sent to address. Open it in that email to finish" line with Resend, and the field is gone (Charlie's report, 2026-10-27).
+
+## 8. iPhone TestFlight 140
 
 - [ ] Upgrade over 3.3.0 keeps the Pro account and records.
 - [ ] Restore App Store purchases wording and sentence under Plan and billing.
