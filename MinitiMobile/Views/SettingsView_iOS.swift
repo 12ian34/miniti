@@ -237,10 +237,11 @@ enum SettingsNavigationPlan {
     }
 
     /// Regular to compact: the visible screen is the top of the detail stack, or the sidebar
-    /// selection; it becomes the one pushed route (General is the list itself).
+    /// selection; it becomes the one pushed route. General is a screen of its own
+    /// (Appearance), so it is pushed like any other; only no selection means the list.
     static func toCompact(selection: SettingsDestination?, detailPath: [SettingsRoute]) -> [SettingsRoute] {
         if let top = detailPath.last { return [top] }
-        guard let selection, selection != .general else { return [] }
+        guard let selection else { return [] }
         return [SettingsRoute(destination: selection, target: nil)]
     }
 

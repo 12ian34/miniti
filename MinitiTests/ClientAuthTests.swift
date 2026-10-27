@@ -2643,8 +2643,9 @@ final class SettingsNavigationPlanTests: XCTestCase {
         XCTAssertEqual(regular.selection, .account)
         XCTAssertEqual(regular.detailPath, [], "the old Cloud push never resurfaces")
         XCTAssertEqual(regular.target, "account.email")
-        // Nothing pushed and General selected: the compact list itself.
-        XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: .general, detailPath: []), [])
+        // General is a screen of its own (Appearance), pushed like any other; only no selection is the list.
+        XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: .general, detailPath: []), [SettingsRoute(destination: .general, target: nil)])
+        XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: nil, detailPath: []), [])
         XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: .cloud, detailPath: []), [SettingsRoute(destination: .cloud, target: nil)])
         let plain = SettingsNavigationPlan.toRegular(path: [], selection: .cloud)
         XCTAssertEqual(plain.selection, .cloud)
