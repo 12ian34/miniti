@@ -3328,3 +3328,40 @@ final class LiveInsightsBackoffTests: XCTestCase {
         XCTAssertEqual(AppState.liveInsightsBackoff(afterFailures: 40), 300, "never grows past five minutes")
     }
 }
+
+#if os(macOS)
+/// The floating surface's action row (field report 2026-10-27: four handoff actions truncated
+/// to "join…", "end &…" on the 360 pt panel).
+@MainActor
+final class RecordingIndicatorLayoutTests: XCTestCase {
+    private func row() -> some View {
+        WrappingRow(spacing: 6) {
+            ForEach(["join next", "end & start next", "end meeting", "keep recording"], id: \.self) { title in
+                MinitiControlLabel(role: .secondary, isEmphasized: false, height: 28, horizontalPadding: 9) {
+                    Label(title, systemImage: "record.circle")
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .fixedSize()
+                }
+            }
+        }
+    }
+
+    func testFourHandoffActionsWrapAtThePanelWidthInsteadOfTruncating() {
+        let wide = NSHostingView(rootView: row().frame(width: 1000, alignment: .leading))
+        let wideHeight = wide.fittingSize.height
+        XCTAssertLessThan(wideHeight, 40, "one row when there is room")
+
+        let panel = NSHostingView(rootView: row().frame(width: 340, alignment: .leading))
+        let panelHeight = panel.fittingSize.height
+        XCTAssertGreaterThan(panelHeight, wideHeight + 20, "at the panel's inner width the actions take a second line")
+        XCTAssertLessThan(panelHeight, 3 * 28 + 2 * 6 + 1, "and no more than three")
+
+        // Every label keeps its full width: the widest one alone is wider than a quarter of the panel.
+        let single = NSHostingView(rootView: MinitiControlLabel(role: .secondary, isEmphasized: false, height: 28, horizontalPadding: 9) {
+            Label("end & start next", systemImage: "arrow.right").font(.system(size: 11, weight: .semibold)).lineLimit(1).fixedSize()
+        })
+        XCTAssertGreaterThan(single.fittingSize.width, 340 / 4, "which is why a single row truncated")
+    }
+}
+#endif

@@ -19,6 +19,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 - fix: (macOS and iOS) Granola summaries show as plain text instead of raw markdown
 - fix: (macOS) restoring Pro with a license key said invalid key for every failure. It now says which: unknown key, no active plan, Polar refused or unreachable, too many attempts, or no connection
 - fix: (macOS and iOS) signing in by email said expired link when the connection dropped. It now says what actually went wrong
+- fix: (macOS) the floating recording surface cut its handoff buttons short, join, end & start next, end meeting, keep recording. They now wrap onto a second line and show their full names
 
 ### 2026-10-21 - v3.3.0
 

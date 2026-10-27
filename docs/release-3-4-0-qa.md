@@ -69,6 +69,7 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 - [ ] Built-in microphone selected: both sides transcribe.
 - [ ] System-only and mic-only recordings, and a recording ended during the grace period.
 - [ ] Transcript health lines in the debug log show converted buffers from every requested source within two seconds of start.
+- [ ] Floating surface during a recording with a calendar handoff due: all four actions show their full names on two lines (Jose's report, 2026-10-27).
 
 ## 8. iPhone TestFlight 139
 

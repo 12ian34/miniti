@@ -768,7 +768,9 @@ private struct RecordingIndicatorView: View {
 
     @ViewBuilder
     private func promptActions(_ prompt: AppState.SmartMeetingPrompt) -> some View {
-        HStack(spacing: 6) {
+        // Up to four actions on a 360 pt panel: they wrap onto a second line rather than
+        // truncating their labels (a field report on 2026-10-27 showed "join…", "end &…").
+        WrappingRow(spacing: 6) {
             switch prompt.kind {
             case .callStart:
                 indicatorActionButton(
@@ -913,6 +915,7 @@ private struct RecordingIndicatorView: View {
                 Label(title, systemImage: systemImage)
                     .font(.system(size: 11, weight: .semibold, design: .default))
                     .lineLimit(1)
+                    .fixedSize()
             }
         }
         .buttonStyle(.plain)
@@ -925,4 +928,44 @@ private struct RecordingIndicatorView: View {
             .lineLimit(1)
     }
 }
+
+/// A horizontal row that wraps its children onto further lines when they do not fit, keeping
+/// every child at its own ideal size so no label is ever truncated.
+struct WrappingRow: Layout {
+    var spacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width ?? .infinity
+        return place(in: width, subviews: subviews, apply: false).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let placements = place(in: bounds.width, subviews: subviews, apply: true)
+        for (subview, origin) in zip(subviews, placements.origins) {
+            subview.place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y), proposal: .unspecified)
+        }
+    }
+
+    private func place(in width: CGFloat, subviews: Subviews, apply: Bool) -> (size: CGSize, origins: [CGPoint]) {
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var maxX: CGFloat = 0
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                x = 0
+                y += rowHeight + spacing
+                rowHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+            maxX = max(maxX, x - spacing)
+        }
+        return (CGSize(width: maxX, height: y + rowHeight), origins)
+    }
+}
+
 #endif
