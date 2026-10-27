@@ -1871,16 +1871,13 @@ struct SendingSettingsView: View {
 
     var body: some View {
         Form {
-            Section("What leaves this Mac") {
-                DataFlowRowsView()
-            }
-            .id("sending.overview")
-            Section {
-                Text("Worked out from your settings right now. Change a setting and this list changes with it. The first screen asked for permission once; this is the running answer.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            DataFlowRowsView { jump in
+                Button("Configure") { appState.jumpToSetting(jump.target) }
+                    .settingsJumpStyle()
+                    .accessibilityLabel("Configure: \(jump.label)")
             }
         }
+        .id("sending.overview")
         .formStyle(.grouped)
         .padding()
         .settingsSearchScrolling(for: .sending)

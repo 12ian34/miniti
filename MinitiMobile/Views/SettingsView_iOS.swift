@@ -815,11 +815,13 @@ private struct SettingsDetailView_iOS: View {
                 }
 
                 if category == .sending {
-                Section("What leaves this device") {
-                    DataFlowRowsView(showsJumps: false)
-                    Text("Worked out from your settings right now. Change a setting and this list changes with it. Each row names the tab that decides it.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                DataFlowRowsView { jump in
+                    if let item = SettingsSearchCatalog.items.first(where: { $0.id == jump.target }) {
+                        NavigationLink("Configure") {
+                            SettingsDetailView_iOS(category: item.destination, initialSearchTarget: item.id)
+                        }
+                        .accessibilityLabel("Configure: \(jump.label)")
+                    }
                 }
                 .id("sending.overview")
                 }
