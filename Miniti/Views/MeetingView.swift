@@ -558,9 +558,9 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
 
-            // Recovery key nudge (managed account created or migrated, key not yet saved)
-            if appState.appMode == .managed && appState.showRecoveryKeyNotice {
-                RecoveryKeyNudgeCard()
+            // Keep access to your account (B6a): after the first saved meeting, never while recording
+            if appState.appMode == .managed && appState.showAccessCard && !appState.isRecording {
+                AccountAccessCard()
             }
 
             // Calendar integration nudge

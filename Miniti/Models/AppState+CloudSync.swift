@@ -1,5 +1,10 @@
 import Foundation
 import SwiftData
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 /// Cloud sync wiring (3.0.0): when the engine may run, what it reads and writes, and the
 /// Settings → Cloud actions. Everything here is a no-op while `cloudSyncEnabled` is false.
@@ -365,5 +370,162 @@ extension AppState {
     /// True when this device joined by email and holds no recovery key of its own.
     var managedDeviceHasNoRecoveryKey: Bool {
         clientAuthStatus.isEnrolled && (clientAuthManager.revealRecoveryKey()?.isEmpty ?? true)
+    }
+}
+
+// MARK: - Account email (B6a, docs/account-sending-consent-ux-plan.md)
+
+/// The addresses on the account as the server returns them: the verified one, and a
+/// replacement awaiting its link. Both can be set at once; "protected by email" means
+/// `verified` is set, whatever is pending.
+struct AccountEmail: Equatable {
+    var verified: String?
+    var pending: String?
+
+    var isProtected: Bool { verified != nil }
+    var isEmpty: Bool { verified == nil && pending == nil }
+}
+
+enum AccountEmailState: Equatable {
+    /// No answer yet for this account.
+    case loading
+    /// The last load failed; the message says why. Never read as "no email".
+    case unavailable(String)
+    case loaded(AccountEmail)
+
+    var email: AccountEmail? {
+        if case .loaded(let email) = self { return email }
+        return nil
+    }
+}
+
+/// The outcome of adding an email, for the control that asked.
+enum AccountEmailAddOutcome: Equatable {
+    /// A confirmation link went to the address; it is pending until opened.
+    case sent(String)
+    /// The address is already the verified one.
+    case alreadyVerified
+    /// Another account holds it; the account section offers Switch account.
+    case inUse
+    /// Delivery or the server failed; the previous state stands and the action can be retried.
+    case failed(String)
+}
+
+extension AppState {
+    /// The Home card shows only when it can help: an enrolled account with a meeting saved,
+    /// whose email state is known and empty, whose recovery key has not been acknowledged, and
+    /// which the person has not dismissed. Loading and unavailable states suppress it, so a
+    /// failed fetch never nags.
+    nonisolated static func accessCardVisible(
+        enrolled: Bool,
+        emailState: AccountEmailState,
+        hasSavedMeeting: Bool,
+        recoveryKeyAcknowledged: Bool,
+        dismissed: Bool
+    ) -> Bool {
+        guard enrolled, hasSavedMeeting, !dismissed, !recoveryKeyAcknowledged else { return false }
+        guard case .loaded(let email) = emailState else { return false }
+        return !email.isProtected
+    }
+
+    /// Reads under 60 s old are fresh enough for an activation; a mutation or an account change
+    /// clears the stamp so the next refresh always goes out.
+    static let accountEmailFreshness: TimeInterval = 60
+
+    /// Load the account's email. Coalesced (one in flight), freshness-limited unless `force`,
+    /// and ordered: a response applies only if the account generation is unchanged and no
+    /// newer read or mutation was issued meanwhile.
+    func refreshAccountEmail(reason: String, force: Bool = false) async {
+        guard appMode == .managed, clientAuthStatus.isEnrolled, let api = minitiAPIService else { return }
+        if !force, let last = accountEmailLastLoaded, Date().timeIntervalSince(last) < Self.accountEmailFreshness, case .loaded = accountEmailState { return }
+        guard !accountEmailInFlight else { return }
+        accountEmailInFlight = true
+        defer { accountEmailInFlight = false }
+        let generation = accountGeneration
+        accountEmailSequence += 1
+        let sequence = accountEmailSequence
+        do {
+            let answer = try await api.cloudEmail()
+            guard generation == accountGeneration, sequence == accountEmailSequence else {
+                DebugLogger.shared.log(.app, "Account email: dropped a stale read (\(reason))")
+                return
+            }
+            accountEmailState = .loaded(AccountEmail(verified: answer.email, pending: answer.pending))
+            accountEmailLastLoaded = Date()
+        } catch {
+            guard generation == accountGeneration, sequence == accountEmailSequence else { return }
+            accountEmailState = .unavailable(Self.accountEmailMessage(for: error))
+            accountEmailLastLoaded = nil
+            DebugLogger.shared.log(.app, "Account email: load failed (\(reason)): \(error)")
+        }
+    }
+
+    /// Send a confirmation link for `raw`. The verified address, if any, stays until the link
+    /// is opened; the state shows the replacement as pending.
+    func addAccountEmail(_ raw: String) async -> AccountEmailAddOutcome {
+        guard let api = minitiAPIService else { return .failed("Not signed in.") }
+        let address = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard address.contains("@"), address.count >= 3 else { return .failed("Enter an email address.") }
+        if case .loaded(let current) = accountEmailState, current.verified == address { return .alreadyVerified }
+        accountEmailSequence += 1
+        do {
+            try await api.setCloudEmail(address)
+            let verified = accountEmailState.email?.verified
+            accountEmailState = .loaded(AccountEmail(verified: verified, pending: address))
+            accountEmailLastLoaded = Date()
+            return .sent(address)
+        } catch CloudSyncError.server(let code, _) where code == "email_in_use" {
+            return .inUse
+        } catch {
+            return .failed(Self.accountEmailMessage(for: error))
+        }
+    }
+
+    /// Remove the email. Every web session and connected app on the account goes with it.
+    func removeAccountEmail() async -> String? {
+        guard let api = minitiAPIService else { return "Not signed in." }
+        accountEmailSequence += 1
+        do {
+            try await api.removeCloudEmail()
+            accountEmailState = .loaded(AccountEmail())
+            accountEmailLastLoaded = Date()
+            return nil
+        } catch {
+            return Self.accountEmailMessage(for: error)
+        }
+    }
+
+    /// Refresh on the browser handoff (the link was opened) and on activation (a link may have
+    /// been opened on another device, an address added elsewhere, or a failed load retried).
+    func installAccountEmailObservers() {
+        NotificationCenter.default.addObserver(forName: .minitiCloudCallback, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.refreshAccountEmail(reason: "browser callback", force: true) }
+        }
+        #if os(macOS)
+        let activation = NSApplication.didBecomeActiveNotification
+        #else
+        let activation = UIApplication.didBecomeActiveNotification
+        #endif
+        NotificationCenter.default.addObserver(forName: activation, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in await self?.refreshAccountEmail(reason: "activate") }
+        }
+    }
+
+    nonisolated static func accountEmailMessage(for error: Error) -> String {
+        switch error {
+        case CloudSyncError.offline: return "No connection."
+        case CloudSyncError.rateLimited: return "Too many attempts. Try again in a minute."
+        case CloudSyncError.unavailable: return "The account service is unavailable right now."
+        case CloudSyncError.requiresManaged: return "Email needs the managed plan."
+        case CloudSyncError.notEnrolled: return "Not signed in."
+        case CloudSyncError.revoked: return "This device was signed out."
+        case CloudSyncError.server(let code, let status):
+            if code == "email_unavailable" { return "Email delivery is not available right now. Try again later." }
+            if code == "email_send_failed" { return "The confirmation email could not be sent. Try again in a minute." }
+            if code == "invalid_email" { return "Enter a valid email address." }
+            return "Could not check this account's email (\(status == 0 ? code : String(status)))."
+        default:
+            return "Could not check this account's email."
+        }
     }
 }

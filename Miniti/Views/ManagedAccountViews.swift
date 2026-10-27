@@ -2,9 +2,9 @@ import SwiftUI
 
 // MARK: - Managed account UI (shared by macOS and iOS)
 //
-// The anonymous recovery key is the account. These views are the only places it is ever
-// shown: the one-time "save it" sheet, the reveal/rotate controls in Settings → Account &
-// Plan, and the restore field for adding a device. Everything else is silent.
+// The account is identified by its verified email when it has one and by the anonymous
+// recovery key as a backup (B6a). The key is shown only here: the one-time "save it" sheet,
+// Show and Replace in Settings, Account, and the sign-in field for adding a device.
 
 // MARK: Recovery key sheet
 
@@ -14,7 +14,7 @@ struct RecoveryKeySheet: View {
     @Environment(\.dismiss) private var dismiss
     let recoveryKey: String
     var title: String = "Save your recovery key"
-    var explanation: String = "This key is your Miniti account. It is the only way to add another device or come back after a wipe, and it cannot be recovered if lost. Keep it in your password manager."
+    var explanation: String = "Another way to sign in. Save it somewhere safe, such as your password manager: it signs this account in on a new device if you have no email, or if email is unavailable. It cannot be recovered if lost."
     @State private var saved = false
     @State private var copied = false
 
@@ -39,7 +39,7 @@ struct RecoveryKeySheet: View {
             .toggleStyle(.checkbox)
             #endif
 
-            Text("You can reveal or rotate it later in Settings → Account.")
+            Text("You can show or replace it later in Settings, Account.")
                 .font(.system(size: 11))
                 .foregroundStyle(ColorPalette.Text.dim)
 
@@ -118,15 +118,15 @@ struct RestoreRecoveryKeySheet: View {
     var onRestored: (() -> Void)? = nil
 
     private var title: String {
-        mode == .move ? "Move this device to another account" : "Restore with recovery key"
+        mode == .move ? "Switch account" : "Sign in with a recovery key"
     }
 
     private var explanation: String {
         switch mode {
         case .restore:
-            return "Enter the key from your other device. It starts with M1 and has eight groups of four characters. This adds the device to that account; your Pro plan on a Mac is restored separately with its license key."
+            return "Enter the key from your other device. It starts with M1 and has eight groups of four characters. This signs the device in to that account. A Pro purchase made on a Mac is restored separately with its license key."
         case .move:
-            return "Enter the recovery key of the account to join. This device keeps its meetings, usage, calendar, and CRM connections. If that account has a Pro plan, this device gets it too. It leaves its current account; if that account is then empty, it is closed."
+            return "Enter the recovery key of the account to switch to. This device keeps its meetings, usage, calendar and CRM connections. If that account has a Pro plan, this device gets it too. It leaves its current account; if that account is then empty, it is closed."
         }
     }
 
@@ -165,7 +165,7 @@ struct RestoreRecoveryKeySheet: View {
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
                 Spacer()
-                Button(isRestoring ? (mode == .move ? "Moving…" : "Restoring…") : (mode == .move ? "Move" : "Restore")) { restore() }
+                Button(isRestoring ? (mode == .move ? "Switching…" : "Signing in…") : (mode == .move ? "Switch" : "Sign in")) { restore() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(!canRestore)
             }
@@ -189,34 +189,216 @@ struct RestoreRecoveryKeySheet: View {
                 dismiss()
             } else {
                 error = appState.managedEnrollmentError
-                    ?? (mode == .move ? "Could not move this device." : "Could not restore this account.")
+                    ?? (mode == .move ? "Could not switch this device." : "Could not sign in to this account.")
             }
         }
     }
 }
 
-// MARK: Home nudge
+// MARK: Account section model
 
-/// Shown on Home until the person has confirmed they saved the recovery key.
-struct RecoveryKeyNudgeCard: View {
+/// What Settings, Account shows and offers for one combination of enrolment, email and key
+/// state (B6a). Pure value type so the eight states in the plan are tested without a view.
+struct AccountSectionModel: Equatable {
+    enum KeyState: Equatable {
+        case usable
+        /// A key failure that may pass: signed actions are disabled, nothing is hidden.
+        case temporarilyUnavailable
+        /// The key cannot work here and no recovery key can repair it: signed actions are
+        /// hidden and the way back is Sign in again.
+        case unusable
+    }
+
+    enum Action: Equatable {
+        case addEmail, changeEmail, resendEmail, removeEmail, retryEmail
+        case showKey, replaceKey
+        case switchAccount, signInAgain, tryAgain, signOut, deleteAccount
+    }
+
+    struct Inputs: Equatable {
+        var status: ClientAuthStatus = .notEnrolled
+        var emailState: AccountEmailState = .loading
+        /// The credential holds a recovery key (false for a device that joined by email).
+        var hasLocalRecoveryKey = true
+        var keyState: KeyState = .usable
+        var isPro = false
+        var isProViaAccount = false
+        var isMac = true
+    }
+
+    /// First line under Your account.
+    let emailLine: String
+    /// "Verified" beside a verified address.
+    let emailBadge: String?
+    /// "Replacement pending: address" while a change awaits its link.
+    let pendingLine: String?
+    let emailActions: [Action]
+    let recoveryKeyLine: String
+    let recoveryKeyActions: [Action]
+    /// The email-joined sentence, or nil.
+    let recoveryKeyNote: String?
+    /// Shown above the account actions when the key failed.
+    let keyNote: String?
+    let accountActions: [Action]
+    /// True while signed actions are disabled (temporary key failure).
+    let signedActionsDisabled: Bool
+    let planLine: String
+    let restoreTitle: String
+    let restoreCaption: String
+    let deviceRemovalMessage: String
+    let signOutMessage: String
+
+    static let temporarilyUnavailable = "Temporarily unavailable. Try again."
+
+    static func make(_ i: Inputs) -> AccountSectionModel {
+        let signedHidden = i.keyState == .unusable
+        let disabled = i.keyState == .temporarilyUnavailable
+
+        var emailLine: String
+        var badge: String?
+        var pendingLine: String?
+        var emailActions: [Action] = []
+        switch i.emailState {
+        case .loading:
+            emailLine = "Checking this account's email…"
+        case .unavailable(let message):
+            emailLine = "Could not check this account's email. \(message)"
+            emailActions = [.retryEmail]
+        case .loaded(let email):
+            if let verified = email.verified {
+                emailLine = verified
+                badge = "Verified"
+                emailActions = [.changeEmail, .removeEmail]
+                if let pending = email.pending {
+                    pendingLine = "Replacement pending: \(pending)"
+                    emailActions = [.resendEmail, .changeEmail, .removeEmail]
+                }
+            } else if let pending = email.pending {
+                emailLine = "Check your email: link sent to \(pending)"
+                emailActions = [.resendEmail, .changeEmail]
+            } else {
+                emailLine = "No email yet"
+                emailActions = [.addEmail]
+            }
+        }
+        if signedHidden { emailActions = emailActions.filter { $0 == .retryEmail } }
+
+        let recoveryKeyLine: String
+        var recoveryKeyActions: [Action] = []
+        var recoveryKeyNote: String?
+        if i.hasLocalRecoveryKey {
+            recoveryKeyLine = i.status.recoveryKeyAcknowledged ? "Saved" : "Not yet saved"
+            recoveryKeyActions = signedHidden ? [.showKey] : [.showKey, .replaceKey]
+        } else {
+            recoveryKeyLine = "Not on this device"
+            recoveryKeyNote = "This device signed in by email, so it does not hold the recovery key. Show it on a device that does, or replace it here; the old key then stops working."
+            recoveryKeyActions = signedHidden ? [] : [.replaceKey]
+        }
+
+        var keyNote: String?
+        var accountActions: [Action]
+        switch i.keyState {
+        case .usable:
+            accountActions = [.switchAccount, .signOut, .deleteAccount]
+        case .temporarilyUnavailable:
+            keyNote = "This device's sign-in key did not work just now. Try again, or sign in again with your email or recovery key."
+            accountActions = [.tryAgain, .signInAgain, .switchAccount, .signOut, .deleteAccount]
+        case .unusable:
+            keyNote = "This device's sign-in key no longer works here, which happens after a move from another \(i.isMac ? "Mac" : "device"). Sign in again with your email or recovery key; this device keeps its meetings."
+            accountActions = [.signInAgain, .signOut]
+        }
+
+        let planLine = i.isPro ? (i.isProViaAccount ? "Pro, from another device on this account" : "Pro") : "Free"
+        let restoreTitle = i.isMac ? "Restore Pro purchase with a license key" : "Restore App Store purchases"
+        let restoreCaption = i.isMac
+            ? "This restores a purchase. It does not sign you into an account. Bought Pro already? Sign in to that account first."
+            : "This restores a purchase from the App Store. It does not sign you into an account. Bought Pro already? Sign in to that account first."
+
+        return AccountSectionModel(
+            emailLine: emailLine,
+            emailBadge: badge,
+            pendingLine: pendingLine,
+            emailActions: emailActions,
+            recoveryKeyLine: recoveryKeyLine,
+            recoveryKeyActions: recoveryKeyActions,
+            recoveryKeyNote: recoveryKeyNote,
+            keyNote: keyNote,
+            accountActions: accountActions,
+            signedActionsDisabled: disabled,
+            planLine: planLine,
+            restoreTitle: restoreTitle,
+            restoreCaption: restoreCaption,
+            deviceRemovalMessage: "It can sign back in with the account's email or recovery key. Its meetings stay on it.",
+            signOutMessage: "This device can sign back in with the account's email or recovery key. Meetings stored on this device are not affected."
+        )
+    }
+
+    /// Whether an action sends a signed request (and so is disabled on a temporary failure).
+    static func needsSignature(_ action: Action) -> Bool {
+        switch action {
+        case .addEmail, .changeEmail, .resendEmail, .removeEmail, .replaceKey, .switchAccount, .deleteAccount: return true
+        case .retryEmail, .showKey, .signInAgain, .tryAgain, .signOut: return false
+        }
+    }
+}
+
+extension AppState {
+    /// The account section's inputs from the live state.
+    var accountSectionInputs: AccountSectionModel.Inputs {
+        var inputs = AccountSectionModel.Inputs()
+        inputs.status = clientAuthStatus
+        inputs.emailState = accountEmailState
+        inputs.hasLocalRecoveryKey = !managedDeviceHasNoRecoveryKey
+        if clientAuthStatus.keyUnusable || (clientAuthManager.keyNeedsReauthentication && !clientAuthStatus.keyTemporarilyUnavailable && !clientAuthStatus.isEnrolled) {
+            inputs.keyState = .unusable
+        } else if clientAuthStatus.keyTemporarilyUnavailable {
+            inputs.keyState = .temporarilyUnavailable
+        }
+        inputs.isPro = isPro
+        inputs.isProViaAccount = isProViaAccount
+        #if os(macOS)
+        inputs.isMac = true
+        #else
+        inputs.isMac = false
+        #endif
+        return inputs
+    }
+
+    /// Open Settings, Account on the email row (both platforms).
+    func openAccountEmailSettings() {
+        jumpToSetting("account.email")
+        showSettings = true
+    }
+}
+
+// MARK: Home card
+
+/// "Keep access to your account" (B6a): shown on Home after the first saved meeting while the
+/// account has no verified email and the recovery key is not acknowledged. Not now dismisses
+/// it for this account on this installation.
+struct AccountAccessCard: View {
     @EnvironmentObject var appState: AppState
     @State private var isPresentingKey = false
     @State private var isHovering = false
+    @State private var resendNotice: String?
+
+    private var pendingAddress: String? { appState.accountEmailState.email?.pending }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "key.horizontal")
+                Image(systemName: pendingAddress == nil ? "envelope" : "envelope.badge.clock")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(ColorPalette.Accent.green)
                     .frame(width: 18)
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("save your recovery key")
+                    Text(pendingAddress == nil ? "keep access to your account" : "check your email to finish")
                         .font(.system(size: 13, weight: .semibold, design: .default))
                         .foregroundStyle(ColorPalette.Text.primary)
 
-                    Text("it is your account: keep it to add another device or come back after a wipe.")
+                    Text(pendingAddress.map { "a link went to \($0). open it to make that address a way to sign in." }
+                         ?? "add an email so you can sign in on another device or recover access if this one stops working. this won't turn on cloud sync.")
                         .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(ColorPalette.Text.muted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -225,7 +407,7 @@ struct RecoveryKeyNudgeCard: View {
                 Spacer(minLength: 8)
 
                 Button {
-                    appState.snoozeRecoveryKeyNotice()
+                    appState.dismissAccessCard()
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 10, weight: .semibold))
@@ -236,39 +418,61 @@ struct RecoveryKeyNudgeCard: View {
                 .buttonStyle(.plain)
                 #if os(macOS)
                 .focusable(false)
-                .help("remind me next time")
+                .help("not now")
                 #endif
-                .accessibilityLabel("Remind me next time")
+                .accessibilityLabel("Not now")
             }
 
             HStack(spacing: 10) {
-                Button {
-                    isPresentingKey = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "eye")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("show key")
-                            .font(.system(size: 11, weight: .semibold, design: .default))
+                if let pendingAddress {
+                    Button {
+                        Task { @MainActor in
+                            let outcome = await appState.addAccountEmail(pendingAddress)
+                            resendNotice = outcome == .sent(pendingAddress) ? "sent again" : "could not send; try again in a minute"
+                        }
+                    } label: {
+                        primaryLabel("resend", systemImage: "arrow.clockwise")
                     }
-                    .foregroundStyle(Color(hex: "09090B"))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
-                    )
+                    .buttonStyle(.plain)
+                    #if os(macOS)
+                    .focusable(false)
+                    #endif
+                    if let resendNotice {
+                        Text(resendNotice)
+                            .font(.system(size: 11))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                    }
+                } else {
+                    Button {
+                        appState.openAccountEmailSettings()
+                    } label: {
+                        primaryLabel("add email", systemImage: "envelope")
+                    }
+                    .buttonStyle(.plain)
+                    #if os(macOS)
+                    .focusable(false)
+                    .onHover { hovering in
+                        withAnimation(.easeOut(duration: MinitiDesignSystem.Motion.hoverDuration)) { isHovering = hovering }
+                    }
+                    #endif
+
+                    if !appState.managedDeviceHasNoRecoveryKey {
+                        Button {
+                            isPresentingKey = true
+                        } label: {
+                            Text("use a recovery key instead")
+                                .font(.system(size: 11, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Text.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        #if os(macOS)
+                        .focusable(false)
+                        #endif
+                    }
                 }
-                .buttonStyle(.plain)
-                #if os(macOS)
-                .focusable(false)
-                .onHover { hovering in
-                    withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
-                }
-                #endif
 
                 Button {
-                    appState.snoozeRecoveryKeyNotice()
+                    appState.dismissAccessCard()
                 } label: {
                     Text("not now")
                         .font(.system(size: 11, weight: .medium, design: .default))
@@ -299,11 +503,28 @@ struct RecoveryKeyNudgeCard: View {
             }
         }
     }
+
+    private func primaryLabel(_ title: String, systemImage: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+                .font(.system(size: 10, weight: .semibold))
+            Text(title)
+                .font(.system(size: 11, weight: .semibold, design: .default))
+        }
+        .foregroundStyle(Color(hex: "09090B"))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
+        )
+    }
 }
 
 // MARK: Settings section
 
-/// Settings → Account & Plan: the anonymous account behind managed mode.
+/// Settings, Account: Your account, Ways to sign in, Devices, then the destructive actions
+/// (B6a). Plan and billing follows it in each platform's Settings view.
 struct ManagedAccountSettingsSection: View {
     @EnvironmentObject var appState: AppState
     @State private var revealedKey: String?
@@ -313,26 +534,47 @@ struct ManagedAccountSettingsSection: View {
     @State private var isPresentingEmailJoin = false
     @State private var isPresentingEmailRestore = false
     @State private var isConfirmingReveal = false
-    @State private var isConfirmingRotate = false
+    @State private var isConfirmingReplace = false
+    @State private var isConfirmingRemoveEmail = false
     @State private var isConfirmingSignOut = false
     @State private var isConfirmingDelete = false
     @State private var pendingRemoval: ClientAuthDevice?
     @State private var isBusy = false
     @State private var notice: String?
+    @State private var isEditingEmail = false
+    @State private var emailDraft = ""
+    @State private var emailNotice: String?
+    @FocusState private var emailFieldFocused: Bool
 
     private var status: ClientAuthStatus { appState.clientAuthStatus }
+    private var model: AccountSectionModel { AccountSectionModel.make(appState.accountSectionInputs) }
+    private var accountIsPresent: Bool { status.isEnrolled || status.keyUnusable }
 
     var body: some View {
-        Section("Account") {
-            if status.isEnrolled {
-                enrolledRows
+        Group {
+            if accountIsPresent {
+                yourAccountSection
+                waysToSignInSection
+                devicesSection
+                destructiveSection
             } else {
-                unenrolledRows
+                Section("Account") {
+                    unenrolledRows
+                }
+                .id("account.recoveryKey")
             }
         }
-        .id("account.recoveryKey")
-        .task(id: status.isEnrolled) {
-            if status.isEnrolled { await appState.loadManagedDevices() }
+        .task(id: status.accountID) {
+            if status.isEnrolled {
+                await appState.loadManagedDevices()
+                await appState.refreshAccountEmail(reason: "account settings")
+            }
+        }
+        .onChange(of: appState.pendingSettingsSearchTarget) { _, target in
+            if target == "account.email", status.isEnrolled, appState.accountEmailState.email?.verified == nil {
+                isEditingEmail = true
+                emailFieldFocused = true
+            }
         }
         .sheet(isPresented: $isPresentingRestore) {
             RestoreRecoveryKeySheet()
@@ -358,25 +600,31 @@ struct ManagedAccountSettingsSection: View {
             Button("Show key") { revealedKey = appState.revealRecoveryKey() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Anyone who sees it can add devices to this account.")
+            Text("Anyone who sees it can sign in to this account.")
         }
-        .confirmationDialog("Generate a new recovery key?", isPresented: $isConfirmingRotate, titleVisibility: .visible) {
-            Button("Rotate key") { rotate() }
+        .confirmationDialog("Replace the recovery key?", isPresented: $isConfirmingReplace, titleVisibility: .visible) {
+            Button("Replace key") { replaceKey() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("The current key stops working immediately. Your devices stay signed in. Save the new key.")
+            Text("The current key stops working at once. Devices already signed in stay signed in. Save the new key somewhere safe.")
+        }
+        .confirmationDialog("Remove the email from this account?", isPresented: $isConfirmingRemoveEmail, titleVisibility: .visible) {
+            Button("Remove email", role: .destructive) { removeEmail() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(removeEmailMessage)
         }
         .confirmationDialog("Sign this device out?", isPresented: $isConfirmingSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { signOut() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You will need the recovery key to use managed mode on this device again. Meetings stored on this device are not affected.")
+            Text(model.signOutMessage)
         }
         .confirmationDialog("Delete this account?", isPresented: $isConfirmingDelete, titleVisibility: .visible) {
             Button("Delete account", role: .destructive) { deleteAccount() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Every device loses access and the recovery key stops working. This does not cancel a Pro subscription; manage that from the App Store or the Polar customer portal first. Meetings stored on your devices are not deleted.")
+            Text("Every device loses access, and the email and recovery key stop working. This does not cancel a Pro subscription; manage that from the App Store or the Polar customer portal first. Meetings stored on your devices are not deleted.")
         }
         .confirmationDialog(
             pendingRemoval?.current == true ? "Sign this device out?" : "Remove this device?",
@@ -388,101 +636,314 @@ struct ManagedAccountSettingsSection: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("It will need the recovery key to sign back in.")
+            Text(pendingRemoval?.current == true ? model.signOutMessage : model.deviceRemovalMessage)
         }
     }
 
-    @ViewBuilder
-    private var enrolledRows: some View {
-        HStack {
-            Text("Account")
-            Spacer()
-            Text(status.accountID.map { String($0.prefix(12)) + "…" } ?? "none")
-                .foregroundStyle(.secondary)
-                .font(.system(.caption, design: .monospaced))
-        }
+    // MARK: Your account
 
-        HStack {
-            Text("Recovery key")
-            Spacer()
-            if appState.managedDeviceHasNoRecoveryKey {
-                Button("Create one") { isConfirmingRotate = true }
-                    .disabled(isBusy)
-            } else if revealedKey != nil {
-                Button("Hide") { revealedKey = nil; copied = false }
-            } else {
-                Button("Reveal") { isConfirmingReveal = true }
-                    .disabled(isBusy)
-                Button("Rotate") { isConfirmingRotate = true }
-                    .disabled(isBusy)
-            }
-        }
-        if appState.managedDeviceHasNoRecoveryKey {
-            Text("This device joined by email, so it holds no recovery key. Reveal it on another device, or create a new one here (the old one stops working).")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        if let revealedKey, !revealedKey.isEmpty {
-            RecoveryKeyDisplay(recoveryKey: revealedKey, copied: $copied)
-                .padding(.vertical, 4)
-        }
-        Text("This key is your account. Use it to add another device or restore after a wipe. \(status.isHardwareBacked ? "This device's key is protected by the Secure Enclave." : "")")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-
-        HStack {
-            Text("Devices")
-            Spacer()
-            Text("\(appState.managedDevices.count) / \(status.deviceCap ?? 5)")
-                .foregroundStyle(.secondary)
-        }
-        .id("account.devices")
-        if let error = appState.managedDevicesError {
-            Text(error)
-                .font(.caption)
-                .foregroundStyle(ColorPalette.Status.error)
-        }
-        ForEach(appState.managedDevices) { device in
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(deviceTitle(device))
-                    Text(deviceSubtitle(device))
+    private var yourAccountSection: some View {
+        Section("Your account") {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Email")
+                    Spacer()
+                    if let badge = model.emailBadge {
+                        Text(badge)
+                            .font(.caption)
+                            .foregroundStyle(ColorPalette.Status.success)
+                    }
+                }
+                Text(model.emailLine)
+                    .foregroundStyle(model.emailBadge == nil ? .secondary : .primary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let pending = model.pendingLine {
+                    Text(pending)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+            .id("account.email")
+
+            HStack {
+                Text("Plan")
                 Spacer()
-                Button(device.current ? "Sign out" : "Remove") { pendingRemoval = device }
-                    .disabled(isBusy)
+                Text(model.planLine)
+                    .foregroundStyle(.secondary)
+            }
+
+            DisclosureGroup("Support details") {
+                detailRow("Account id", status.accountID ?? "none")
+                detailRow("Device id", DeviceIdentifier.getOrCreateDeviceId())
+                detailRow("Sign-in key", status.isHardwareBacked ? "Secure Enclave" : "Software")
+                detailRow("App", "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))")
+            }
+            .font(.callout)
+        }
+    }
+
+    private func detailRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+            Spacer()
+            Text(value)
+                .foregroundStyle(.secondary)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
+        }
+    }
+
+    // MARK: Ways to sign in
+
+    private var waysToSignInSection: some View {
+        Section("Ways to sign in") {
+            if let note = model.keyNote {
+                Text(note)
+                    .font(.caption)
                     .foregroundStyle(ColorPalette.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if model.signedActionsDisabled {
+                Text(AccountSectionModel.temporarilyUnavailable)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Email
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Email")
+                    Spacer()
+                    ForEach(model.emailActions, id: \.self) { action in
+                        actionButton(action)
+                    }
+                }
+                if isEditingEmail {
+                    HStack {
+                        TextField("name@example.com", text: $emailDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($emailFieldFocused)
+                            #if os(iOS)
+                            .keyboardType(.emailAddress)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            #endif
+                            .onSubmit { submitEmail() }
+                        Button("Send link") { submitEmail() }
+                            .disabled(isBusy || !emailDraft.contains("@"))
+                        Button("Cancel") { isEditingEmail = false; emailDraft = ""; emailNotice = nil }
+                    }
+                    Text("A confirmation link goes to this address. It becomes a way to sign in once you open the link. This does not turn on cloud sync.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let emailNotice {
+                    Text(emailNotice)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // Recovery key
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Recovery key")
+                    Spacer()
+                    Text(model.recoveryKeyLine)
+                        .foregroundStyle(.secondary)
+                    if revealedKey != nil {
+                        Button("Hide") { revealedKey = nil; copied = false }
+                    } else {
+                        ForEach(model.recoveryKeyActions, id: \.self) { action in
+                            actionButton(action)
+                        }
+                    }
+                }
+                .id("account.recoveryKey")
+                if let note = model.recoveryKeyNote {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let revealedKey, !revealedKey.isEmpty {
+                    RecoveryKeyDisplay(recoveryKey: revealedKey, copied: $copied)
+                        .padding(.vertical, 4)
+                }
+                Text("Another way to sign in: it signs this account in on a new device if you have no email, or if email is unavailable.\(status.isHardwareBacked ? " This device's sign-in key is protected by the Secure Enclave." : "")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            // Account actions
+            HStack {
+                ForEach(model.accountActions.filter { [.tryAgain, .signInAgain, .switchAccount].contains($0) }, id: \.self) { action in
+                    actionButton(action)
+                }
+            }
+            .id("account.move")
+            if model.accountActions.contains(.switchAccount) {
+                Text("Switch account signs this device in to another account by email or recovery key. It keeps its meetings; if that account has Pro, this device gets it too.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let notice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
+    }
 
-        if let notice {
-            Text(notice)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
+    // MARK: Devices
 
-        HStack {
-            Button("Move this device to another account…") { isPresentingMove = true }
-                .disabled(isBusy)
-            Button("Join by email…") { isPresentingEmailJoin = true }
-                .disabled(isBusy)
+    private var devicesSection: some View {
+        Section("Devices") {
+            HStack {
+                Text("Devices")
+                Spacer()
+                Text("\(appState.managedDevices.count) / \(status.deviceCap ?? 5)")
+                    .foregroundStyle(.secondary)
+            }
+            .id("account.devices")
+            if let error = appState.managedDevicesError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Status.error)
+            }
+            ForEach(appState.managedDevices) { device in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(deviceTitle(device))
+                        Text(deviceSubtitle(device))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    if model.accountActions.contains(.deleteAccount) || device.current {
+                        // Removal is a signed request; a device whose key cannot sign only offers
+                        // its own sign-out (which clears locally).
+                        Button(device.current ? "Sign out" : "Remove") { pendingRemoval = device }
+                            .disabled(isBusy || (model.signedActionsDisabled && !device.current))
+                            .foregroundStyle(ColorPalette.Status.error)
+                    }
+                }
+            }
         }
-        .id("account.move")
-        Text("Bought Pro on another Mac? Move this device onto that account and it shares the plan. Join by email sends a link to the account's email instead of typing the key.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
+    }
 
-        HStack {
-            Button("Sign out this device") { isConfirmingSignOut = true }
-                .disabled(isBusy)
-            Spacer()
-            Button("Delete account") { isConfirmingDelete = true }
-                .disabled(isBusy)
-                .foregroundStyle(ColorPalette.Status.error)
+    // MARK: Sign out and delete
+
+    private var destructiveSection: some View {
+        Section {
+            HStack {
+                if model.accountActions.contains(.signOut) {
+                    Button("Sign out this device") { isConfirmingSignOut = true }
+                        .disabled(isBusy)
+                }
+                Spacer()
+                if model.accountActions.contains(.deleteAccount) {
+                    Button("Delete account") { isConfirmingDelete = true }
+                        .disabled(isBusy || model.signedActionsDisabled)
+                        .foregroundStyle(ColorPalette.Status.error)
+                }
+            }
+            .id("account.delete")
         }
-        .id("account.delete")
+    }
+
+    // MARK: Actions
+
+    @ViewBuilder
+    private func actionButton(_ action: AccountSectionModel.Action) -> some View {
+        let disabled = isBusy || (model.signedActionsDisabled && AccountSectionModel.needsSignature(action))
+        switch action {
+        case .addEmail:
+            Button("Add email") { isEditingEmail = true; emailFieldFocused = true }.disabled(disabled)
+        case .changeEmail:
+            Button("Change") { isEditingEmail = true; emailFieldFocused = true }.disabled(disabled)
+        case .resendEmail:
+            Button("Resend") { resendEmail() }.disabled(disabled)
+        case .removeEmail:
+            Button("Remove") { isConfirmingRemoveEmail = true }.disabled(disabled)
+        case .retryEmail:
+            Button("Retry") { Task { await appState.refreshAccountEmail(reason: "retry", force: true) } }
+        case .showKey:
+            Button("Show recovery key") { isConfirmingReveal = true }.disabled(isBusy)
+        case .replaceKey:
+            Button("Replace recovery key") { isConfirmingReplace = true }.disabled(disabled)
+        case .switchAccount:
+            Menu("Switch account…") {
+                Button("With email…") { isPresentingEmailJoin = true }
+                Button("With recovery key…") { isPresentingMove = true }
+            }
+            .disabled(disabled)
+        case .signInAgain:
+            Menu("Sign in again…") {
+                Button("With email…") { isPresentingEmailRestore = true }
+                Button("With recovery key…") { isPresentingRestore = true }
+            }
+        case .tryAgain:
+            Button("Try again") { Task { await appState.ensureManagedEnrollment(trigger: "settings") } }
+        case .signOut:
+            Button("Sign out this device") { isConfirmingSignOut = true }.disabled(isBusy)
+        case .deleteAccount:
+            Button("Delete account") { isConfirmingDelete = true }.disabled(disabled)
+        }
+    }
+
+    private var removeEmailMessage: String {
+        let keyPart = appState.managedDeviceHasNoRecoveryKey
+            ? "This device holds no recovery key, so make sure another device does before removing it."
+            : "The recovery key stays a way to sign in."
+        return "Every browser signed in with it and every connected app (Claude, ChatGPT) is signed out. \(keyPart)"
+    }
+
+    private func submitEmail() {
+        guard emailDraft.contains("@") else { return }
+        isBusy = true
+        emailNotice = nil
+        Task { @MainActor in
+            let outcome = await appState.addAccountEmail(emailDraft)
+            isBusy = false
+            switch outcome {
+            case .sent(let address):
+                isEditingEmail = false
+                emailDraft = ""
+                emailNotice = "Check \(address) for the link. It works for 15 minutes."
+            case .alreadyVerified:
+                isEditingEmail = false
+                emailDraft = ""
+                emailNotice = "That address is already verified on this account."
+            case .inUse:
+                emailNotice = "That email is on another miniti account. Use Switch account to sign this device in to it, or remove the email there first."
+            case .failed(let message):
+                emailNotice = message
+            }
+        }
+    }
+
+    private func resendEmail() {
+        guard let pending = appState.accountEmailState.email?.pending else { return }
+        isBusy = true
+        Task { @MainActor in
+            let outcome = await appState.addAccountEmail(pending)
+            isBusy = false
+            emailNotice = outcome == .sent(pending) ? "Sent again to \(pending)." : "Could not send. Try again in a minute."
+        }
+    }
+
+    private func removeEmail() {
+        isBusy = true
+        Task { @MainActor in
+            emailNotice = await appState.removeAccountEmail()
+            isBusy = false
+        }
     }
 
     @ViewBuilder
@@ -497,7 +958,7 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Text(appState.managedEnrollmentError ?? "Managed mode needs an account on this device. Miniti creates one automatically; if that failed, retry or restore with a recovery key from another device.")
+            Text(appState.managedEnrollmentError ?? "Managed mode needs an account on this device. miniti creates one automatically; if that failed, retry, or sign in to an account you already have with its email or recovery key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -505,8 +966,8 @@ struct ManagedAccountSettingsSection: View {
                 Button("Retry setup") {
                     Task { await appState.ensureManagedEnrollment(trigger: "settings") }
                 }
-                Button("Restore with recovery key…") { isPresentingRestore = true }
                 Button("Sign in with email…") { isPresentingEmailRestore = true }
+                Button("Sign in with recovery key…") { isPresentingRestore = true }
             }
         }
     }
@@ -526,13 +987,13 @@ struct ManagedAccountSettingsSection: View {
         return parts.joined(separator: " · ")
     }
 
-    private func rotate() {
+    private func replaceKey() {
         isBusy = true
         Task { @MainActor in
             if let key = await appState.rotateManagedRecoveryKey() {
                 revealedKey = key
                 copied = false
-                notice = "Recovery key rotated. Save the new key."
+                notice = "Recovery key replaced. Save the new key; the old one no longer works."
             } else {
                 notice = appState.managedEnrollmentError
             }

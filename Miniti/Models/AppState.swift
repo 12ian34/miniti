@@ -398,7 +398,8 @@ enum SettingsSearchCatalog {
         .init("data.autoExport", "Auto-export Meetings as Markdown", section: "Markdown Export", destination: .data, keywords: ["Obsidian", "AGENTS.md"], platforms: [.macOS]),
         .init("data.exportAll", "Export All Meetings", section: "Markdown Export", destination: .data, keywords: ["backup", "markdown"], platforms: [.macOS]),
 
-        .init("account.recoveryKey", "Recovery Key", section: "Account", destination: .account, keywords: ["account", "restore", "backup", "another device", "sign in"]),
+        .init("account.email", "Email", section: "Your account", destination: .account, keywords: ["email", "address", "verified", "sign in", "web", "recover", "protect"]),
+        .init("account.recoveryKey", "Recovery key", section: "Ways to sign in", destination: .account, keywords: ["account", "restore", "backup", "another device", "sign in", "show", "replace"]),
         .init("account.devices", "Devices on This Account", section: "Account", destination: .account, keywords: ["remove device", "sign out", "linked"]),
         .init("account.delete", "Delete Account", section: "Account", destination: .account, keywords: ["erase", "remove account", "privacy"]),
 
@@ -1061,7 +1062,22 @@ final class AppState: ObservableObject {
     @Published var isEnrollingManagedDevice = false
     @Published var managedEnrollmentError: String?
     /// Show the "save your recovery key" nudge: enrolled, key never acknowledged, not snoozed this launch.
-    @Published private(set) var showRecoveryKeyNotice = false
+    /// The Home "Keep access to your account" card (B6a). Decided by `accessCardVisible`.
+    @Published private(set) var showAccessCard = false
+    /// The account's email as last loaded (B6a). `.loading` until the first answer; a failed
+    /// load is `.unavailable`, never "no email".
+    @Published var accountEmailState: AccountEmailState = .loading {
+        didSet { refreshAccessCard() }
+    }
+    /// Bumped whenever the enrolled account changes (sign in, switch, sign out, revoke); a
+    /// response captured under an older generation is dropped.
+    private(set) var accountGeneration = 0
+    /// Bumped by every email read and mutation; only the latest read may apply.
+    var accountEmailSequence = 0
+    var accountEmailLastLoaded: Date?
+    var accountEmailInFlight = false
+    /// The account id the generation currently belongs to.
+    private var accountEmailAnchorID: String?
     @Published private(set) var managedDevices: [ClientAuthDevice] = []
     @Published private(set) var managedDevicesError: String?
     /// Set when the on-disk meeting store could not be opened at launch (roadmap P0.2).
@@ -1078,7 +1094,6 @@ final class AppState: ObservableObject {
     var persistenceFetchHandler: (ModelContext, FetchDescriptor<Meeting>) throws -> [Meeting] = { try $0.fetch($1) }
     /// Sees every diagnostics event before the share/mode guards; tests assert through it.
     var diagnosticEventObserver: ((String, [String: String]) -> Void)?
-    private var recoveryKeyNoticeSnoozed = false
     /// The enrollment policy lives in `ManagedEnrollmentCoordinator` (ClientAuth.swift); this
     /// object keeps the guards that need the host and the published mirrors it updates.
     private lazy var enrollmentCoordinator = ManagedEnrollmentCoordinator(
@@ -2331,6 +2346,7 @@ final class AppState: ObservableObject {
             .store(in: &cancellables)
         insightsService = InsightsService()
         minitiAPIService = MinitiAPIService()
+        installAccountEmailObservers()
         #if os(iOS)
         let storeKitService = AppStoreSubscriptionService()
         self.storeKitService = storeKitService
@@ -10727,12 +10743,49 @@ final class AppState: ObservableObject {
     func refreshClientAuthStatus() {
         let status = clientAuthManager.status
         clientAuthStatus = status
-        showRecoveryKeyNotice = status.isEnrolled && !status.recoveryKeyAcknowledged && !recoveryKeyNoticeSnoozed
+        noteAccountIdentity(status.accountID)
+        refreshAccessCard()
     }
 
-    /// Screenshot mode: derive the nudge from the faked status rather than the Keychain.
+    /// Screenshot mode: derive the card from the faked status rather than the Keychain.
     func refreshClientAuthStatusForScreenshots() {
-        showRecoveryKeyNotice = clientAuthStatus.isEnrolled && !clientAuthStatus.recoveryKeyAcknowledged
+        accountEmailState = .loaded(AccountEmail())
+        showAccessCard = clientAuthStatus.isEnrolled && !clientAuthStatus.recoveryKeyAcknowledged
+    }
+
+    /// The enrolled account changed (or went away): the email state belongs to the old one.
+    private func noteAccountIdentity(_ accountID: String?) {
+        guard accountID != accountEmailAnchorID else { return }
+        accountEmailAnchorID = accountID
+        accountGeneration += 1
+        accountEmailSequence += 1
+        accountEmailLastLoaded = nil
+        accountEmailState = .loading
+        if accountID != nil, appMode == .managed {
+            Task { @MainActor [weak self] in await self?.refreshAccountEmail(reason: "account changed", force: true) }
+        }
+    }
+
+    /// Recompute the Home card from the current status, email state and saved meetings.
+    func refreshAccessCard() {
+        let status = clientAuthStatus
+        let dismissed = status.accountID.map { UserDefaults.standard.bool(forKey: Self.accessCardDismissedKey(accountID: $0)) } ?? false
+        showAccessCard = Self.accessCardVisible(
+            enrolled: status.isEnrolled,
+            emailState: accountEmailState,
+            hasSavedMeeting: hasSavedMeetingOnThisInstallation,
+            recoveryKeyAcknowledged: status.recoveryKeyAcknowledged,
+            dismissed: dismissed
+        )
+    }
+
+    static func accessCardDismissedKey(accountID: String) -> String { "accessCard.dismissed.\(accountID)" }
+
+    /// One finished meeting on this installation is enough; the first launch stays quiet.
+    private var hasSavedMeetingOnThisInstallation: Bool {
+        var descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.endTime != nil })
+        descriptor.fetchLimit = 1
+        return !(cloudFetchMeetings(descriptor) ?? []).isEmpty
     }
 
     /// Make sure this installation holds device-bound credentials before a managed request.
@@ -10850,10 +10903,12 @@ final class AppState: ObservableObject {
         refreshClientAuthStatus()
     }
 
-    /// Hide the nudge until the next launch.
-    func snoozeRecoveryKeyNotice() {
-        recoveryKeyNoticeSnoozed = true
-        refreshClientAuthStatus()
+    /// Not now on the Home card: dismissed for this account on this installation, for good.
+    func dismissAccessCard() {
+        if let accountID = clientAuthStatus.accountID {
+            UserDefaults.standard.set(true, forKey: Self.accessCardDismissedKey(accountID: accountID))
+        }
+        refreshAccessCard()
     }
 
     func rotateManagedRecoveryKey() async -> String? {

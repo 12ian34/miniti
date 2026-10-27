@@ -47,9 +47,6 @@ struct CloudSettingsSections: View {
     @State private var notice: String?
     @State private var tokens: [CloudToken] = []
     @State private var connectedApps: [CloudConnectedApp] = []
-    @State private var email: String?
-    @State private var pendingEmail: String?
-    @State private var newEmail = ""
     @State private var newTokenName = ""
     @State private var revealedToken: String?
     @State private var copiedToken = false
@@ -116,10 +113,12 @@ struct CloudSettingsSections: View {
                     appState.selectedSettingsTab = SettingsDestination.cloud.rawValue
                 }
                 #endif
-            } else if email == nil {
-                Text("Claude and ChatGPT sign you in with the email on your account. Add one in Settings, Cloud, Web sign-in before connecting them. Tokens work without it.")
+            } else if appState.accountEmailState.email?.verified == nil {
+                Text("Claude and ChatGPT sign you in with the email on your account. Add one in Settings, Account before connecting them. Tokens work without it.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Add email in Settings, Account") { appState.jumpToSetting("account.email") }
+                    .settingsJumpStyle()
             }
         }
         .id("api.setup")
@@ -179,9 +178,8 @@ struct CloudSettingsSections: View {
         }
         .id("cloud.sync")
         .sheet(isPresented: $isPresentingEnable) {
-            CloudEnableSheet(onTurnOn: { emailToAdd in
+            CloudEnableSheet(onTurnOn: {
                 appState.setCloudSyncEnabled(true)
-                if let emailToAdd { addEmail(emailToAdd) }
             })
             .environmentObject(appState)
             .preferredColorScheme(.dark)
@@ -249,36 +247,40 @@ struct CloudSettingsSections: View {
 
     private var signInSection: some View {
         Section("Web sign-in") {
-            if let email {
-                HStack {
-                    Text("Email")
-                    Spacer()
-                    Text(email).foregroundStyle(.secondary)
-                    Button("Remove") { removeEmail() }.disabled(isBusy)
-                }
-                Text("Sign in at api.miniti.app/signin with a link sent to this address, and connect tools like Claude. Removing it signs every browser and connected app out.")
-                    .font(.caption)
+            switch appState.accountEmailState {
+            case .loading:
+                Text("Checking this account's email…")
                     .foregroundStyle(.secondary)
-            } else {
-                if let pendingEmail {
-                    Text("Check \(pendingEmail) for a confirmation link.")
+            case .unavailable(let message):
+                HStack {
+                    Text("Could not check this account's email. \(message)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Retry") { Task { await appState.refreshAccountEmail(reason: "cloud retry", force: true) } }
+                }
+            case .loaded(let email):
+                if let verified = email.verified {
+                    HStack {
+                        Text("Email")
+                        Spacer()
+                        Text(verified).foregroundStyle(.secondary)
+                    }
+                    Text("Sign in at api.miniti.app/signin with a link sent to this address, and approve a new device from your inbox.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if let pending = email.pending {
+                    Text("Check \(pending) for a confirmation link.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("No email on this account yet. Add one to sign in on the web and to connect tools like Claude.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                HStack {
-                    TextField("Email for web sign-in", text: $newEmail)
-                        .textFieldStyle(.roundedBorder)
-                        #if os(iOS)
-                        .keyboardType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        #endif
-                    Button("Add") { addEmail(newEmail) }
-                        .disabled(isBusy || !newEmail.contains("@"))
-                }
-                Text("Optional. Needed to sign in on the web and to connect tools like Claude. It never adds a device by itself; that still needs your recovery key or an approval from a signed-in device.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
+            Button("Manage email in Settings, Account") { appState.jumpToSetting("account.email") }
+                .settingsJumpStyle()
             Text("Connected apps and tokens live in Settings, API.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -355,47 +357,9 @@ struct CloudSettingsSections: View {
         loadedAccount = account
         async let tokenList = try? api.listCloudTokens()
         async let appList = try? api.listConnectedApps()
-        async let emailState = try? api.cloudEmail()
         tokens = await tokenList ?? []
         connectedApps = await appList ?? []
-        if let state = await emailState {
-            email = state.email
-            pendingEmail = state.pending
-        }
-    }
-
-    private func addEmail(_ address: String) {
-        guard let api = appState.minitiAPIService else { return }
-        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard trimmed.contains("@") else { return }
-        isBusy = true
-        Task {
-            defer { isBusy = false }
-            do {
-                try await api.setCloudEmail(trimmed)
-                pendingEmail = trimmed
-                newEmail = ""
-                notice = nil
-            } catch CloudSyncError.server(let code, _) where code == "email_in_use" {
-                notice = "That email is on another account. Move this device to it from Settings, Account."
-            } catch {
-                notice = "Could not send the confirmation link."
-            }
-        }
-    }
-
-    private func removeEmail() {
-        guard let api = appState.minitiAPIService else { return }
-        isBusy = true
-        Task {
-            defer { isBusy = false }
-            if (try? await api.removeCloudEmail()) != nil {
-                email = nil
-                connectedApps = []
-            } else {
-                notice = "Could not remove the email."
-            }
-        }
+        await appState.refreshAccountEmail(reason: "cloud settings")
     }
 
     private func disconnect(_ app: CloudConnectedApp) {
@@ -473,35 +437,35 @@ struct CloudSettingsSections: View {
 struct CloudEnableSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
-    let onTurnOn: (String?) -> Void
-    @State private var email = ""
+    let onTurnOn: () -> Void
     @State private var meetingCount: Int?
+
+    private var hasEmail: Bool { appState.accountEmailState.email?.verified != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Keep your meetings in the cloud")
                 .font(.title3.weight(.semibold))
             Text(meetingCount.map { "\($0) finished meeting\($0 == 1 ? "" : "s") on this device will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account." } ?? "Your finished meetings will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account.")
-            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Meetings recorded in private mode stay off the cloud.")
+            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. A meeting recorded in private mode stays off the cloud unless you put it on.")
                 .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 6) {
-                TextField("Email for web sign-in (optional)", text: $email)
-                    .textFieldStyle(.roundedBorder)
-                    #if os(iOS)
-                    .keyboardType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                Text("Add an email to sign in on the web and connect tools like Claude. You can skip this and add it later.")
+            if !hasEmail {
+                Text("Web sign-in and tools like Claude need an email on the account. You can add one in Settings, Account now or later.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             HStack {
+                if !hasEmail {
+                    Button("Add email first") {
+                        dismiss()
+                        appState.jumpToSetting("account.email")
+                    }
+                }
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Turn on") {
-                    let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
-                    onTurnOn(trimmed.contains("@") ? trimmed : nil)
+                Button(hasEmail ? "Turn on" : "Turn on without email") {
+                    onTurnOn()
                     dismiss()
                 }
                 .keyboardShortcut(.defaultAction)

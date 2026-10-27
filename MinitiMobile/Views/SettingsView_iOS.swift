@@ -273,7 +273,9 @@ private struct SettingsDetailView_iOS: View {
 
                 if category == .account {
                 if appState.appMode == .managed {
-                    Section("Subscription") {
+                    ManagedAccountSettingsSection()
+
+                    Section("Plan and billing") {
                         HStack {
                             Text("Plan")
                             Spacer()
@@ -371,9 +373,12 @@ private struct SettingsDetailView_iOS: View {
                                         Text("Restoring…")
                                 }
                             } else {
-                                Text("Restore Purchases")
+                                Text("Restore App Store purchases")
                             }
                         }
+                        Text("This restores a purchase from the App Store. It does not sign you into an account. Bought Pro already? Sign in to that account first.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         
                         if let subscriptionMessage {
                             Text(subscriptionMessage)
@@ -429,7 +434,6 @@ private struct SettingsDetailView_iOS: View {
                     }
                     .id("account.usage")
 
-                    ManagedAccountSettingsSection()
                 }
 
                 Section("Mode") {

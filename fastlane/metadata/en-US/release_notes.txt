@@ -1,7 +1,11 @@
 NEW
+- Settings, Account shows your account the way you think of it: your verified email, how you sign in, your devices, your plan. Add an email on any account, free or Pro, with cloud off. It is the easiest way back in on a new device, and it never turns on cloud sync.
 - Settings, Sending: one tab that lists what leaves this device and who gets it, worked out from your settings right now: Deepgram, OpenAI, TypeSafe, miniti, your docs server, Google Calendar, your CRM, your webhook. Each row says exactly what is sent, or nothing and why. While you record it says what this meeting is doing.
 
 IMPROVED
+- The recovery key is a backup, not your account. Show it or replace it from Settings, Account, with plain words about what each does.
+- Settings, Sending is three short groups with one status word per row and one Configure link.
+- The first-run permission screen is shorter, and Allow and Not now stay on screen at every size.
 - Granola import takes the zip Granola emails, or several CSV files at once.
 
 FIXED

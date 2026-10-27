@@ -2,9 +2,13 @@
 
 The top-level gates and primary screens for each platform. For UI patterns (focus rings, keyboard handling, etc.) see [patterns.md](patterns.md).
 
-## Planned account, Sending and consent changes (2026-10-26)
+## Account, Sending and consent (built 2026-10-27 for 3.4.0 build 139)
 
-B6a in [enrollment-identity-plan.md](enrollment-identity-plan.md) defines the approved email-first Account state table and Home prompt without requiring email, Pro or cloud. B6b first-use/signed-out choices wait for A4. [reliability-follow-up-plan.md](reliability-follow-up-plan.md), U1/U2, defines the grouped Sending screen and shorter consent screen with persistent visible actions. These are future-update requirements; the current UI states below describe the implementation, including its documented gaps.
+- **Consent (U2):** `TermsAcceptanceView` is a scrolling disclosure with Allow and Not now in their own bar below it; two provider lines, the two routes, the not-now choice; version 2 unchanged. Escape cancels only on the sheet.
+- **Settings, Sending (U1):** a headline (this recording's routes, or "based on your current settings"), three groups (Transcription and AI, Sync and exports, Account and connections), one status word per row (Used for recordings, On request, Automatic, Automatic export, Off, Paused: reason, Not connected), one Configure control, Details on demand, "Not in use: n" folded, and a footer that names what is kept on the device without claiming a meeting never leaves.
+- **Settings, Account (B6a):** Your account (email in full with Verified, replacement pending line, plan, Support details with ids and key kind), Ways to sign in (Add, Change, Resend, Remove email with an inline field; Show and Replace recovery key; Switch account by email or key; on a broken key: Sign in again, Show recovery key kept, signed actions hidden; on a temporary key failure: signed actions disabled with "Temporarily unavailable. Try again."), Devices, then Sign out and Delete. Plan and billing follows, with "Restore Pro purchase with a license key" on the Mac and "Restore App Store purchases" on iOS, each with the sentence that it restores a purchase and does not sign in.
+- **Home card (B6a):** "Keep access to your account" after the first saved meeting while the account has no verified email and the key is not acknowledged: Add email (opens Settings, Account on the email field), Use a recovery key instead, Not now (dismissed per account). Pending verification shows "Check your email to finish" with Resend. Never while recording, loading or unavailable.
+- **Cloud and API:** the Cloud section shows the shared email state and links to Settings, Account; the enable sheet has no email field (Add email first / Turn on without email); the API tab's guidance points at Settings, Account. B6b first-use and signed-out choices still wait for A4.
 
 ## Current limitations and private-mode semantics
 

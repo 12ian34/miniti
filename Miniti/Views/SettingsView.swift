@@ -259,7 +259,9 @@ struct AccountSettingsView: View {
             }
             
             if appState.appMode == .managed {
-                Section("Subscription") {
+                ManagedAccountSettingsSection()
+
+                Section("Plan and billing") {
                     if appState.isPro {
                         HStack {
                             Text("Plan")
@@ -292,9 +294,12 @@ struct AccountSettingsView: View {
                         }
                     }
                     
-                    Button("Restore with License Key") {
+                    Button("Restore Pro purchase with a license key") {
                         showRestoreSheet = true
                     }
+                    Text("This restores a purchase. It does not sign you into an account. Bought Pro already? Sign in to that account first.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 .id("account.subscription")
                 
@@ -344,7 +349,6 @@ struct AccountSettingsView: View {
                 }
                 .id("account.usage")
 
-                ManagedAccountSettingsSection()
             }
 
             if appState.appMode == .byok {

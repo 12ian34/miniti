@@ -1962,3 +1962,317 @@ private final class DiagnosticClientAuthStore: ClientAuthCredentialStore, @unche
     }
     func clear() { lock.lock(); defer { lock.unlock() }; value = nil }
 }
+
+// MARK: - B6a: account email, the Home card and the account section model
+
+final class AccessCardPolicyTests: XCTestCase {
+    private let empty = AccountEmailState.loaded(AccountEmail())
+
+    func testShowsOnlyForAnEnrolledAccountWithAMeetingAndNoProtection() {
+        XCTAssertTrue(AppState.accessCardVisible(enrolled: true, emailState: empty, hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false))
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: false, emailState: empty, hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false), "no account, nothing to protect")
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: empty, hasSavedMeeting: false, recoveryKeyAcknowledged: false, dismissed: false), "the first launch stays quiet")
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: empty, hasSavedMeeting: true, recoveryKeyAcknowledged: true, dismissed: false), "a saved recovery key is protection")
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: empty, hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: true), "not now is respected")
+    }
+
+    func testLoadingAndUnavailableSuppressTheCardAndAVerifiedEmailEndsIt() {
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: .loading, hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false))
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: .unavailable("No connection."), hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false), "a failed fetch never nags")
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: .loaded(AccountEmail(verified: "a@example.com")), hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false))
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: .loaded(AccountEmail(verified: "a@example.com", pending: "b@example.com")), hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false), "a pending replacement does not remove protection")
+        XCTAssertTrue(AppState.accessCardVisible(enrolled: true, emailState: .loaded(AccountEmail(pending: "b@example.com")), hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false), "first verification pending shows the quiet form")
+    }
+}
+
+final class AccountSectionModelTests: XCTestCase {
+    private typealias M = AccountSectionModel
+    private func enrolled(acknowledged: Bool = true) -> ClientAuthStatus {
+        ClientAuthStatus(isEnrolled: true, accountID: "acct_test", deviceCap: 5, enrolledAt: "2026-10-27T00:00:00Z", enrollmentPath: "create", recoveryKeyAcknowledged: acknowledged, isHardwareBacked: true)
+    }
+    private func make(_ configure: (inout M.Inputs) -> Void) -> M {
+        var i = M.Inputs()
+        i.status = enrolled()
+        i.emailState = .loaded(AccountEmail())
+        configure(&i)
+        return M.make(i)
+    }
+
+    func testTheEightStatesShowTheirSentenceAndTheirOneAction() {
+        let loading = make { $0.emailState = .loading }
+        XCTAssertEqual(loading.emailLine, "Checking this account's email…")
+        XCTAssertEqual(loading.emailActions, [])
+
+        let unavailable = make { $0.emailState = .unavailable("No connection.") }
+        XCTAssertEqual(unavailable.emailLine, "Could not check this account's email. No connection.")
+        XCTAssertEqual(unavailable.emailActions, [.retryEmail], "never an add-email nudge from a failed request")
+
+        let none = make { _ in }
+        XCTAssertEqual(none.emailLine, "No email yet")
+        XCTAssertEqual(none.emailActions, [.addEmail])
+        XCTAssertNil(none.emailBadge)
+
+        let pending = make { $0.emailState = .loaded(AccountEmail(pending: "new@example.com")) }
+        XCTAssertEqual(pending.emailLine, "Check your email: link sent to new@example.com")
+        XCTAssertEqual(pending.emailActions, [.resendEmail, .changeEmail])
+        XCTAssertNil(pending.emailBadge, "pending is not verified")
+
+        let verified = make { $0.emailState = .loaded(AccountEmail(verified: "me@example.com")) }
+        XCTAssertEqual(verified.emailLine, "me@example.com", "the full address, not a mask")
+        XCTAssertEqual(verified.emailBadge, "Verified")
+        XCTAssertEqual(verified.emailActions, [.changeEmail, .removeEmail])
+
+        let replacing = make { $0.emailState = .loaded(AccountEmail(verified: "me@example.com", pending: "new@example.com")) }
+        XCTAssertEqual(replacing.emailLine, "me@example.com")
+        XCTAssertEqual(replacing.emailBadge, "Verified", "still protected while the replacement waits")
+        XCTAssertEqual(replacing.pendingLine, "Replacement pending: new@example.com")
+        XCTAssertEqual(replacing.emailActions, [.resendEmail, .changeEmail, .removeEmail], "no Cancel: there is no backend operation for it")
+
+        let emailJoined = make { $0.hasLocalRecoveryKey = false }
+        XCTAssertEqual(emailJoined.recoveryKeyLine, "Not on this device")
+        XCTAssertEqual(emailJoined.recoveryKeyActions, [.replaceKey])
+        XCTAssertTrue(emailJoined.recoveryKeyNote?.contains("does not hold the recovery key") == true)
+
+        let unusable = make { $0.keyState = .unusable }
+        XCTAssertEqual(unusable.accountActions, [.signInAgain, .signOut])
+        XCTAssertTrue(unusable.keyNote?.contains("no longer works here") == true)
+        XCTAssertEqual(unusable.recoveryKeyActions, [.showKey], "showing the stored key needs no installation key and is the way back in")
+        XCTAssertEqual(unusable.emailActions, [], "add, change and remove are signed requests")
+        XCTAssertFalse(unusable.signedActionsDisabled)
+    }
+
+    func testATemporaryKeyFailureDisablesSignedActionsWithoutHidingOrBlaming() {
+        let temporary = make { $0.keyState = .temporarilyUnavailable; $0.emailState = .loaded(AccountEmail(verified: "me@example.com")) }
+        XCTAssertTrue(temporary.signedActionsDisabled)
+        XCTAssertEqual(temporary.emailActions, [.changeEmail, .removeEmail], "visible, disabled")
+        XCTAssertEqual(temporary.recoveryKeyActions, [.showKey, .replaceKey])
+        XCTAssertEqual(temporary.accountActions, [.tryAgain, .signInAgain, .switchAccount, .signOut, .deleteAccount])
+        XCTAssertFalse(temporary.keyNote?.lowercased().contains("no longer") == true, "a temporary failure never reads as permanent damage")
+        XCTAssertEqual(M.temporarilyUnavailable, "Temporarily unavailable. Try again.")
+        for action in [M.Action.addEmail, .changeEmail, .resendEmail, .removeEmail, .replaceKey, .switchAccount, .deleteAccount] {
+            XCTAssertTrue(M.needsSignature(action), "\(action)")
+        }
+        for action in [M.Action.showKey, .signInAgain, .tryAgain, .signOut, .retryEmail] {
+            XCTAssertFalse(M.needsSignature(action), "\(action)")
+        }
+    }
+
+    func testPlanAndRestoreWordingPerPlatform() {
+        let mac = make { $0.isMac = true; $0.isPro = true }
+        XCTAssertEqual(mac.planLine, "Pro")
+        XCTAssertEqual(mac.restoreTitle, "Restore Pro purchase with a license key")
+        XCTAssertTrue(mac.restoreCaption.hasPrefix("This restores a purchase. It does not sign you into an account."))
+        let phone = make { $0.isMac = false; $0.isPro = true; $0.isProViaAccount = true }
+        XCTAssertEqual(phone.planLine, "Pro, from another device on this account")
+        XCTAssertEqual(phone.restoreTitle, "Restore App Store purchases")
+        XCTAssertEqual(make { _ in }.planLine, "Free")
+    }
+
+    func testNoSentenceCallsTheKeyTheAccountOrTheOnlyWayBack() {
+        let banned = ["only way", "your account is", "this key is your", "reveal", "rotate", "create one", "settings, cloud", "—"]
+        var inputs: [M.Inputs] = []
+        for key in [M.KeyState.usable, .temporarilyUnavailable, .unusable] {
+            for email in [AccountEmailState.loading, .unavailable("x"), .loaded(AccountEmail()), .loaded(AccountEmail(verified: "a@b.c")), .loaded(AccountEmail(verified: "a@b.c", pending: "d@e.f")), .loaded(AccountEmail(pending: "d@e.f"))] {
+                for local in [true, false] {
+                    var i = M.Inputs(); i.status = enrolled(); i.keyState = key; i.emailState = email; i.hasLocalRecoveryKey = local
+                    inputs.append(i)
+                }
+            }
+        }
+        for i in inputs {
+            let m = M.make(i)
+            let texts = [m.emailLine, m.pendingLine ?? "", m.recoveryKeyLine, m.recoveryKeyNote ?? "", m.keyNote ?? "", m.planLine, m.restoreTitle, m.restoreCaption, m.deviceRemovalMessage, m.signOutMessage]
+            for text in texts {
+                let lower = text.lowercased()
+                for phrase in banned { XCTAssertFalse(lower.contains(phrase), "\"\(phrase)\" in: \(text)") }
+            }
+            XCTAssertTrue(m.signOutMessage.contains("email or recovery key"), "sign-out names both ways back")
+            XCTAssertTrue(m.deviceRemovalMessage.contains("email or recovery key"))
+        }
+    }
+}
+
+@MainActor
+final class AccountEmailStateTests: XCTestCase {
+    private var session: URLSession!
+
+    override func setUp() {
+        super.setUp()
+        StubURLProtocol.reset()
+        session = TestSupport.stubbedSession()
+    }
+
+    override func tearDown() {
+        StubURLProtocol.reset()
+        super.tearDown()
+    }
+
+    private func credentials(account: String) -> ClientAuthCredentials {
+        var c = TestSupport.enrolledCredentials()
+        c.accountID = account
+        return c
+    }
+
+    /// An enrolled `AppState` whose auth and API go through the stub.
+    private func makeApp(account: String = "acct_a") -> AppState {
+        let manager = TestSupport.enrolledAuthManager(session: session, credentials: credentials(account: account))
+        let app = AppState()
+        app.appModeRaw = AppMode.managed.rawValue
+        app.clientAuthManager = manager
+        app.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        app.refreshClientAuthStatus()
+        return app
+    }
+
+    private func answer(email: String?, pending: String?) {
+        StubURLProtocol.handler = { request in
+            guard request.url?.path.hasSuffix("/account/email") == true else { return (404, Data("{}".utf8)) }
+            let body: [String: Any?] = ["email": email, "pending": pending]
+            return (200, try! JSONSerialization.data(withJSONObject: body.mapValues { $0 ?? NSNull() }))
+        }
+    }
+
+    private func emailRequests() -> [URLRequest] {
+        StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/account/email") == true }
+    }
+
+    func testTheFourLoadedShapesAndTheProtectedRule() async {
+        let app = makeApp()
+        let cloudBefore = app.cloudSyncEnabled
+        answer(email: "me@example.com", pending: "new@example.com")
+        await app.refreshAccountEmail(reason: "test", force: true)
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(verified: "me@example.com", pending: "new@example.com")))
+        XCTAssertTrue(app.accountEmailState.email?.isProtected == true, "verified with a replacement pending is still protected")
+        answer(email: nil, pending: "new@example.com")
+        await app.refreshAccountEmail(reason: "test", force: true)
+        XCTAssertEqual(app.accountEmailState.email?.isProtected, false)
+        answer(email: nil, pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail()))
+        XCTAssertEqual(app.clientAuthStatus.accountID, "acct_a", "loading the email never touches the account")
+        XCTAssertEqual(app.cloudSyncEnabled, cloudBefore, "and never changes the cloud switch")
+    }
+
+    func testAFailedFetchIsUnavailableAndKeepsNoStaleAddress() async {
+        let app = makeApp()
+        answer(email: "me@example.com", pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"cloud_unavailable"}"#.utf8)) }
+        await app.refreshAccountEmail(reason: "test", force: true)
+        XCTAssertEqual(app.accountEmailState, .unavailable("The account service is unavailable right now."))
+        XCTAssertNil(app.accountEmailState.email, "unavailable is not \"no email\" and not the old address")
+        XCTAssertNil(app.accountEmailLastLoaded, "the next activation retries instead of trusting a stale load")
+    }
+
+    func testAddShowsPendingBesideTheVerifiedAddressThenTheCallbackRefreshVerifiesIt() async {
+        let app = makeApp()
+        let cloudBefore = app.cloudSyncEnabled
+        answer(email: "me@example.com", pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        StubURLProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (202, Data(#"{"email":"me@example.com","pending":"new@example.com","expires_in":900}"#.utf8)) }
+            return (200, Data(#"{"email":"new@example.com","pending":null}"#.utf8))
+        }
+        let outcome = await app.addAccountEmail(" New@Example.com ")
+        XCTAssertEqual(outcome, .sent("new@example.com"))
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(verified: "me@example.com", pending: "new@example.com")), "the verified address stays until the link is opened")
+        // The browser handed back: the forced refresh sees the replacement confirmed.
+        await app.refreshAccountEmail(reason: "browser callback", force: true)
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(verified: "new@example.com", pending: nil)))
+        XCTAssertEqual(app.clientAuthStatus.accountID, "acct_a")
+        XCTAssertEqual(app.cloudSyncEnabled, cloudBefore, "confirming an email never changes the cloud switch")
+    }
+
+    func testAnAddressOnAnotherAccountAndAProviderFailureLeaveTheStateAlone() async {
+        let app = makeApp()
+        answer(email: nil, pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        StubURLProtocol.handler = { request in
+            request.httpMethod == "POST" ? (409, Data(#"{"error":"email_in_use"}"#.utf8)) : (200, Data(#"{"email":null,"pending":null}"#.utf8))
+        }
+        let inUse = await app.addAccountEmail("taken@example.com")
+        XCTAssertEqual(inUse, .inUse)
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail()))
+        StubURLProtocol.handler = { request in
+            request.httpMethod == "POST" ? (502, Data(#"{"error":"email_send_failed"}"#.utf8)) : (200, Data(#"{"email":null,"pending":null}"#.utf8))
+        }
+        let failed = await app.addAccountEmail("x@example.com")
+        XCTAssertEqual(failed, .failed("The confirmation email could not be sent. Try again in a minute."))
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail()), "a provider error is retryable and changes nothing")
+        let nonsense = await app.addAccountEmail("nonsense")
+        XCTAssertEqual(nonsense, .failed("Enter an email address."))
+    }
+
+    func testRemoveReturnsToNoEmail() async {
+        let app = makeApp()
+        answer(email: "me@example.com", pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        StubURLProtocol.handler = { _ in (200, Data(#"{"removed":true,"sessions_revoked":1,"grants_revoked":0}"#.utf8)) }
+        let removeError = await app.removeAccountEmail()
+        XCTAssertNil(removeError)
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail()))
+    }
+
+    func testAnOlderReadNeverOverwritesANewerWrite() async throws {
+        let app = makeApp()
+        answer(email: nil, pending: nil)
+        await app.refreshAccountEmail(reason: "test", force: true)
+        // A slow read starts, then an add completes before the read answers.
+        StubURLProtocol.delay = 0.4
+        StubURLProtocol.handler = { request in
+            request.httpMethod == "POST" ? (202, Data(#"{"email":null,"pending":"new@example.com"}"#.utf8)) : (200, Data(#"{"email":null,"pending":null}"#.utf8))
+        }
+        let slowRead = Task { await app.refreshAccountEmail(reason: "slow", force: true) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        StubURLProtocol.delay = 0
+        let sent = await app.addAccountEmail("new@example.com")
+        XCTAssertEqual(sent, .sent("new@example.com"))
+        await slowRead.value
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(pending: "new@example.com")), "the stale \"no email\" answer was dropped")
+    }
+
+    func testAResponseForAnEarlierAccountIsDroppedAfterAToBToA() async throws {
+        let app = makeApp(account: "acct_a")
+        StubURLProtocol.delay = 0.4
+        answer(email: "a@example.com", pending: nil)
+        let slowRead = Task { await app.refreshAccountEmail(reason: "slow", force: true) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        StubURLProtocol.delay = 0
+        // Switch to B and back to A while A's first read is in flight.
+        let b = TestSupport.enrolledAuthManager(session: session, credentials: credentials(account: "acct_b"))
+        app.clientAuthManager = b
+        app.refreshClientAuthStatus()
+        let a = TestSupport.enrolledAuthManager(session: session, credentials: credentials(account: "acct_a"))
+        app.clientAuthManager = a
+        app.refreshClientAuthStatus()
+        let generation = app.accountGeneration
+        await slowRead.value
+        XCTAssertEqual(app.accountGeneration, generation)
+        if case .loaded(let email) = app.accountEmailState {
+            XCTAssertNil(email.verified, "A's original answer was captured two generations ago and must not apply")
+        }
+    }
+
+    func testActivationRefreshIsFreshnessLimitedCoalescedAndRetriesAfterUnavailable() async {
+        let app = makeApp()
+        answer(email: nil, pending: nil)
+        await app.refreshAccountEmail(reason: "first", force: true)
+        let after = emailRequests().count
+        await app.refreshAccountEmail(reason: "activate")
+        XCTAssertEqual(emailRequests().count, after, "a load under 60 s old is fresh enough for an activation")
+        StubURLProtocol.handler = { _ in (0, Data()) }
+        app.accountEmailLastLoaded = nil
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"cloud_unavailable"}"#.utf8)) }
+        await app.refreshAccountEmail(reason: "activate")
+        XCTAssertEqual(app.accountEmailState, .unavailable("The account service is unavailable right now."))
+        // Another device added and confirmed an address meanwhile: the next activation sees it.
+        answer(email: "added@elsewhere.com", pending: nil)
+        let before = emailRequests().count
+        async let one: Void = app.refreshAccountEmail(reason: "activate")
+        async let two: Void = app.refreshAccountEmail(reason: "activate")
+        _ = await (one, two)
+        XCTAssertEqual(emailRequests().count, before + 1, "two activations in flight send one request")
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(verified: "added@elsewhere.com")))
+        XCTAssertFalse(AppState.accessCardVisible(enrolled: true, emailState: app.accountEmailState, hasSavedMeeting: true, recoveryKeyAcknowledged: false, dismissed: false), "device B drops its card once A's address arrives")
+    }
+}

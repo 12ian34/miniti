@@ -430,6 +430,10 @@ struct ClientAuthStatus: Equatable, Sendable {
     /// The credential is present but its key cannot sign here and no recovery key can replace it
     /// (A2d). `isEnrolled` is false; `accountID` still names the account for the copy.
     var keyUnusable: Bool = false
+    /// A key failure happened (load or signing, outside the permanent allow-list) and nothing
+    /// has signed since: signed actions are disabled with "temporarily unavailable" rather
+    /// than hidden, and nothing says the key is broken (B6a).
+    var keyTemporarilyUnavailable: Bool = false
 
     static let notEnrolled = ClientAuthStatus(isEnrolled: false, accountID: nil, deviceCap: nil, enrolledAt: nil, enrollmentPath: nil, recoveryKeyAcknowledged: false, isHardwareBacked: false)
 }
@@ -856,7 +860,8 @@ final class ClientAuthManager: @unchecked Sendable {
             enrollmentPath: credentials.enrollmentPath,
             recoveryKeyAcknowledged: credentials.recoveryKeyAcknowledged,
             isHardwareBacked: credentials.installationKey.kind == "se",
-            keyUnusable: keyUnusableWithoutRecovery
+            keyUnusable: keyUnusableWithoutRecovery,
+            keyTemporarilyUnavailable: keyFailureActive && !keyUnusableWithoutRecovery
         )
     }
 

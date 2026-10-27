@@ -14,7 +14,7 @@ The shared registry (`SettingsDestination`, grouped by `SettingsGroup`) introduc
 
 Setup
 1. General — startup, appearance, shortcuts
-2. Account — plan, usage, subscription, your own keys, this device and recovery key
+2. Account — your account (email, plan, support details), ways to sign in (email, recovery key, switch account), devices, then plan and billing, usage and your own keys (B6a, 3.4.0 build 139)
 
 Meetings
 3. Recording — microphone, system audio, permissions, auto-stop, iOS Live Activity
@@ -102,6 +102,6 @@ Cloud is a tab in the Setup group, directly under Account (General, Account, Clo
 
 ## Approved follow-up, not implemented (2026-10-26)
 
-Account UX is specified in [enrollment-identity-plan.md](enrollment-identity-plan.md), B6a: optional verified email first, full recognizable address, recovery key as backup, separate Switch account and billing restore, email available on free accounts with cloud off. B6a can precede the ownership migrations; persisted first-use/sign-out choices remain B6b/A4.
+Account UX (B6a) was built on 2026-10-27 for 3.4.0 build 139 as specified in [enrollment-identity-plan.md](enrollment-identity-plan.md) and planned in [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md): optional verified email first, the full address, recovery key as backup, Switch account and billing restore separated, email on free accounts with cloud off. The search rows are `account.email` (Your account) and `account.recoveryKey` (Ways to sign in).
 
 Sending U1 and first-run consent U2 are in [reliability-follow-up-plan.md](reliability-follow-up-plan.md). Sending becomes three concise groups with truthful state labels, one primary settings action per row and expandable details. Consent becomes a short disclosure with the action area outside the scroll body. These retain shared tokens, native actions and adaptive platform navigation. Completion requires rendered review at minimum Mac window sizes, compact iPhone/iPad and accessibility sizes, not just model tests. Existing 3.4.0 UI is not yet this design.
