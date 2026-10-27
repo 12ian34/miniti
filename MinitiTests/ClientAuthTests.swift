@@ -1198,6 +1198,60 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(store.load()?.accountID, "acct_new")
     }
 
+    func testACompletedRepairDoesNotResumeTheOldRequestUnderANewerAccount() async throws {
+        // Review 2026-10-27: pause after A's repair committed, enrol B, resume: A's request must
+        // continue under A's replacement or not at all.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        manager.attachEventSink { event in
+            if event.name == "client_auth_key_repaired" {
+                entered.signal()
+                _ = release.wait(timeout: .now() + 5)
+            }
+        }
+        restoreStub(account: stored.accountID)
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            if request.url?.path.contains("/sync/meetings/") == true { return (200, Data(#"{"revision":2}"#.utf8)) }
+            return restoreHandler(request)
+        }
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let repaired = await Task.detached { entered.wait(timeout: .now() + 3) == .success }.value
+        XCTAssertTrue(repaired)
+        XCTAssertEqual(store.load()?.accountID, stored.accountID)
+        manager.clearLocal(reason: "signout")
+        Restore.answer = Self.tokens("acct_new")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        release.signal()
+        _ = try? await deleting.value
+        XCTAssertFalse(StubURLProtocol.requests.contains { $0.url?.path.contains("/sync/meetings/") == true }, "A's completed repair must return A's replacement context, not whatever account is current afterwards")
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+    }
+
+    @MainActor
+    func testAnAlreadyRevokedSignOutReportsItsLocalClearSoBookkeepingRuns() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        StubURLProtocol.handler = { _ in Self.failure(401, "installation_revoked") }
+        let app = AppState()
+        app.clientAuthManager = manager
+        app.refreshClientAuthStatus()
+        let signedOut = await app.signOutManagedDevice()
+        XCTAssertNil(store.load(), "the request's revoked handler already cleared this credential")
+        XCTAssertTrue(signedOut, "this is a completed sign-out, not a stale operation; normal bookkeeping cleanup must run")
+        XCTAssertFalse(app.clientAuthStatus.isEnrolled)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))

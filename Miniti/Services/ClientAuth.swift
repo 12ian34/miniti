@@ -675,7 +675,7 @@ final class ClientAuthManager: @unchecked Sendable {
     private var cachedKey: InstallationKey?
     private var refreshTask: Task<String, Error>?
     /// One repair at a time; concurrent callers await it (A2d).
-    private var repairTask: Task<Void, Error>?
+    private var repairTask: Task<Int, Error>?
     /// The generation the in-flight repair replaces.
     private var repairGeneration = 0
     /// Set when the stored key is unusable here and the credential holds no recovery key:
@@ -1057,9 +1057,10 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Concurrent callers share one repair. Without a recovery key the credential enters
     /// `keyUnusable` and the person signs in again instead.
     /// Repair the credential that is current right now (the coordinator's eager repair).
-    func repairUnusableKey() async throws {
+    @discardableResult
+    func repairUnusableKey() async throws -> Int {
         guard let (_, generation) = snapshot() else { throw ClientAuthError.notEnrolled }
-        try await repairUnusableKey(expecting: generation)
+        return try await repairUnusableKey(expecting: generation)
     }
 
     /// Repair the credential at generation `expecting`, the one whose signing just failed. A
@@ -1067,11 +1068,14 @@ final class ClientAuthManager: @unchecked Sendable {
     /// switched, the failing operation ends with `notEnrolled` instead of being carried onto
     /// the new account (review 2026-10-27). Concurrent callers for the same generation share
     /// one repair; a caller for another generation is refused.
-    func repairUnusableKey(expecting generation: Int) async throws {
+    /// Returns the generation of the replacement credential, captured at its commit, so the
+    /// operation that caused the repair continues under exactly that credential and never
+    /// under whatever is current when it resumes (review 2026-10-27).
+    func repairUnusableKey(expecting generation: Int) async throws -> Int {
         try await sharedRepairTask(expecting: generation).value
     }
 
-    private func sharedRepairTask(expecting generation: Int) throws -> Task<Void, Error> {
+    private func sharedRepairTask(expecting generation: Int) throws -> Task<Int, Error> {
         lock.lock()
         defer { lock.unlock() }
         if let repairTask {
@@ -1079,16 +1083,16 @@ final class ClientAuthManager: @unchecked Sendable {
             return repairTask
         }
         guard credentialEpoch == generation else { throw ClientAuthError.notEnrolled }
-        let task = Task { [self] in
+        let task = Task<Int, Error> { [self] in
             defer { lock.lock(); repairTask = nil; lock.unlock() }
-            try await performRepair(expecting: generation)
+            return try await performRepair(expecting: generation)
         }
         repairTask = task
         repairGeneration = generation
         return task
     }
 
-    private func performRepair(expecting generation: Int) async throws {
+    private func performRepair(expecting generation: Int) async throws -> Int {
         // The snapshot must still be the credential whose signing failed: the commit below
         // replaces exactly this credential, or nothing.
         let (recoveryKey, path, acknowledged, epoch): (String, String, Bool, Int) = try {
@@ -1104,9 +1108,10 @@ final class ClientAuthManager: @unchecked Sendable {
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: deviceLabelProvider())
         // Signed out (or switched) while the restore was in flight: the answer belongs to a
         // credential the person no longer holds, and the atomic commit refuses it.
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: ClientAuthEnrollmentPath(rawValue: path) ?? .restore, acknowledged: acknowledged, expectedEpoch: epoch)
+        let replacement = try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: ClientAuthEnrollmentPath(rawValue: path) ?? .restore, acknowledged: acknowledged, expectedEpoch: epoch)
         DebugLogger.shared.log(.app, "Device auth: the stored installation key cannot be used on this machine; re-bound with a fresh key")
         emit("client_auth_key_repaired", level: .info, details: [:])
+        return replacement
     }
 
     // MARK: Credential commit contract (review 2026-10-27)
@@ -1121,17 +1126,22 @@ final class ClientAuthManager: @unchecked Sendable {
     // touch the key-failure state (that is `storeEnrollment`'s job alone).
 
     /// A first enrolment: no credential to replace, so no expectation; bumps the generation.
-    private func persist(_ newValue: ClientAuthCredentials) throws {
+    @discardableResult
+    private func persist(_ newValue: ClientAuthCredentials) throws -> Int {
         lock.lock(); defer { lock.unlock() }
         guard store.save(newValue) else { throw ClientAuthError.storage }
         credentials = newValue
         cachedKey = nil
         credentialEpoch += 1
+        return credentialEpoch
     }
 
     /// Commit `newValue` if the generation is still `expectedEpoch`. `replaces` says whether
     /// the write changes the credential's identity and so moves the generation on.
-    private func commit(_ newValue: ClientAuthCredentials, expectedEpoch: Int, replaces: Bool) throws {
+    /// Returns the generation the written credential lives at, captured in the same critical
+    /// section, so a replacement can hand its exact result to the operation that caused it.
+    @discardableResult
+    private func commit(_ newValue: ClientAuthCredentials, expectedEpoch: Int, replaces: Bool) throws -> Int {
         lock.lock(); defer { lock.unlock() }
         guard credentialEpoch == expectedEpoch else {
             DebugLogger.shared.log(.app, "Device auth: a credential write finished after a sign-out or replacement; discarded")
@@ -1141,6 +1151,7 @@ final class ClientAuthManager: @unchecked Sendable {
         credentials = newValue
         cachedKey = nil
         if replaces { credentialEpoch += 1 }
+        return credentialEpoch
     }
 
     /// The credential generation, for hosts that fence work on it (cloud sync, R3).
@@ -1381,7 +1392,8 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// `expectedEpoch` makes the write a replacement of the credential that was current when
     /// the request started (repair, reauthentication); a first enrolment passes nil.
-    private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool, expectedEpoch: Int? = nil) throws {
+    @discardableResult
+    private func storeEnrollment(key: InstallationKey, recoveryKey: String, tokens: TokenResponse, path: ClientAuthEnrollmentPath, acknowledged: Bool, expectedEpoch: Int? = nil) throws -> Int {
         defer { if credentialsHold(key: key) { clearKeyFailure() } }
         let value = ClientAuthCredentials(
             installationKey: key.stored,
@@ -1396,9 +1408,9 @@ final class ClientAuthManager: @unchecked Sendable {
             recoveryKeyAcknowledged: acknowledged
         )
         if let expectedEpoch {
-            try commit(value, expectedEpoch: expectedEpoch, replaces: true)
+            return try commit(value, expectedEpoch: expectedEpoch, replaces: true)
         } else {
-            try persist(value)
+            return try persist(value)
         }
     }
 
@@ -1595,8 +1607,8 @@ final class ClientAuthManager: @unchecked Sendable {
             // The challenge grant needed the stored key and this machine cannot use it: the
             // repair restores with a fresh key and brings its own tokens (A2d). It repairs the
             // credential this refresh started with, never one enrolled since.
-            try await repairUnusableKey(expecting: epoch)
-            guard let (token, _) = cachedToken() else { throw ClientAuthError.notEnrolled }
+            let replacement = try await repairUnusableKey(expecting: epoch)
+            guard let (repaired, generation) = snapshot(), generation == replacement, let token = repaired.accessToken else { throw ClientAuthError.notEnrolled }
             return token
         }
     }
@@ -1678,9 +1690,12 @@ final class ClientAuthManager: @unchecked Sendable {
             // A valid cached bearer skipped the refresh and only the proof failed: repair the
             // credential whose signing failed (never one enrolled meanwhile), then sign the same
             // request with its replacement key and token (A2d).
-            try await repairUnusableKey(expecting: generation)
-            let repairedToken = try await accessToken()
-            guard let (repaired, repairedGeneration) = snapshot(), repaired.accessToken == repairedToken else { throw ClientAuthError.notEnrolled }
+            let replacement = try await repairUnusableKey(expecting: generation)
+            // Continue under the repair's exact result: if anything else replaced it meanwhile,
+            // this request has no credential of its own any more.
+            guard let (repaired, repairedGeneration) = snapshot(), repairedGeneration == replacement, let repairedToken = repaired.accessToken else {
+                throw ClientAuthError.notEnrolled
+            }
             return try authorizeOnce(&request, token: repairedToken, generation: repairedGeneration)
         }
     }
@@ -1818,7 +1833,13 @@ final class ClientAuthManager: @unchecked Sendable {
             let (_, under): (Empty, Int) = try await authorizedJSONTracking("POST", "/auth/revoke", body: [:])
             signed = under
         } catch ClientAuthError.revoked {
-            // Already gone server-side; local clear below is all that matters.
+            // Already gone server-side, and the request handler cleared exactly this
+            // credential (a stale revoked answer throws notEnrolled instead): the sign-out is
+            // complete and its bookkeeping may run.
+            return true
+        } catch ClientAuthError.notEnrolled {
+            // The credential this sign-out was for is no longer the one held: superseded.
+            return false
         } catch ClientAuthError.server(_, let status) where status == 401 {
             // The server no longer accepts this installation's key and the re-bind did not
             // help either. Signing out is how the person escapes that state, so it must not
@@ -1839,8 +1860,13 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Returns true when this call cleared the local credential (see `signOut`).
     @discardableResult
     func deleteAccount() async throws -> Bool {
-        let (_, generation): (Empty, Int) = try await authorizedJSONTracking("DELETE", "/auth/account")
-        return clearLocal(reason: "delete", ifGeneration: generation)
+        do {
+            let (_, generation): (Empty, Int) = try await authorizedJSONTracking("DELETE", "/auth/account")
+            return clearLocal(reason: "delete", ifGeneration: generation)
+        } catch ClientAuthError.revoked {
+            // The handler cleared this credential already: the account is gone for this device.
+            return true
+        }
     }
 }
 
