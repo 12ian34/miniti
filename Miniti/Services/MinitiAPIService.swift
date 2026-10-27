@@ -71,6 +71,10 @@ final class MinitiAPIService: @unchecked Sendable {
     /// (`/version`) go out without an account.
     func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
         var request = original
+        // The credential this request is made with. A retry and a revocation answer belong to
+        // it alone: after a sign-out or a switch, neither may touch the credential enrolled
+        // since (review 2026-10-27).
+        let generation = auth.credentialGeneration
         if auth.isEnrolled {
             do {
                 try await auth.authorize(&request)
@@ -91,9 +95,11 @@ final class MinitiAPIService: @unchecked Sendable {
         let code = (try? Self.decoder.decode(APIError.self, from: data))?.error ?? ""
         switch code {
         case "token_expired", "invalid_token":
+            guard auth.credentialGeneration == generation else { throw ServiceError.notEnrolled }
             var retry = original
             do {
                 _ = try await auth.forceRefresh()
+                guard auth.credentialGeneration == generation else { throw ServiceError.notEnrolled }
                 try await auth.authorize(&retry)
             } catch ClientAuthError.revoked {
                 throw ServiceError.authRevoked
@@ -102,7 +108,7 @@ final class MinitiAPIService: @unchecked Sendable {
             }
             return try await session.data(for: retry)
         case "installation_revoked", "device_auth_required":
-            auth.clearLocal()
+            guard auth.clearLocal(reason: "revoke", ifGeneration: generation) else { throw ServiceError.notEnrolled }
             throw ServiceError.authRevoked
         default:
             return (data, response)

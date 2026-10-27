@@ -354,10 +354,14 @@ final class WatchImportService: ObservableObject {
                     partList.append((url, running))
                     running += (try? await AVURLAsset(url: url).load(.duration).seconds) ?? 0
                 }
-                result = try await WatchTranscriptionClient.transcribeParts(partList, language: job.language, credential: credential)
+                result = try await WatchTranscriptionClient.transcribeParts(partList, language: job.language, credential: credential, mayContinue: { appState.aiContentPermitted })
             } else {
                 result = try await WatchTranscriptionClient.transcribe(fileURL: joined, language: job.language, credential: credential)
             }
+        } catch WatchTranscriptionClient.Failure.permissionWithdrawn {
+            if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
+            waitForPermission("upload parts")
+            return
         } catch let error as URLError {
             if let sessionID { await appState.reportPrerecordedSessionEnd(sessionId: sessionID, durationMinutes: 0) }
             retryLater("upload: \(error.localizedDescription)")

@@ -6990,7 +6990,8 @@ final class AppState: ObservableObject {
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: summaryForContext, existingTitle: nil,
                         mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
-                        language: language
+                        language: language,
+                        requiresPermission: true
                     )
                     meddpiccInsights = response.toLiveInsights()
                 } else {
@@ -7026,7 +7027,8 @@ final class AppState: ObservableObject {
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: nil, existingTitle: nil,
                         mode: InsightsMode.questions.rawValue, model: model.rawValue,
-                        language: language
+                        language: language,
+                        requiresPermission: true
                     )
                     questionsInsights = response.toLiveInsights()
                 } else {
@@ -7058,7 +7060,8 @@ final class AppState: ObservableObject {
                         mode: InsightsMode.template.rawValue, model: model.rawValue,
                         language: language,
                         template: template,
-                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline,
+                        requiresPermission: true
                     )
                     templateInsights = response.toLiveInsights(template: template)
                 } else {
@@ -9424,7 +9427,8 @@ final class AppState: ObservableObject {
         language: String = "en",
         attendees: [[String: String]]? = nil,
         template: InsightTemplate? = nil,
-        previousTemplateSections: [String: String]? = nil
+        previousTemplateSections: [String: String]? = nil,
+        requiresPermission: Bool = false
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
             throw MinitiAPIService.ServiceError.invalidResponse
@@ -9435,7 +9439,14 @@ final class AppState: ObservableObject {
         )
 
         var attempt = 1
+        var lastError: Error?
         while true {
+            // Narrowed R2: a retry is a new request and needs the permission at the moment it
+            // leaves, after the delay, not when the first attempt failed.
+            if attempt > 1, requiresPermission, !aiContentPermitted, let lastError {
+                DebugLogger.shared.log(.app, "Insights retry skipped: Deepgram and OpenAI no longer allowed")
+                throw lastError
+            }
             do {
                 return try await minitiAPIService.generateInsights(
                     deviceId: deviceId,
@@ -9456,6 +9467,7 @@ final class AppState: ObservableObject {
                 if !shouldRetry {
                     throw error
                 }
+                lastError = error
 
                 DebugLogger.shared.log(.app, "Insights transient error (attempt \(attempt)/\(maxAttempts)); retrying: \(error.localizedDescription)")
                 attempt += 1

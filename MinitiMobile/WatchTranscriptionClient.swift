@@ -36,9 +36,12 @@ enum WatchTranscriptionClient {
         case emptyTranscript
         case tooLarge
         case unreadable
+        /// Permission for Deepgram and OpenAI was withdrawn between parts (narrowed R2).
+        case permissionWithdrawn
 
         var errorDescription: String? {
             switch self {
+            case .permissionWithdrawn: return "Permission for Deepgram and OpenAI was withdrawn."
             case .http(let code, let body): return "Transcription failed (HTTP \(code)): \(body.prefix(140))"
             case .emptyTranscript: return "No speech was found in the recording"
             case .tooLarge: return "The recording is too large to transcribe"
@@ -166,11 +169,13 @@ enum WatchTranscriptionClient {
     /// Fallback when joining fails: transcribe every part on its own and shift the timestamps.
     /// Speaker numbers restart per part, so people may get a new number after each five minutes;
     /// still a meeting rather than a permanent failure.
-    static func transcribeParts(_ parts: [(url: URL, offset: TimeInterval)], language: String, credential: Credential) async throws -> Result {
+    static func transcribeParts(_ parts: [(url: URL, offset: TimeInterval)], language: String, credential: Credential, mayContinue: () -> Bool = { true }) async throws -> Result {
         var segments: [TranscriptSegmentDraft] = []
         var duration: TimeInterval = 0
         var nextSpeakerBase = 0
         for (index, part) in parts.enumerated() {
+            // Every part is its own upload: the permission is checked before each one.
+            guard mayContinue() else { throw Failure.permissionWithdrawn }
             let one: Result
             do {
                 one = try await transcribe(fileURL: part.url, language: language, credential: credential)

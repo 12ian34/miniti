@@ -279,6 +279,18 @@ final class WatchImportTests: XCTestCase {
         }
     }
 
+    func testEachSeparatePartUploadChecksPermissionFirst() async throws {
+        // Review 2026-10-27: after a failed join, every part is its own upload.
+        var checks = 0
+        let parts = [(url: URL(fileURLWithPath: "/tmp/p0.m4a"), offset: 0.0), (url: URL(fileURLWithPath: "/tmp/p1.m4a"), offset: 300.0)]
+        do {
+            _ = try await WatchTranscriptionClient.transcribeParts(parts, language: "en", credential: .init(scheme: "Token", token: "x"), mayContinue: { checks += 1; return false })
+            XCTFail("expected permissionWithdrawn")
+        } catch WatchTranscriptionClient.Failure.permissionWithdrawn {
+            XCTAssertEqual(checks, 1, "checked before the first upload, which therefore never left")
+        }
+    }
+
     func testStitchSkipsUnreadablePartsAndCopiesASingleGoodOne() async throws {
         let dir = root.appendingPathComponent("stitch")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

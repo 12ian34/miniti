@@ -988,6 +988,70 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(manager.isEnrolled)
     }
 
+    func testACloudRequestsRetryNeverRunsUnderANewerCredential() async throws {
+        // Review 2026-10-27: a delete on A answered token_expired after a switch to B must not be
+        // replayed with B's credential.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        restoreStub(account: "acct_new")
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            if request.url?.path.contains("/sync/meetings/") == true {
+                if request.value(forHTTPHeaderField: "Authorization") == "Bearer cached-bearer" {
+                    return Self.failure(401, "token_expired")
+                }
+                return (200, Data(#"{"revision":2}"#.utf8))
+            }
+            if request.url?.path == "/api/auth/token" { return Self.tokens("acct_new") }
+            return restoreHandler(request)
+        }
+        StubURLProtocol.delay = 0.4
+        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path.contains("/sync/meetings/") == true } }
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        _ = try? await deleting.value
+        let deletes = StubURLProtocol.requests.filter { $0.httpMethod == "DELETE" && $0.url?.path.contains("/sync/meetings/") == true }
+        XCTAssertEqual(deletes.count, 1, "A's delayed 401 must not replay the delete using B's credential")
+        XCTAssertFalse(deletes.contains { $0.value(forHTTPHeaderField: "Authorization") == "Bearer tok" })
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+    }
+
+    func testAStaleRevocationAnswerDoesNotClearTheNewEnrolment() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        restoreStub(account: "acct_new")
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            request.url?.path == "/api/auth/token" ? Self.failure(401, "installation_revoked") : restoreHandler(request)
+        }
+        StubURLProtocol.delay = 0.4
+        let refreshing = Task { try await manager.forceRefresh() }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path == "/api/auth/token" } }
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        do {
+            _ = try await refreshing.value
+            XCTFail("the stale refresh must not succeed")
+        } catch {
+            XCTAssertEqual(error as? ClientAuthError, .notEnrolled, "stale, not revoked: the current credential was never refused")
+        }
+        XCTAssertEqual(store.load()?.accountID, "acct_new", "an old revoked response must not clear the newly enrolled credential")
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+        XCTAssertTrue(manager.isEnrolled)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))

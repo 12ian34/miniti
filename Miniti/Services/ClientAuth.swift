@@ -902,6 +902,26 @@ final class ClientAuthManager: @unchecked Sendable {
         store.clear()
     }
 
+    /// Clear only if the credential is still the one a request was made with: a revocation
+    /// answered to an old credential says nothing about the one enrolled since (review
+    /// 2026-10-27). Returns whether anything was cleared.
+    @discardableResult
+    func clearLocal(reason: String, ifGeneration generation: Int) -> Bool {
+        lock.lock()
+        guard credentialEpoch == generation else {
+            lock.unlock()
+            DebugLogger.shared.log(.app, "Device auth: stale \(reason) answer ignored; the credential has changed since")
+            return false
+        }
+        credentials = nil
+        cachedKey = nil
+        localClearReason = reason
+        credentialEpoch += 1
+        store.clear()
+        lock.unlock()
+        return true
+    }
+
 
 
     private func installationKey() throws -> InstallationKey {
@@ -1549,8 +1569,9 @@ final class ClientAuthManager: @unchecked Sendable {
             guard written else { throw ClientAuthError.notEnrolled }
             return tokens.accessToken
         } catch ClientAuthError.revoked {
+            // Only the credential that was refused is cleared; a newer one stays.
+            guard clearLocal(reason: "revoke", ifGeneration: epoch) else { throw ClientAuthError.notEnrolled }
             DebugLogger.shared.log(.app, "Device auth: installation revoked by the server; clearing local credentials")
-            clearLocal(reason: "revoke")
             throw ClientAuthError.revoked
         } catch ClientAuthError.keyUnusable where canRepairKey {
             // The challenge grant needed the stored key and this machine cannot use it: the
@@ -1648,6 +1669,7 @@ final class ClientAuthManager: @unchecked Sendable {
         request.timeoutInterval = 20
         identityHeaders(&request)
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
+        let generation = credentialGeneration
         try await authorize(&request)
         let (data, response): (Data, URLResponse)
         do {
@@ -1659,7 +1681,9 @@ final class ClientAuthManager: @unchecked Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else {
             let mapped = mapError(status: status, data: data)
-            if case .revoked = mapped { clearLocal() }
+            if case .revoked = mapped {
+                guard clearLocal(reason: "revoke", ifGeneration: generation) else { throw ClientAuthError.notEnrolled }
+            }
             throw mapped
         }
         return try JSONDecoder().decode(T.self, from: data)

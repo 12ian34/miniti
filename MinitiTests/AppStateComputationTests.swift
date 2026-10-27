@@ -3161,6 +3161,40 @@ final class ThirdPartyAIConsentTests: XCTestCase {
         XCTAssertEqual(insightsRequests(), 2, "the next request needed permission again")
     }
 
+    func testHistoryRetryNeedsPermissionAgain() async throws {
+        // Review 2026-10-27: the transient-error retry is a new request.
+        let defaults = UserDefaults.standard
+        let saved = keys.map { ($0, defaults.object(forKey: $0)) }
+        defer { for (key, value) in saved { if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        keys.forEach { defaults.removeObject(forKey: $0) }
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let session = TestSupport.stubbedSession()
+        let manager = TestSupport.enrolledAuthManager(session: session)
+        let state = AppState()
+        state.appModeRaw = AppMode.managed.rawValue
+        state.clientAuthManager = manager
+        state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        state.refreshClientAuthStatus()
+        state.insightsMode = .questions
+        state.privateModeEnabled = false
+        state.setThirdPartyAIConsent(true)
+        let meeting = Meeting(title: "saved")
+        meeting.segments = [TranscriptSegment(text: "we agreed to ship on Friday", speaker: 0, timestamp: 1, isFinal: true)]
+        StubURLProtocol.script = { _ in throw URLError(.timedOut) }
+        let generating = Task { await state.generateInsightsForMeeting(meeting) }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path.hasSuffix("/insights") == true } }
+        state.setThirdPartyAIConsent(false)
+        await generating.value
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/insights") == true }.count, 1, "History must not retry after withdrawal")
+
+        // With permission kept, the transient failure is retried once as before.
+        StubURLProtocol.requests = []
+        state.setThirdPartyAIConsent(true)
+        await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/insights") == true }.count, 2)
+    }
+
     #if os(macOS)
     func testPresentingTheScreenAnswersNothing() {
         withCleanConsentDefaults {
