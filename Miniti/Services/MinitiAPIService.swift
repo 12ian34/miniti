@@ -71,9 +71,14 @@ final class MinitiAPIService: @unchecked Sendable {
     /// (`/version`) go out without an account.
     func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
         var request = original
+        // The generation of the credential that actually signed this request, handed back by
+        // `authorize` (never re-read here). A retry and a revocation answer belong to it alone:
+        // after a sign-out or a switch, neither may touch the credential enrolled since
+        // (review 2026-10-27).
+        var generation = 0
         if auth.isEnrolled {
             do {
-                try await auth.authorize(&request)
+                generation = try await auth.authorize(&request)
             } catch ClientAuthError.revoked {
                 throw ServiceError.authRevoked
             } catch let error as ClientAuthError {
@@ -84,11 +89,6 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.notEnrolled
         }
 
-        // The credential this request was signed under, read after `authorize` so an automatic
-        // same-account key repair inside it counts as this request's own. A retry and a
-        // revocation answer belong to it alone: after a sign-out or a switch, neither may touch
-        // the credential enrolled since (review 2026-10-27).
-        let generation = auth.credentialGeneration
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
@@ -100,8 +100,9 @@ final class MinitiAPIService: @unchecked Sendable {
             var retry = original
             do {
                 _ = try await auth.forceRefresh()
-                guard auth.credentialGeneration == generation else { throw ServiceError.notEnrolled }
-                try await auth.authorize(&retry)
+                // The retry must sign under the same credential as the request it repeats.
+                let retried = try await auth.authorize(&retry)
+                guard retried == generation else { throw ServiceError.notEnrolled }
             } catch ClientAuthError.revoked {
                 throw ServiceError.authRevoked
             } catch let error as ClientAuthError {

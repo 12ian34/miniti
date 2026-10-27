@@ -1111,6 +1111,35 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNil(store.load())
     }
 
+    func testASignedRequestKeepsItsOwnGenerationAcrossAuthorization() async throws {
+        // Review 2026-10-27: the request signs with A; a sign-out and an enrolment of B land
+        // before authorization returns; A's revoked answer must not clear B.
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let gate = SigningDefaultsGate(suiteName: "AuthGate-\(UUID().uuidString)")!
+        let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(), deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, defaults: gate)
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        restoreStub(account: "acct_new")
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            if request.url?.path.contains("/sync/meetings/") == true { return Self.failure(401, "installation_revoked") }
+            return restoreHandler(request)
+        }
+        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let signed = await Task.detached { gate.entered.wait(timeout: .now() + 3) == .success }.value
+        XCTAssertTrue(signed)
+        manager.clearLocal(reason: "signout")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        gate.release.signal()
+        _ = try? await deleting.value
+        XCTAssertEqual(store.load()?.accountID, "acct_new", "an A-signed request must not acquire B's generation and clear B")
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+        XCTAssertTrue(manager.isEnrolled)
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
@@ -2987,5 +3016,25 @@ final class SaveGateStore: ClientAuthCredentialStore, @unchecked Sendable {
         entered.signal()
         guard release.wait(timeout: .now() + 5) == .success else { return false }
         return backing.save(value)
+    }
+}
+
+/// Pauses the real signing path after its signature and before authorize returns: the manager
+/// reads the temporary-failure counter from its defaults right after a successful signature.
+final class SigningDefaultsGate: UserDefaults, @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    private let gateLock = NSLock()
+    private var armed = true
+    override func object(forKey defaultName: String) -> Any? {
+        gateLock.lock()
+        let hold = defaultName == ClientAuthManager.keyUnavailableLaunchesKey && armed
+        if hold { armed = false }
+        gateLock.unlock()
+        if hold {
+            entered.signal()
+            _ = release.wait(timeout: .now() + 5)
+        }
+        return super.object(forKey: defaultName)
     }
 }

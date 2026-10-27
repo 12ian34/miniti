@@ -1640,24 +1640,39 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     /// Attach bearer + proof to a request. Throws `notEnrolled` when there is no account.
-    func authorize(_ request: inout URLRequest) async throws {
+    /// Attach the bearer and, on writes, the request proof. Returns the credential generation
+    /// of the snapshot that actually signed: the bearer is the snapshot's token and the proof
+    /// its key, and the snapshot is checked to be still current after signing, so the value
+    /// never names a credential enrolled while the signature was being made (review
+    /// 2026-10-27). Callers carry it through sending, retries and commits and never re-read
+    /// the current generation in its place. An automatic same-account repair inside this call
+    /// yields the repaired credential's generation, which is then the request's own.
+    @discardableResult
+    func authorize(_ request: inout URLRequest) async throws -> Int {
         do {
-            try authorizeOnce(&request, token: try await accessToken())
+            return try authorizeOnce(&request, token: try await accessToken())
         } catch ClientAuthError.keyUnusable where canRepairKey {
             // A valid cached bearer skipped the refresh and only the proof failed: repair,
             // then sign the same request with the new key and token (A2d).
             try await repairUnusableKey()
-            try authorizeOnce(&request, token: try await accessToken())
+            return try authorizeOnce(&request, token: try await accessToken())
         }
     }
 
-    private func authorizeOnce(_ request: inout URLRequest, token: String) throws {
+    private func authorizeOnce(_ request: inout URLRequest, token: String) throws -> Int {
+        // The snapshot that signs: its token must be the one we were handed, or the token came
+        // from a credential that has since been replaced.
+        guard let (credentials, generation) = snapshot(), credentials.accessToken == token else { throw ClientAuthError.notEnrolled }
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let method = request.httpMethod ?? "GET"
         if method != "GET", method != "HEAD", let url = request.url {
             let proof = try requestProof(accessToken: token, method: method, url: url, body: request.httpBody ?? Data())
             request.setValue(proof, forHTTPHeaderField: "X-Request-Proof")
         }
+        // Signing took time; a sign-out or switch meanwhile means this signature belongs to a
+        // credential the device no longer holds.
+        guard credentialGeneration == generation else { throw ClientAuthError.notEnrolled }
+        return generation
     }
 
     // MARK: Account management (authenticated)
@@ -1678,8 +1693,7 @@ final class ClientAuthManager: @unchecked Sendable {
         request.timeoutInterval = 20
         identityHeaders(&request)
         if let body { request.httpBody = try JSONSerialization.data(withJSONObject: body) }
-        try await authorize(&request)
-        let generation = credentialGeneration
+        let generation = try await authorize(&request)
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
