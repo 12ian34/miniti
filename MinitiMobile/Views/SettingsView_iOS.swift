@@ -47,13 +47,21 @@ struct SettingsView_iOS: View {
             consumeNavigationRequest()
         }
         .onChange(of: horizontalSizeClass) { _, newClass in
-            // Keep the intended destination across a size-class change: the compact stack
-            // becomes the sidebar selection and back.
+            // Carry the visible screen and its target between the two layouts and clear the
+            // stack that is no longer showing, so a resize never loses a pushed Configure
+            // screen and a stale stack never resurfaces later (review 2026-10-27).
             if newClass == .regular {
-                if let last = path.last { selectedDestination = last.destination }
+                let plan = SettingsNavigationPlan.toRegular(path: path, selection: selectedDestination)
+                selectedDestination = plan.selection
+                detailPath = plan.detailPath
                 path = []
-            } else if let destination = selectedDestination, destination != .general, path.isEmpty {
-                path = [SettingsRoute(destination: destination, target: nil)]
+                if let target = plan.target {
+                    appState.pendingSettingsSearchTarget = nil
+                    DispatchQueue.main.async { appState.pendingSettingsSearchTarget = target }
+                }
+            } else {
+                path = SettingsNavigationPlan.toCompact(selection: selectedDestination, detailPath: detailPath)
+                detailPath = []
             }
         }
     }
@@ -226,6 +234,21 @@ enum SettingsNavigationPlan {
 
     static func sidebarSelection(for request: SettingsNavigationRequest, available: Set<SettingsDestination>) -> SettingsDestination? {
         regular(for: request, available: available)?.selection
+    }
+
+    /// Regular to compact: the visible screen is the top of the detail stack, or the sidebar
+    /// selection; it becomes the one pushed route (General is the list itself).
+    static func toCompact(selection: SettingsDestination?, detailPath: [SettingsRoute]) -> [SettingsRoute] {
+        if let top = detailPath.last { return [top] }
+        guard let selection, selection != .general else { return [] }
+        return [SettingsRoute(destination: selection, target: nil)]
+    }
+
+    /// Compact to regular: the visible screen becomes the sidebar selection with a fresh detail
+    /// stack; its target is scrolled to by the detail.
+    static func toRegular(path: [SettingsRoute], selection: SettingsDestination?) -> (selection: SettingsDestination, detailPath: [SettingsRoute], target: String?) {
+        if let top = path.last { return (top.destination, [], top.target) }
+        return (selection ?? .general, [], nil)
     }
 }
 

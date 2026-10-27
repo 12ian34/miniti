@@ -2627,6 +2627,30 @@ final class SettingsNavigationPlanTests: XCTestCase {
         XCTAssertNil(SettingsNavigationPlan.sidebarSelection(for: unavailable, available: available))
     }
 
+    func testResizingCarriesTheVisibleScreenBetweenLayoutsAndClearsTheOtherStack() {
+        let available = Set(SettingsDestination.available(on: .iOS))
+        // Regular: Sending selected, Configure Cloud pushed.
+        let pushed = [SettingsRoute(destination: .cloud, target: "cloud.sync")]
+        // To compact: the visible Cloud screen, not Sending, is what the stack shows.
+        let compact = SettingsNavigationPlan.toCompact(selection: .sending, detailPath: pushed)
+        XCTAssertEqual(compact, pushed)
+        // An Account request while compact replaces it.
+        let request = SettingsNavigationRequest(destination: .account, target: "account.email")
+        let afterRequest = SettingsNavigationPlan.path(for: request, current: compact, available: available)
+        XCTAssertEqual(afterRequest, [SettingsRoute(destination: .account, target: "account.email")])
+        // Back to regular: Account is the selection with a fresh detail stack and the target to scroll to.
+        let regular = SettingsNavigationPlan.toRegular(path: afterRequest!, selection: .sending)
+        XCTAssertEqual(regular.selection, .account)
+        XCTAssertEqual(regular.detailPath, [], "the old Cloud push never resurfaces")
+        XCTAssertEqual(regular.target, "account.email")
+        // Nothing pushed and General selected: the compact list itself.
+        XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: .general, detailPath: []), [])
+        XCTAssertEqual(SettingsNavigationPlan.toCompact(selection: .cloud, detailPath: []), [SettingsRoute(destination: .cloud, target: nil)])
+        let plain = SettingsNavigationPlan.toRegular(path: [], selection: .cloud)
+        XCTAssertEqual(plain.selection, .cloud)
+        XCTAssertNil(plain.target)
+    }
+
     @MainActor
     func testJumpToSettingPostsOneRequestOnIOS() {
         let app = AppState()
