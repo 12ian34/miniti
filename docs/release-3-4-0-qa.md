@@ -9,8 +9,8 @@ Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone accou
 ## 1. Builds
 
 - [x] 2026-10-27: reviewed the build-140 Fastlane scan logs: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This is log verification, not a fresh rerun.
-- [ ] Mac DMG built by `fastlane mac release`, `scripts/release-info.sh` reports 3.4.0 build 140; installed over 3.3.0 on the personal account (reads only) and launched.
-- [ ] iOS build 140 on TestFlight, installed over 3.3.0 on the personal iPhone.
+- [x] 2026-10-27: Mac DMG 3.4.0 build 141 built by `fastlane mac release` (Mac lane 1,038 tests, 0 failures beforehand); `scripts/release-info.sh` reports 3.4.0 build 141, sandbox, nested signatures and staple ok; Gatekeeper reads the app inside the DMG as Notarized Developer ID. Recording smoke test on 141 is Ian's.
+- [x] 2026-10-27 17:49: iOS build 141 and the 3.4.0 metadata uploaded to App Store Connect by `fastlane ios release` (iOS lane 976 tests, 0 failures beforehand). Not submitted for review yet. Install over 3.3.0 on the personal iPhone from TestFlight once processed.
 
 ## 2. A5, enrollment and keys (throwaway Mac user, build 140)
 

@@ -4,7 +4,7 @@ Public-facing changelog. End-user documentation lives at `https://miniti.app/doc
 
 ## Releases
 
-### Unreleased - v3.4.0
+### 2026-10-27 - v3.4.0
 
 - new: (macOS and iOS) Settings, Sending: one tab under Setup that lists what leaves this device and who gets it, worked out from your settings right now: Deepgram, OpenAI, TypeSafe, miniti, your docs server, Google Calendar, your CRM, your webhook. Each row says exactly what is sent, or nothing and why, and on the Mac links to the setting that decides it. While you record it says what this meeting is doing. Privacy points to it
 - new: (macOS and iOS) Settings, Account shows your account the way you think of it: your verified email, how you sign in, your devices, your plan. Add an email on any account, free or Pro, with cloud off. It is the easiest way back in on a new device, and it never turns on cloud sync. After your first saved meeting, Home offers it once, and Not now means not now

@@ -176,8 +176,10 @@ Validate the documentation and website before pushing:
 
 ```sh
 cd ../miniti-docs
-# mint refuses Node 25+; use the Homebrew LTS on this machine
-export PATH=/opt/homebrew/Cellar/node@22/22.23.2_1/bin:$PATH
+# mint refuses Node 25+; use the Homebrew LTS on this machine. Unset NODE_OPTIONS first if a terminal
+# multiplexer injected a --require preload that no longer exists (node fails with MODULE_NOT_FOUND).
+unset NODE_OPTIONS
+export PATH=/opt/homebrew/opt/node@22/bin:$PATH
 mint validate
 mint broken-links
 
