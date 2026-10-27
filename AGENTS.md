@@ -33,6 +33,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Understand a specific file | [docs/architecture.md](docs/architecture.md) |
 | Understand a cross-file pattern (hot paths, watchdogs, save queues, recovery) | [docs/patterns.md](docs/patterns.md) |
 | Work on the audio pipeline | [docs/audio.md](docs/audio.md) (includes the 2026-10-27 failed-mic stereo fallback, bounded startup retries and buffer-based recovery health; built, unreleased, AirPods QA open) |
+| Change the return from a Polar purchase to the app | [docs/enrollment-identity-plan.md](docs/enrollment-identity-plan.md#b6d-return-to-miniti-after-buying-pro) (B6d, planned future update: Open miniti, server-confirmed Pro, bounded waiting and restore fallback; outside current release QA) |
 | Work on UI (home, recording, stopped, history, settings) | [docs/ui-states.md](docs/ui-states.md) |
 | Touch backend / monetization / pricing | [docs/monetization.md](docs/monetization.md) |
 | Understand how we ship (Sparkle, notarization, entitlements) | [docs/distribution.md](docs/distribution.md) |
