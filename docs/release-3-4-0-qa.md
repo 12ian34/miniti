@@ -2,6 +2,10 @@
 
 Consolidated manual QA for the 3.4.0 tree, written 2026-10-27 and moved to build 140 the same day after the Settings disclosure, support-details copy and link-sent changes (build 139 DMG and TestFlight 139 are superseded). Moved to build 141 after 3ee13bb's Privacy and Sending wording; Ian's build-140 audio results stand, with a short recording smoke test on 141. Tick each line with the device, date and result. Automated state before QA: macOS 1,038 tests and iOS 976 tests, zero failures, three skips each. This file authorises nothing: the Sparkle update, the website and the App Store submission wait for Ian's separate go.
 
+**Release reconciliation, 2026-10-27:** macOS 3.4.0 build 141 is live, confirmed against the public Sparkle feed and `/api/version`; release commit `d547e00`. iOS build 141 is uploaded per the release record; the backend still advertises iOS 3.3.0, and App Store availability is not independently confirmed here. [Release QA](release-3-4-0-qa.md) preserves the measured results, remaining unchecked scenarios and macOS 26 waiver. Shipping does not turn an unchecked device test into a pass.
+
+This file is now the release evidence record. Earlier “wait for go” and build-140 inspection notes below are historical. Preserve unchecked entries as unrecorded measurements rather than retroactively marking them passed. Ian reports the release shipped.
+
 Sources: enrollment plan A5 lines, [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md) U2/U1/B6a QA, [reliability-follow-up-plan.md](reliability-follow-up-plan.md) R1–R3 device checks, [audio.md](audio.md) "Initial microphone failure".
 
 Setup once: a throwaway macOS user (`iantest`) on imbp, a throwaway iPhone account on TestFlight build 140, never the personal Pro account for anything destructive. Keep keys and tokens out of notes. Read the debug log from Settings, Support after each step; admin events via `node ../miniti-api/scripts/admin-stats.mjs events --name client_auth`.

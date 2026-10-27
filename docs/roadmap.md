@@ -19,14 +19,27 @@ Within a priority, order is intentional unless a production incident changes it.
 
 ## Recommended execution order
 
-Current order, reconciled 2026-10-26:
+Current order, reconciled after the 3.4.0 release on 2026-10-27:
 
-1. Use the recorded 3.4.0 QA in P1.4a: Mac build 137 on macOS 27 and iPhone build 138 passed the recorded scenarios; macOS 26 is unmeasured with Ian's explicit release waiver. Built, deployed, tested and released remain distinct states.
-2. Implement the approved future reliability and UX fixes in P0.11, plus the independent early email/account slice B6a in P1.4a, with their regressions and rendered UI review. On 2026-10-26 Ian assigned U2, U1 and B6a to 3.4.0 (build 139, release held); the implementation plan is [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). On 2026-10-27 Ian also held 3.4.0 for the remaining auth persistence fix, R1, narrowed R2 (History/Watch only) and R3. R4–R8, the wider R2 audit and ownership migrations remain separate; no push or release is authorized.
-3. Continue enrollment A3/A4 and Track B only under the slice-specific decisions, compatibility tests and cutover rules in the enrollment plan.
-4. Keep the unresolved long-session, device QA, measurement and platform work below. Historical implementation phases document why the code exists; do not restart completed auth, persistence or CI work.
+1. **Observe the release and close the monitoring blind spot.** Mac 3.4.0 build 141 is live; iOS build 141 is uploaded, App Store availability not independently confirmed. Auth/key recovery, A1–A2e, U1/U2/B6a, R1, narrowed History/Watch R2, R3 and failed-mic system-audio fallback are in this release. Preserve the actual QA record and macOS 26 waiver. Proposed O1–O4 in [ops-alerting-plan.md](ops-alerting-plan.md#post-340-observability-follow-up-o1o4) cover single-device incidents, trustworthy delivery, recording/auth outcomes and probe blind spots. Start with O1's backend reader of existing events; O2 precedes relying on O3's new outcome counters. No monitoring job or code is created by this plan.
+2. **Finish enrollment behavior in a bounded client update:** backend A2f, then A3/A3a (credential states and migration retry/backoff), then A4/B6b (explicit first-use, signed-out and revoked choices), each with its A5 tests. No forced email or forced sign-out. A2f and A3a are still unbuilt, verified against the current route/coordinator. Separate implementation/release of A4 is allowed if the earlier slice needs observation; staging is not a requirement for a new version for every small item.
+3. **Fix remaining proven reliability failures in small batches:** R4 Watch retry spin, R8 atomic web/email-link consumption, R7 stale History responses, then R5→R6 export delivery/resend. Pair each with the corresponding tests in P0.12 instead of building a second fix. The wider R2 audit stays deferred; do not reopen the shipped auth design without new evidence.
+4. **Undertake ownership migration as its own programme:** B0 canonical records, B1 subscription ownership, B2 account usage ledger and B3 lifecycle, with the exact dependency/cutover sequence in the enrollment plan; then B4 meeting provenance and B5 integration ownership. Inventory/backfill and the relevant open decisions precede cutover. No ownership data migration is authorized merely because 3.4.0 shipped.
+5. **Deliver the approved smaller product follow-ups independently:** B6c recognizable device labels; B6d return to miniti after Polar checkout; C1 pre-recording cloud exclusion, then calendar-title exclusion rules. They can move ahead of the ownership programme where their stated contracts permit. C1 rules are initially per device. Keep Linux parity with each slice.
 
-Testing follow-up added 2026-10-27: P0.12 captures the full app/backend test review. Start with isolated helpers and exact billing/delivery regressions, then purchase, insights, consent/account and real-storage coverage. Pair regressions with their existing P0.1/P0.11 implementation owners; this adds no release assignment or change to the build 139 scope above.
+### Which document owns what
+
+| Document | Role after 3.4.0 |
+|---|---|
+| This roadmap | One priority list and cross-repository completion tracker |
+| [enrollment-identity-plan.md](enrollment-identity-plan.md) | Remaining A2f/A3/A4 and B0–B7 contracts/decisions; B6a is delivered |
+| [reliability-follow-up-plan.md](reliability-follow-up-plan.md) | R4–R8 and deferred wider R2; preserves shipped R1–R3 regression contracts |
+| [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md) | Implementation/review history for delivered U1/U2/B6a; not another active backlog |
+| [ops-alerting-plan.md](ops-alerting-plan.md) | Existing alerts and proposed O1–O4 observability work |
+| [cloud-sync-plan.md](cloud-sync-plan.md) | Shipped sync contract plus planned C1 selective exclusions |
+| [test-quality-and-coverage-plan.md](test-quality-and-coverage-plan.md) | T01–T17 test investment, paired with production fixes; not duplicate implementation scope |
+| [release-3-4-0-qa.md](release-3-4-0-qa.md) | Dated artifact/device evidence and explicit gaps for build 141 |
+
 
 ## P0 — protect users and releases
 
@@ -561,7 +574,7 @@ Every PR updates the relevant `miniti-api/docs/agents/*` and/or Miniti focused d
 
 ### P0.11 Fix permission, account-switch and delivery races; clarify Sending and consent
 
-**Status (2026-10-27):** U1/U2 and B6a built for 3.4.0 build 139, review/device QA still required. Ian held the release for the remaining auth persistence fix, R1, narrowed R2 (History regeneration and Watch processing only) and R3; all four built 2026-10-27 (16a70ab, f97f4ff, e083482, a69b7e3), review and device QA pending. R4–R8 and the wider R2 audit remain unversioned. [reliability-follow-up-plan.md](reliability-follow-up-plan.md) holds the evidence, eight behavioral slices plus U1 Sending/U2 consent UX, regression requirements, dependencies and compatibility gates. Optional email-first account protection is B6a in the enrollment plan, an early slice independent of the ownership migration.
+**Status (2026-10-27, after release):** U1/U2, B6a, auth persistence/authorization fixes through `051fe88`, R1, narrowed R2 (History/Watch only) and R3 are delivered in macOS 3.4.0 build 141 and the uploaded iOS build. R4–R8 and the wider R2 audit remain planned and unversioned. [reliability-follow-up-plan.md](reliability-follow-up-plan.md) retains their contracts; device evidence stays in the release QA file.
 
 Scope: private-mode transitions during capture; consistent AI-content consent; account/generation fencing for cloud work; bounded Watch import retries; safe webhook coalescing; current-state resend after terminal webhook failure; History response revision guards; atomic web/confirmation link consumption. Deliberately configured webhook/CRM exports remain allowed in private mode, per Ian. U1 groups Sending into concise transcription/AI, sync/exports and account/connections sections with accurate states and a single Configure action per row. U2 shortens first-run disclosure and keeps Allow/Not now visible outside the scroll body, including small-window and accessibility QA. This does not authorize ownership migrations or claim current QA closes these issues.
 
@@ -569,7 +582,9 @@ Scope: private-mode transitions during capture; consistent AI-content consent; a
 
 **Failed microphone startup follow-up (2026-10-27).**
 
-Built locally for the pending 3.4.0 update, unreleased. Ian requested the fix after a 3.3.0 AirPods Max report. System audio no longer depends on a failed mic callback, stereo channels stay stable, initial mic failure gets bounded retries and a visible recovery instruction, and audio health requires delivered PCM. Regression and real-device QA contract: [audio.md](audio.md#initial-microphone-failure-2026-10-27-built-unreleased). No push or release authorized; AirPods Max route-change QA remains open.
+Delivered in macOS 3.4.0 build 141. Ian requested the fix after a 3.3.0 AirPods Max report. System audio no longer depends on a failed mic callback, stereo channels stay stable, initial mic failure gets bounded retries and a visible recovery instruction, and audio health requires delivered PCM. Regression and real-device QA contract: [audio.md](audio.md#initial-microphone-failure-2026-10-27-built-unreleased). Preserve the dated hardware evidence in the release QA file; unchecked hardware scenarios remain unverified.
+
+**Post-release monitoring:** proposed O1–O4 are owned by [ops-alerting-plan.md](ops-alerting-plan.md#post-340-observability-follow-up-o1o4), not a second reliability implementation. Existing diagnostics do not guarantee an alert for one blocked user.
 
 ### P0.12 Strengthen app and backend test quality and coverage
 
@@ -654,7 +669,7 @@ The review reproduced concurrent double billing with the backend test double and
 
 **Complete when:** replacing, removing or losing a device does not change what its account owns, and the plan's cross-cutting tests (device removal, account switching, lost responses, failed writes, backup restore, billing events, old clients, mixed-case ids) pass in both repositories.
 
-**Status (2026-10-26):** A0/A0a and A1–A2e built; backend through `4b41878` deployed per Fable, with revoked-ID create exemption removed and the targeted admission regression independently rerun. QA recorded for Mac 3.4.0 build 137 on macOS 27 and iPhone build 138; macOS 26 remains unmeasured with Ian's explicit waiver. No client release inferred. A2f now puts its outer request budget before eligibility reads; A3a defers on 429. A3/A4 and ownership migrations remain planned. B6a's optional email-first protection, full Account email, clear recovery/billing actions and free/cloud-off availability are approved for an early future slice (D8 settled); B6b stays with A4. Other migration decisions retain their individual status in the enrollment plan.
+**Status (2026-10-27):** A0/A0a and the structured error backend are deployed; A1–A2e and B6a are delivered in macOS 3.4.0 build 141 and the uploaded iOS build. A2f, A3/A3a, A4/B6b, B0–B5 and B6c/B6d remain planned. The macOS 26 migrated-key case retains Ian's documented waiver. D8 is settled by B6a; other ownership decisions retain their individual status. See the release QA file for actual measurements, not an inferred blanket pass.
 
 ### P1.5 Maintain large-history Coaching performance
 
@@ -682,6 +697,12 @@ Two upstream deprecations are real but must not be opportunistically bundled int
 - `@vercel/kv` is deprecated even though the existing Upstash-backed integration still works. Plan a direct `@upstash/redis` migration across every command, generic/result conversion, Lua `eval`, test stub, and environment binding. Run parity tests and a preview/shadow validation before production cutover.
 
 **Complete when:** Each migration has an independent design/PR sequence and no unresolved deprecation warning remains; neither is mixed into atomic registration, finalization, authentication, registry, or prompt-cache changes.
+
+### P1.9 Selective cloud exclusion before recording
+
+**Approved 2026-10-27; planned, not built; future update outside current 3.4.0 QA.** Add **Keep this meeting off the cloud** before recording on Mac and iPhone, without requiring private mode, plus optional calendar-title exclusion rules with a preview. Other meetings keep syncing. Rules affect cloud storage, not calendar visibility, recording, transcription or configured exports. Initial rules are explicitly per device; recurring-series/calendar-wide rules need provider identifiers and remain follow-ups.
+
+**Contract and completion:** [cloud-sync-plan.md, C1](cloud-sync-plan.md#c1-selective-cloud-exclusion-before-recording) specifies creation-time persistence, every recording start path, sticky exclusion, explicit overrides, in-flight push/delete safety, compatibility and device QA. An excluded therapy meeting must never be uploaded when chosen before recording, while the next ordinary meeting syncs normally. Adding/removing rules never silently changes historical meetings.
 
 ## P2 — bounded product expansion
 

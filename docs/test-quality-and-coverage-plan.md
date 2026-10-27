@@ -28,6 +28,8 @@ The concurrency result demonstrates the handler race with the test double, not a
 - Managed endpoint tests use device-bound bearer/proof authentication. Keep explicitly supported legacy compatibility cases separately; never add a shared client secret to the app.
 - Use isolated stores, credentials, audio fixtures and provider doubles. Real-provider and hardware runs use designated test environments. This plan creates no scheduled job and authorizes no production deployment.
 
+**Post-3.4.0 reconciliation, 2026-10-27:** auth generation/lifecycle, narrowed History/Watch consent, cloud response fencing and failed-mic regressions added during 3.4.0 provide part of the evidence relevant to T08/T09. They do not complete this broader programme. Inventory/reuse those tests before adding more; do not reimplement the shipped production fixes. O2 diagnostics-queue coverage belongs with the proposed ops follow-up.
+
 ## Status and sequence
 
 Every slice is planned. Priority here means implementation order within this testing programme, not a new product roadmap classification. Finish the small harness prerequisites, then money/privacy regressions; do cosmetic cleanup last. A known-bug regression should fail before its fix and pass with it. Do not merge a permanently red suite, weaken the assertion or silently skip it to claim completion.

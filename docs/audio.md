@@ -70,7 +70,11 @@ Debug log lines to look for when diagnosing:
 - `Post-recovery health: degraded 2/2 heartbeats — escalating to full capture restart`
 - `Full capture restart complete` / `Full capture restart FAILED: <err>`
 
-## Initial microphone failure, 2026-10-27 (built, unreleased)
+<a id="initial-microphone-failure-2026-10-27-built-unreleased"></a>
+
+## Initial microphone failure, 2026-10-27 (shipped in 3.4.0)
+
+**Release status, 2026-10-27:** delivered in macOS 3.4.0 build 141 (`28d247b`). The legacy anchor is retained; [release QA](release-3-4-0-qa.md) records the actual device evidence and unchecked scenarios.
 
 A macOS 3.3.0 field report showed AirPods Max input startup failing with Core Audio `-10868` (unsupported format), while system capture remained active and Deepgram connected but sent zero packets. Production diagnostics matched the report at 12:58–13:03 UK time. The original dual-source ring waited forever for the absent mic callback; the active-mic watchdog did not cover a failed initial start.
 

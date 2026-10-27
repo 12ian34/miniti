@@ -1,6 +1,10 @@
 # Cloud sync, cloud storage, and API/MCP access plan
 
-> Started 2026-10-15 from a user request: meetings synced between devices, stored in the cloud, and reachable from the user's own tools through a REST API and an MCP server. Optional, default off, must not touch existing users, must coexist with private mode. Nothing is built; this document is the plan and its status table. Ships as 3.0.0 on macOS and iOS (Ian, 2026-10-15), together with the quiet-mic live transcript fix below; Linux follows on its own line.
+> Started 2026-10-15 from a user request: meetings synced between devices, stored in the cloud, and reachable from the user's own tools through a REST API and an MCP server. Optional, default off, must not touch existing users, must coexist with private mode. The original implementation is built; the status table distinguishes it from later planned work. Ships as 3.0.0 on macOS and iOS (Ian, 2026-10-15), together with the quiet-mic live transcript fix below; Linux follows on its own line.
+
+**Release reconciliation, 2026-10-27:** macOS 3.4.0 build 141 is live, confirmed against the public Sparkle feed and `/api/version`; release commit `d547e00`. iOS build 141 is uploaded per the release record; the backend still advertises iOS 3.3.0, and App Store availability is not independently confirmed here. [Release QA](release-3-4-0-qa.md) preserves the measured results, remaining unchecked scenarios and macOS 26 waiver. Shipping does not turn an unchecked device test into a pass.
+
+C1 selective exclusions remains planned. B6a account/email UI and R3 stale-pass protection are delivered; B4 ownership/provenance is still future work.
 
 ## Status
 
@@ -22,6 +26,7 @@
 | Manual validation | partly done 2026-10-16 | Ian ran first enable, recording each way, rename, pin, delete, trim, email sign-in and join by email on his Mac and phone; the rest is covered by the shared wire fixture, the engine tests and the backend route tests. Claude.ai connector and Claude Code with a real token still untested live. |
 | One switch per account | built 2026-10-21 for 3.3.0 | `cloud_enabled` and `cloud_version` on the account (Redis, `setAccountCloud`), `GET`/`PUT /api/account/cloud`, mirrored on `/api/usage`; `AppState.cloudAccountFlagAction` decides push, follow, acknowledge or wait; per-account version and pending keys in UserDefaults; copy in Settings → Cloud and the enable sheet. Section "One switch per account" below has the rules and edge cases. Backend deployed first; Linux tracks it in its PLAN. |
 | Staged rollout | shipping 2026-10-16 | macOS 3.0.0 (build 130) live on GitHub, appcast and MACOS_LATEST; iOS build 130 uploaded and submitted; website and docs deployed. `CLOUD_SYNC_ALLOWLIST` still holds Ian's account until he removes it (the classifier blocked the agent). App Privacy labels (email, user content) to be added by Ian in App Store Connect. |
+| Selective cloud exclusion before recording and calendar rules (C1) | planned, approved 2026-10-27 | Future update, outside current 3.4.0 release QA. Per-meeting choice without private mode, plus explicit title rules with a preview. See C1 below; nothing implemented. |
 
 ## What the user gets
 
@@ -349,3 +354,35 @@ A person's flip goes through `setCloudSyncEnabled(_, source: .user)`, which writ
 - *Older clients* (3.2.x Apple, Linux today) ignore the two fields and keep their local switch; they neither write nor follow until they adopt the protocol.
 - *Propagation delay*: a device learns a change at its next usage check, which is launch, activation, enrollment or the end of a recording. A Mac left in the background keeps its last state until it comes to the front. Adding the flag to the 60 s poll (`/api/sync/status`) is the obvious next step if that proves too slow.
 - *Kill switch off or allowlist refusal*: the write fails, stays pending, and is retried; the local switch still flipped, so the person is not blocked by the server.
+
+## C1: selective cloud exclusion before recording
+
+**Status: approved 2026-10-27, planned for a future update; nothing implemented. Outside current 3.4.0 release QA.** Keep selected sensitive meetings, such as therapy sessions, excluded from miniti cloud storage while other meetings sync normally, without needing full private mode. This is independent of Track B's account-ownership migration.
+
+### Before recording
+
+- Add **Keep this meeting off the cloud** beside the Home recording setup and the selected calendar meeting, on macOS and iOS. It works without local models or private mode. A brief explanation says: “This meeting won't sync to your other devices or appear on the web. Your transcription, AI and export settings still apply.” Never label this choice “private” or promise nothing leaves the device.
+- The choice applies to the next meeting being started, not the account-wide cloud switch. Keep it available when cloud is off so a meeting can be protected against a later enable. A failed start retains the choice for retry; a successful start consumes it, and a different calendar selection recomputes its own default without inheriting another event's one-off override. Show the effective choice before start and a quiet **Kept off the cloud** indicator during recording and in History.
+- Set and persist `Meeting.syncExcluded` at creation, before any save can make the row eligible for sync. Every start path uses the same decision: Home, shortcuts/menu, calendar auto-start/countdown, call detection and Smart meetings handoff. Resuming an existing meeting preserves its decision. A new meeting created by a handoff evaluates the new event independently.
+- Keep the exclusion across stop/finalisation, relaunch, rename, insight updates, later cloud enable and account changes. Removing a rule must never make previously excluded meetings upload. Private mode still forces exclusion; this control cannot override it at start. Later **Put on the cloud** in History remains an explicit per-meeting action subject to account/provenance gates.
+
+### Automatic exclusions for calendar meetings
+
+- Settings → Cloud gains **Keep matching meetings off the cloud**, separate from Settings → Calendar's meeting filters. These rules affect storage only: matching events stay visible and recordable, with reminders and auto-start behaving normally.
+- First scope: user-entered **Title contains** rules, literal case-insensitive matching with trimmed nonempty input, OR across rules. No regex, inferred sensitive categories or AI classification. Example: a user can enter “therapy”, preview matching events, and save the rule. Show a next-seven-days preview and the reason beside a matching event. Explain that a renamed event or missing calendar association may not match; the manual choice remains available for any recording.
+- Evaluate the selected calendar event's title at start, before the first save, and latch the result on the meeting. Do not evaluate an AI-generated title after recording. An explicit one-meeting override can include a rule-matched event only after the person changes the visible choice; private mode still wins. If a calendar event becomes associated after capture has started, a matching rule may add exclusion before finalisation, but must never remove an existing exclusion. Test that late association is handled before upload eligibility.
+- Initial rules are stored locally and labelled **On this device**. They do not claim to protect a recording made on another device. Do not upload titles or rule text to implement this feature or include them in diagnostics. Account-wide rule sync is a separate scope decision; the existing account-wide cloud enable switch is unchanged.
+- Calendar-wide and **This recurring series** exclusions are possible follow-ups, not promises in the first slice. The current client `CalendarEvent` does not expose calendar identity or recurring-series identity; those controls require an additive provider/backend contract and stable identifiers. Do not guess a series from an event title.
+
+### Existing meetings and sync safety
+
+The existing History action remains available. Explain that excluding a meeting after recording may remove a copy that has already uploaded; it is not the same guarantee as choosing before recording. Preserve the local meeting, request cloud deletion when necessary, and show pending/failure state until acknowledged. Do not claim immediate erasure from backups or copies already exported to other tools.
+
+Before implementation, cover the in-flight push boundary: an exclusion must not be overwritten by a delayed successful push or pull. If a push was already sent, retain the exclusion and durably queue deletion using the acknowledged server revision, even if the local revision was zero when exclusion was chosen. An excluded meeting must not be resurrected by another sync pass. Reuse the R3 account/generation fencing and existing tombstone machinery, with a held-transport regression; merely filtering the next batch is insufficient.
+
+### Delivery and acceptance
+
+- Implement the manual pre-recording control first, then title rules using the same creation-time decision. Preserve existing users' defaults and existing exclusions; do not retroactively exclude or upload historical meetings when a rule is added, edited or removed.
+- New source recordings on macOS and iOS are the first scope. Watch/Granola import controls and recurring-series/provider metadata are follow-ups, explicitly not covered by the calendar-rule promise. Record Linux parity in `../miniti-linux/PLAN.md` before implementation; keep `syncExcluded` local as today unless a separately reviewed wire change is needed. Align Sending, Help and public cloud docs with what ships.
+- Regression tests: manual exclusion produces zero pushes with cloud already enabled; ordinary next meeting still syncs; cloud off then on; relaunch/resume; failed-start retry; calendar selection changes; auto-start and handoff; rule match/non-match/case/empty input; late event association; rename and rule removal; explicit include override; private mode precedence; account switch; exclusion during a held initial push and delayed pull, with local data kept and cloud deletion acknowledged.
+- Device QA: a synthetic therapy calendar event followed by a normal meeting, on Mac and iPhone, with cloud on throughout and no local models required. Confirm the excluded meeting never appears on the second device, web or API, while the ordinary meeting does. Review minimum Mac window, compact iPhone, iPad, large text and VoiceOver. Separately test removal of an already uploaded meeting and its visible pending/error state.

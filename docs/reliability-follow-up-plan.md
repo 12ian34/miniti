@@ -2,22 +2,24 @@
 
 ## Status and scope
 
-Approved by Ian on 2026-10-26. On 2026-10-27 Ian held 3.4.0 for R1, the narrowed R2 below, R3 and the remaining auth persistence fix; all four were built the same day (16a70ab, f97f4ff, e083482, a69b7e3) with regressions, both full bundles green on the combined tree (macOS 1020, iOS 965); code review and device QA remain. R4–R8 and the deferred wider R2 audit remain unversioned. U1 and U2 were assigned to 3.4.0 build 139 on 2026-10-26 (see [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md)). The audit examined app `0a0961d` and backend through `3512172`; the enrollment incident notes were then reviewed at app `963b236`. The cross-repository tracker is [roadmap.md](roadmap.md), P0.11. This work is separate from the ownership migrations in [enrollment-identity-plan.md](enrollment-identity-plan.md), Track B. On 2026-10-26 Ian also approved the Sending and consent UX slices U1/U2 below. Optional email-first account protection is specified once in that plan, B6a; it can ship ahead of the ownership migrations.
+**Release reconciliation, 2026-10-27:** macOS 3.4.0 build 141 is live, confirmed against the public Sparkle feed and `/api/version`; release commit `d547e00`. iOS build 141 is uploaded per the release record; the backend still advertises iOS 3.3.0, and App Store availability is not independently confirmed here. [Release QA](release-3-4-0-qa.md) preserves the measured results, remaining unchecked scenarios and macOS 26 waiver. Shipping does not turn an unchecked device test into a pass.
+
+Delivered in build 141: auth commit/authorization/lifecycle fixes through `051fe88`, R1, narrowed History/Watch R2, R3, U1 and U2. B6a is delivered under the enrollment/UX plans. R4–R8 and the wider R2 audit remain planned and unversioned. The dated evidence and review sections below describe the original defects and their implementation history; “currently” in that evidence is not the current backlog. Cross-repository order is in [roadmap.md](roadmap.md).
 
 Ian accepted audit findings 1, 3, 4, 5 and the four other findings. Finding 2, disabling configured webhooks/CRM in private mode, was **rejected**: private mode means keeping meeting data under the person's control. Deliberately configured exports remain permitted. Do not add an export ban, erase outbox items, or change export defaults under this plan. Sending copy must distinguish external AI processing from user-controlled exports and describe the running session accurately.
 
 | Slice | Change | Platform / repository | State |
 |---|---|---|---|
-| R1 | Private-mode transitions match the running transcription session | macOS, miniti | **built 2026-10-27** (f97f4ff): `setPrivateMode` refuses while recording, starting, resuming or finalising and the switch says the recording must stop first; Sending already reads the latched route (U1/F5); regression in `PrivateModeTests`. Device QA open |
-| R2 | Consent guards for History regeneration and Watch transcription/insights | macOS + iOS, miniti | **built 2026-10-27, narrowed** (e083482): History's Update shows the permission sheet and sends nothing without permission, re-checked before each request; Watch jobs wait in `waitingForPermission` with audio kept, no grant, upload or insights, resumed once on grant, re-checked before upload and insights; regressions in `ThirdPartyAIConsentTests` and `WatchImportTests`. Wider audit deferred. Device QA open |
-| R3 | Cloud work is fenced by account and generation | macOS + iOS, miniti | **built 2026-10-27** (a69b7e3): `PassContext` captured per pass and checked after every await, cursor writes scoped to the captured account, superseded passes apply nothing and hand over, stale errors never pause the current account, invalidated on account change, credential generation change and reset; four held-transport regressions in `CloudSyncEngineTests`. Device QA open |
+| R1 | Private-mode transitions match the running transcription session | macOS, miniti | **built 2026-10-27** (f97f4ff): `setPrivateMode` refuses while recording, starting, resuming or finalising and the switch says the recording must stop first; Sending already reads the latched route (U1/F5); regression in `PrivateModeTests`. Delivered in build 141; remaining measurement gaps in release QA |
+| R2 | Consent guards for History regeneration and Watch transcription/insights | macOS + iOS, miniti | **built 2026-10-27, narrowed** (e083482): History's Update shows the permission sheet and sends nothing without permission, re-checked before each request; Watch jobs wait in `waitingForPermission` with audio kept, no grant, upload or insights, resumed once on grant, re-checked before upload and insights; regressions in `ThirdPartyAIConsentTests` and `WatchImportTests`. Wider audit deferred. Delivered in build 141; remaining measurement gaps in release QA |
+| R3 | Cloud work is fenced by account and generation | macOS + iOS, miniti | **built 2026-10-27** (a69b7e3): `PassContext` captured per pass and checked after every await, cursor writes scoped to the captured account, superseded passes apply nothing and hand over, stale errors never pause the current account, invalidated on account change, credential generation change and reset; four held-transport regressions in `CloudSyncEngineTests`. Delivered in build 141; remaining measurement gaps in release QA |
 | R4 | Watch imports defer retries without spinning or starving other jobs | iOS, miniti | planned |
 | R5 | Webhook coalescing cannot lose an update in flight | macOS + iOS, miniti | planned |
 | R6 | Manual retry of a failed webhook has a valid payload | macOS + iOS, miniti | planned |
 | R7 | History insight responses cannot overwrite a newer transcript/template | macOS + iOS, miniti | planned |
 | R8 | Web/email confirmation link consumption is atomic | miniti-api | planned |
-| U1 | Sending becomes a concise, grouped account of data destinations and current behavior | macOS + iOS, miniti | built 2026-10-27 for 3.4.0 build 139 (account-sending-consent-ux-plan.md), QA open |
-| U2 | Shorter Deepgram/OpenAI consent with visible, accessible actions | macOS + iOS, miniti | built 2026-10-27 for 3.4.0 build 139 (account-sending-consent-ux-plan.md), QA open |
+| U1 | Sending becomes a concise, grouped account of data destinations and current behavior | macOS + iOS, miniti | delivered in 3.4.0 build 141; Mac live, iOS uploaded; evidence in release QA |
+| U2 | Shorter Deepgram/OpenAI consent with visible, accessible actions | macOS + iOS, miniti | delivered in 3.4.0 build 141; Mac live, iOS uploaded; evidence in release QA |
 
 ## Evidence and implementation contract
 
@@ -93,9 +95,9 @@ Do not blindly replace device-enrollment's inspect/bind/consume sequence: its Re
 
 ## User experience additions, approved 2026-10-26
 
-U1 and U2 were pulled into 3.4.0 (build 139) on 2026-10-26; the implementation plan, file list, tests and QA lines are in [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). The R-series items below stay future work.
+U1 and U2 were pulled into 3.4.0 (build 139) on 2026-10-26; the implementation plan, file list, tests and QA lines are in [account-sending-consent-ux-plan.md](account-sending-consent-ux-plan.md). R1–R3 shipped in build 141; R4–R8 and the wider R2 audit remain future work.
 
-U1 and U2 ship in 3.4.0 build 139; the 137 and 138 builds and their QA results are superseded and the A5 QA is repeated on 139. B6a in the enrollment plan owns email/account/billing UX; do not implement a second account state machine here.
+U1 and U2 were implemented during build 139 preparation and delivered in build 141; dated earlier QA remains evidence only for the scenarios and builds it actually tested. B6a in the enrollment plan owns email/account/billing UX; do not implement a second account state machine here.
 
 ### U1: Sending is readable at a glance
 
