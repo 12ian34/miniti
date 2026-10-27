@@ -567,6 +567,10 @@ Scope: private-mode transitions during capture; consistent AI-content consent; a
 
 **Complete when:** each slice's real-action regression passes, both Apple bundles pass on the combined tree, backend store/route tests pass where affected, and the named device scenarios are recorded. Existing account IDs, credentials, data and user-configured exports are preserved.
 
+**Failed microphone startup follow-up (2026-10-27).**
+
+Built locally for the pending 3.4.0 update, unreleased. Ian requested the fix after a 3.3.0 AirPods Max report. System audio no longer depends on a failed mic callback, stereo channels stay stable, initial mic failure gets bounded retries and a visible recovery instruction, and audio health requires delivered PCM. Regression and real-device QA contract: [audio.md](audio.md#initial-microphone-failure-2026-10-27-built-unreleased). No push or release authorized; AirPods Max route-change QA remains open.
+
 ### P0.12 Strengthen app and backend test quality and coverage
 
 **Status (2026-10-27):** planned at Ian's request, not implemented; no release assigned. [test-quality-and-coverage-plan.md](test-quality-and-coverage-plan.md) holds the audit evidence and T01–T17 implementation slices across macOS, iOS, Watch integration and `miniti-api`.

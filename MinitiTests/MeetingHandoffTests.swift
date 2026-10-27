@@ -171,6 +171,26 @@ final class MeetingHandoffTests: XCTestCase {
 
     // MARK: - Mic engine stops on an output-device switch (the field bug)
 
+    func testRecoveryDoesNotCallASilentCaptureHealthyJustBecauseTheSourcesAreActive() async throws {
+        let service = AudioCaptureService(microphoneStart: {}, systemAudioStart: {})
+        state.audioCaptureService = service
+        state.isRecording = true
+        try await service.startCapture(microphone: true, systemAudio: true)
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioRecoveryState, .recovering)
+        let now = CFAbsoluteTimeGetCurrent()
+        service.deliverSystemPCM(Data([0, 0]), multichannel: true, at: now, callback: nil)
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioRecoveryState, .recovering, "system-only output cannot hide the missing mic")
+        var sample: Int16 = 0
+        withUnsafePointer(to: &sample) {
+            service.deliverMicrophonePCM($0, count: 1, multichannel: true, at: now, callback: nil)
+        }
+        state.updateAudioRecoveryState()
+        try await Task.sleep(for: .milliseconds(1500))
+        XCTAssertEqual(state.audioRecoveryState, .healthy, "silent buffers count; speaking is not required")
+    }
+
     func testMicRestartRuleRestartsAStoppedEngineEvenWhenInputIsUnchanged() {
         XCTAssertFalse(AudioCaptureService.shouldRestartMicAfterConfigChange(hasMeaningfulInputChange: false, engineRunning: true))
         XCTAssertTrue(AudioCaptureService.shouldRestartMicAfterConfigChange(hasMeaningfulInputChange: false, engineRunning: false))
@@ -342,6 +362,137 @@ final class MeetingHandoffTests: XCTestCase {
             AudioObjectGetPropertyData(id, &addr, 0, nil, &size, UnsafeMutableRawPointer(ptr))
         }
         return err == noErr ? (ref as String?) : nil
+    }
+}
+#endif
+
+#if os(macOS)
+/// Charlie's 2026-10-27 report: the AirPods mic never started, so the system ring
+/// never drained. Exercise the production PCM delivery and startup paths without HAL.
+@MainActor
+final class CaptureFailureTests: XCTestCase {
+    private final class Packets: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [[Int16]] = []
+        func append(_ data: Data) {
+            lock.lock(); defer { lock.unlock() }
+            values.append(data.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) })
+        }
+        var all: [[Int16]] { lock.lock(); defer { lock.unlock() }; return values }
+    }
+
+    private func pcm(_ samples: [Int16]) -> Data {
+        samples.withUnsafeBytes { Data($0) }
+    }
+
+    private func mic(_ service: AudioCaptureService, _ samples: [Int16], at time: Double, into packets: Packets, stereo: Bool = true) {
+        samples.withUnsafeBufferPointer {
+            service.deliverMicrophonePCM($0.baseAddress!, count: $0.count, multichannel: stereo, at: time, callback: { packets.append($0) })
+        }
+    }
+
+    func testFailedMicDoesNotHoldSystemAudioAndRecoveryKeepsTheStereoChannels() {
+        let service = AudioCaptureService(microphoneStart: {}, systemAudioStart: {})
+        let packets = Packets()
+        service.deliverSystemPCM(pcm([101, 102]), multichannel: true, at: 100, callback: { packets.append($0) })
+        XCTAssertEqual(packets.all, [[0, 101, 0, 102]])
+        XCTAssertFalse(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true, at: 100))
+        mic(service, [11, 12], at: 100.1, into: packets)
+        XCTAssertEqual(packets.all.last, [11, 0, 12, 0], "do not replay already-delivered system audio")
+        service.deliverSystemPCM(pcm([201, 202]), multichannel: true, at: 100.2, callback: { packets.append($0) })
+        XCTAssertEqual(packets.all.count, 2, "healthy mic clocks the combined stream")
+        mic(service, [21, 22], at: 100.3, into: packets)
+        XCTAssertEqual(packets.all.last, [21, 201, 22, 202])
+        XCTAssertTrue(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true, at: 100.3))
+        // Mic callbacks disappear again, even though its engine might still say active.
+        service.deliverSystemPCM(pcm([301, 302]), multichannel: true, at: 103, callback: { packets.append($0) })
+        XCTAssertEqual(packets.all.last, [0, 301, 0, 302])
+        XCTAssertFalse(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true, at: 103))
+        mic(service, [31, 32], at: 103.1, into: packets)
+        XCTAssertEqual(packets.all.last, [31, 0, 32, 0])
+    }
+
+    func testFallbackRespectsSendingSuspensionAndMonoSessionsStayMono() {
+        let service = AudioCaptureService(microphoneStart: {}, systemAudioStart: {})
+        let packets = Packets()
+        service.suspendSending()
+        service.deliverSystemPCM(pcm([101, 102]), multichannel: true, at: 100, callback: { packets.append($0) })
+        mic(service, [11, 12], at: 100, into: packets)
+        XCTAssertTrue(packets.all.isEmpty)
+        service.resumeSending()
+        service.deliverSystemPCM(pcm([201, 202]), multichannel: false, at: 103, callback: { packets.append($0) })
+        mic(service, [21, 22], at: 103, into: packets, stereo: false)
+        XCTAssertEqual(packets.all, [[201, 202], [21, 22]])
+    }
+
+    func testSilenceCountsAsHealthyBuffersAndStopClearsTheirHistory() {
+        let service = AudioCaptureService(microphoneStart: {}, systemAudioStart: {})
+        let packets = Packets()
+        mic(service, [0, 0], at: 100, into: packets)
+        service.deliverSystemPCM(pcm([0, 0]), multichannel: true, at: 100, callback: { packets.append($0) })
+        XCTAssertTrue(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true, at: 100))
+        service.stopCapture()
+        XCTAssertFalse(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true, at: 100))
+    }
+
+    func testInitialFormatFailureRetriesTheMicWithoutStoppingSystemCapture() async throws {
+        var attempts = 0
+        var systemStarts = 0
+        let service = AudioCaptureService(microphoneStart: {
+            attempts += 1
+            if attempts == 1 { throw NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868) }
+        }, systemAudioStart: { systemStarts += 1 })
+        defer { service.stopCapture() }
+        try await service.startCapture(microphone: true, systemAudio: true)
+        XCTAssertTrue(service.isCapturing)
+        XCTAssertFalse(service.isMicActive)
+        XCTAssertNotNil(service.microphoneCaptureIssue)
+        let deadline = Date().addingTimeInterval(2)
+        while !service.isMicActive, Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertEqual(attempts, 2)
+        XCTAssertTrue(service.isMicActive)
+        XCTAssertTrue(service.isSystemAudioActive)
+        XCTAssertNil(service.microphoneCaptureIssue)
+        XCTAssertFalse(service.hasRecentCaptureBuffers(microphone: true, systemAudio: true), "successful engine startup alone is not recovery")
+        XCTAssertEqual(systemStarts, 1, "mic recovery must not interrupt the healthy system tap")
+    }
+
+    func testStopCancelsTheInitialMicRetry() async throws {
+        var attempts = 0
+        let service = AudioCaptureService(microphoneStart: {
+            attempts += 1
+            throw NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868)
+        }, systemAudioStart: {})
+        try await service.startCapture(microphone: true, systemAudio: true)
+        service.stopCapture()
+        try await Task.sleep(for: .milliseconds(750))
+        XCTAssertEqual(attempts, 1)
+        XCTAssertFalse(service.isCapturing)
+        XCTAssertNil(service.microphoneCaptureIssue)
+    }
+
+    func testMicRetriesAreBoundedAndPermissionDenialDoesNotRetry() async throws {
+        var attempts = 0
+        let service = AudioCaptureService(microphoneStart: {
+            attempts += 1
+            throw NSError(domain: "com.apple.coreaudio.avfaudio", code: -10868)
+        }, systemAudioStart: {})
+        defer { service.stopCapture() }
+        try await service.startCapture(microphone: true, systemAudio: true)
+        try await Task.sleep(for: .seconds(6))
+        XCTAssertEqual(attempts, 4, "one start plus three bounded retries")
+        XCTAssertTrue(service.microphoneCaptureIssue?.contains("built-in microphone") == true)
+        XCTAssertTrue(service.isSystemAudioActive)
+        var deniedAttempts = 0
+        let denied = AudioCaptureService(microphoneStart: {
+            deniedAttempts += 1
+            throw AudioCaptureError.microphonePermissionDenied
+        }, systemAudioStart: {})
+        defer { denied.stopCapture() }
+        try await denied.startCapture(microphone: true, systemAudio: true)
+        try await Task.sleep(for: .milliseconds(750))
+        XCTAssertEqual(deniedAttempts, 1)
+        XCTAssertTrue(denied.microphoneCaptureIssue?.contains("Microphone access is off") == true)
     }
 }
 #endif

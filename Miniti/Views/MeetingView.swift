@@ -16,6 +16,8 @@ struct MeetingView: View {
 
                     if let error = appState.recordingErrorMessage {
                         RecordingIssueBanner(message: error)
+                    } else if appState.isRecording, let issue = appState.microphoneCaptureIssue {
+                        RecordingIssueBanner(message: issue, isDismissible: false)
                     }
 
                     if let grace = appState.endingGrace {
@@ -366,6 +368,7 @@ private struct SmartMeetingBanner: View {
 private struct RecordingIssueBanner: View {
     @EnvironmentObject private var appState: AppState
     let message: String
+    var isDismissible = true
 
     var body: some View {
         HStack(spacing: 10) {
@@ -388,13 +391,15 @@ private struct RecordingIssueBanner: View {
             .buttonStyle(.borderedProminent)
             .tint(ColorPalette.Accent.amber)
 
-            Button {
-                appState.dismissRecordingError()
-            } label: {
-                Image(systemName: "xmark")
+            if isDismissible {
+                Button {
+                    appState.dismissRecordingError()
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Dismiss recording issue")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Dismiss recording issue")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

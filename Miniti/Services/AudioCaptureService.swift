@@ -26,12 +26,16 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private(set) var isSendSuspended = false
 
     func suspendSending() {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
         guard !isSendSuspended else { return }
         isSendSuspended = true
         DebugLogger.shared.log(.audio, "Audio sending suspended (ending grace)")
     }
 
     func resumeSending() {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
         guard isSendSuspended else { return }
         isSendSuspended = false
         // Drop any stale system audio buffered while suspended.
@@ -46,6 +50,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     @Published var microphoneLevel: Float = 0
     @Published var systemAudioLevel: Float = 0
     @Published var isMicActive = false
+    @Published private(set) var microphoneCaptureIssue: String?
     nonisolated(unsafe) private var isMicActiveForWatchdog = false
     @Published var isSystemAudioActive = false
 
@@ -85,6 +90,29 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var ringReadIndex = 0
     nonisolated(unsafe) private var ringCount = 0  // samples currently in buffer
     private let ringLock = NSLock()
+    // Serializes the two capture callbacks when either can drive the stereo stream.
+    private let deliveryLock = NSLock()
+    nonisolated(unsafe) private var lastMicDeliveryAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var lastSystemDeliveryAt: CFAbsoluteTime = 0
+    nonisolated(unsafe) private var systemDrivingStereo = true
+
+    /// Silence is valid audio. Health requires actual converted buffers, not meter energy
+    /// or an engine/socket that merely claims to be running.
+    func hasRecentCaptureBuffers(microphone: Bool, systemAudio: Bool, at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
+        return (!microphone || (lastMicDeliveryAt > 0 && now - lastMicDeliveryAt < 2))
+            && (!systemAudio || (lastSystemDeliveryAt > 0 && now - lastSystemDeliveryAt < 2))
+    }
+
+    private func resetDelivery() {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
+        lastMicDeliveryAt = 0
+        lastSystemDeliveryAt = 0
+        systemDrivingStereo = true
+        resetRingBuffer()
+    }
     
     // Display-level EMA only (no longer used for Deepgram AGC).
     nonisolated(unsafe) private var runningMicRMS: Float = 0.01
@@ -308,6 +336,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     
     /// Clears source log (call when starting a new recording).
     func resetSourceTracking() {
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
         sourceLogLock.lock()
         sourceLog.removeAll()
         cumulativeSamplesSent = 0
@@ -334,12 +364,22 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     #endif
     
-    override init() {
+    private let microphoneStart: (() async throws -> Void)?
+    private let systemAudioStart: (() throws -> Void)?
+
+    override convenience init() {
+        self.init(microphoneStart: nil, systemAudioStart: nil)
+    }
+
+    /// Hardware boundary for deterministic startup/recovery tests without opening devices.
+    init(microphoneStart: (() async throws -> Void)?, systemAudioStart: (() throws -> Void)?) {
+        self.microphoneStart = microphoneStart
+        self.systemAudioStart = systemAudioStart
         sourceLog = SourceSampleRing(capacity: Self.sourceLogCapacity)
         super.init()
         ringBuffer = .allocate(capacity: ringCapacity)
         ringBuffer.initialize(repeating: 0, count: ringCapacity)
-        monitorAudioDeviceChanges()
+        if microphoneStart == nil, systemAudioStart == nil { monitorAudioDeviceChanges() }
     }
     
     // MARK: - Audio Device Monitoring
@@ -809,6 +849,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func setMicActive(_ active: Bool) {
+        if active { microphoneCaptureIssue = nil }
         isMicActive = active
         isMicActiveForWatchdog = active
     }
@@ -831,6 +872,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         expectsMicAudio = microphone
         expectsSystemAudio = systemAudio
         var capturedAny = false
+        var retryMicrophone = false
+        microphoneCaptureIssue = nil
         
         if microphone {
             do {
@@ -840,13 +883,20 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             } catch {
                 DebugLogger.shared.log(.audio, "Mic capture FAILED: \(error.localizedDescription)")
                 setMicActive(false)
+                stopMicrophoneCapture()
+                if case AudioCaptureError.microphonePermissionDenied = error {
+                    microphoneCaptureIssue = "Microphone access is off. Enable miniti in System Settings, Privacy & Security, Microphone."
+                } else {
+                    retryMicrophone = true
+                    microphoneCaptureIssue = "Your microphone could not start. Retrying. You can stop and choose the built-in microphone in Settings, Recording."
+                }
                 if !systemAudio { throw error }
             }
         }
         
         if systemAudio {
             do {
-                try startSystemAudioCapture(mixWithMic: microphone)
+                try startSystemAudioCapture()
                 capturedAny = true
                 setSystemAudioActive(true)
             } catch {
@@ -865,6 +915,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         
         isCapturing = capturedAny
+        if retryMicrophone { scheduleMicRestartRetry(reason: "initial start failed") }
         startSystemCallbackWatchdogIfNeeded()
         startMicLivenessWatchdogIfNeeded()
         DebugLogger.shared.log(.audio, "Capture result: mic=\(isMicActive), sys=\(isSystemAudioActive)")
@@ -898,7 +949,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         isSendSuspended = false
         setMicActive(false)
         setSystemAudioActive(false)
-        resetRingBuffer()
+        microphoneCaptureIssue = nil
+        resetDelivery()
     }
     
     private func stopCaptureAsync() async {
@@ -929,7 +981,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         isSendSuspended = false
         setMicActive(false)
         setSystemAudioActive(false)
-        resetRingBuffer()
+        microphoneCaptureIssue = nil
+        resetDelivery()
     }
     
     // MARK: - Microphone Capture
@@ -940,6 +993,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
     
     private func startMicrophoneCapture(skipPermissionCheck: Bool = false) async throws {
+        if let microphoneStart { return try await microphoneStart() }
         if !skipPermissionCheck {
             let granted = await requestMicrophonePermission()
             guard granted else {
@@ -1143,7 +1197,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             do {
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
-                try self.startSystemAudioCapture(mixWithMic: mixWithMic)
+                try self.startSystemAudioCapture()
                 self.setSystemAudioActive(true)
                 let restartedAt = CFAbsoluteTimeGetCurrent()
                 self.lastSystemNonSilentAt = restartedAt
@@ -1170,6 +1224,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         guard isCapturing, expectsMicAudio else { return }
         guard pendingMicRetryTask == nil else { return }
         guard micRetryAttempt < maxMicRetryAttempts else {
+            microphoneCaptureIssue = "Your microphone is unavailable. Stop and choose the built-in microphone in Settings, Recording, then try again."
             DebugLogger.shared.log(
                 .audio,
                 "Mic auto-retry exhausted (\(micRetryAttempt) attempts), reason=\(reason)"
@@ -1212,44 +1267,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 } else {
                     DebugLogger.shared.log(.audio, "Mic restart retry succeeded")
                 }
-                
-                if self.isSystemAudioActive, self.expectsSystemAudio {
-                    await self.restartSystemTapForMixMode()
-                }
+                // PCM routing resumes mic-driven stereo on the first real mic buffer.
+                // The healthy system tap does not need to be rebuilt for this handover.
             } catch {
                 self.setMicActive(false)
+                self.stopMicrophoneCapture()
                 DebugLogger.shared.log(.audio, "Mic restart retry FAILED: \(error.localizedDescription)")
                 self.scheduleMicRestartRetry(reason: "retry \(attempt) failed")
             }
         }
     }
     
-    private func restartSystemTapForMixMode() async {
-        guard isCapturing, isSystemAudioActive, !isRestartingSystemAfterOutputChange else { return }
-        
-        DebugLogger.shared.log(.audio, "Restarting system tap with mixing after mic recovery")
-        
-        do {
-            resetRingBuffer()
-            stopSystemAudioCapture()
-            try startSystemAudioCapture(mixWithMic: true)
-            setSystemAudioActive(true)
-            let now = CFAbsoluteTimeGetCurrent()
-            lastSystemNonSilentAt = now
-            lastSystemCallbackAt = now
-            lastSystemAutoRestartAt = now
-            beginPostRecoveryHealthCheck(reason: "mix-mode restart after mic recovery")
-            DebugLogger.shared.log(.audio, "System tap restarted with mixing after mic recovery")
-        } catch {
-            setSystemAudioActive(false)
-            DebugLogger.shared.log(.audio, "System tap mix-mode restart FAILED: \(error.localizedDescription)")
-            if case AudioCaptureError.systemAudioPermissionDenied = error {
-                return
-            }
-            scheduleSystemTapRetry(reason: "mix-mode restart failed", mixWithMic: true)
-        }
-    }
-
     nonisolated static func shouldRecoverSystemCallbackStall(
         expectsSystemAudio: Bool,
         isSystemAudioActive: Bool,
@@ -1454,7 +1482,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         do {
             resetRingBuffer()
             stopSystemAudioCapture()
-            try startSystemAudioCapture(mixWithMic: mixWithMic)
+            try startSystemAudioCapture()
             setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
@@ -1535,7 +1563,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         do {
             resetRingBuffer()
             stopSystemAudioCapture()
-            try startSystemAudioCapture(mixWithMic: mixWithMic)
+            try startSystemAudioCapture()
             setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
@@ -1600,7 +1628,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             do {
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
-                try self.startSystemAudioCapture(mixWithMic: mixWithMic)
+                try self.startSystemAudioCapture()
                 self.setSystemAudioActive(true)
                 self.systemRetryAttempt = 0
                 // The fresh tap starts its own silence clock, so the silent-from-birth
@@ -1644,7 +1672,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // in macOS 15+ (like Granola), avoiding the invasive Screen Recording
     // permission and per-window Gatekeeper popups.
     
-    private func startSystemAudioCapture(mixWithMic: Bool) throws {
+    private func startSystemAudioCapture() throws {
+        if let systemAudioStart { return try systemAudioStart() }
         var started = false
         defer {
             if !started {
@@ -1767,12 +1796,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             throw AudioCaptureError.formatCreationFailed
         }
         
-        let directCallback = mixWithMic ? nil : onAudioBuffer
+        let multichannel = expectsMicAudio && expectsSystemAudio
+        let directCallback = onAudioBuffer
         let targetRate = targetSampleRate
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
         lastSystemCallbackAt = lastSystemHeartbeat
         systemCallbackWatchdogArmedAt = lastSystemHeartbeat
-        DebugLogger.shared.log(.audio, "System path routing: mixWithMic=\(mixWithMic), directCallback=\(directCallback != nil)")
+        DebugLogger.shared.log(.audio, "System path routing: multichannel=\(multichannel), callback=\(directCallback != nil)")
         
         // 6. IO proc callback on a custom dispatch queue. Uses direct vDSP
         // for mono downmix + decimation + Float→Int16 (no AVAudioConverter).
@@ -1785,7 +1815,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 inInputData: inInputData,
                 inputFormat: inputFormat,
                 targetRate: targetRate,
-                mixWithMic: mixWithMic,
+                mixWithMic: multichannel,
                 directCallback: directCallback
             )
         }
@@ -2144,10 +2174,45 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         // Ending-grace suspension: drop system audio instead of buffering or sending it.
         guard !isSendSuspended else { return }
 
-        if mixWithMic {
+        deliverSystemPCM(data, multichannel: mixWithMic, at: CFAbsoluteTimeGetCurrent(), callback: directCallback)
+    }
+
+    /// The system callback drives stereo while the mic is missing. Never send mono into
+    /// the already-open two-channel socket, and never wait indefinitely for a dead mic.
+    nonisolated func deliverSystemPCM(_ data: Data, multichannel: Bool, at now: CFAbsoluteTime, callback: (@Sendable (Data) -> Void)?) {
+        guard !data.isEmpty else { return }
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
+        lastSystemDeliveryAt = now
+        guard !isSendSuspended else { return }
+        if multichannel, lastMicDeliveryAt > 0, now - lastMicDeliveryAt < 0.5 {
             appendToRingBuffer(data)
+            return
+        }
+        if multichannel {
+            systemDrivingStereo = true
+            // Buffered samples predate the fallback clock. Do not replay them when the
+            // microphone returns, which would duplicate remote speech at a later time.
+            resetRingBuffer()
+        }
+        let count = data.count / MemoryLayout<Int16>.size
+        sourceLogLock.lock()
+        let start = Double(cumulativeSamplesSent) / 16000
+        sourceLog.append(SourceSample(startTime: start, endTime: start + Double(count) / 16000, micEnergy: 0, sysEnergy: 1))
+        cumulativeSamplesSent += count
+        sourceLogLock.unlock()
+        if multichannel {
+            var stereo = Data(count: data.count * 2)
+            stereo.withUnsafeMutableBytes { destination in
+                data.withUnsafeBytes { source in
+                    let samples = source.bindMemory(to: Int16.self)
+                    let output = destination.bindMemory(to: Int16.self)
+                    for i in samples.indices { output[i * 2 + 1] = samples[i] }
+                }
+            }
+            callback?(stereo)
         } else {
-            directCallback?(data)
+            callback?(data)
         }
     }
     
@@ -2192,7 +2257,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         return drainCount
     }
     
-    private func resetRingBuffer() {
+    nonisolated private func resetRingBuffer() {
         ringLock.lock()
         ringWriteIndex = 0
         ringReadIndex = 0
@@ -2252,11 +2317,22 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             )
         }
         
+        deliverMicrophonePCM(micPtr, count: micSamples, multichannel: expectsMicAudio && expectsSystemAudio, at: now, callback: callback)
+    }
+
+    nonisolated func deliverMicrophonePCM(_ micPtr: UnsafePointer<Int16>, count micSamples: Int, multichannel wantsMultichannel: Bool, at now: CFAbsoluteTime, callback: (@Sendable (Data) -> Void)?) {
+        guard micSamples > 0 else { return }
+        deliveryLock.lock()
+        defer { deliveryLock.unlock() }
+        lastMicDeliveryAt = now
+        if systemDrivingStereo {
+            resetRingBuffer()
+            systemDrivingStereo = false
+        }
         // Ending-grace suspension: metering above stays live, but no samples are accounted
         // or delivered, so the Deepgram sample clock and source log pause in step.
         guard !isSendSuspended else { return }
 
-        let wantsMultichannel = expectsMicAudio && expectsSystemAudio
         if micSamples > sysScratchCapacity && now - lastNoSystemInterleaveWarning > 5.0 {
             lastNoSystemInterleaveWarning = now
             DebugLogger.shared.log(

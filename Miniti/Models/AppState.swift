@@ -713,6 +713,7 @@ final class AppState: ObservableObject {
     }
     @Published var isMonitoring = false  // Audio monitoring active (home screen)
     @Published var audioRecoveryState: AudioRecoveryState = .healthy
+    @Published private(set) var microphoneCaptureIssue: String?
 
     var interimText: String {
         get { transcriptRuntime.interimText }
@@ -2447,6 +2448,17 @@ final class AppState: ObservableObject {
                 .store(in: &cancellables)
             
             #if os(macOS)
+            audioService.$microphoneCaptureIssue
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] issue in
+                    guard let self else { return }
+                    self.microphoneCaptureIssue = issue
+                    if issue != nil, self.isRecording {
+                        self.enqueueDiagnosticEvent("microphone_capture_failed", category: .audio, level: .error)
+                    }
+                    self.updateAudioRecoveryState()
+                }
+                .store(in: &cancellables)
             audioService.$isSystemAudioActive
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] isActive in
@@ -3558,6 +3570,15 @@ final class AppState: ObservableObject {
             consecutiveTranscriptRecoveries = 0
         }
 
+        #if os(macOS)
+        let micFlowing = captureMicrophone && audioCaptureService?.hasRecentCaptureBuffers(microphone: true, systemAudio: false) == true
+        let systemFlowing = captureSystemAudio && audioCaptureService?.hasRecentCaptureBuffers(microphone: false, systemAudio: true) == true
+        if !micFlowing && !systemFlowing {
+            updateAudioRecoveryState()
+            return
+        }
+        #endif
+
         let action = Self.evaluateTranscriptHealth(
             transcriptGap: transcriptGap,
             audioGap: audioGap,
@@ -3599,7 +3620,7 @@ final class AppState: ObservableObject {
         updateAudioRecoveryState()
     }
     
-    private func updateAudioRecoveryState() {
+    func updateAudioRecoveryState() {
         if ScreenshotMode.isActive {
             audioRecoveryState = .healthy
             return
@@ -3623,19 +3644,20 @@ final class AppState: ObservableObject {
         }
         
         #if os(macOS)
-        if captureSystemAudio {
-            let isSystemActive = audioCaptureService?.isSystemAudioActive ?? false
-            if !isSystemActive {
-                let now = CFAbsoluteTimeGetCurrent()
-                if systemAudioInactiveSince == 0 {
-                    systemAudioInactiveSince = now
-                }
-                let inactiveFor = now - systemAudioInactiveSince
-                applyAudioRecoveryState(inactiveFor > 12 ? .degraded : .recovering)
-                return
-            }
-            systemAudioInactiveSince = 0
+        // A connected socket and an active tap do not prove that either source is
+        // delivering PCM. In particular, an initial mic failure used to look healthy.
+        if endingGrace != nil { return }
+        if microphoneCaptureIssue != nil, captureMicrophone {
+            applyAudioRecoveryState(.degraded)
+            return
         }
+        if audioCaptureService?.hasRecentCaptureBuffers(microphone: captureMicrophone, systemAudio: captureSystemAudio) != true {
+            let now = CFAbsoluteTimeGetCurrent()
+            if systemAudioInactiveSince == 0 { systemAudioInactiveSince = now }
+            applyAudioRecoveryState(now - systemAudioInactiveSince > 12 ? .degraded : .recovering)
+            return
+        }
+        systemAudioInactiveSince = 0
         #endif
         
         applyAudioRecoveryState(.healthy)
@@ -3657,8 +3679,6 @@ final class AppState: ObservableObject {
             enqueueDiagnosticEvent("audio_recovery_degraded", category: .audio, level: .warning)
         } else if nextState == .recovering {
             enqueueDiagnosticEvent("audio_recovery_recovering", category: .audio)
-        } else if audioRecoveryState != .healthy {
-            enqueueDiagnosticEvent("audio_recovery_healthy", category: .audio)
         }
         
         pendingAudioRecoveryTransitionTask?.cancel()
@@ -3675,9 +3695,12 @@ final class AppState: ObservableObject {
         let delayNanoseconds: UInt64 = nextState == .healthy ? 1_400_000_000 : 700_000_000
         pendingAudioRecoveryTransitionTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: delayNanoseconds)
-            guard let self else { return }
+            guard !Task.isCancelled, let self else { return }
             guard self.isRecording else { return }
             guard self.desiredAudioRecoveryState == nextState else { return }
+            if nextState == .healthy, self.audioRecoveryState != .healthy {
+                self.enqueueDiagnosticEvent("audio_recovery_healthy", category: .audio)
+            }
             self.audioRecoveryState = nextState
             self.pendingAudioRecoveryTransitionTask = nil
         }
