@@ -676,6 +676,8 @@ final class ClientAuthManager: @unchecked Sendable {
     private var refreshTask: Task<String, Error>?
     /// One repair at a time; concurrent callers await it (A2d).
     private var repairTask: Task<Void, Error>?
+    /// The generation the in-flight repair replaces.
+    private var repairGeneration = 0
     /// Set when the stored key is unusable here and the credential holds no recovery key:
     /// the person must sign in again; nothing is created or rotated meanwhile.
     private var keyUnusableWithoutRecovery = false
@@ -1054,28 +1056,44 @@ final class ClientAuthManager: @unchecked Sendable {
     /// stored recovery key: same device id, same installation, no cap slot, no new account.
     /// Concurrent callers share one repair. Without a recovery key the credential enters
     /// `keyUnusable` and the person signs in again instead.
+    /// Repair the credential that is current right now (the coordinator's eager repair).
     func repairUnusableKey() async throws {
-        try await sharedRepairTask().value
+        guard let (_, generation) = snapshot() else { throw ClientAuthError.notEnrolled }
+        try await repairUnusableKey(expecting: generation)
     }
 
-    private func sharedRepairTask() -> Task<Void, Error> {
+    /// Repair the credential at generation `expecting`, the one whose signing just failed. A
+    /// repair never adopts an unrelated credential: if the device has since signed out or
+    /// switched, the failing operation ends with `notEnrolled` instead of being carried onto
+    /// the new account (review 2026-10-27). Concurrent callers for the same generation share
+    /// one repair; a caller for another generation is refused.
+    func repairUnusableKey(expecting generation: Int) async throws {
+        try await sharedRepairTask(expecting: generation).value
+    }
+
+    private func sharedRepairTask(expecting generation: Int) throws -> Task<Void, Error> {
         lock.lock()
         defer { lock.unlock() }
-        if let repairTask { return repairTask }
+        if let repairTask {
+            guard repairGeneration == generation else { throw ClientAuthError.notEnrolled }
+            return repairTask
+        }
+        guard credentialEpoch == generation else { throw ClientAuthError.notEnrolled }
         let task = Task { [self] in
             defer { lock.lock(); repairTask = nil; lock.unlock() }
-            try await performRepair()
+            try await performRepair(expecting: generation)
         }
         repairTask = task
+        repairGeneration = generation
         return task
     }
 
-    private func performRepair() async throws {
-        // The snapshot and its epoch are read together: the commit below replaces exactly
-        // this credential, or nothing.
+    private func performRepair(expecting generation: Int) async throws {
+        // The snapshot must still be the credential whose signing failed: the commit below
+        // replaces exactly this credential, or nothing.
         let (recoveryKey, path, acknowledged, epoch): (String, String, Bool, Int) = try {
             lock.lock(); defer { lock.unlock() }
-            guard let credentials, !Self.isDraft(credentials) else { throw ClientAuthError.notEnrolled }
+            guard let credentials, !Self.isDraft(credentials), credentialEpoch == generation else { throw ClientAuthError.notEnrolled }
             return (credentials.recoveryKey, credentials.enrollmentPath, credentials.recoveryKeyAcknowledged, credentialEpoch)
         }()
         guard !recoveryKey.isEmpty else {
@@ -1575,8 +1593,9 @@ final class ClientAuthManager: @unchecked Sendable {
             throw ClientAuthError.revoked
         } catch ClientAuthError.keyUnusable where canRepairKey {
             // The challenge grant needed the stored key and this machine cannot use it: the
-            // repair restores with a fresh key and brings its own tokens (A2d).
-            try await repairUnusableKey()
+            // repair restores with a fresh key and brings its own tokens (A2d). It repairs the
+            // credential this refresh started with, never one enrolled since.
+            try await repairUnusableKey(expecting: epoch)
             guard let (token, _) = cachedToken() else { throw ClientAuthError.notEnrolled }
             return token
         }
@@ -1649,20 +1668,24 @@ final class ClientAuthManager: @unchecked Sendable {
     /// yields the repaired credential's generation, which is then the request's own.
     @discardableResult
     func authorize(_ request: inout URLRequest) async throws -> Int {
-        do {
-            return try authorizeOnce(&request, token: try await accessToken())
-        } catch ClientAuthError.keyUnusable where canRepairKey {
-            // A valid cached bearer skipped the refresh and only the proof failed: repair,
-            // then sign the same request with the new key and token (A2d).
-            try await repairUnusableKey()
-            return try authorizeOnce(&request, token: try await accessToken())
-        }
-    }
-
-    private func authorizeOnce(_ request: inout URLRequest, token: String) throws -> Int {
+        let token = try await accessToken()
         // The snapshot that signs: its token must be the one we were handed, or the token came
         // from a credential that has since been replaced.
         guard let (credentials, generation) = snapshot(), credentials.accessToken == token else { throw ClientAuthError.notEnrolled }
+        do {
+            return try authorizeOnce(&request, token: token, generation: generation)
+        } catch ClientAuthError.keyUnusable where canRepairKey {
+            // A valid cached bearer skipped the refresh and only the proof failed: repair the
+            // credential whose signing failed (never one enrolled meanwhile), then sign the same
+            // request with its replacement key and token (A2d).
+            try await repairUnusableKey(expecting: generation)
+            let repairedToken = try await accessToken()
+            guard let (repaired, repairedGeneration) = snapshot(), repaired.accessToken == repairedToken else { throw ClientAuthError.notEnrolled }
+            return try authorizeOnce(&request, token: repairedToken, generation: repairedGeneration)
+        }
+    }
+
+    private func authorizeOnce(_ request: inout URLRequest, token: String, generation: Int) throws -> Int {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         let method = request.httpMethod ?? "GET"
         if method != "GET", method != "HEAD", let url = request.url {
@@ -1720,8 +1743,8 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// Remove any device on the account. Removing the current one clears local credentials.
     func removeDevice(installationID: String) async throws {
-        let _: Empty = try await authorizedJSON("DELETE", "/auth/account/devices/\(installationID)")
-        if installationID.lowercased() == deviceIDProvider().lowercased() { clearLocal(reason: "removed") }
+        let (_, generation): (Empty, Int) = try await authorizedJSONTracking("DELETE", "/auth/account/devices/\(installationID)")
+        if installationID.lowercased() == deviceIDProvider().lowercased() { clearLocal(reason: "removed", ifGeneration: generation) }
     }
 
     /// Generate a new recovery key and ask the server to accept it. Returns the formatted key.
@@ -1777,17 +1800,23 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     /// Sign this installation out server-side, then forget it locally.
-    func signOut() async throws {
+    /// Sign this installation out. Returns true when this call cleared the local credential;
+    /// false when the credential it started with had already been replaced (a sign-out that
+    /// completes for an old credential leaves the newer one alone, review 2026-10-27).
+    @discardableResult
+    func signOut() async throws -> Bool {
+        guard let (_, generation) = snapshot() else { throw ClientAuthError.notEnrolled }
         if keyNeedsReauthentication {
             // The stored key failed and nothing has signed since: the revoke cannot be proved.
             // Signing out is how the person leaves that state, so it clears locally at once
             // (review 2026-10-26: after the unusable state is established, every authorized
             // call throws notEnrolled, which the catches below never saw).
-            clearLocal(reason: "signout")
-            return
+            return clearLocal(reason: "signout", ifGeneration: generation)
         }
+        var signed = generation
         do {
-            let _: Empty = try await authorizedJSON("POST", "/auth/revoke", body: [:])
+            let (_, under): (Empty, Int) = try await authorizedJSONTracking("POST", "/auth/revoke", body: [:])
+            signed = under
         } catch ClientAuthError.revoked {
             // Already gone server-side; local clear below is all that matters.
         } catch ClientAuthError.server(_, let status) where status == 401 {
@@ -1801,13 +1830,17 @@ final class ClientAuthManager: @unchecked Sendable {
             // The stored key cannot sign here, so the revoke cannot be proved. Signing out is
             // how the person leaves that state; it must not depend on the key (A2d).
         }
-        clearLocal(reason: "signout")
+        // Only the credential this sign-out was for is cleared; a same-account repair inside the
+        // request moved `signed` on to its replacement, a sign-out or switch since did not.
+        return clearLocal(reason: "signout", ifGeneration: signed)
     }
 
     /// Delete the anonymous account (revokes every device). Does not cancel subscriptions.
-    func deleteAccount() async throws {
-        let _: Empty = try await authorizedJSON("DELETE", "/auth/account")
-        clearLocal(reason: "delete")
+    /// Returns true when this call cleared the local credential (see `signOut`).
+    @discardableResult
+    func deleteAccount() async throws -> Bool {
+        let (_, generation): (Empty, Int) = try await authorizedJSONTracking("DELETE", "/auth/account")
+        return clearLocal(reason: "delete", ifGeneration: generation)
     }
 }
 

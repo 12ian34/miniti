@@ -11040,10 +11040,17 @@ final class AppState: ObservableObject {
     /// credential remains (review 2026-10-27). A key that cannot sign clears locally.
     @discardableResult
     func signOutManagedDevice() async -> Bool {
+        let cleared: Bool
         do {
-            try await clientAuthManager.signOut()
+            cleared = try await clientAuthManager.signOut()
         } catch {
             managedDevicesError = Self.signOutFailureMessage(for: error)
+            refreshClientAuthStatus()
+            return false
+        }
+        guard cleared else {
+            // The sign-out completed for a credential this device no longer holds; the one it
+            // holds now, and its bookkeeping, are untouched.
             refreshClientAuthStatus()
             return false
         }
@@ -11071,7 +11078,11 @@ final class AppState: ObservableObject {
     /// Delete the anonymous account. Revokes every device; subscriptions are untouched.
     func deleteManagedAccount() async -> Bool {
         do {
-            try await clientAuthManager.deleteAccount()
+            let cleared = try await clientAuthManager.deleteAccount()
+            guard cleared else {
+                refreshClientAuthStatus()
+                return false
+            }
             managedDevices = []
             usageInfo = nil
             cloudSync.resetBookkeeping()

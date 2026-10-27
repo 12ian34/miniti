@@ -1140,6 +1140,64 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertTrue(manager.isEnrolled)
     }
 
+    func testADelayedSuccessfulSignOutDoesNotClearANewerEnrolment() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        restoreStub(account: "acct_new")
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            request.url?.path == "/api/auth/revoke" ? (200, Data("{}".utf8)) : restoreHandler(request)
+        }
+        StubURLProtocol.delay = 0.4
+        let signingOut = Task { try await manager.signOut() }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path == "/api/auth/revoke" } }
+        StubURLProtocol.delay = 0
+        manager.clearLocal(reason: "signout")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        let cleared = try? await signingOut.value
+        XCTAssertEqual(cleared, false, "the old sign-out completed, but it cleared nothing of the new credential")
+        XCTAssertEqual(store.load()?.accountID, "acct_new", "a completed old sign-out must not clear the new credential")
+        XCTAssertEqual(manager.status.accountID, "acct_new")
+    }
+
+    func testAKeyFailureNeverRepairsANewerAccountToSendTheOldRequest() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: TKErrorDomain, code: -10))
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        manager.attachEventSink { event in
+            if event.name == "client_auth_key_unusable" {
+                entered.signal()
+                _ = release.wait(timeout: .now() + 5)
+            }
+        }
+        restoreStub(account: "acct_new")
+        let restoreHandler = StubURLProtocol.handler!
+        StubURLProtocol.handler = { request in
+            if request.url?.path.contains("/sync/meetings/") == true { return (200, Data(#"{"revision":2}"#.utf8)) }
+            return restoreHandler(request)
+        }
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let failed = await Task.detached { entered.wait(timeout: .now() + 3) == .success }.value
+        XCTAssertTrue(failed)
+        manager.clearLocal(reason: "signout")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+        release.signal()
+        _ = try? await deleting.value
+        XCTAssertFalse(StubURLProtocol.requests.contains { $0.url?.path.contains("/sync/meetings/") == true }, "A's failed signing must not repair B and send A's delete under B")
+        XCTAssertEqual(Restore.hits, 1, "only the explicit enrolment of B was authorized; A's failure must not trigger another repair on B")
+        XCTAssertEqual(store.load()?.accountID, "acct_new")
+    }
+
     func testConcurrentCallersShareOneRepair() async throws {
         let (stored, _) = repairableCredentials()
         let manager = managerFor(stored, loader: unloadableLoader(for: stored.installationKey))
