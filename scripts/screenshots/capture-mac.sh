@@ -19,6 +19,23 @@ if pgrep -xq Miniti; then
   exit 1
 fi
 
+# macOS protects another app's data container. A shell that has not been allowed gets
+# "Operation not permitted" on every file under it, with no prompt (2026-10-30: both the
+# agent session and a new terminal). Fail here with the fix rather than on a bare rm.
+mkdir -p "$CONTAINER_TMP" 2>/dev/null || true
+if ! ls "$CONTAINER_TMP" >/dev/null 2>&1; then
+  echo "cannot read $CONTAINER_TMP: macOS blocks this terminal from miniti's app container." >&2
+  echo "Give the terminal app Full Disk Access (System Settings, Privacy & Security), or allow the" >&2
+  echo "'access data from other apps' prompt if one appears, then rerun." >&2
+  exit 1
+fi
+
+# Park the cursor in the bottom-right corner: a pointer left over the sidebar puts a
+# history row into its hover state (pin and delete controls) and that ships in the card
+# (the 2026-10-30 coaching capture). CGWarpMouseCursorPosition needs no permission.
+swift -e 'import CoreGraphics; let b = CGDisplayBounds(CGMainDisplayID()); CGWarpMouseCursorPosition(CGPoint(x: b.maxX - 2, y: b.maxY - 2))' 2>/dev/null \
+  || echo "could not move the cursor; keep it off the miniti window during capture" >&2
+
 OUT_DIR="$SHOTS_DIR/mac"
 mkdir -p "$OUT_DIR"
 for SCENE in "${SCENES[@]}"; do

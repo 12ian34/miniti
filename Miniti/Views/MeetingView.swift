@@ -92,6 +92,7 @@ struct MeetingView: View {
             }
         }
         .background(Color(hex: "09090B"))
+        .meetingCloudFeedback(for: appState.currentMeeting?.id)
         .onAppear {
             meetingTitle = appState.currentMeeting?.title ?? ""
         }
@@ -486,21 +487,7 @@ struct HomeActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            MinitiControlLabel(role: .secondary) {
-                HStack(spacing: 7) {
-                    Image(systemName: icon)
-                        .font(.system(size: 11, weight: .semibold))
-
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .lineLimit(1)
-
-                    Text(shortcut)
-                        .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.meta)
-                        .lineLimit(1)
-                }
-            }
+            MinitiHomeActionLabel(icon: icon, label: label, shortcut: shortcut)
         }
         .buttonStyle(.plain)
         .focusable(false)
@@ -680,6 +667,9 @@ struct ReadyStateView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .safeAreaInset(edge: .bottom) {
+            HStack { Spacer(); HomeFeedbackButton() }.padding(12)
+        }
         .overlay(alignment: .top) {
             VStack(spacing: 0) {
                 ZStack(alignment: .top) {
@@ -957,6 +947,7 @@ private struct EventConfirmSheet: View {
                     .font(.system(size: 10, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.dim)
                     .padding(.bottom, 6)
+
 
                 TextEditor(text: Binding(
                     get: { appState.prepNotes(for: event) },
@@ -2647,6 +2638,9 @@ struct TerminalHeader: View {
                 }
                 
                 Spacer(minLength: 0)
+                if let meeting = appState.currentMeeting {
+                    MeetingCloudStorageButton(meeting: meeting)
+                }
             }
             
             HStack(spacing: 8) {

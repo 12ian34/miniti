@@ -112,6 +112,9 @@ final class Meeting {
     /// Never upload this meeting. Set for meetings recorded under private mode and by the
     /// per-meeting "Keep off the cloud" action.
     var syncExcluded: Bool = false
+    /// Explicit user request to put a retained local original back after cloud deletion.
+    /// Never populated from a downloaded sync document.
+    var cloudRestoreRequested: Bool = false
     /// `skipped_too_large` or nil. Shown in Settings → Cloud.
     var syncStateRaw: String?
     /// Fields from another client (Linux) this build does not model, echoed back untouched.

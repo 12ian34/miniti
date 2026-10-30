@@ -71,17 +71,81 @@ struct VoicePrintSettingsSection: View {
             }
 
             if appState.voicePrintSelfEnabled || appState.voicePrintOthersEnabled {
-                if needsOnDeviceSpeakers {
-                    Text("Needs Speakers set to \(deviceName == "this Mac" ? "This Mac" : "This device") above. Deepgram's speaker separation gives nothing to recognise voices from.")
-                        .font(.caption)
-                        .foregroundStyle(ColorPalette.Status.error)
-                } else {
-                    Text(embedder.statusDescription)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(appState.voiceModelStatus(embedder.status))
+                    .font(.caption)
+                    .foregroundStyle(needsOnDeviceSpeakers ? ColorPalette.Status.error : ColorPalette.Text.secondary)
             }
         }
         .id("transcription.voices")
     }
 }
+
+/// All local model families in one inventory. Feature choices remain under Transcription.
+struct LocalModelsSettingsSections<Configure: View>: View {
+    @EnvironmentObject private var appState: AppState
+    @ObservedObject var embedder: VoicePrintEmbedderService
+    @ViewBuilder var configure: (String) -> Configure
+
+    var body: some View {
+        Section("On this device") {
+            Text("Models used for local transcription, speaker separation and voice recognition. Cloud services are listed under Privacy.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        #if os(macOS)
+        Section("Speech transcription") {
+            Text("NVIDIA Nemotron 3.5")
+            Text("Turns audio into words on this Mac. Downloads when you choose This Mac in Transcription.")
+                .font(.caption).foregroundStyle(.secondary)
+            OnDeviceTranscriptionModelsRow(service: appState.onDeviceTranscription, isEnabled: appState.onDeviceTranscriptionEnabled)
+            configure("transcription.model")
+        }
+        #endif
+        Section("Speaker separation") {
+            Text("NVIDIA Nemotron")
+            Text("Identifies who spoke when. Included with miniti, about 190 MB.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(appState.onDeviceSpeakerSeparationEnabled ? "Enabled for new recordings" : "Not enabled")
+                .font(.caption).foregroundStyle(.secondary)
+            configure("transcription.speakers")
+        }
+        Section("Voice recognition") {
+            Text("CAM++")
+            Text("Recognises familiar voices. Downloads when a voice option is enabled and Speakers uses this device, about 17 MB.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text(appState.voiceModelStatus(embedder.status))
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Voice fingerprints stay on this device. Manage or forget them in Transcription, Voices.")
+                .font(.caption).foregroundStyle(.secondary)
+            configure("transcription.voices")
+        }
+    }
+}
+
+#if os(macOS)
+/// The downloaded speech model: size on disk and a remove button, enabled only while the
+/// model is not in use so an active download or session is never pulled from under it.
+private struct OnDeviceTranscriptionModelsRow: View {
+    @ObservedObject var service: OnDeviceTranscriptionService
+    let isEnabled: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Speech model")
+            Spacer()
+            if service.downloadedBytes > 0 {
+                Text(ByteCountFormatter.string(fromByteCount: service.downloadedBytes, countStyle: .file))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Remove") { service.removeDownloadedModels() }
+                    .disabled(isEnabled)
+                    .help(isEnabled ? "Turn transcription on this Mac off first." : "Delete the downloaded files.")
+            } else {
+                Text("not downloaded")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+#endif

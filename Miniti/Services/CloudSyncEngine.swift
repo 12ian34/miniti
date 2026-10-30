@@ -13,6 +13,19 @@ enum CloudSyncPause: Equatable {
     case notAvailableYet
     case deviceRemoved
 
+    var diagnosticReason: String {
+        switch self {
+        case .off: return "off"
+        case .notManaged: return "not_managed"
+        case .notEnrolled: return "not_enrolled"
+        case .privateMode: return "private_mode"
+        case .notPro: return "not_pro"
+        case .offline: return "network"
+        case .unavailable, .notAvailableYet: return "not_available"
+        case .deviceRemoved: return "device_removed"
+        }
+    }
+
     var label: String {
         switch self {
         case .off: return "Off"
@@ -218,6 +231,7 @@ final class CloudSyncEngine: ObservableObject {
         // Signing out clears the "removed" verdict; the next account starts clean.
         if host?.cloudPauseReason == .notEnrolled { deviceRemoved = false }
         if let reason = effectivePause() {
+            if phase != .paused(reason) { DiagnosticTimeline.shared.record(.cloudPaused, fields: ["reason": reason.diagnosticReason]) }
             phase = .paused(reason)
         } else if case .paused = phase {
             phase = .idle
@@ -330,6 +344,11 @@ final class CloudSyncEngine: ObservableObject {
         }
         lastError = nil
         let context = currentContext()
+        let diagnosticID = UUID().uuidString
+        // Background polls/autosaves can repeat all meeting long. Their useful uploads,
+        // removals and failures are recorded separately, without an empty-pass heartbeat.
+        let explicitPass = !["poll", "change", "rerun"].contains(reason)
+        if explicitPass { DiagnosticTimeline.shared.record(.cloudStarted, fields: ["attempt_id": diagnosticID]) }
         do {
             // Stamp local edits before anything compares timestamps with the cloud. The poll
             // skips the scan when nothing committed since the last one.
@@ -360,11 +379,13 @@ final class CloudSyncEngine: ObservableObject {
             try check(context)
             lastSyncedAt = now()
             phase = .idle
+            if explicitPass { DiagnosticTimeline.shared.record(.cloudSucceeded, fields: ["attempt_id": diagnosticID]) }
             DebugLogger.shared.log(.app, "Cloud sync done reason=\(reason)")
         } catch CloudSyncError.superseded {
             // Another account or credential owns the engine now: nothing from this pass is
             // applied, and the new owner gets its own pass.
             DebugLogger.shared.log(.app, "Cloud sync pass superseded reason=\(reason)")
+            DiagnosticTimeline.shared.record(.cloudSuperseded, fields: ["attempt_id": diagnosticID])
             rerunRequested = true
         } catch let error as CloudSyncError {
             // An answer for an account that is no longer current says nothing about this one:
@@ -374,8 +395,10 @@ final class CloudSyncEngine: ObservableObject {
                 rerunRequested = true
                 return
             }
+            DiagnosticTimeline.shared.record(.cloudFailed, fields: DiagnosticTimeline.errorFields(error))
             handle(error)
         } catch {
+            DiagnosticTimeline.shared.record(.cloudFailed, fields: DiagnosticTimeline.errorFields(error))
             phase = .failed("Sync failed")
             lastError = String(describing: type(of: error))
             note(.error, "Sync failed", String(describing: type(of: error)))
@@ -414,6 +437,13 @@ final class CloudSyncEngine: ObservableObject {
             break
         }
         if case .paused(let reason) = phase { note(.paused, reason.label) } else if case .failed(let text) = phase { note(.error, text) }
+        if case .paused(let reason) = phase { DiagnosticTimeline.shared.record(.cloudPaused, fields: ["reason": reason.diagnosticReason]) }
+        switch error {
+        case .server(_, let status): DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "server", "status": String(status)])
+        case .rateLimited: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "rate_limited"])
+        case .cursorExpired: DiagnosticTimeline.shared.record(.cloudFailed, fields: ["reason": "cursor_expired"])
+        default: break
+        }
         DebugLogger.shared.log(.app, "Cloud sync paused: \(error)", level: .warning)
     }
 
@@ -433,7 +463,7 @@ final class CloudSyncEngine: ObservableObject {
         for meeting in finishedMeetings(host) where meeting.id != live && !host.isMeetingDeleted(meeting.id) {
             let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
             if fingerprint != meeting.localFingerprint { changed.append((meeting, fingerprint)) }
-            if fingerprint != meeting.syncFingerprint && meeting.syncStateRaw == nil { dirty.append(meeting) }
+            if meeting.cloudRestoreRequested || (fingerprint != meeting.syncFingerprint && meeting.syncStateRaw == nil) { dirty.append(meeting) }
             else if fingerprint != meeting.syncFingerprint && meeting.syncStateRaw != nil && fingerprint != meeting.localFingerprint {
                 // Content changed since it was skipped: try again.
                 dirty.append(meeting)
@@ -458,12 +488,13 @@ final class CloudSyncEngine: ObservableObject {
     private func push(host: CloudSyncHost, transport: CloudSyncTransport, context: PassContext) async throws {
         let dirty = Array(scan(host: host).prefix(Self.pushBatch))
         guard !dirty.isEmpty else { return }
+        DiagnosticTimeline.shared.record(.cloudUpload, fields: ["outcome": "pending", "pending_uploads": String(dirty.count)])
         var done = 0
         phase = .pushing(done: 0, total: dirty.count)
         // Ids are read before any await: a meeting deleted mid-batch must not be touched.
         for (id, meeting) in dirty.map({ ($0.id, $0) }) {
             guard stillAllowed else { return }
-            guard meeting.modelContext != nil, !host.isMeetingDeleted(id) else { continue }
+            guard meeting.modelContext != nil, !host.isMeetingDeleted(id), !meeting.syncExcluded else { continue }
             try await push(meeting, id: id, host: host, transport: transport, retrying: false, context: context)
             done += 1
             phase = .pushing(done: done, total: dirty.count)
@@ -471,19 +502,41 @@ final class CloudSyncEngine: ObservableObject {
         if dirty.count == Self.pushBatch { rerunRequested = true }
     }
 
+    private var inFlightUploadIDs: Set<UUID> = []
+    func isUploading(_ id: UUID) -> Bool { inFlightUploadIDs.contains(id) }
+
     private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool, context pass: PassContext) async throws {
+        guard !meeting.syncExcluded else { return }
         let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
         let document = try MeetingSyncDocument.encodeData(meeting, segments: meeting.segments)
         let base = meeting.cloudRevision
         let localUpdatedAt = meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting)
         let localTranscriptRevision = meeting.transcriptRevision
-        let result = try await transport.putMeeting(id: id, baseRevision: base, document: document)
+        let restoring = meeting.cloudRestoreRequested
+        inFlightUploadIDs.insert(id)
+        defer { inFlightUploadIDs.remove(id) }
+        let result = try await transport.putMeeting(id: id, baseRevision: base, document: document, restoreDeleted: restoring)
         try check(pass)
         if host.isMeetingDeleted(id) || meeting.modelContext == nil {
             // Deleted while the upload was in flight: the cloud now has a copy nobody wants.
             if case .ok(let revision) = result, let context = host.cloudModelContext {
                 _ = host.cloudCommit { context.insert(MeetingTombstone(id: id, cloudRevision: revision)) }
                 rerunRequested = true
+            }
+            return
+        }
+        // Exclusion may have happened while the first upload was in flight, when the
+        // local revision was still zero. Persist deletion against the server's answer
+        // before another pass can pull that copy back onto the device.
+        if meeting.syncExcluded {
+            let revision: Int?
+            switch result {
+            case .ok(let accepted): revision = accepted
+            case .conflict(let state): revision = state.deleted ? nil : state.revision
+            case .tooLarge, .externalDuplicate: revision = nil
+            }
+            if let revision {
+                _ = host.cloudCommit { self.retainExcludedMeeting(meeting, remoteRevision: revision, host: host) }
             }
             return
         }
@@ -494,8 +547,10 @@ final class CloudSyncEngine: ObservableObject {
                 meeting.syncFingerprint = fingerprint
                 meeting.syncedAt = self.now()
                 meeting.syncStateRaw = nil
+                if restoring { meeting.cloudRestoreRequested = false }
             }
             skippedMeetingIDs.remove(id)
+            DiagnosticTimeline.shared.record(.cloudUpload, fields: ["outcome": "success"])
             note(base == 0 ? .uploaded : .updated, meeting.title, base == 0 ? "uploaded" : "changes sent")
         case .tooLarge:
             _ = host.cloudCommit {
@@ -522,6 +577,15 @@ final class CloudSyncEngine: ObservableObject {
             }
         case .conflict(let state):
             if state.deleted {
+                if meeting.cloudRestoreRequested {
+                    _ = host.cloudCommit { meeting.cloudRevision = state.revision }
+                    if !retrying {
+                        try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass)
+                    } else {
+                        throw CloudSyncError.server(code: "cloud_restore_pending", status: 409)
+                    }
+                    return
+                }
                 note(.deletedLocally, meeting.title, "deleted on another device")
                 deleteLocal(meeting, host: host)
                 return
@@ -562,13 +626,16 @@ final class CloudSyncEngine: ObservableObject {
 
     private func pushTombstones(host: CloudSyncHost, transport: CloudSyncTransport, context pass: PassContext) async throws {
         guard let context = host.cloudModelContext else { return }
-        for (id, base, tombstone) in (host.cloudFetchTombstones() ?? []).map({ ($0.id, $0.cloudRevision, $0) }) {
+        let pending = (host.cloudFetchTombstones() ?? []).map { ($0.id, $0.cloudRevision, $0) }
+        if !pending.isEmpty { DiagnosticTimeline.shared.record(.cloudRemoval, fields: ["outcome": "pending", "pending_removals": String(pending.count)]) }
+        for (id, base, tombstone) in pending {
             guard stillAllowed else { return }
             let result = try await transport.deleteMeeting(id: id, baseRevision: base)
             try check(pass)
             guard tombstone.modelContext != nil else { continue }
             switch result {
             case .ok:
+                DiagnosticTimeline.shared.record(.cloudRemoval, fields: ["outcome": "success"])
                 note(.deletedInCloud, String(id.uuidString.prefix(8)), "delete sent")
                 _ = host.cloudCommit { context.delete(tombstone) }
             case .conflict(let state):
@@ -612,6 +679,16 @@ final class CloudSyncEngine: ObservableObject {
         _ = host.cloudCommit {
             for change in changes where change.id != live && !host.isMeetingDeleted(change.id) {
                 let local = self.localMeeting(id: change.id, host: host)
+                if let local, local.syncExcluded {
+                    if !change.deleted { self.retainExcludedMeeting(local, remoteRevision: change.revision, host: host) }
+                    continue
+                }
+                if let local, local.cloudRestoreRequested {
+                    local.cloudRevision = max(local.cloudRevision, change.revision)
+                    local.syncFingerprint = nil
+                    self.rerunRequested = true
+                    continue
+                }
                 if change.deleted {
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
                         self.note(.deletedLocally, local.title, "deleted on another device")
@@ -663,6 +740,15 @@ final class CloudSyncEngine: ObservableObject {
             for entry in manifest.entries where entry.id != live && !host.isMeetingDeleted(entry.id) {
                 seen.insert(entry.id)
                 let local = byID[entry.id]
+                if let local, local.syncExcluded {
+                    if !entry.deleted { self.retainExcludedMeeting(local, remoteRevision: entry.revision, host: host) }
+                    continue
+                }
+                if let local, local.cloudRestoreRequested {
+                    local.cloudRevision = max(local.cloudRevision, entry.revision)
+                    local.syncFingerprint = nil
+                    continue
+                }
                 if entry.deleted {
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
                         self.note(.deletedLocally, local.title, "deleted on another device")
@@ -703,6 +789,15 @@ final class CloudSyncEngine: ObservableObject {
                 for state in states where !state.deleted && !host.isMeetingDeleted(state.id) && state.id != host.liveMeetingID {
                     guard let document = state.document, let decoded = MeetingSyncDocument.decode(document) else { continue }
                     if let local = self.localMeeting(id: state.id, host: host) {
+                        if local.syncExcluded {
+                            self.retainExcludedMeeting(local, remoteRevision: state.revision, host: host)
+                            continue
+                        }
+                        if local.cloudRestoreRequested {
+                            local.cloudRevision = max(local.cloudRevision, state.revision)
+                            local.syncFingerprint = nil
+                            continue
+                        }
                         let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
                         if dirty, let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
                             local.cloudRevision = state.revision
@@ -728,6 +823,21 @@ final class CloudSyncEngine: ObservableObject {
     }
 
     // MARK: Helpers
+
+    /// Call inside the host's commit. Keep the local content and persist the outstanding
+    /// removal so a crash, offline retry or delayed pull cannot undo the user's choice.
+    private func retainExcludedMeeting(_ meeting: Meeting, remoteRevision: Int, host: CloudSyncHost) {
+        guard let context = host.cloudModelContext, remoteRevision > 0 else { return }
+        if let pending = host.cloudFetchTombstones()?.first(where: { $0.id == meeting.id }) {
+            if pending.cloudRevision < remoteRevision { pending.cloudRevision = remoteRevision }
+        } else {
+            context.insert(MeetingTombstone(id: meeting.id, cloudRevision: remoteRevision))
+        }
+        meeting.cloudRevision = 0
+        meeting.syncFingerprint = nil
+        meeting.syncedAt = nil
+        rerunRequested = true
+    }
 
     private func localMeeting(id: UUID, host: CloudSyncHost) -> Meeting? {
         host.cloudFetchMeetings(FetchDescriptor<Meeting>())?.first { $0.id == id }

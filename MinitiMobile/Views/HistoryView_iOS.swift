@@ -182,7 +182,7 @@ struct HistoryView_iOS: View {
                             } label: {
                                 Label(meeting.isPinned ? "Unpin meeting" : "Pin meeting", systemImage: meeting.isPinned ? "pin.slash" : "pin")
                             }
-                            if appState.cloudSyncEnabled && meeting.endTime != nil {
+                            if meeting.endTime != nil {
                                 Button {
                                     appState.setMeetingExcludedFromCloud(meeting, excluded: !meeting.syncExcluded)
                                 } label: {
@@ -265,6 +265,10 @@ struct MeetingRow_iOS: View {
                         .foregroundStyle(ColorPalette.Text.dim)
                         .lineLimit(1)
                 }
+            }
+
+            if meeting.syncExcluded || meeting.cloudRestoreRequested {
+                MeetingCloudPrivacyStatus(meeting: meeting, engine: appState.cloudSync)
             }
 
             // Match snippet
@@ -427,6 +431,8 @@ struct MeetingDetail_iOS: View {
     var body: some View {
         VStack(spacing: 0) {
             titleEditor
+            MeetingCloudPrivacyStatus(meeting: meeting, engine: appState.cloudSync, showsChoice: false)
+                .padding(.horizontal, 16)
 
             if let provenance = meeting.provenanceDisplayName {
                 HStack(spacing: 5) {
@@ -510,7 +516,11 @@ struct MeetingDetail_iOS: View {
             .presentationDetents([.height(360)])
             .presentationBackground(ColorPalette.Background.primary)
         }
+        .meetingCloudFeedback(for: meeting.id)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                MeetingCloudStorageButton(meeting: meeting)
+            }
             ToolbarItem(placement: .topBarLeading) {
                 Button {
                     dismiss()

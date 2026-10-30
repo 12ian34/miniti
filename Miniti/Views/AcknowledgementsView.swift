@@ -53,6 +53,7 @@ struct AcknowledgementsSection: View {
                 AcknowledgementRow(entry: entry)
             }
         }
+        .disclosureGroupStyle(MinitiDisclosureStyle())
     }
 }
 
@@ -79,6 +80,7 @@ private struct AcknowledgementRow: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .disclosureGroupStyle(MinitiDisclosureStyle())
         .onChange(of: expanded) { _, isOpen in
             if isOpen, text == nil { text = Acknowledgements.text(for: entry) }
         }

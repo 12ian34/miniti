@@ -200,7 +200,7 @@ enum PersistentStore {
     }
 
     /// Debug-only `-MinitiStoreURL <path>` launch argument so the recovery screen and the
-    /// manual drill in `docs/testing.md` can run against a scratch file instead of the real
+    /// manual drill in `docs/reference/testing.md` can run against a scratch file instead of the real
     /// store. Ignored in Release builds.
     static var storeURLOverride: URL? {
         #if DEBUG

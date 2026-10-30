@@ -56,7 +56,11 @@ status-bar override. On macOS the app writes its own window image into its sandb
 container (`~/Library/Containers/com.miniti.app/Data/tmp/`), because a terminal without
 Screen Recording permission cannot capture another app's window; the script moves it
 into `out/mac/`. The window is sized to 1440×900 points, so the PNG is 2880×1800 on a
-Retina display. The Debug build shares its container with the installed app, so quit
+Retina display. macOS treats that container as another app's data: a terminal that has not
+been allowed gets `Operation not permitted` on every file under it and no prompt. Give the
+terminal Full Disk Access once (System Settings, Privacy & Security); `capture-mac.sh` checks
+this first and says so. The script also parks the cursor in a screen corner before the first
+scene, because a pointer resting on the sidebar leaves a history row in its hover state. The Debug build shares its container with the installed app, so quit
 Miniti before capturing; the app snapshots and restores your defaults around each run
 and never opens the real meeting store.
 
@@ -119,3 +123,5 @@ App Store Connect has en-US and en-GB listings. `all.sh` mirrors the rendered en
 ## Apple Watch (3.1.0)
 
 `scripts/screenshots/capture-watch.sh` installs the watch app from the last iOS simulator build onto the Apple Watch Series 12 (46mm) simulator (416 x 496, the size App Store Connect lists as Apple Watch Series 10) and captures two states through the `-MinitiScreenshotScene record|queue` launch argument: the Record page mid-meeting and the Queue page with three recordings. Output goes to `fastlane/screenshots/en-US/Apple Watch Series 10-0N.png`, which `fastlane ios screenshots` uploads next to the iPhone and iPad sets. No framing step; watch screenshots are submitted as captured.
+
+Live preview initialization: reapply `ScreenshotMode.apply` after the root view wires its seeded model context and runs interrupted-meeting restoration. AppState may be constructed before the seeded store, and restoration otherwise replaces the synthetic live scene with Home. This guard is screenshot-mode-only on both platforms.

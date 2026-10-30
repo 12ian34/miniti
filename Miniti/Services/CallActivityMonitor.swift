@@ -8,7 +8,7 @@ import CoreAudio
 ///
 /// Uses only public HAL properties (`kAudioHardwarePropertyProcessObjectList` and the
 /// `kAudioProcessProperty*` family). No camera, Accessibility, screen contents, log
-/// scraping, or private API — see docs/call-lifecycle-and-recording-presence-plan.md.
+/// scraping, or private API — see docs/archive/call-lifecycle-and-recording-presence-plan.md.
 @MainActor
 final class CallActivityMonitor {
     var onSnapshot: ((CallActivitySnapshot) -> Void)?

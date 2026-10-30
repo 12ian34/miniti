@@ -179,6 +179,7 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
     }
 
     func clear() {
+        DiagnosticTimeline.shared.clear()
         lock.lock()
         buffer.removeAll()
         lock.unlock()
@@ -187,10 +188,198 @@ final class DebugLogger: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func supportSnapshot() -> [Entry] {
+        lock.lock()
+        defer { lock.unlock() }
+        return buffer.snapshot()
+    }
+
     func exportText() -> String {
         lock.lock()
         let snap = buffer.snapshot()
         lock.unlock()
-        return snap.map(Self.format).joined(separator: "\n")
+        return snap.map(Self.format).joined(separator: "\n") + "\n\nDiagnostic timeline:\n"
+            + DiagnosticTimeline.shared.snapshot().map(\.text).joined(separator: "\n")
     }
+}
+
+/// Content-free local breadcrumbs, independent of automatic telemetry consent. Only explicit
+/// Help Copy/Send exports these. No network, Keychain queries or recovery decisions live here.
+final class DiagnosticTimeline: @unchecked Sendable {
+    enum Code: String, Codable, CaseIterable {
+        case historyTruncated = "history_truncated", storageUnavailable = "diagnostic_storage_unavailable"
+        case keychainRead = "keychain_read", keychainWrite = "keychain_write", keychainFallback = "keychain_fallback"
+        case keyLoaded = "key_loaded", cloudPaused = "cloud_paused"
+        case credentialLoaded = "credential_loaded", credentialMissing = "credential_missing"
+        case credentialUnreadable = "client_auth_credential_unreadable", credentialUndecodable = "client_auth_credential_undecodable"
+        case keyUnusable = "client_auth_key_unusable", keyUnavailable = "client_auth_key_unavailable"
+        case repairAttempt = "client_auth_repair_attempt", repairOutcome = "client_auth_repair_outcome", keyRepaired = "client_auth_key_repaired"
+        case signingRecovered = "signing_recovered", refreshStarted = "refresh_started", refreshSucceeded = "refresh_succeeded", refreshFailed = "refresh_failed"
+        case authRefused = "auth_refused", credentialStale = "credential_stale", accountChanged = "account_changed"
+        case recordingAttempt = "recording_attempt", recordingReady = "recording_ready", recordingFailed = "recording_failed", recordingFinal = "recording_final"
+        case audioReceived = "audio_received", transcriptReceived = "transcript_received", transcriptionConnected = "transcription_connected"
+        case captureFailed = "microphone_capture_failed", audioStall = "transcript_starvation_detected"
+        case recoveryDegraded = "audio_recovery_degraded", recoveryHealthy = "audio_recovery_healthy"
+        case connectionFailed = "deepgram_initial_connection_failed", reconnectExhausted = "deepgram_reconnect_exhausted"
+        case cloudStarted = "cloud_started", cloudSucceeded = "cloud_succeeded", cloudFailed = "cloud_failed", cloudSuperseded = "cloud_superseded"
+        case cloudUpload = "cloud_upload", cloudRemoval = "cloud_removal", cloudChoice = "cloud_choice"
+        case purchaseReturned = "purchase_returned", purchaseChecking = "purchase_checking", purchasePending = "purchase_pending", purchaseReady = "purchase_ready", purchaseFailed = "purchase_failed"
+
+        var category: String {
+            switch self {
+            case .keychainRead, .keychainWrite, .keychainFallback: return "keychain"
+            case .recordingAttempt, .recordingReady, .recordingFailed, .recordingFinal, .audioReceived, .transcriptReceived, .transcriptionConnected, .captureFailed, .audioStall, .recoveryDegraded, .recoveryHealthy, .connectionFailed, .reconnectExhausted: return "audio"
+            case .cloudPaused, .cloudStarted, .cloudSucceeded, .cloudFailed, .cloudSuperseded, .cloudUpload, .cloudRemoval, .cloudChoice: return "cloud"
+            case .purchaseReturned, .purchaseChecking, .purchasePending, .purchaseReady, .purchaseFailed: return "purchase"
+            case .historyTruncated, .storageUnavailable: return "app"
+            default: return "auth"
+            }
+        }
+    }
+
+    struct Event: Codable, Equatable {
+        let code: Code
+        let first: Date
+        var last: Date
+        var count: Int
+        let fields: [String: String]
+        var level: String {
+            if fields["outcome"] == "failed" || fields["outcome"] == "timeout" || code.rawValue.contains("failed") || code.rawValue.contains("unusable") || code.rawValue.contains("unavailable") || code == .authRefused || code == .credentialUnreadable || code == .credentialUndecodable || code == .reconnectExhausted { return "warning" }
+            return "info"
+        }
+        var text: String {
+            "\(ISO8601DateFormatter().string(from: first)) [\(code.category)] \(code.rawValue) "
+                + fields.keys.sorted().map { "\($0)=\(fields[$0]!)" }.joined(separator: " ")
+                + (count > 1 ? " count=\(count) last=\(ISO8601DateFormatter().string(from: last))" : "")
+        }
+    }
+
+    static let maxEvents = 300
+    static let maxBytes = 96 * 1024
+    static let maxAge: TimeInterval = 48 * 3600
+    static let shared: DiagnosticTimeline = {
+        // Tests must not overwrite or export the user's real diagnostic history.
+        let testing = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil || NSClassFromString("XCTestCase") != nil
+        let url = testing ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Miniti/Diagnostics/timeline.json")
+        return DiagnosticTimeline(fileURL: url)
+    }()
+    private let queue = DispatchQueue(label: "com.miniti.diagnostic-timeline", qos: .utility)
+    private let admission = NSLock()
+    private var pending = 0
+    private var dropped = 0
+    private var storageFailed = false
+    private var events: [Event] = [] // queue-owned
+    private var writeScheduled = false
+    private let fileURL: URL?
+
+    init(fileURL: URL?) {
+        self.fileURL = fileURL
+        queue.async { [self] in
+            if let fileURL,
+               let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= Self.maxBytes,
+               let data = try? Data(contentsOf: fileURL), let saved = try? JSONDecoder().decode([Event].self, from: data) {
+                events = saved.filter { $0.fields == Self.sanitize($0.fields) && $0.count > 0 && $0.count <= 1_000_000 && $0.first <= $0.last }
+            }
+            prune(now: Date())
+            // Also remove expired data from disk after a quiet launch.
+            scheduleWrite()
+        }
+    }
+
+    /// Fixed vocabularies only. Callers may pass existing outcome metadata, never raw messages.
+    static func sanitize(_ fields: [String: String]) -> [String: String] {
+        let vocabularies: [String: Set<String>] = [
+            "phase": ["launch", "load", "sign", "read", "write", "refresh", "restore", "attach", "rotate", "create", "migrate", "sign_out", "delete"],
+            "outcome": ["started", "success", "failed", "stale", "missing", "unreadable", "pending", "stopped", "cancelled", "degraded", "timeout", "sign_in", "throttled", "expired", "ready"],
+            "item": ["credential", "device_id", "other"], "store": ["data_protection", "login"],
+            "key_kind": ["enclave", "software"], "recovery": ["yes", "no"], "via": ["email", "recovery_key"],
+            "route": ["local", "managed", "byok"], "reason": ["manual", "rule", "private_mode", "network", "auth", "quota", "rate_limited", "server", "timeout", "unknown", "off", "not_managed", "not_enrolled", "not_pro", "not_available", "device_removed", "cursor_expired"],
+            "error_domain": ["NSOSStatusErrorDomain", "NSCocoaErrorDomain", "NSURLErrorDomain", "CryptoTokenKit", "TKErrorDomain", "other"],
+            "server_code": ["installation_revoked", "token_expired", "device_already_enrolled", "invalid_key", "rate_limited", "provider_config", "provider_unavailable", "not_enrolled", "unknown", "invalid_proof", "device_cap_reached", "subscription_conflict", "invalid_recovery_key", "recovery_key_unknown", "device_not_eligible"],
+        ]
+        let booleans: Set<String> = ["capture_mic", "capture_system", "mic_pcm", "system_pcm", "pcm_sent", "speech_seen", "transcript_seen", "excluded"]
+        let numbers: Set<String> = ["error_code", "status", "duration_seconds", "pending_uploads", "pending_removals", "dropped"]
+        var result: [String: String] = [:]
+        for (key, value) in fields {
+            if vocabularies[key]?.contains(value) == true { result[key] = value }
+            else if booleans.contains(key), value == "true" || value == "false" { result[key] = value }
+            else if numbers.contains(key), let n = Int(value), (-10_000_000...10_000_000).contains(n) { result[key] = String(n) }
+            else if key == "attempt_id", let id = UUID(uuidString: value) { result[key] = id.uuidString.lowercased() }
+        }
+        return result
+    }
+
+    static func errorFields(_ error: Error) -> [String: String] {
+        let ns = error as NSError
+        let domain = sanitize(["error_domain": ns.domain])["error_domain"] ?? "other"
+        return sanitize(["error_domain": domain, "error_code": String(ns.code)])
+    }
+
+    func record(_ code: Code, fields: [String: String] = [:], at date: Date = Date()) {
+        // Bounded admission as well as bounded storage: a busy producer cannot build an
+        // unbounded Dispatch queue. No I/O or calls back into auth/audio on the producer.
+        admission.lock()
+        guard pending < 64 else { dropped = min(10_000_000, dropped + 1); admission.unlock(); return }
+        pending += 1
+        admission.unlock()
+        let safe = Self.sanitize(fields)
+        queue.async { [self] in
+            defer { admission.lock(); pending -= 1; admission.unlock() }
+            prune(now: date)
+            if let index = events.lastIndex(where: { $0.code == code && $0.fields == safe && date.timeIntervalSince($0.last) >= 0 && date.timeIntervalSince($0.last) < 60 }) {
+                events[index].last = date
+                events[index].count = min(1_000_000, events[index].count + 1)
+            } else {
+                let event = Event(code: code, first: date, last: date, count: 1, fields: safe)
+                events.append(event)
+                if fileURL != nil {
+                    DebugLogger.shared.log(.app, event.text, level: event.level == "warning" ? .warning : .routine)
+                }
+            }
+            prune(now: date)
+            scheduleWrite()
+        }
+    }
+
+    private func prune(now: Date) {
+        events.removeAll { now.timeIntervalSince($0.last) > Self.maxAge || $0.last > now.addingTimeInterval(300) }
+        if events.count > Self.maxEvents { events.removeFirst(events.count - Self.maxEvents) }
+        while !events.isEmpty, (try? JSONEncoder().encode(events).count) ?? Int.max > Self.maxBytes { events.removeFirst() }
+    }
+
+    private func scheduleWrite() {
+        guard fileURL != nil, !writeScheduled else { return }
+        writeScheduled = true
+        queue.asyncAfter(deadline: .now() + 2) { [self] in
+            guard writeScheduled else { return }
+            writeScheduled = false; write()
+        }
+    }
+
+    private func write() {
+        guard var fileURL, let data = try? JSONEncoder().encode(events), data.count <= Self.maxBytes else { return }
+        do {
+            try FileManager.default.createDirectory(at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+            var values = URLResourceValues(); values.isExcludedFromBackup = true
+            try fileURL.setResourceValues(values)
+            storageFailed = false
+        } catch { storageFailed = true /* No app decisions depend on diagnostic storage. */ }
+    }
+
+    func snapshot(now: Date = Date()) -> [Event] {
+        queue.sync {
+            prune(now: now)
+            var result = events
+            admission.lock(); let lost = dropped; admission.unlock()
+            if lost > 0 { result.append(Event(code: .historyTruncated, first: now, last: now, count: 1, fields: ["dropped": String(lost)])) }
+            if storageFailed { result.append(Event(code: .storageUnavailable, first: now, last: now, count: 1, fields: [:])) }
+            return Array(result.suffix(Self.maxEvents))
+        }
+    }
+    func clear() { queue.async { [self] in events.removeAll(); admission.lock(); dropped = 0; admission.unlock(); write() } }
+    /// Test seam. Production persistence is always batched on the utility queue.
+    func flushForTesting() { queue.sync { writeScheduled = false; write() } }
 }

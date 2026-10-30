@@ -81,10 +81,26 @@ enum TestSupport {
 
     /// The in-memory SwiftData container every persistence-adjacent test used to build by hand.
     static func makeInMemoryContainer() throws -> ModelContainer {
-        try ModelContainer(
+        retain(try ModelContainer(
             for: Meeting.self, TranscriptSegment.self, MeetingTombstone.self,
             configurations: ModelConfiguration(isStoredInMemoryOnly: true)
-        )
+        ))
+    }
+
+    /// Test containers live for the whole process. Work a finished test left behind (the
+    /// end-of-meeting naming pass, a delayed save) can still hold a model from its container;
+    /// once that container is released, SwiftData aborts the host with "destroyed by calling
+    /// ModelContext.reset" and the bundle reports a partial count with 0 failures (CI runs on
+    /// 2026-10-19, 10-22 and 10-27, never seen locally). Keeping the container alive turns that
+    /// straggler into a harmless write to a store nobody reads.
+    nonisolated(unsafe) private static var retainedContainers: [ModelContainer] = []
+    private static let retainLock = NSLock()
+    @discardableResult
+    static func retain(_ container: ModelContainer) -> ModelContainer {
+        retainLock.lock()
+        retainedContainers.append(container)
+        retainLock.unlock()
+        return container
     }
 
     /// Stored credentials for an already-enrolled installation (no Secure Enclave in tests).

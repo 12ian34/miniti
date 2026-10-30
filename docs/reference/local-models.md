@@ -1,0 +1,27 @@
+# Local transcription, speakers, voice prints and Jev
+
+Current optional capabilities, reconciled 2026-10-27. Model evaluations are dated evidence in [research](../research/local-transcription-research.md), not blanket quality promises. No default-on change or new model is authorized here.
+
+## Local transcription
+
+Nemotron 3.5 streaming through FluidAudio shipped on macOS in 2.12.0, default off. One model family is shared across per-source managers. 16 kHz samples and token timings feed the same segmentation/persistence path as cloud responses. Settings say This Mac, not the model name. Latin-family en/es/fr/de/pt/it and experimental nl/ru run locally; Greek/Polish/Swedish retain cloud. iOS transcription is hidden pending hardware measurements.
+
+Models download on demand, approximately 589/640 MB by family. Revision pinning/CDN delivery and default-on are unresolved future choices, not a reason to call the existing feature unreleased. Missing model with fallback off refuses start visibly; an on-disk loading model can wait up to 30 seconds. Never silently upload when local was selected. Managed local transcription consumes no Deepgram minutes; ordinary managed AI/allowance gating is distinct, while full private mode bypasses the managed recording limit.
+
+A mid-session local engine failure can stop transcription while recording continues: retain this limitation and evaluate recovery rather than claiming automatic cloud fallback. Local transcription alone still sends text for enabled cloud insights. Private mode disables those and is locked during the active lifecycle in 3.4.0. Configured exports remain allowed. [Detailed engine/assembly record](../archive/local-transcription-plan.md).
+
+## Local diarization
+
+Nemotron-3 diarization shipped optional/default off in 2.10.0. The 190 MB bundled model is pinned/checksummed by the build phase and requires its notices. Preserve source-clock alignment, socket offset, decoded-horizon coverage and the maturity gate. Current code requires at least 50% word-span coverage, then uses agreement without multiplying by coverage; slots mature after 3 seconds. Borrowed labels use confidence 0.3 and a maximum 3-second lookback; do not restore the rejected confidence calculation from the early plan. Local speaker mapping must not be forced through cloud clone-promotion rules that suppress real local turns. On failure retain the documented fallback rather than claiming continuous local separation. [Measured fixes and model contract](../archive/on-device-diarization-plan.md).
+
+## Voice prints
+
+Shipped 3.2.0, Your voice and Remember voices both default off and depend on local speaker separation. CAM++ embeddings are local only: never cloud synced, exported or sent to a classifier. Deleting/disabling remembered identities must remove their stored prints. Attendee email can label a print but is not inferred from an unknown voice. Keep unknown/confirmation behavior rather than guessing.
+
+Current code matches at 0.60, offers confirmation from 0.45, requires 10 seconds of own speech to match and 20 to learn, with history weight capped at 10 meetings. Own-speech collection uses 6-second windows off the audio thread. Preserve self-first, one-to-one matches and print names protected from GPT/Jev overwrites. The [voice-print record](../archive/voice-prints-plan.md) retains the evaluation protocol and Watch phone processing details. T13 quality/privacy evaluation is future work; a small corpus is not universal accuracy evidence.
+
+## Jev
+
+Managed attendee speaker naming and Sales nudge shipped default off in 2.10.0. Backend pins `jev-1.13.0`; the client sends bounded windows only when enabled, with GPT/phrase fallback. No generated prose, no call on every finalized segment, no replacement of lifecycle/Coaching policy. No beta label. Preserve transcript-supported-name validation and suggestion-only behavior.
+
+[Original integration and evaluation](../archive/jev-system-one-plan.md) contains synthetic and real-corpus limits, question versions and rejected ideas. “Not deployed” and “no speaker naming in slice 1” there are superseded. Calibration before default-on, investigation/lookup gates and template/calendar suggestions are research candidates, not active delivery commitments. Never run customer-transcript evals merely because a historical command is printed.

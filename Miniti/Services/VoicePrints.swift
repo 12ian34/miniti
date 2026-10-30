@@ -195,7 +195,7 @@ final class VoicePrintEmbedderService: ObservableObject {
 
     var statusDescription: String {
         switch status {
-        case .idle: return "Off."
+        case .idle: return "Not loaded."
         case .preparing: return "Downloading the voice model (about 17 MB)."
         case .ready: return "Ready."
         case .failed(let m): return "Could not load the voice model (\(m))."

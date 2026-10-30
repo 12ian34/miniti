@@ -5,7 +5,7 @@ import XCTest
 @testable import miniti
 #endif
 
-/// The Sending tab's model (U1, docs/account-sending-consent-ux-plan.md). Every test asserts
+/// The Sending tab's model (U1, docs/archive/account-sending-consent-ux-plan.md). Every test asserts
 /// the group, the status word and the summary of the rows a setting affects, never row counts.
 final class DataFlowSummaryTests: XCTestCase {
     private typealias Status = DataFlowSummary.Status
@@ -347,8 +347,8 @@ final class DataFlowSummaryTests: XCTestCase {
                 }
             }
         }
-        XCTAssertTrue(SettingsGroup.setup.destinations.contains(.sending))
-        XCTAssertEqual(SettingsDestination.fromLegacyID("dataFlow"), .sending)
+        XCTAssertTrue(SettingsGroup.setup.destinations.contains(.models))
+        XCTAssertEqual(SettingsDestination.fromLegacyID("dataFlow"), .privacy)
     }
 
     func testNoSentenceMakesAClaimTheCodeDoesNotKeep() {

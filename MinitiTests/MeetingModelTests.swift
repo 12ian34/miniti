@@ -27,7 +27,7 @@ final class MeetingModelTests: XCTestCase, @unchecked Sendable {
         super.setUp()
         MainActor.assumeIsolated {
             let config = ModelConfiguration(isStoredInMemoryOnly: true)
-            container = try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
+            container = TestSupport.retain(try! ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config))
             context = container.mainContext
         }
     }

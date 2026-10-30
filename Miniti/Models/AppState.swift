@@ -157,7 +157,7 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case general
     case account
     case cloud
-    case sending
+    case models
     case recording
     case transcription
     case ai
@@ -170,17 +170,18 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
     case playbook
     case data
     case privacy
+    case help
     case about
 
     var id: String { rawValue }
 
     var group: SettingsGroup {
         switch self {
-        case .general, .account, .cloud, .sending: return .setup
+        case .general, .account, .cloud, .models: return .setup
         case .recording, .transcription, .ai, .templates, .notifications: return .meetings
         case .calendar, .crm, .webhooks, .api, .playbook, .data: return .connections
         case .privacy: return .privacy
-        case .about: return .support
+        case .help, .about: return .support
         }
     }
 
@@ -201,7 +202,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .data: return "Data"
         case .privacy: return "Privacy"
         case .cloud: return "Cloud"
-        case .sending: return "Sending"
+        case .models: return "Models"
+        case .help: return "Help"
         case .about: return "About"
         }
     }
@@ -221,10 +223,11 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .api: return "Claude, ChatGPT, Cursor and scripts read your meetings"
         case .playbook: return "Your docs server for grounded answers"
         case .data: return "Granola import and markdown export"
-        case .privacy: return "Private mode, diagnostics and models on this device"
+        case .privacy: return "What leaves this device, permissions and diagnostics"
         case .cloud: return "Your meetings on every device"
-        case .sending: return "What leaves this device, who gets it, and where to change it"
-        case .about: return "Version, updates, help and licences"
+        case .models: return "Local speech, speaker and voice models"
+        case .help: return "Report a problem and copy support details"
+        case .about: return "Version, updates and licences"
         }
     }
 
@@ -245,7 +248,8 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case .data: return "tray.and.arrow.down"
         case .privacy: return "lock"
         case .cloud: return "cloud"
-        case .sending: return "paperplane"
+        case .models: return "cpu"
+        case .help: return "questionmark.circle"
         case .about: return "info.circle"
         }
     }
@@ -257,15 +261,14 @@ enum SettingsDestination: String, CaseIterable, Identifiable {
         case "apikeys": return .account
         case "audio": return .recording
         case "language": return .transcription
-        case "models": return .ai
         case "integrations": return .calendar
         case "webhook": return .webhooks
         case "mcp", "docsMCP", "docs": return .playbook
         case "tokens", "connectors", "connected": return .api
         case "dataExport", "export": return .data
         case "privacySupport": return .privacy
-        case "dataFlow", "whatLeaves": return .sending
-        case "support": return .about
+        case "sending", "dataFlow", "whatLeaves": return .privacy
+        case "support": return .help
         default: return .general
         }
     }
@@ -342,7 +345,7 @@ enum SettingsSearchCatalog {
         .init("account.apiMode", "API Mode", section: "Mode", destination: .account, keywords: ["managed", "BYOK", "bring your own keys"]),
         .init("account.deepgramKey", "Deepgram API Key", section: "API Keys", destination: .account, keywords: ["transcription key"], requiresBYOK: true),
         .init("account.openAIKey", "OpenAI API Key", section: "API Keys", destination: .account, keywords: ["insights key"], requiresBYOK: true),
-        .init("account.deviceID", "Device ID", section: "Your account, Support details", destination: .account, keywords: ["identifier", "UUID", "support"]),
+        .init("account.deviceID", "Device ID", section: "Support details", destination: .help, keywords: ["identifier", "UUID", "support"]),
 
         .init("recording.microphone", "Capture Microphone", section: "Audio Sources", destination: .recording, keywords: ["mic", "audio input"], platforms: [.macOS]),
         .init("recording.systemAudio", "Capture System Audio", section: "Audio Sources", destination: .recording, keywords: ["screen audio", "video calls"], platforms: [.macOS]),
@@ -350,9 +353,11 @@ enum SettingsSearchCatalog {
         .init("recording.permissions", "Audio Permissions", section: "Permissions", destination: .recording, keywords: ["microphone access", "system settings"]),
         .init("recording.autoStop", "Auto-stop After Silence", section: "Recording", destination: .recording, keywords: ["quiet", "inactivity", "3 minutes", "5 minutes", "fallback"]),
         .init("ai.speakerNames", "Speaker Names", section: "Speaker names", destination: .ai, keywords: ["jev", "typesafe", "gpt", "auto-name", "diarization", "speaker names"]),
+        .init("transcription.voices", "Voices", section: "Voices", destination: .transcription, keywords: ["your voice", "remember voices", "forget", "fingerprint", "CAM++"]),
         .init("transcription.speakers", "Speakers", section: "Models", destination: .transcription, keywords: ["diarization", "nemotron", "privacy", "speakers", "local"]),
         .init("transcription.model", "Transcription", section: "Models", destination: .transcription, keywords: ["deepgram", "this mac", "on-device", "local", "nemotron", "private"]),
         .init("transcription.fallback", "Use Deepgram if the model is not ready", section: "Models", destination: .transcription, keywords: ["fallback", "on-device", "local"]),
+        .init("cloud.exclusions", "Keep matching meetings off the cloud", section: "On this device", destination: .cloud, keywords: ["therapy", "title", "rules", "privacy", "exclude"]),
         .init("cloud.sync", "Keep a copy of your meetings on miniti's servers", section: "Cloud", destination: .cloud, keywords: ["sync", "cloud", "devices", "backup", "iPhone", "Mac", "copy"]),
         .init("cloud.status", "Cloud status", section: "Cloud", destination: .cloud, keywords: ["last synced", "size", "sync now", "skipped"], requiresManaged: true),
         .init("cloud.signin", "Web sign-in", section: "Web sign-in", destination: .cloud, keywords: ["email", "magic link", "sign in", "login", "web"], requiresManaged: true),
@@ -362,9 +367,9 @@ enum SettingsSearchCatalog {
         .init("cloud.delete", "Delete cloud copy", section: "Cloud", destination: .cloud, keywords: ["remove", "wipe", "server", "delete"], requiresManaged: true),
 
         .init("privacy.thirdPartyAI", "Sending meetings", section: "Deepgram and OpenAI", destination: .privacy, keywords: ["permission", "consent", "deepgram", "openai", "allow", "withdraw", "third party"]),
-        .init("sending.overview", "What Leaves This Device", section: "Sending", destination: .sending, keywords: ["sent", "where", "data", "deepgram", "openai", "typesafe", "jev", "webhook", "cloud", "calendar", "crm", "what goes where", "privacy"]),
+        .init("sending.overview", "What Leaves This Device", section: "What leaves this device", destination: .privacy, keywords: ["sending", "sent", "where", "data", "deepgram", "openai", "typesafe", "jev", "webhook", "cloud", "calendar", "crm", "what goes where", "privacy"]),
         .init("privacy.privateMode", "Private Mode", section: "Privacy", destination: .privacy, keywords: ["local", "on this mac", "nothing leaves", "offline"], platforms: [.macOS]),
-        .init("privacy.models", "Models on This Device", section: "Models on this device", destination: .privacy, keywords: ["download", "remove", "nemotron", "disk"]),
+        .init("privacy.models", "Models on This Device", section: "On this device", destination: .models, keywords: ["download", "remove", "nemotron", "disk", "speech", "speakers", "voice", "CAM++"]),
         .init("recording.liveActivityTranscript", "Show Transcript on Lock Screen", section: "Live Activity", destination: .recording, keywords: ["Dynamic Island", "privacy"], platforms: [.iOS]),
 
         .init("templates.list", "Templates", section: "Templates", destination: .templates, keywords: ["BANT", "SPIN", "interview", "stand-up", "1:1", "check-in", "specialist view", "sections"]),
@@ -404,10 +409,12 @@ enum SettingsSearchCatalog {
         .init("account.delete", "Delete Account", section: "Account", destination: .account, keywords: ["erase", "remove account", "privacy"]),
 
         .init("privacy.diagnostics", "Share Diagnostics", section: "Diagnostics", destination: .privacy, keywords: ["reliability", "errors", "telemetry"]),
+        .init("help.report", "Report a problem", section: "Report a problem", destination: .help, keywords: ["bug", "support", "email", "debug", "log"]),
+        .init("help.details", "Support details", section: "Support details", destination: .help, keywords: ["copy", "version", "build", "account id", "device id", "debug"]),
         .init("about.version", "Version", section: "About", destination: .about, keywords: ["build", "update"]),
         .init("about.acknowledgements", "Acknowledgements", section: "About", destination: .about, keywords: ["licenses", "licences", "open source", "nemotron", "fluidaudio", "sparkle", "credits"]),
         .init("about.docs", "miniti Docs", section: "Help", destination: .about, keywords: ["documentation", "learn"]),
-        .init("about.support", "Support", section: "Help", destination: .about, keywords: ["help", "contact"]),
+        .init("about.support", "Support website", section: "Help", destination: .help, keywords: ["help", "contact"]),
         .init("about.legal", "Privacy & Terms", section: "About", destination: .about, keywords: ["policy", "legal"])
     ]
 
@@ -967,7 +974,9 @@ final class AppState: ObservableObject {
     
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
-    @AppStorage("appMode") var appModeRaw: String = AppMode.managed.rawValue
+    @AppStorage("appMode") var appModeRaw: String = AppMode.managed.rawValue {
+        didSet { if appModeRaw != AppMode.managed.rawValue { diagnosticsQueue.clear() } }
+    }
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasAcceptedTerms") private var legacyHasAcceptedTerms: Bool = false
     @AppStorage("acceptedTermsVersion") private var acceptedTermsVersion: Int = 0
@@ -1473,8 +1482,7 @@ final class AppState: ObservableObject {
     @AppStorage("shareDiagnostics") var shareDiagnostics: Bool = true {
         didSet {
             if !shareDiagnostics {
-                pendingClientEvents.removeAll()
-                persistPendingClientEvents()
+                diagnosticsQueue.clear()
             } else {
                 Task { await flushClientEvents(trigger: "setting enabled") }
             }
@@ -1547,7 +1555,7 @@ final class AppState: ObservableObject {
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
     let onDeviceDiarization = OnDeviceDiarizationService()
 
-    // Voice prints (3.2.0): see AppState+VoicePrints.swift and docs/voice-prints-plan.md.
+    // Voice prints (3.2.0): see AppState+VoicePrints.swift and docs/archive/voice-prints-plan.md.
     @AppStorage("voicePrintSelfEnabled") var voicePrintSelfEnabled: Bool = false
     @AppStorage("voicePrintOthersEnabled") var voicePrintOthersEnabled: Bool = false
     let voicePrints = VoicePrintStore()
@@ -1693,7 +1701,7 @@ final class AppState: ObservableObject {
     @Published private(set) var isUsingFallbackInputDevice = false
     #endif
     /// Managed-mode TypeSafe Jev classifier for attendee speaker naming and the sales
-    /// nudge (docs/jev-system-one-plan.md, slice 1). Default off: it sends bounded transcript
+    /// nudge (docs/archive/jev-system-one-plan.md, slice 1). Default off: it sends bounded transcript
     /// windows to a third processor, so it is opt-in with copy that names the vendor.
     @AppStorage("jevClassifierEnabled") var jevClassifierEnabled: Bool = false
     /// Timestamp (TimeInterval since 1970) after which the calendar nudge card on the
@@ -1808,7 +1816,16 @@ final class AppState: ObservableObject {
         let isAllDay: Bool
         let skipReason: MinitiAPIService.CalendarMeetingSkipReason?
     }
-    @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent?
+    @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent? {
+        didSet { applyLateCalendarCloudExclusion() }
+    }
+
+    /// Storage rules are local to this installation and independent of calendar visibility.
+    @Published var cloudExclusionRules: [String] = UserDefaults.standard.stringArray(forKey: "cloud.exclusionTitleRules") ?? [] {
+        didSet { UserDefaults.standard.set(cloudExclusionRules, forKey: "cloud.exclusionTitleRules") }
+    }
+    @Published var meetingCloudFeedback: MeetingCloudFeedback?
+    var activeMeetingCloudOverride: Bool?
 
     var upcomingMeetingEvents: [MinitiAPIService.CalendarEvent] {
         let now = Date()
@@ -1948,8 +1965,10 @@ final class AppState: ObservableObject {
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
     private let pendingClientEventsDefaultsKey = "pendingClientEvents"
-    private(set) var pendingClientEvents: [MinitiAPIService.ClientEventPayload] = []
+    private let diagnosticsQueue = DiagnosticsQueue(defaults: AppState.isRunningUnderXCTest ? UserDefaults(suiteName: "miniti.test.diagnostics.\(UUID().uuidString)")! : .standard)
+    var pendingClientEvents: [MinitiAPIService.ClientEventPayload] { diagnosticsQueue.events }
     private var clientEventsFlushTask: Task<Void, Never>?
+    private var recordingDiagnosticAttempt: RecordingDiagnosticAttempt?
     private let diagnosticsSessionId = UUID().uuidString
     private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
@@ -1970,6 +1989,7 @@ final class AppState: ObservableObject {
     /// must never write one back.
     private var deletedMeetingIDs: Set<UUID> = []
     private var cancellables = Set<AnyCancellable>()
+    let purchaseReturn = PurchaseReturnController()
     
     #if os(iOS)
     private var currentActivity: Activity<RecordingActivityAttributes>?
@@ -2288,7 +2308,7 @@ final class AppState: ObservableObject {
         setupServices()
         updateLogRedaction()
         pendingSessionEndReports = loadPendingSessionEndReports()
-        pendingClientEvents = loadPendingClientEvents()
+        if !shareDiagnostics || appMode != .managed { diagnosticsQueue.clear() }
         // The auth manager read the credential before this object existed; whatever it could
         // not read is waiting in its buffer and arrives now (enrollment-identity-plan A1).
         ClientAuthManager.shared.attachEventSink { [weak self] event in
@@ -2559,11 +2579,16 @@ final class AppState: ObservableObject {
             deepgramReconnectTask = nil
             deepgramReconnectGeneration += 1
             lastDeepgramReconnectScheduledAt = 0
+            if DeepgramInitialFailure.allMessages.contains(recordingErrorMessage ?? "") { recordingErrorMessage = nil }
             enqueueDiagnosticEvent("deepgram_connected", category: .deepgram)
             updateAudioRecoveryState()
         case .connecting:
             updateAudioRecoveryState()
         case .error:
+            if let failure = deepgramService?.initialConnectionFailure {
+                recordingErrorMessage = failure.errorDescription
+                enqueueDiagnosticEvent("deepgram_initial_failed", category: .deepgram, level: .error, details: ["code": failure.rawValue])
+            }
             enqueueDiagnosticEvent("deepgram_connection_error", category: .deepgram, level: .error)
             scheduleDeepgramReconnect(reason: "connection error")
         case .disconnected:
@@ -3621,6 +3646,7 @@ final class AppState: ObservableObject {
     }
     
     func updateAudioRecoveryState() {
+        if isRecording { sampleRecordingDiagnostics() }
         if ScreenshotMode.isActive {
             audioRecoveryState = .healthy
             return
@@ -3677,6 +3703,10 @@ final class AppState: ObservableObject {
 
         if nextState == .degraded {
             enqueueDiagnosticEvent("audio_recovery_degraded", category: .audio, level: .warning)
+            if var attempt = recordingDiagnosticAttempt, !attempt.degraded {
+                attempt.degraded = true; recordingDiagnosticAttempt = attempt
+                enqueueDiagnosticEvent("recording_degraded", category: .audio, level: .warning, details: attempt.details)
+            }
         } else if nextState == .recovering {
             enqueueDiagnosticEvent("audio_recovery_recovering", category: .audio)
         }
@@ -3700,6 +3730,13 @@ final class AppState: ObservableObject {
             guard self.desiredAudioRecoveryState == nextState else { return }
             if nextState == .healthy, self.audioRecoveryState != .healthy {
                 self.enqueueDiagnosticEvent("audio_recovery_healthy", category: .audio)
+                self.sampleRecordingDiagnostics()
+                if var attempt = self.recordingDiagnosticAttempt, attempt.degraded,
+                   self.audioCaptureService?.hasRecentCaptureBuffers(microphone: attempt.microphone, systemAudio: attempt.system) == true,
+                   attempt.sentPCM {
+                    attempt.degraded = false; self.recordingDiagnosticAttempt = attempt
+                    self.enqueueDiagnosticEvent("recording_recovered", category: .audio, details: attempt.details)
+                }
             }
             self.audioRecoveryState = nextState
             self.pendingAudioRecoveryTransitionTask = nil
@@ -6504,7 +6541,10 @@ final class AppState: ObservableObject {
         meeting.recordedOnRaw = RecordingDevice.current.rawValue
         // A meeting recorded under private mode never goes to the cloud, even after private
         // mode is turned off; the per-meeting action in History can change that later.
-        meeting.syncExcluded = privateModeEnabled
+        meeting.syncExcluded = cloudExclusionForNextMeeting(event: calendarEvent)
+        if meeting.syncExcluded { DiagnosticTimeline.shared.record(.cloudChoice, fields: ["excluded": "true", "reason": privateModeEnabled ? "private_mode" : "rule"]) }
+        activeMeetingCloudOverride = nil
+        meetingCloudFeedback = nil
         if let calendarEvent {
             meeting.calendarEventId = calendarEvent.id
             meeting.calendarEventTitle = calendarEvent.title
@@ -8172,6 +8212,7 @@ final class AppState: ObservableObject {
             return
         }
         
+        beginRecordingDiagnostics()
         DebugLogger.shared.log(.app, "startRecording (mode=\(appMode.rawValue), mic=\(captureMicrophone), sys=\(captureSystemAudio), onDevice=\(willTranscribeOnDevice))")
         recordingErrorMessage = nil
         finalizationStatusText = ""
@@ -8184,6 +8225,7 @@ final class AppState: ObservableObject {
         if onDeviceTranscriptionBlocksStart {
             DebugLogger.shared.log(.app, "startRecording refused: on-device transcription model not ready and cloud fallback off")
             recordingErrorMessage = onDeviceTranscriptionRefusalMessage
+            finishRecordingDiagnostics(failed: true)
             return
         }
         sessionTranscribesOnDevice = willTranscribeOnDevice
@@ -8284,6 +8326,7 @@ final class AppState: ObservableObject {
         audioCaptureService.onAudioBuffer = makeAudioBufferHandler(multichannel: useMultichannel, monoSource: monoSource)
         
         // Start capturing
+        let startingMeetingID = currentMeeting?.id
         Task {
             if sessionTranscribesOnDevice {
                 await connectTranscription(
@@ -8299,7 +8342,12 @@ final class AppState: ObservableObject {
                     systemAudio: captureSystemAudio
                 )
             } catch {
+                guard currentMeeting?.id == startingMeetingID, isRecording else { return }
+                let captureError = error as NSError
+                enqueueDiagnosticEvent("microphone_capture_failed", category: .audio, level: .error,
+                    details: ["error_domain": captureError.domain, "error_code": String(captureError.code)])
                 DebugLogger.shared.log(.app, "Audio capture FAILED in startRecording: \(error.localizedDescription)")
+                recordingDiagnosticAttempt?.failed = true
                 recordingErrorMessage = "Recording could not start. Check microphone and system-audio permissions, then try again."
                 stopRecording()
             }
@@ -8342,7 +8390,9 @@ final class AppState: ObservableObject {
             isResumingRecording = false
             return
         }
+        beginRecordingDiagnostics()
         guard await ensureManagedEnrollment(trigger: "start") else {
+            finishRecordingDiagnostics(failed: true)
             recordingErrorMessage = managedEnrollmentError
                 ?? "Miniti could not set up this device for managed mode. Check your connection and try again."
             isStartingMeeting = false
@@ -8355,6 +8405,7 @@ final class AppState: ObservableObject {
             recordingErrorMessage = onDeviceTranscriptionRefusalMessage
             isStartingMeeting = false
             isResumingRecording = false
+            finishRecordingDiagnostics(failed: true)
             return
         }
         if willTranscribeOnDevice {
@@ -8369,7 +8420,7 @@ final class AppState: ObservableObject {
         }
 
         let obtained = await refreshManagedDeepgramCredential(trigger: "start")
-        guard obtained else { return }
+        guard obtained else { finishRecordingDiagnostics(failed: true); return }
 
         recordingErrorMessage = nil
         
@@ -8526,6 +8577,7 @@ final class AppState: ObservableObject {
         let stoppedInterimSpeaker = interimSpeaker ?? currentSpeaker
         let stoppedInterimTimestamp = recordingDuration
         
+        finishRecordingDiagnostics(failed: recordingDiagnosticAttempt?.failed == true)
         isRecording = false
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
@@ -9554,6 +9606,46 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func beginRecordingDiagnostics() {
+        guard recordingDiagnosticAttempt == nil else { return }
+        let attempt = RecordingDiagnosticAttempt(route: willTranscribeOnDevice ? "local" : appMode.rawValue,
+            microphone: captureMicrophone, system: captureSystemAudio)
+        recordingDiagnosticAttempt = attempt
+        enqueueDiagnosticEvent("recording_attempt", category: .audio, details: attempt.details)
+    }
+
+    private func sampleRecordingDiagnostics() {
+        guard isRecording else { return } // A rejected grant must not sample the previous session.
+        guard var attempt = recordingDiagnosticAttempt else { return }
+        let hadAudio = attempt.micPCM || attempt.systemPCM
+        let hadTranscript = attempt.transcript
+        attempt.micPCM = attempt.micPCM || (attempt.microphone && audioCaptureService?.hasRecentCaptureBuffers(microphone: true, systemAudio: false) == true)
+        attempt.systemPCM = attempt.systemPCM || (attempt.system && audioCaptureService?.hasRecentCaptureBuffers(microphone: false, systemAudio: true) == true)
+        attempt.sentPCM = attempt.sentPCM || (deepgramService?.packetsSentCount ?? 0) > 0
+        attempt.speech = attempt.speech || (deepgramService?.lastSpeechStartedAt ?? 0) > 0
+        attempt.transcript = attempt.transcript || (attempt.route == "local" ? !liveSegments.isEmpty : (deepgramService?.lastTranscriptTimestamp ?? 0) > 0)
+        if !hadAudio && (attempt.micPCM || attempt.systemPCM) { DiagnosticTimeline.shared.record(.audioReceived, fields: attempt.details) }
+        if !hadTranscript && attempt.transcript { DiagnosticTimeline.shared.record(.transcriptReceived, fields: attempt.details) }
+        let ready = (!attempt.microphone || attempt.micPCM) && (!attempt.system || attempt.systemPCM)
+            && (attempt.route == "local" || attempt.sentPCM)
+        if ready && !attempt.ready {
+            attempt.ready = true
+            enqueueDiagnosticEvent("recording_ready", category: .audio, details: attempt.details)
+        }
+        recordingDiagnosticAttempt = attempt
+    }
+
+    private func finishRecordingDiagnostics(failed: Bool) {
+        sampleRecordingDiagnostics()
+        guard let attempt = recordingDiagnosticAttempt else { return }
+        var details = attempt.details
+        details["outcome"] = failed ? "failed" : attempt.degraded ? "degraded" : attempt.ready ? "stopped" : "cancelled"
+        details["duration_seconds"] = String(max(0, Int(recordingDuration)))
+        enqueueDiagnosticEvent(failed ? "recording_failed" : "recording_final", category: .audio,
+            level: failed ? .error : .info, details: details)
+        recordingDiagnosticAttempt = nil
+    }
+
     // MARK: - Diagnostics Events
 
     func enqueueDiagnosticEvent(
@@ -9562,15 +9654,18 @@ final class AppState: ObservableObject {
         level: MinitiAPIService.ClientEventPayload.EventLevel = .info,
         details: [String: String] = [:]
     ) {
+        if !name.hasPrefix("client_auth_"), let code = DiagnosticTimeline.Code(rawValue: name) { DiagnosticTimeline.shared.record(code, fields: details) }
         diagnosticEventObserver?(name, details)
         // The unit-test host shares this device's defaults and enrollment; it must never queue
         // events that would later flush to production as if a real session produced them.
         guard !Self.isRunningUnderXCTest else { return }
         guard shareDiagnostics else { return }
         guard appMode == .managed else { return }
-        guard minitiAPIService != nil else { return }
-
-        let cappedDetails = details.reduce(into: [String: String]()) { partial, pair in
+        var metadata = details
+        metadata["build"] = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        metadata["os_version"] = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+        let cappedDetails = metadata.reduce(into: [String: String]()) { partial, pair in
             guard partial.count < 20 else { return }
             let key = String(pair.key.prefix(40))
             let value = String(pair.value.prefix(240))
@@ -9584,14 +9679,14 @@ final class AppState: ObservableObject {
             occurredAt: Date(),
             diagnosticsSessionId: diagnosticsSessionId,
             appMode: appMode.rawValue,
-            meetingId: currentMeeting?.id.uuidString,
+            meetingId: nil,
             details: cappedDetails.isEmpty ? nil : cappedDetails
         )
-        pendingClientEvents.append(event)
-        if pendingClientEvents.count > 200 {
-            pendingClientEvents.removeFirst(pendingClientEvents.count - 200)
+        let lostBefore = diagnosticsQueue.dropped + diagnosticsQueue.expired
+        diagnosticsQueue.append(event)
+        if diagnosticsQueue.dropped + diagnosticsQueue.expired != lostBefore {
+            DebugLogger.shared.log(.app, "Diagnostics retention: dropped=\(diagnosticsQueue.dropped), expired=\(diagnosticsQueue.expired)")
         }
-        persistPendingClientEvents()
         scheduleClientEventsFlush()
     }
 
@@ -9601,72 +9696,29 @@ final class AppState: ObservableObject {
         guard clientEventsFlushTask == nil else { return }
 
         clientEventsFlushTask = Task { @MainActor [weak self] in
-            defer { self?.clientEventsFlushTask = nil }
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            let delay = max(8, self?.diagnosticsQueue.retryDelay ?? 8)
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled else { return }
             await self?.flushClientEvents(trigger: "debounced")
+            self?.clientEventsFlushTask = nil
+            self?.scheduleClientEventsFlush()
         }
     }
 
     private func flushClientEvents(trigger: String) async {
-        guard shareDiagnostics else { return }
-        guard appMode == .managed else { return }
-        guard let minitiAPIService else { return }
-        guard !pendingClientEvents.isEmpty else { return }
-
-        let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-        var remaining = pendingClientEvents
-        var sentCount = 0
-
-        while !remaining.isEmpty {
-            let batch = Array(remaining.prefix(25))
-            do {
-                try await minitiAPIService.sendClientEvents(
-                    deviceId: deviceId,
-                    events: batch
-                )
-                sentCount += batch.count
-                remaining.removeFirst(batch.count)
-            } catch {
-                DebugLogger.shared.log(
-                    .app,
-                    "Client events flush FAILED (\(trigger)): \(error.localizedDescription)"
-                )
-                break
-            }
-        }
-
-        pendingClientEvents = remaining
-        persistPendingClientEvents()
-        if sentCount > 0 {
-            DebugLogger.shared.log(
-                .app,
-                "Client events flushed (\(trigger)): sent=\(sentCount), pending=\(pendingClientEvents.count)"
-            )
-        }
+        guard !Self.isRunningUnderXCTest, shareDiagnostics, appMode == .managed,
+              let minitiAPIService else { return }
+        let account = clientAuthManager.status.accountID
+        let generation = clientAuthManager.credentialGeneration
+        diagnosticsQueue.setOwner(account)
+        await diagnosticsQueue.flush(allowed: { [weak self] in
+            guard let self else { return false }
+            return self.shareDiagnostics && self.appMode == .managed && self.clientAuthManager.status.accountID == account && self.clientAuthManager.credentialGeneration == generation
+        }, send: { events in
+            try await minitiAPIService.sendClientEvents(deviceId: DeviceIdentifier.getOrCreateDeviceId(), events: events)
+        })
     }
 
-    private func persistPendingClientEvents() {
-        do {
-            let data = try JSONEncoder().encode(pendingClientEvents)
-            UserDefaults.standard.set(data, forKey: pendingClientEventsDefaultsKey)
-        } catch {
-            DebugLogger.shared.log(.app, "Persist client events FAILED: \(error.localizedDescription)")
-        }
-    }
-
-    private func loadPendingClientEvents() -> [MinitiAPIService.ClientEventPayload] {
-        guard let data = UserDefaults.standard.data(forKey: pendingClientEventsDefaultsKey) else {
-            return []
-        }
-        do {
-            return try JSONDecoder().decode([MinitiAPIService.ClientEventPayload].self, from: data)
-        } catch {
-            DebugLogger.shared.log(.app, "Load client events FAILED: \(error.localizedDescription)")
-            return []
-        }
-    }
-    
     // MARK: - Managed Session End Durability
     
     private func reportManagedSessionEnd(_ report: PendingSessionEndReport, trigger: String) async {
@@ -10828,6 +10880,7 @@ final class AppState: ObservableObject {
         // any cloud pass in flight (R3).
         let credentialGeneration = clientAuthManager.credentialGeneration
         if credentialGeneration != lastSeenCredentialGeneration {
+            purchaseReturn.cancelForIdentityChange()
             lastSeenCredentialGeneration = credentialGeneration
             cloudSync.invalidatePasses(reason: "credential changed")
         }
@@ -10843,7 +10896,11 @@ final class AppState: ObservableObject {
     /// The enrolled account changed (or went away): the email state belongs to the old one.
     private func noteAccountIdentity(_ accountID: String?) {
         guard accountID != accountEmailAnchorID else { return }
+        DiagnosticTimeline.shared.record(.accountChanged)
+        purchaseReturn.cancelForIdentityChange()
+        diagnosticsQueue.setOwner(accountID)
         accountEmailAnchorID = accountID
+        meetingCloudFeedback = nil
         accountGeneration += 1
         accountEmailSequence += 1
         cloudSync.invalidatePasses(reason: "account changed")

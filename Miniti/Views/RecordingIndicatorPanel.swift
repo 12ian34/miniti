@@ -7,7 +7,7 @@ import Combine
 // outside the main SwiftUI window hierarchy so it survives the main window closing. Every
 // action routes through the same AppState methods as the main window, menu bar, and
 // notifications — the panel is presentation only.
-// See docs/call-lifecycle-and-recording-presence-plan.md ("Recording presence design").
+// See docs/archive/call-lifecycle-and-recording-presence-plan.md ("Recording presence design").
 
 // MARK: - Shared presentation model
 

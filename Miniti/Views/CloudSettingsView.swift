@@ -1,6 +1,43 @@
 import SwiftUI
 import SwiftData
 
+struct MeetingCloudPrivacyStatus: View {
+    @EnvironmentObject private var appState: AppState
+    let meeting: Meeting
+    @ObservedObject var engine: CloudSyncEngine
+    var showsChoice = true
+    @Query private var pending: [MeetingTombstone]
+
+    init(meeting: Meeting, engine: CloudSyncEngine, showsChoice: Bool = true) {
+        self.meeting = meeting; self.engine = engine; self.showsChoice = showsChoice
+        let id = meeting.id
+        _pending = Query(filter: #Predicate<MeetingTombstone> { $0.id == id })
+    }
+
+    private var pause: CloudSyncPause? {
+        if let reason = appState.cloudPauseReason { return reason }
+        if case .paused(let reason) = engine.phase { return reason }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            if meeting.syncExcluded {
+                if showsChoice { Label("Kept off the cloud", systemImage: "icloud.slash") }
+                if !pending.isEmpty, pause == nil || pending.contains(where: { $0.cloudRevision > 0 }) {
+                    Text(engine.lastError == nil ? "Cloud copy removal pending. Sync must be connected to finish." : "Cloud copy removal has not finished. Check Settings, Cloud and try syncing again.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if meeting.cloudRestoreRequested {
+                Label(MeetingCloudPrivacyPresentation.uploadStatus(pause: pause), systemImage: "icloud.and.arrow.up")
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .help("This controls miniti cloud storage. Transcription, AI and exports still use your settings. Removing a cloud copy does not remove exports or backups immediately.")
+    }
+}
+
 /// Settings → Cloud (3.0.0): the switch, status, web sign-in and delete. Settings → API
 /// (3.2.1): connected apps, tokens and the connector setup, with the upgrade path for people
 /// who are not on Pro or have cloud off. One view each on macOS; the sections are reused by
@@ -64,12 +101,14 @@ struct CloudSettingsSections: View {
                 .id("cloud.sync")
             } else {
                 cloudSection
+                CloudExclusionRulesSection()
                 if appState.cloudSyncEnabled {
                     statusSection
                     signInSection
                     deleteSection
                 }
             }
+            if appState.appMode == .byok { CloudExclusionRulesSection() }
         case .api:
             apiIntroSection
             if appState.appMode != .byok, appState.isPro, appState.cloudSyncEnabled {
@@ -430,6 +469,178 @@ struct CloudSettingsSections: View {
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
     }
+}
+
+/// A per-meeting storage choice. The label describes the choice, not a completed upload.
+struct MeetingCloudStorageButton: View {
+    @EnvironmentObject private var appState: AppState
+    @Bindable var meeting: Meeting
+    private var locked: Bool {
+        appState.currentMeeting?.id == meeting.id && appState.privateModeEnabled && appState.privateModeLocked
+    }
+    var body: some View {
+        Button { appState.toggleMeetingCloudStorage(meeting) } label: {
+            MinitiControlLabel(role: .primary, isEmphasized: !meeting.syncExcluded && appState.cloudPauseReason == nil) {
+                HStack(spacing: 6) {
+                    Image(systemName: meeting.syncExcluded ? "icloud.slash" : "icloud")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(meeting.syncExcluded ? "Local" : "Cloud")
+                        .font(.system(size: 11, weight: .medium))
+                        .lineLimit(1)
+                }
+                .opacity(meeting.syncExcluded ? 0.65 : 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .disabled(locked)
+        .accessibilityLabel(meeting.syncExcluded ? "Local, keep this meeting off the cloud" : "Cloud, save this meeting to the cloud")
+        .accessibilityHint(locked ? "Private mode keeps this recording local." : "Changes cloud storage for this meeting only. Transcription, AI and exports still use your settings.")
+        .help(locked ? "Private mode keeps this recording off the cloud." : "Cloud storage for this meeting. Transcription, AI and exports still follow your settings.")
+    }
+}
+
+private struct MeetingCloudFeedbackView: View {
+    @EnvironmentObject private var appState: AppState
+    let meetingID: UUID?
+    var body: some View {
+        Group {
+            if let feedback = appState.meetingCloudFeedback, feedback.meetingID == meetingID {
+                Text(feedback.message)
+                    .font(.callout)
+                    .foregroundStyle(ColorPalette.Text.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(MinitiDesignSystem.Spacing.comfortable)
+                    .frame(maxWidth: 310, alignment: .leading)
+                    .background(ColorPalette.Background.card, in: RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control))
+                    .overlay(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control).stroke(ColorPalette.Border.light, lineWidth: 1))
+                    .padding(MinitiDesignSystem.Spacing.comfortable)
+                    .allowsHitTesting(false)
+                    .onDisappear {
+                        if appState.meetingCloudFeedback?.id == feedback.id { appState.meetingCloudFeedback = nil }
+                    }
+                    .task(id: feedback.id) {
+                        AccessibilityNotification.Announcement(feedback.message).post()
+                        try? await Task.sleep(for: .seconds(4))
+                        guard !Task.isCancelled, appState.meetingCloudFeedback?.id == feedback.id else { return }
+                        appState.meetingCloudFeedback = nil
+                    }
+            }
+        }
+    }
+}
+
+extension View {
+    func meetingCloudFeedback(for meetingID: UUID?) -> some View {
+        overlay(alignment: .bottomTrailing) { MeetingCloudFeedbackView(meetingID: meetingID) }
+    }
+}
+
+private struct CloudExclusionRuleEditor: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft = ""
+    @FocusState private var fieldFocused: Bool
+    private var problem: String? { CloudRuleValidation.problem(draft, existing: appState.cloudExclusionRules) }
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+            Text("Add cloud rule").font(.headline)
+            Text("Keep calendar meetings off the cloud when their title contains:")
+                .foregroundStyle(.secondary)
+            TextField("For example, therapy", text: $draft)
+                .textFieldStyle(.roundedBorder)
+                .focused($fieldFocused)
+                .onSubmit(save)
+                .accessibilityLabel("Meeting title contains")
+            if let problem, !draft.isEmpty { Text(problem).font(.caption).foregroundStyle(.secondary) }
+            Text("On this device only. Transcription, AI and exports still follow your settings.")
+                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Save rule", action: save)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(problem != nil)
+            }
+        }
+        .padding(MinitiDesignSystem.Spacing.section)
+        .frame(idealWidth: 380)
+        .task { fieldFocused = true }
+        .presentationDetents([.medium])
+    }
+    private func save() {
+        if appState.addCloudExclusionRule(draft) { dismiss() }
+    }
+}
+
+private struct CloudExclusionRulesSection: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var isAddingRule = false
+    @State private var preview: [AppState.CalendarFilterPreviewRow]?
+    @State private var isLoading = false
+    @State private var previewError: String?
+    @State private var previewSequence = 0
+
+    var body: some View {
+        Section("Keep matching meetings off the cloud") {
+            Text("On this device. Calendar meetings stay visible and recordable. A matching title keeps new recordings off miniti cloud; transcription, AI and exports still follow your settings. Changes here do not affect saved meetings.")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(Array(appState.cloudExclusionRules.enumerated()), id: \.offset) { index, rule in
+                HStack {
+                    Text("Title contains: \(rule)")
+                    Spacer()
+                    Button("Remove") { appState.cloudExclusionRules.remove(at: index) }
+                        .accessibilityLabel("Remove rule \(rule)")
+                }
+            }
+            Button("Add rule") { isAddingRule = true }
+            .disabled(appState.cloudExclusionRules.count >= 30)
+            if appState.cloudExclusionRules.count >= 30 {
+                Text("You have 30 rules. Remove one to add another.").font(.caption).foregroundStyle(.secondary)
+            }
+            Text("A renamed event or a recording without a calendar event may not match. You can change a meeting between Cloud and Local in its toolbar. These rules do not apply to Watch recordings or imports.")
+                .font(.caption).foregroundStyle(.secondary)
+            Button(isLoading ? "Loading preview…" : "Preview next 7 days") {
+                isLoading = true; previewError = nil
+                previewSequence += 1
+                let sequence = previewSequence
+                let generation = appState.accountGeneration
+                Task {
+                    do {
+                        let rows = try await appState.previewCalendarMeetingFilters()
+                        guard generation == appState.accountGeneration, sequence == previewSequence else { return }
+                        preview = rows
+                    } catch {
+                        guard generation == appState.accountGeneration, sequence == previewSequence else { return }
+                        previewError = "Could not load the calendar preview. Try again."
+                    }
+                    isLoading = false
+                }
+            }
+            .disabled(isLoading || !appState.isGoogleCalendarConnected)
+            if let previewError { Text(previewError).font(.caption).foregroundStyle(.secondary) }
+            if let preview {
+                let matches = preview.filter { CloudExclusionPolicy.matchingRule(title: $0.title, rules: appState.cloudExclusionRules) != nil }
+                if matches.isEmpty { Text("No matching events in this preview.").font(.caption).foregroundStyle(.secondary) }
+                ForEach(matches) { row in
+                    VStack(alignment: .leading) {
+                        Text(row.title)
+                        if let start = row.start { Text(start, style: .date).font(.caption).foregroundStyle(.secondary) }
+                        Text("Kept off the cloud: title contains \(CloudExclusionPolicy.matchingRule(title: row.title, rules: appState.cloudExclusionRules) ?? "")").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Text("Preview covers up to 50 calendar events.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .id("cloud.exclusions")
+        .sheet(isPresented: $isAddingRule) { CloudExclusionRuleEditor().environmentObject(appState) }
+        .onChange(of: appState.accountGeneration) { _, _ in
+            previewSequence += 1
+            preview = nil; previewError = nil; isLoading = false
+        }
+    }
+
+
 }
 
 /// The one sheet shown when the switch is turned on: what uploads, the plain sentence about

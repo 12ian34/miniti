@@ -17,6 +17,17 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     private var isRestartingMicAfterRouteChange = false
     private var lastMicRestartAt: CFAbsoluteTime = 0
     private var activeInputIdentity: String = ""
+    private let deliveryLock = NSLock()
+    nonisolated(unsafe) private var lastDeliveryAt: CFAbsoluteTime = 0
+
+    private func resetDeliveryDiagnostic() {
+        deliveryLock.lock(); lastDeliveryAt = 0; deliveryLock.unlock()
+    }
+
+    func hasRecentCaptureBuffers(microphone: Bool, systemAudio: Bool, at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
+        deliveryLock.lock(); defer { deliveryLock.unlock() }
+        return !systemAudio && (!microphone || (lastDeliveryAt > 0 && now - lastDeliveryAt < 2))
+    }
     
     #if compiler(>=6.2)
     private let bluetoothCallProfileOption: AVAudioSession.CategoryOptions = .allowBluetoothHFP
@@ -124,6 +135,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         DebugLogger.shared.log(.audio, "Mic converter armed (dynamic input format) → \(targetSampleRate)Hz")
         micBufferCount = 0
+        resetDeliveryDiagnostic()
         lastMicHeartbeat = CFAbsoluteTimeGetCurrent()
         
         let onBuffer = onAudioBuffer
@@ -415,6 +427,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         // Send mic-only data to callback
         let data = Data(bytes: micPtr, count: micSamples * 2)
+        if !data.isEmpty { deliveryLock.lock(); lastDeliveryAt = now; deliveryLock.unlock() }
         callback?(data)
     }
     

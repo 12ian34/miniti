@@ -7,7 +7,7 @@ import SwiftUI
 /// so this is the permission, not a formality. "not now" is a real answer: the app opens with
 /// recording and the AI features off. The terms version is bumped when the recipients, the data
 /// or the purposes change; a shorter wording of the same disclosure keeps the version (U2,
-/// docs/account-sending-consent-ux-plan.md).
+/// docs/archive/account-sending-consent-ux-plan.md).
 ///
 /// Layout contract (U2): the disclosure scrolls, the two actions sit below it in their own bar
 /// and never scroll out of reach, whatever the window size or text size.

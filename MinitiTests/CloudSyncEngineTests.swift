@@ -108,7 +108,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
         return ids.compactMap { id in rows[id].map { state(id, $0) } }
     }
 
-    func putMeeting(id: UUID, baseRevision: Int, document data: Data) async throws -> CloudPutResult {
+    func putMeeting(id: UUID, baseRevision: Int, document data: Data, restoreDeleted: Bool = false) async throws -> CloudPutResult {
         calls.append("put"); await gate.wait("put"); try throwIfArmed()
         let document = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         if tier != "pro" { throw CloudSyncError.proRequired }
@@ -121,7 +121,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
             }
         }
         if let existing = rows[id] {
-            if existing.revision != baseRevision || existing.deleted || existing.transcriptRevision > transcriptRevision {
+            if existing.revision != baseRevision || (existing.deleted && !restoreDeleted) || existing.transcriptRevision > transcriptRevision {
                 return .conflict(state(id, existing))
             }
             let row = Row(revision: existing.revision + 1, deleted: false, updatedAt: updatedAt, transcriptRevision: transcriptRevision, document: document)
@@ -267,6 +267,71 @@ final class CloudSyncEngineTests: XCTestCase {
     }
 
     // MARK: Push
+
+    func testExclusionDuringTheFirstUploadKeepsLocalContentAndDeletesTheAcceptedCopy() async throws {
+        let meeting = finished("Keep here")
+        let id = meeting.id
+        transport.gate.holdNames = ["put"]
+        let syncing = Task { await engine.sync(reason: "test") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        XCTAssertTrue(engine.isUploading(id))
+        XCTAssertEqual(meeting.cloudRevision, 0)
+        meeting.syncExcluded = true
+        try host.context.save()
+        transport.gate.release()
+        await syncing.value
+        XCTAssertFalse(engine.isUploading(id))
+        await settle()
+        XCTAssertTrue(meeting.syncExcluded)
+        XCTAssertEqual(host.meeting(id)?.title, "Keep here")
+        XCTAssertEqual(meeting.cloudRevision, 0)
+        XCTAssertNil(meeting.syncFingerprint)
+        XCTAssertTrue(transport.rows[id]?.deleted == true)
+        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 1)
+        XCTAssertTrue(try host.context.fetch(FetchDescriptor<MeetingTombstone>()).isEmpty)
+    }
+
+    func testAnExcludedMeetingSurvivesRemoteChangesAndDeletionDuringReconcile() async throws {
+        let meeting = finished("Keep local title", excluded: true)
+        _ = transport.seed(remoteDocument(meeting.id, title: "Do not apply", updatedAt: clock), updatedAt: clock)
+        await tick()
+        XCTAssertEqual(host.meeting(meeting.id)?.title, "Keep local title")
+        XCTAssertTrue(meeting.syncExcluded)
+        XCTAssertTrue(transport.rows[meeting.id]?.deleted == true)
+        XCTAssertFalse(transport.calls.contains("put"))
+        await tick()
+        XCTAssertNotNil(host.meeting(meeting.id), "the cloud deletion must not delete the excluded local original")
+    }
+
+    func testAQueuedUploadIsSkippedWhenExcludedDuringAnEarlierUpload() async throws {
+        _ = finished("First")
+        let second = finished("Second", start: 1_790_000_700)
+        transport.onPut = { _ in second.syncExcluded = true }
+        await tick()
+        XCTAssertNil(transport.rows[second.id])
+        XCTAssertTrue(second.syncExcluded)
+    }
+
+    func testAnExplicitPutOnCloudRestoresTheExcludedOriginalButOrdinarySyncDoesNot() async throws {
+        let meeting = finished("Original")
+        await tick()
+        meeting.syncExcluded = true
+        host.context.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
+        meeting.cloudRevision = 0
+        meeting.syncFingerprint = nil
+        try host.context.save()
+        await tick()
+        XCTAssertTrue(transport.rows[meeting.id]?.deleted == true)
+        XCTAssertNotNil(host.meeting(meeting.id))
+        meeting.syncExcluded = false
+        meeting.cloudRestoreRequested = true
+        engine.noteLocalChange()
+        await tick()
+        XCTAssertFalse(transport.rows[meeting.id]?.deleted ?? true)
+        XCTAssertEqual(host.meeting(meeting.id)?.title, "Original")
+        XCTAssertFalse(meeting.cloudRestoreRequested)
+        XCTAssertEqual(meeting.cloudRevision, 3)
+    }
 
     func testFirstSyncUploadsFinishedMeetingsOnly() async throws {
         let a = finished("Alpha")
@@ -740,6 +805,102 @@ extension CloudSyncEngineTests {
 
 @MainActor
 final class CloudSyncAppStateTests: XCTestCase {
+    func testTitleRulesAreLiteralAndPrivateModeWins() {
+        let rules = ["  ", " therapy ", "[private]"]
+        XCTAssertEqual(CloudExclusionPolicy.matchingRule(title: "THERAPY appointment", rules: rules), "therapy")
+        XCTAssertNil(CloudExclusionPolicy.matchingRule(title: "private sale", rules: rules))
+        XCTAssertNil(CloudExclusionPolicy.matchingRule(title: nil, rules: rules))
+        XCTAssertTrue(CloudExclusionPolicy.excluded(privateMode: true, title: nil, rules: []))
+        XCTAssertFalse(CloudExclusionPolicy.excluded(privateMode: false, title: nil, rules: rules))
+    }
+
+    func testRuleEditorTrimsRejectsDuplicatesAndShowsWhySaveIsUnavailable() {
+        let key = "cloud.exclusionTitleRules"
+        let previous = UserDefaults.standard.object(forKey: key)
+        defer { UserDefaults.standard.set(previous, forKey: key) }
+        let state = AppState()
+        state.cloudExclusionRules = []
+        XCTAssertNotNil(CloudRuleValidation.problem("  ", existing: []))
+        XCTAssertTrue(state.addCloudExclusionRule("  Therapy  "))
+        XCTAssertEqual(state.cloudExclusionRules, ["Therapy"])
+        XCTAssertFalse(state.addCloudExclusionRule("therapy"))
+        XCTAssertEqual(CloudRuleValidation.problem("therapy", existing: state.cloudExclusionRules), "That rule already exists.")
+        XCTAssertFalse(state.addCloudExclusionRule(String(repeating: "x", count: 121)))
+        XCTAssertNotNil(CloudRuleValidation.problem("new", existing: (0..<30).map(String.init)))
+    }
+
+    func testToolbarTogglePersistsAndOverridesLateRulesWithoutChangingOtherMeetings() throws {
+        let keys = ["privateMode", "cloud.exclusionTitleRules", "cloudSyncEnabled"]
+        let previous = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+        defer { for (key, value) in previous { UserDefaults.standard.set(value, forKey: key) } }
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState()
+        state.modelContext = container.mainContext
+        state.privateModeEnabled = false
+        state.cloudSyncEnabled = false
+        state.cloudExclusionRules = ["therapy"]
+        let meeting = Meeting(title: "Current")
+        let ordinary = Meeting(title: "Other")
+        container.mainContext.insert(meeting); container.mainContext.insert(ordinary)
+        state.currentMeeting = meeting
+        state.isRecording = true
+        state.toggleMeetingCloudStorage(meeting)
+        XCTAssertTrue(meeting.syncExcluded)
+        XCTAssertFalse(ordinary.syncExcluded)
+        XCTAssertEqual(state.meetingCloudFeedback?.message, "This meeting won't be synced to your cloud.")
+        state.toggleMeetingCloudStorage(meeting)
+        XCTAssertFalse(meeting.syncExcluded)
+        XCTAssertTrue(meeting.cloudRestoreRequested)
+        XCTAssertEqual(state.meetingCloudFeedback?.message, MeetingCloudPrivacyPresentation.uploadStatus(pause: .off))
+        state.selectedCalendarEvent = try JSONDecoder().decode(MinitiAPIService.CalendarEvent.self,
+            from: Data(#"{"id":"therapy-test","title":"Therapy session","start":"2026-10-29T09:00:00Z","end":"2026-10-29T09:30:00Z","attendees":[]}"#.utf8))
+        XCTAssertFalse(meeting.syncExcluded, "The explicit toolbar choice wins over a late calendar rule")
+        state.privateModeEnabled = true
+        meeting.syncExcluded = true
+        state.toggleMeetingCloudStorage(meeting)
+        XCTAssertTrue(meeting.syncExcluded, "A running private recording cannot be opted into cloud")
+        state.isRecording = false; state.currentMeeting = nil
+    }
+
+    func testSavedToolbarToggleQueuesDeletionAndNeverClaimsItAlreadyFinished() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState()
+        state.modelContext = container.mainContext
+        let meeting = Meeting(title: "Saved", startTime: Date(), endTime: Date())
+        meeting.cloudRevision = 3
+        container.mainContext.insert(meeting)
+        state.toggleMeetingCloudStorage(meeting)
+        XCTAssertTrue(meeting.syncExcluded)
+        XCTAssertEqual(try container.mainContext.fetch(FetchDescriptor<MeetingTombstone>()).first?.cloudRevision, 3)
+        XCTAssertTrue(state.meetingCloudFeedback?.message.contains("removal is pending") == true)
+        state.toggleMeetingCloudStorage(meeting)
+        XCTAssertFalse(meeting.syncExcluded)
+        XCTAssertTrue(meeting.cloudRestoreRequested)
+    }
+
+    func testRulesLatchBeforeCaptureAndLateAssociationOnlyAddsExclusionWithoutAnOverride() throws {
+        let keys = ["appMode", "deepgramApiKey", "hasAcceptedTerms", "acceptedTermsVersion", "declinedTermsVersion", "privateMode", "cloud.exclusionTitleRules"]
+        let previous = keys.map { ($0, UserDefaults.standard.object(forKey: $0)) }
+        defer { for (key, value) in previous { UserDefaults.standard.set(value, forKey: key) } }
+        let state = AppState()
+        state.appMode = .byok; state.deepgramApiKey = "test-only-no-transport"
+        state.audioCaptureService = nil; state.deepgramService = nil
+        state.privateModeEnabled = false; state.cloudExclusionRules = ["therapy"]
+        let event = try JSONDecoder().decode(MinitiAPIService.CalendarEvent.self,
+            from: Data(#"{"id":"therapy-test","title":"Therapy session","start":"2026-10-29T09:00:00Z","end":"2026-10-29T09:30:00Z","attendees":[]}"#.utf8))
+        state.hasAcceptedTerms = true
+        XCTAssertTrue(state.startMeetingFromEvent(event))
+        XCTAssertTrue(try XCTUnwrap(state.currentMeeting).syncExcluded, "Rule applies before capture or first save")
+        state.currentMeeting = nil
+        XCTAssertTrue(state.startNewMeeting())
+        XCTAssertFalse(try XCTUnwrap(state.currentMeeting).syncExcluded)
+        state.isRecording = true; state.selectedCalendarEvent = event
+        XCTAssertTrue(try XCTUnwrap(state.currentMeeting).syncExcluded)
+        state.cloudExclusionRules = []; state.selectedCalendarEvent = nil
+        XCTAssertTrue(try XCTUnwrap(state.currentMeeting).syncExcluded)
+        state.isRecording = false; state.isStartingMeeting = false; state.currentMeeting = nil
+    }
+
     func testPrivateModeSnapshotsTheSwitchAndPausesTheEngine() throws {
         let defaults = UserDefaults(suiteName: "CloudSyncAppStateTests-\(UUID().uuidString)")!
         let state = AppState()
@@ -818,5 +979,41 @@ final class CloudSyncAppStateTests: XCTestCase {
         state.noteMeetingDeleted(fresh)
         XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 2)
         state.cloudSyncEnabled = false
+    }
+}
+
+
+@MainActor
+final class CloudPrivacyAvailabilityTests: XCTestCase {
+    func testFinishedNeverSyncedMeetingDoesNotInventARemovalWhileCloudIsOffOrBYOK() throws {
+        let previous = UserDefaults.standard.object(forKey: "appMode")
+        let cloudBefore = UserDefaults.standard.object(forKey: "cloudSyncEnabled")
+        defer {
+            UserDefaults.standard.set(previous, forKey: "appMode")
+            UserDefaults.standard.set(cloudBefore, forKey: "cloudSyncEnabled")
+        }
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        let meeting = Meeting(title: "Never on cloud", startTime: Date(), endTime: Date())
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        for mode in [AppMode.managed, .byok] {
+            state.appMode = mode; state.cloudSyncEnabled = false
+            state.toggleMeetingCloudStorage(meeting)
+            XCTAssertTrue(meeting.syncExcluded)
+            XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<MeetingTombstone>()).isEmpty)
+            XCTAssertEqual(state.meetingCloudFeedback?.message, "This meeting won't be synced to your cloud.")
+            state.toggleMeetingCloudStorage(meeting)
+            XCTAssertFalse(meeting.syncExcluded)
+            XCTAssertEqual(state.meetingCloudFeedback?.message, MeetingCloudPrivacyPresentation.uploadStatus(pause: .off))
+        }
+    }
+
+    func testRemovalProtectionSurvivesCloudBeingDisabledDuringAnUpload() {
+        XCTAssertFalse(MeetingCloudPrivacyPresentation.needsRemoval(knownCopy: false, uploadInFlight: false, canSync: false, finished: true))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.needsRemoval(knownCopy: false, uploadInFlight: true, canSync: false, finished: true))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.needsRemoval(knownCopy: true, uploadInFlight: false, canSync: false, finished: true))
+        XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: .notManaged), "This meeting can sync with a managed Pro account.")
+        XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: .notPro), "This meeting can sync when this account has Pro.")
+        XCTAssertEqual(MeetingCloudPrivacyPresentation.uploadStatus(pause: nil), "Waiting to put on the cloud")
     }
 }

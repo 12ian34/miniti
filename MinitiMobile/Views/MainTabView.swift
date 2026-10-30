@@ -42,6 +42,7 @@ struct MainTabView: View {
             .onAppear {
                 appState.modelContext = modelContext
                 appState.resumeInterruptedMeeting()
+                if ScreenshotMode.isActive { ScreenshotMode.apply(to: appState) }
                 coachingOverviewStore.refreshIfNeeded(meetings: meetings)
             }
             .onChange(of: meetings.count) { _, _ in

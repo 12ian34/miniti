@@ -6,6 +6,7 @@ build/
 DerivedData/
 DerivedDataCoverage/
 DerivedDataLocal/
+DerivedDataLocal-iOS/
 *.xcuserstate
 *.xcuserdatad
 xcuserdata/
@@ -54,5 +55,7 @@ Miniti/Resources/NemotronDiarizer/
 # Internal, never public: plans, strategy, agent entry point, App Review notes
 # Internal docs are public since 3.0.0 except the financial model, the real-data eval report and the voice skill.
 docs/monetization.md
+docs/reference/monetization.md
 docs/jev-eval-report-2026-09-21.md
+docs/research/jev-eval-report-2026-09-21.md
 fastlane/metadata/app_review_notes.txt

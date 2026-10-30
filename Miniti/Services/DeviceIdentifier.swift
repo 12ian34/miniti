@@ -33,7 +33,7 @@ struct SecurityKeychainBackend: KeychainBackend {
 /// a provisioning profile; miniti's release build has none, so every write there fails with
 /// `errSecMissingEntitlement` (-34018) and reads answer "not found". 3.2.1 assumed the data
 /// protection keychain always worked, deleted the login-keychain device id before the new write
-/// and left every Mac on a fresh identity at the second launch (docs/distribution.md). So:
+/// and left every Mac on a fresh identity at the second launch (docs/reference/distribution.md). So:
 ///
 /// - reads try the data protection keychain, then (macOS) the login keychain;
 /// - a login-keychain item is moved only after the data protection add succeeded;
@@ -81,6 +81,7 @@ final class KeychainSlot: @unchecked Sendable {
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         let (status, data) = backend.copyMatching(query)
+        DiagnosticTimeline.shared.record(.keychainRead, fields: diagnosticFields(status: status, dataProtection: dataProtection))
         switch status {
         case errSecSuccess:
             guard let data else { return .unreadable(status) }
@@ -95,14 +96,26 @@ final class KeychainSlot: @unchecked Sendable {
     /// Update in place, add when absent. Returns the Security status of the attempt that decided.
     private func upsert(_ data: Data, dataProtection: Bool) -> OSStatus {
         let status = backend.update(query(dataProtection: dataProtection), [kSecValueData as String: data])
-        guard status == errSecItemNotFound else { return status }
+        guard status == errSecItemNotFound else {
+            DiagnosticTimeline.shared.record(.keychainWrite, fields: diagnosticFields(status: status, dataProtection: dataProtection))
+            return status
+        }
         var add = query(dataProtection: dataProtection)
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = accessible
-        return backend.add(add)
+        let result = backend.add(add)
+        DiagnosticTimeline.shared.record(.keychainWrite, fields: diagnosticFields(status: result, dataProtection: dataProtection))
+        return result
+    }
+
+    private func diagnosticFields(status: OSStatus, dataProtection: Bool) -> [String: String] {
+        ["item": service == "com.miniti.device-auth" ? "credential" : service == "com.miniti.device-id" ? "device_id" : "other",
+         "store": dataProtection ? "data_protection" : "login", "status": String(status),
+         "outcome": status == errSecSuccess ? "success" : status == errSecItemNotFound ? "missing" : "failed"]
     }
 
     private func noteUnavailable(_ status: OSStatus) {
+        DiagnosticTimeline.shared.record(.keychainFallback, fields: diagnosticFields(status: status, dataProtection: true))
         lock.lock(); defer { lock.unlock() }
         guard !loggedUnavailable else { return }
         loggedUnavailable = true

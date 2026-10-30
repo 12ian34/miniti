@@ -10,7 +10,7 @@ struct VoicePrintSuggestion: Equatable, Sendable {
 
 /// Voice prints (3.2.0): recognise the person using miniti and remembered attendees by voice
 /// across meetings. Everything runs on the on-device diarizer's slots; Deepgram's diarizer gives
-/// no embeddings, so with it in charge nothing here fires. See docs/voice-prints-plan.md.
+/// no embeddings, so with it in charge nothing here fires. See docs/archive/voice-prints-plan.md.
 extension AppState {
     /// Either print setting on, and the on-device diarizer selected.
     var voicePrintsWanted: Bool {
@@ -138,5 +138,39 @@ extension AppState {
         livePrintMatchedIDs = []
         livePrintSuggestions = [:]
         lastVoicePrintMatchAt = nil
+    }
+}
+
+/// Feature preference and model residency are different states. Never call enabled
+/// voice recognition "Off" just because its local-speaker dependency is unselected.
+enum VoiceModelStatusCopy {
+    static func text(yourVoice: Bool, rememberVoices: Bool, localSpeakers: Bool,
+                     hardwareSupported: Bool, status: VoicePrintEmbedderService.Status,
+                     isMac: Bool) -> String {
+        guard yourVoice || rememberVoices else { return "Off. Enable Your voice or Remember voices in Transcription." }
+        guard hardwareSupported else { return "Enabled, but local speaker separation is not supported on this device." }
+        guard localSpeakers else {
+            return "Enabled, waiting for Speakers to be set to \(isMac ? "This Mac" : "This device") in Transcription."
+        }
+        switch status {
+        case .idle: return "Enabled. The voice model is not loaded."
+        case .preparing: return "Enabled. Downloading the voice model (about 17 MB)."
+        case .ready: return "Enabled and ready."
+        case .failed(let message): return "Enabled, but the voice model could not load: \(message)"
+        }
+    }
+}
+
+extension AppState {
+    func voiceModelStatus(_ status: VoicePrintEmbedderService.Status) -> String {
+        #if os(macOS)
+        let isMac = true
+        #else
+        let isMac = false
+        #endif
+        return VoiceModelStatusCopy.text(yourVoice: voicePrintSelfEnabled, rememberVoices: voicePrintOthersEnabled,
+                                         localSpeakers: onDeviceSpeakerSeparationEnabled,
+                                         hardwareSupported: OnDeviceDiarizationService.isHardwareSupported,
+                                         status: status, isMac: isMac)
     }
 }

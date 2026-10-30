@@ -23,6 +23,26 @@ final class VoicePrintTests: XCTestCase {
         var v = [Float](repeating: 0, count: dims); v[i] = 1; return v
     }
 
+    func testVoiceModelStatusSeparatesEnabledPreferencesFromLoadedState() {
+        for choices in [(true, true), (true, false), (false, true)] {
+            let waiting = VoiceModelStatusCopy.text(yourVoice: choices.0, rememberVoices: choices.1,
+                localSpeakers: false, hardwareSupported: true, status: .idle, isMac: true)
+            XCTAssertEqual(waiting, "Enabled, waiting for Speakers to be set to This Mac in Transcription.")
+            for status in [VoicePrintEmbedderService.Status.idle, .preparing, .ready, .failed("test error")] {
+                let text = VoiceModelStatusCopy.text(yourVoice: choices.0, rememberVoices: choices.1,
+                    localSpeakers: true, hardwareSupported: true, status: status, isMac: false)
+                XCTAssertTrue(text.hasPrefix("Enabled"))
+                XCTAssertFalse(text.contains("Off"))
+            }
+        }
+        XCTAssertTrue(VoiceModelStatusCopy.text(yourVoice: false, rememberVoices: false,
+            localSpeakers: true, hardwareSupported: true, status: .ready, isMac: true).hasPrefix("Off."))
+        XCTAssertTrue(VoiceModelStatusCopy.text(yourVoice: true, rememberVoices: true,
+            localSpeakers: false, hardwareSupported: true, status: .idle, isMac: false).contains("This device"))
+        XCTAssertTrue(VoiceModelStatusCopy.text(yourVoice: true, rememberVoices: true,
+            localSpeakers: true, hardwareSupported: false, status: .idle, isMac: true).contains("not supported"))
+    }
+
     func testStoreRoundTripMergeCapAndDelete() {
         let store = VoicePrintStore(root: root)
         store.merge(key: VoicePrint.selfKey, displayName: "You", email: nil, vector: unit(0), speechSeconds: 30)

@@ -239,9 +239,13 @@ struct MeetingView_iOS: View {
                             .font(.system(size: 14, weight: .medium))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }
+                    if let meeting = appState.currentMeeting {
+                        MeetingCloudStorageButton(meeting: meeting)
+                    }
                 }
             }
         }
+        .meetingCloudFeedback(for: appState.currentMeeting?.id)
         .sheet(
             isPresented: Binding(
                 get: { appState.isZonedOutPresented },
@@ -947,6 +951,9 @@ struct ReadyStateView_iOS: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+        .safeAreaInset(edge: .bottom) {
+            HStack { Spacer(); HomeFeedbackButton() }.padding(.horizontal).padding(.vertical, 8)
+        }
         .onDisappear {
             if isMicTesting {
                 isMicTesting = false
@@ -1891,6 +1898,7 @@ private struct EventPrepSheet_iOS: View {
                 Text("Add anything you want surfaced when this meeting starts.")
                     .font(.caption)
                     .foregroundStyle(ColorPalette.Text.muted)
+
 
                 TextEditor(text: Binding(
                     get: { appState.prepNotes(for: event) },

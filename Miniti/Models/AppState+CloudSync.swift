@@ -1,5 +1,70 @@
 import Foundation
 import SwiftData
+
+enum CloudExclusionPolicy {
+    static func matchingRule(title: String?, rules: [String]) -> String? {
+        guard let title else { return nil }
+        return rules.lazy.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty && title.range(of: $0, options: [.caseInsensitive, .literal]) != nil }
+    }
+
+    static func excluded(privateMode: Bool, title: String?, rules: [String]) -> Bool {
+        if privateMode { return true }
+        return matchingRule(title: title, rules: rules) != nil
+    }
+}
+
+struct MeetingCloudFeedback: Identifiable {
+    let id = UUID()
+    let meetingID: UUID
+    let message: String
+}
+
+enum MeetingCloudPrivacyPresentation {
+    static func uploadStatus(pause: CloudSyncPause?) -> String {
+        switch pause {
+        case nil: return "Waiting to put on the cloud"
+        case .off: return "Cloud sync is off. This meeting can sync when you enable it."
+        case .notManaged: return "This meeting can sync with a managed Pro account."
+        case .notPro: return "This meeting can sync when this account has Pro."
+        case .notEnrolled, .deviceRemoved: return "Sign in to sync this meeting."
+        case .privateMode: return "Cloud sync is paused in private mode."
+        case .offline: return "Waiting for a connection to sync this meeting."
+        case .unavailable, .notAvailableYet: return "Cloud sync is currently unavailable."
+        }
+    }
+
+    static func needsRemoval(knownCopy: Bool, uploadInFlight: Bool, canSync: Bool, finished: Bool) -> Bool {
+        knownCopy || uploadInFlight || (canSync && finished)
+    }
+}
+
+enum CloudRuleValidation {
+    static func problem(_ input: String, existing: [String]) -> String? {
+        let rule = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if rule.isEmpty { return "Enter part of a calendar meeting title." }
+        if rule.count > 120 { return "Use 120 characters or fewer." }
+        if existing.contains(where: { $0.caseInsensitiveCompare(rule) == .orderedSame }) { return "That rule already exists." }
+        if existing.count >= 30 { return "You can keep up to 30 rules. Remove one to add another." }
+        return nil
+    }
+}
+
+extension AppState {
+    func cloudExclusionForNextMeeting(event: MinitiAPIService.CalendarEvent? = nil) -> Bool {
+        CloudExclusionPolicy.excluded(privateMode: privateModeEnabled, title: event?.title, rules: cloudExclusionRules)
+    }
+
+    func applyLateCalendarCloudExclusion() {
+        guard isRecording, activeMeetingCloudOverride == nil, let meeting = currentMeeting, !meeting.syncExcluded,
+              let event = selectedCalendarEvent,
+              CloudExclusionPolicy.excluded(privateMode: privateModeEnabled, title: event.title, rules: cloudExclusionRules) else { return }
+        // The row is still live and ineligible for upload. Persist the sticky decision
+        // through the same save path used by the History action, before finalisation.
+        if modelContext != nil { setMeetingExcludedFromCloud(meeting, excluded: true) }
+        else { meeting.syncExcluded = true }
+    }
+}
 #if os(macOS)
 import AppKit
 #else
@@ -210,19 +275,64 @@ extension AppState: CloudSyncHost {
 
     /// Per-meeting "Keep off the cloud". Turning it on removes the cloud copy; turning it off
     /// lets the next sync upload the meeting.
-    func setMeetingExcludedFromCloud(_ meeting: Meeting, excluded: Bool) {
-        guard !isMeetingDeleted(meeting.id), let modelContext else { return }
-        commit(.cloudSync, mutate: {
+    private func meetingMayHaveCloudCopy(_ meeting: Meeting) -> Bool {
+        MeetingCloudPrivacyPresentation.needsRemoval(
+            knownCopy: meeting.cloudRevision > 0 || meeting.syncedAt != nil || meeting.syncFingerprint != nil
+                || cloudFetchTombstones()?.contains(where: { $0.id == meeting.id }) == true,
+            uploadInFlight: cloudSync.isUploading(meeting.id), canSync: cloudPauseReason == nil,
+            finished: meeting.endTime != nil)
+    }
+
+    @discardableResult
+    func setMeetingExcludedFromCloud(_ meeting: Meeting, excluded: Bool) -> Bool {
+        guard !isMeetingDeleted(meeting.id), let modelContext else { return false }
+        if currentMeeting?.id == meeting.id { activeMeetingCloudOverride = excluded }
+        let needsRemoval = excluded && meetingMayHaveCloudCopy(meeting)
+        let saved = commit(.cloudSync, mutate: {
             meeting.syncExcluded = excluded
-            if excluded, meeting.cloudRevision > 0 {
-                modelContext.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
+            meeting.cloudRestoreRequested = !excluded
+            if needsRemoval {
+                if let pending = self.cloudFetchTombstones()?.first(where: { $0.id == meeting.id }) {
+                    pending.cloudRevision = max(pending.cloudRevision, meeting.cloudRevision)
+                } else {
+                    modelContext.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
+                }
                 meeting.cloudRevision = 0
                 meeting.syncFingerprint = nil
                 meeting.syncedAt = nil
             }
             if !excluded { meeting.syncFingerprint = nil }
         })
+        DiagnosticTimeline.shared.record(.cloudChoice, fields: ["excluded": String(excluded), "reason": "manual", "outcome": saved ? "success" : "failed"])
         cloudSync.noteLocalChange()
+        return saved
+    }
+
+    func toggleMeetingCloudStorage(_ meeting: Meeting) {
+        if currentMeeting?.id == meeting.id, privateModeEnabled, privateModeLocked { return }
+        let excluded = !meeting.syncExcluded
+        let hadCloudCopy = meetingMayHaveCloudCopy(meeting)
+        let saved = setMeetingExcludedFromCloud(meeting, excluded: excluded)
+        let message: String
+        if !saved {
+            message = "This change could not be saved. Try again."
+        } else if excluded {
+            message = hadCloudCopy
+                ? "This meeting won't be synced to your cloud. Cloud copy removal is pending."
+                : "This meeting won't be synced to your cloud."
+        } else if cloudPauseReason != nil {
+            message = MeetingCloudPrivacyPresentation.uploadStatus(pause: cloudPauseReason)
+        } else {
+            message = "This meeting will be saved to the cloud."
+        }
+        meetingCloudFeedback = MeetingCloudFeedback(meetingID: meeting.id, message: message)
+    }
+
+    @discardableResult
+    func addCloudExclusionRule(_ input: String) -> Bool {
+        guard CloudRuleValidation.problem(input, existing: cloudExclusionRules) == nil else { return false }
+        cloudExclusionRules.append(input.trimmingCharacters(in: .whitespacesAndNewlines))
+        return true
     }
 
     /// "Delete cloud copy": every meeting, token and connected app on the server. Local
@@ -373,7 +483,7 @@ extension AppState {
     }
 }
 
-// MARK: - Account email (B6a, docs/account-sending-consent-ux-plan.md)
+// MARK: - Account email (B6a, docs/archive/account-sending-consent-ux-plan.md)
 
 /// The addresses on the account as the server returns them: the verified one, and a
 /// replacement awaiting its link. Both can be set at once; "protected by email" means

@@ -13,7 +13,7 @@ The authoritative runbook is [`RELEASE.md`](../../../RELEASE.md) at the repo roo
 For deeper context:
 
 - Per-lane detail → [`fastlane/RUNBOOK.md`](../../../fastlane/RUNBOOK.md)
-- Sparkle / notarization / postmortems → [`docs/distribution.md`](../../../docs/distribution.md)
+- Sparkle / notarization / postmortems → [`docs/reference/distribution.md`](../../../docs/reference/distribution.md)
 
 ## Prerequisites (both platforms)
 
@@ -134,14 +134,14 @@ Product → Archive → Distribute App → App Store Connect → Upload.
 
 ## Key safety rules
 
-- **Never ship if `release-info.sh` shows `[FAIL] app-sandbox entitlement MISSING`.** That's the v1.24.0 regression that wiped history for every user — see postmortem in [`docs/distribution.md`](../../../docs/distribution.md).
+- **Never ship if `release-info.sh` shows `[FAIL] app-sandbox entitlement MISSING`.** That's the v1.24.0 regression that wiped history for every user — see postmortem in [`docs/reference/distribution.md`](../../../docs/reference/distribution.md).
 - **Never overwrite a versioned Netlify blob** (`miniti-X.Y.Z.dmg`) after release. Sparkle pins the signature to the exact bytes at that URL.
 - **Never call `codesign --force --sign` on a bundle with entitlements without passing `--entitlements`** — silently strips them.
 
 ## Reference
 
 - `RELEASE.md` — full 10-step checklist
-- `docs/distribution.md` — Sparkle internals, key management, postmortems
+- `docs/reference/distribution.md` — Sparkle internals, key management, postmortems
 - `fastlane/RUNBOOK.md` — detailed lane behaviour and parameters
 - `scripts/build-dmg.sh` — requires `create-dmg` (auto-installed via Homebrew)
 - `scripts/release-info.sh` — post-build sanity checks + appcast values

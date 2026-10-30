@@ -466,6 +466,8 @@ struct MainWindow: View {
         didInitialize = true
         appState.modelContext = modelContext
         appState.resumeInterruptedMeeting()
+        // AppState can initialize before the seeded screenshot store. Apply after wiring it.
+        if ScreenshotMode.isActive { ScreenshotMode.apply(to: appState) }
         navigationHistory = MainNavigationHistory(current: currentNavigationDestination)
         setupNavigationHandlers()
     }
@@ -1465,6 +1467,10 @@ struct SidebarHistoryItem: View {
                         }
                     }
 
+                    if meeting.syncExcluded || meeting.cloudRestoreRequested {
+                        MeetingCloudPrivacyStatus(meeting: meeting, engine: appState.cloudSync)
+                    }
+
                     // Match snippet
                     if let snippet = matchSnippet, let query = searchQuery, !query.isEmpty {
                         highlightedText(
@@ -1584,7 +1590,7 @@ struct SidebarHistoryItem: View {
         }
         .contextMenu {
             Button(meeting.isPinned ? "Unpin meeting" : "Pin meeting", action: onTogglePin)
-            if appState.cloudSyncEnabled && meeting.endTime != nil {
+            if meeting.endTime != nil {
                 Button(meeting.syncExcluded ? "Put on the cloud" : "Keep off the cloud") {
                     appState.setMeetingExcludedFromCloud(meeting, excluded: !meeting.syncExcluded)
                 }
@@ -1778,7 +1784,10 @@ struct MeetingDetailView: View {
             }
             .padding(16)
             .background(Theme.bgSecondary)
-            
+
+            MeetingCloudPrivacyStatus(meeting: meeting, engine: appState.cloudSync, showsChoice: false)
+                .padding(.horizontal, 16)
+
             GradientDivider()
             
             // Side by side content
@@ -1848,6 +1857,7 @@ struct MeetingDetailView: View {
             }
         }
         .background(Theme.bg)
+        .meetingCloudFeedback(for: meeting.id)
         .onDisappear {
             saveTitle()
         }
@@ -2063,6 +2073,7 @@ struct MeetingDetailView: View {
                 .help("Send meeting to Twenty")
                 .accessibilityLabel("Send meeting to Twenty")
             }
+            MeetingCloudStorageButton(meeting: meeting)
         }
         .fixedSize(horizontal: true, vertical: false)
     }

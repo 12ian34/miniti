@@ -508,9 +508,9 @@ enum ScreenshotFixtures {
             return (formatter.string(from: start), formatter.string(from: end))
         }
         let events: [(String, Int, Int, [(String, String)])] = [
-            ("Halcyon Labs — pricing follow-up", 45, 45, [("priya@halcyonlabs.io", "Priya Raman"), ("marcus@halcyonlabs.io", "Marcus Lee")]),
+            ("Halcyon Labs: pricing follow-up", 45, 45, [("priya@halcyonlabs.io", "Priya Raman"), ("marcus@halcyonlabs.io", "Marcus Lee")]),
             ("Design sync: onboarding flow", 135, 30, [("sofia@fernwood.co", "Sofia Alvarez")]),
-            ("Customer interview — Fernwood Analytics", 24 * 60 + 60, 30, [("daniel@fernwood.co", "Daniel Okafor")]),
+            ("Customer interview: Fernwood Analytics", 24 * 60 + 60, 30, [("daniel@fernwood.co", "Daniel Okafor")]),
             ("Weekly pipeline review", 48 * 60 + 15, 30, [("lena@brightharbor.com", "Lena Fischer")]),
             ("1:1 with Marcus", 72 * 60, 30, [("marcus@halcyonlabs.io", "Marcus Lee")]),
         ]
@@ -621,7 +621,7 @@ enum ScreenshotFixtures {
         // The live discovery call, in progress right now.
         let live = Meeting(
             id: ScreenshotMode.liveMeetingID,
-            title: "Halcyon Labs — discovery call",
+            title: "Halcyon Labs: discovery call",
             startTime: now.addingTimeInterval(-liveDuration),
             segments: segments(liveTranscript),
             summaryText: "Halcyon Labs is replacing a homegrown call-notes process for a 40-person sales team. Priya (VP Revenue) owns the budget and wants live summaries their reps will actually read; Marcus (RevOps) needs Attio sync without a Zapier chain. They are piloting with six reps this month and want a decision before their Q4 kickoff.",
@@ -642,12 +642,12 @@ enum ScreenshotFixtures {
             notes: "Priya mentioned their kickoff is the second week of October.\nMarcus is the one who will run the pilot day to day.",
             insightsUpdatedAt: now.addingTimeInterval(-90),
             meddpiccMetrics: "Reps lose roughly 40 minutes a day on manual notes; target is same-day CRM updates for every call",
-            meddpiccEconomicBuyer: "Priya Raman, VP Revenue — owns the tooling budget, CFO sign-off needed above $20k a year",
+            meddpiccEconomicBuyer: "Priya Raman, VP Revenue, owns the tooling budget, CFO sign-off needed above $20k a year",
             meddpiccDecisionCriteria: "Rep adoption during the pilot, Attio sync quality, security review, and price per seat",
             meddpiccDecisionProcess: "Six-rep pilot through month end, then a go or no-go with Priya before the Q4 kickoff",
             meddpiccPaperProcess: "Standard MSA plus a security questionnaire from their IT lead",
             meddpiccIdentifiedPain: "CRM notes arrive a day late and managers cannot see what happened on calls",
-            meddpiccChampion: "Marcus Lee, RevOps — running the pilot and pushing for a native Attio integration",
+            meddpiccChampion: "Marcus Lee, RevOps, running the pilot and pushing for a native Attio integration",
             meddpiccCompetition: "Staying on the current homegrown process; a generic notetaker evaluated last year"
         )
         live.language = "en"
@@ -667,7 +667,7 @@ enum ScreenshotFixtures {
         // Saved meetings for History, Coaching, and the detail screen.
         let saved = Meeting(
             id: ScreenshotMode.savedMeetingID,
-            title: "Halcyon Labs — technical deep dive",
+            title: "Halcyon Labs: technical deep dive",
             startTime: day(1, 14, 0),
             endTime: day(1, 14, 47),
             segments: segments(deepDiveTranscript),
@@ -717,7 +717,7 @@ enum ScreenshotFixtures {
              ["Draft the weekly digest format", "Enable automatic task creation for the pilot reps"],
              ["pilot", "digest", "tasks"],
              ["0": "Marcus Lee"], false),
-            ("Customer interview — Fernwood Analytics", day(4, 11, 0), 34, interviewTranscript,
+            ("Customer interview: Fernwood Analytics", day(4, 11, 0), 34, interviewTranscript,
              "Daniel runs a nine-person analytics consultancy and records every client call. He wants coaching feedback for junior consultants and a way to hand a summary to the client the same day. Price is not the main concern; trust in the transcript is.",
              ["Send Daniel the coaching overview walkthrough", "Follow up on the same-day client summary export"],
              ["coaching", "consultancy", "client summaries"],
@@ -732,7 +732,7 @@ enum ScreenshotFixtures {
              ["Finalize the board deck by Monday", "Pull the pilot conversion numbers for the last two quarters"],
              ["board", "hiring", "revenue"],
              ["0": "Lena Fischer"], false),
-            ("Vendor call — data warehouse", day(13, 10, 0), 29, vendorTranscript,
+            ("Vendor call: data warehouse", day(13, 10, 0), 29, vendorTranscript,
              "Evaluated moving analytics into a managed warehouse. The vendor's pricing scales with rows scanned, which makes the transcript tables expensive; they will send a quote with a flat tier.",
              ["Wait for the flat-tier quote", "Estimate monthly rows scanned for transcripts"],
              ["warehouse", "pricing", "analytics"],

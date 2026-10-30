@@ -19,7 +19,15 @@ extension Notification.Name {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     static let mainWindowIdentifier = NSUserInterfaceItemIdentifier("miniti.main-window")
     private static let lifecycleLogger = Logger(subsystem: "com.miniti.app", category: "window-lifecycle")
-    weak var appState: AppState?
+    weak var appState: AppState? {
+        didSet {
+            if let pendingPurchaseReturn, let appState {
+                self.pendingPurchaseReturn = nil
+                appState.handlePurchaseReturn(pendingPurchaseReturn)
+            }
+        }
+    }
+    private var pendingPurchaseReturn: URL?
     var openMainWindow: (() -> Void)?
     private var isTerminationReplyPending = false
     private var terminationTimeoutTask: Task<Void, Never>?
@@ -51,6 +59,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     func application(_ application: NSApplication, open urls: [URL]) {
         for url in urls {
             let scheme = url.scheme?.lowercased() ?? ""
+            if scheme == "miniti-billing", PurchaseReturnController.checkoutID(from: url) != nil {
+                if let appState { appState.handlePurchaseReturn(url) }
+                else { pendingPurchaseReturn = url }
+                openOrRestoreMainWindow()
+                NSApp.activate(ignoringOtherApps: true)
+                continue
+            }
             guard ["miniti-google", "miniti-attio", "miniti-twenty", "miniti-cloud"].contains(scheme) else { continue }
             let notificationName: Notification.Name
             switch scheme {

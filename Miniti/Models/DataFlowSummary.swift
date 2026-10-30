@@ -8,7 +8,7 @@ import UIKit
 /// value type: `AppState` fills in `Inputs`, the views render `groups`, `notInUse`, `headline`
 /// and `footer`, and the tests cover the rules without an `AppState`.
 ///
-/// Rules (U1, docs/account-sending-consent-ux-plan.md): every row names one recipient, one
+/// Rules (U1, docs/archive/account-sending-consent-ux-plan.md): every row names one recipient, one
 /// status word the model decides, one line of what is sent and why, optional details, and at
 /// most one way to the setting that decides it. The status describes routing, never live
 /// traffic. No sentence claims that a meeting "stays on this device": local transcription is
@@ -269,7 +269,7 @@ struct DataFlowSummary: Equatable {
                 status = .paused(i.cloudPause!.lowercased())
                 summary = "Cloud is paused; nothing uploads until it resumes."
             }
-            rows.append(Row(id: "cloud", group: .syncAndExports, title: "miniti cloud", status: status, summary: summary, details: "Pro only. The switch belongs to the account. Each meeting can be kept off the cloud, or put on it later. A meeting recorded in private mode stays off unless you put it on.", configure: Jump(label: "Cloud", target: "cloud.sync")))
+            rows.append(Row(id: "cloud", group: .syncAndExports, title: "miniti cloud", status: status, summary: summary, details: "Pro only. The switch belongs to the account. Choose Cloud or Local in a live or saved meeting, or use title rules in Cloud settings on this device. A meeting recorded in private mode stays off unless you put it on.", configure: Jump(label: "Cloud", target: "cloud.sync")))
         }
 
         // Webhook.
@@ -403,7 +403,7 @@ struct DataFlowRowsView<Configure: View>: View {
 
     var body: some View {
         let summary = DataFlowSummary.build(appState.dataFlowInputs)
-        Section {
+        Section("What leaves this device") {
             Label(summary.headline, systemImage: appState.isRecording ? "record.circle" : "arrow.up.right")
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -516,5 +516,49 @@ extension View {
         #else
         self.buttonStyle(.borderless)
         #endif
+    }
+}
+
+/// The permission the first screen asked for, with the way to withdraw it or give it later.
+struct ThirdPartyAIConsentRow: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var showingConsent = false
+
+    var body: some View {
+        HStack {
+            Text("Sending meetings")
+            Spacer()
+            Text(appState.hasAcceptedTerms ? "allowed" : "not allowed")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        Text(appState.hasAcceptedTerms
+             ? "When you use these services, Deepgram receives live audio, the meeting title and attendee names for transcription. OpenAI receives the transcript, your notes, the meeting title and attendee names for summaries, action items, questions and speaker names. On the managed plan, text goes to OpenAI through miniti."
+             : "You have not allowed Deepgram transcription or OpenAI meeting insights. Recording asks for permission again. You can still read, import and export your meetings.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        if appState.hasAcceptedTerms {
+            Button("Withdraw permission") {
+                appState.setThirdPartyAIConsent(false)
+            }
+            .disabled(appState.isRecording)
+            if appState.isRecording {
+                Text("Stop the recording first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Button("Allow…") {
+                showingConsent = true
+            }
+            .sheet(isPresented: $showingConsent) {
+                TermsAcceptanceView(presentation: .sheet)
+                    #if os(macOS)
+                    .frame(width: 560, height: 520)
+                    #else
+                    .preferredColorScheme(.dark)
+                    #endif
+            }
+        }
     }
 }

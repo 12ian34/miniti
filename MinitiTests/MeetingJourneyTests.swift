@@ -9,7 +9,7 @@ import XCTest
 
 /// Roadmap P0.6: the user journeys the UI depends on, driven at the `AppState` level with an
 /// in-memory store and a stubbed backend. Audio capture and the Deepgram socket are the
-/// manual boundary (see docs/testing.md); everything after "final segments arrived" runs here.
+/// manual boundary (see docs/reference/testing.md); everything after "final segments arrived" runs here.
 @MainActor
 final class MeetingJourneyTests: XCTestCase {
     private var container: ModelContainer!

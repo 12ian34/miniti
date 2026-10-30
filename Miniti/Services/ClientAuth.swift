@@ -11,7 +11,7 @@ import Security
 // tokens bound to the key's thumbprint; every write carries an ES256 proof.
 //
 // Contract: ../miniti-api/docs/agents/04-api-reference.md § "Device-bound client
-// authorization". Design: docs/roadmap.md P0.1. The Linux app (src-tauri/src/auth) is
+// authorization". Design: docs/reference/accounts.md. The Linux app (src-tauri/src/auth) is
 // the reference implementation; the cross-language vectors live in the backend's
 // test/fixtures/client-auth-vectors.json and are mirrored in ClientAuthTests.
 
@@ -481,7 +481,7 @@ struct ClientAuthDeviceList: Decodable, Sendable {
 /// Where credentials live. Keychain in the app; an in-memory store in tests.
 /// What a `load()` could not deliver. Absence (`.missing`) is not a diagnostic: it is the
 /// normal first-use state. These two are the cases that today look like absence to the
-/// rest of the app and must not (docs/enrollment-identity-plan.md, fragilities 1 and 2).
+/// rest of the app and must not (docs/archive/enrollment-identity-plan.md, fragilities 1 and 2).
 enum ClientAuthStoreDiagnostic: Equatable, Sendable {
     /// The Keychain answered something other than "found" or "not found" (locked, denied, prompting).
     case unreadable(status: OSStatus)
@@ -738,6 +738,8 @@ final class ClientAuthManager: @unchecked Sendable {
         self.keyLoader = keyLoader
         self.defaults = defaults
         self.credentials = store.load()
+        if self.credentials != nil { DiagnosticTimeline.shared.record(.credentialLoaded) }
+        else if store.lastLoadDiagnostic == nil { DiagnosticTimeline.shared.record(.credentialMissing) }
         reportLoadDiagnostic(phase: "launch")
         reconcileDeviceIdentity()
     }
@@ -758,6 +760,7 @@ final class ClientAuthManager: @unchecked Sendable {
     /// Raise an event. Deduplicated per process on name plus details, so a retry loop does
     /// not flood the queue. The sink is never called while `lock` is held.
     private func emit(_ name: String, level: MinitiAPIService.ClientEventPayload.EventLevel, details: [String: String] = [:]) {
+        if let code = DiagnosticTimeline.Code(rawValue: name) { DiagnosticTimeline.shared.record(code, fields: details) }
         let event = ClientAuthEvent(name: name, level: level, details: details)
         let key = name + "|" + details.keys.sorted().map { "\($0)=\(details[$0] ?? "")" }.joined(separator: ",")
         lock.lock()
@@ -935,7 +938,9 @@ final class ClientAuthManager: @unchecked Sendable {
         if case .success(let key) = loaded { cachedKey = key }
         lock.unlock()
         switch loaded {
-        case .success(let key): return key
+        case .success(let key):
+            DiagnosticTimeline.shared.record(.keyLoaded, fields: ["key_kind": key.isHardwareBacked ? "enclave" : "software"])
+            return key
         case .failure(let error): throw keyFailure(InstallationKeyFailure.classify(loadError: error), phase: "load")
         }
     }
@@ -947,13 +952,22 @@ final class ClientAuthManager: @unchecked Sendable {
         switch failure {
         case .unusable(let reason):
             if !hasRecovery { lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock() }
-            emit("client_auth_key_unusable", level: .error, details: ["reason": reason, "phase": phase, "recovery": hasRecovery ? "yes" : "no"])
+            emit("client_auth_key_unusable", level: .error, details: Self.keyFailureDetails(reason: reason, phase: phase, recovery: hasRecovery))
             return .keyUnusable
         case .temporary(let reason):
             noteTemporaryKeyFailure()
-            emit("client_auth_key_unavailable", level: .warning, details: ["reason": reason, "phase": phase])
+            emit("client_auth_key_unavailable", level: .warning, details: Self.keyFailureDetails(reason: reason, phase: phase, recovery: hasRecovery))
             return .keyUnavailable(reason)
         }
+    }
+
+    private static func keyFailureDetails(reason: String, phase: String, recovery: Bool) -> [String: String] {
+        var details = ["phase": phase, "recovery": recovery ? "yes" : "no"]
+        let parts = reason.split(separator: ":")
+        if parts.count == 3, let code = Int(parts[2]) {
+            details["error_domain"] = String(parts[1]); details["error_code"] = String(code)
+        }
+        return details
     }
 
     /// Whether `installationID` names this installation (the Devices row's own entry).
@@ -961,7 +975,7 @@ final class ClientAuthManager: @unchecked Sendable {
         deviceIDProvider().lowercased() == installationID.lowercased()
     }
 
-    // MARK: Signing probe (F3, docs/account-sending-consent-ux-plan.md)
+    // MARK: Signing probe (F3, docs/archive/account-sending-consent-ux-plan.md)
 
     /// Local key-usability check behind Try again: load the stored key and sign a labelled
     /// probe through the same classification as a real signature. No request leaves, no token
@@ -1023,7 +1037,8 @@ final class ClientAuthManager: @unchecked Sendable {
         do {
             let value = try body()
             clearTemporaryKeyFailures()
-            lock.lock(); keyFailureActive = false; lock.unlock()
+            lock.lock(); let recovered = keyFailureActive; keyFailureActive = false; lock.unlock()
+            if recovered { DiagnosticTimeline.shared.record(.signingRecovered) }
             return value
         } catch let error as ClientAuthError {
             throw error
@@ -1085,7 +1100,18 @@ final class ClientAuthManager: @unchecked Sendable {
         guard credentialEpoch == generation else { throw ClientAuthError.notEnrolled }
         let task = Task<Int, Error> { [self] in
             defer { lock.lock(); repairTask = nil; lock.unlock() }
-            return try await performRepair(expecting: generation)
+            let attempt = UUID().uuidString
+            emit("client_auth_repair_attempt", level: .info, details: ["attempt_id": attempt])
+            do {
+                let replacement = try await performRepair(expecting: generation)
+                emit("client_auth_repair_outcome", level: .info, details: ["attempt_id": attempt, "outcome": "success"])
+                return replacement
+            } catch {
+                let stale = lock.withLock { credentialEpoch != generation }
+                let ns = error as NSError
+                emit("client_auth_repair_outcome", level: .warning, details: ["attempt_id": attempt, "outcome": stale ? "stale" : "failed", "error_domain": ns.domain, "error_code": String(ns.code)])
+                throw error
+            }
         }
         repairTask = task
         repairGeneration = generation
@@ -1144,6 +1170,7 @@ final class ClientAuthManager: @unchecked Sendable {
     private func commit(_ newValue: ClientAuthCredentials, expectedEpoch: Int, replaces: Bool) throws -> Int {
         lock.lock(); defer { lock.unlock() }
         guard credentialEpoch == expectedEpoch else {
+            DiagnosticTimeline.shared.record(.credentialStale)
             DebugLogger.shared.log(.app, "Device auth: a credential write finished after a sign-out or replacement; discarded")
             throw ClientAuthError.notEnrolled
         }
@@ -1186,6 +1213,7 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard var value = credentials else { return false }
         if let expectedEpoch, expectedEpoch != credentialEpoch {
+            DiagnosticTimeline.shared.record(.credentialStale)
             DebugLogger.shared.log(.app, "Device auth: a credential update finished after a sign-out or replacement; discarded")
             return false
         }
@@ -1249,6 +1277,36 @@ final class ClientAuthManager: @unchecked Sendable {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
     }
 
+    private static func diagnosticPhase(_ path: String) -> String {
+        switch path {
+        case "/auth/token", "/auth/challenge": return "refresh"
+        case "/auth/account/create": return "create"
+        case "/auth/migrate": return "migrate"
+        case "/auth/account/restore": return "restore"
+        case "/auth/account/attach": return "attach"
+        case "/auth/account/recovery-key/rotate": return "rotate"
+        case "/auth/revoke": return "sign_out"
+        case "/auth/account": return "delete"
+        default: return "read"
+        }
+    }
+
+    private static func diagnosticServerCode(_ error: ClientAuthError) -> String {
+        switch error {
+        case .server(let code, _): return DiagnosticTimeline.sanitize(["server_code": code])["server_code"] ?? "unknown"
+        case .revoked: return "installation_revoked"
+        case .notEnrolled: return "not_enrolled"
+        case .deviceAlreadyEnrolled: return "device_already_enrolled"
+        case .deviceCapReached: return "device_cap_reached"
+        case .subscriptionConflict: return "subscription_conflict"
+        case .invalidRecoveryKey: return "invalid_recovery_key"
+        case .recoveryKeyUnknown: return "recovery_key_unknown"
+        case .notEligibleForMigration: return "device_not_eligible"
+        case .rateLimited: return "rate_limited"
+        default: return "unknown"
+        }
+    }
+
     private func mapError(status: Int, data: Data) -> ClientAuthError {
         let body = try? JSONDecoder().decode(ErrorBody.self, from: data)
         let code = body?.error ?? ""
@@ -1278,12 +1336,14 @@ final class ClientAuthManager: @unchecked Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            DiagnosticTimeline.shared.record(.authRefused, fields: DiagnosticTimeline.errorFields(error).merging(["phase": Self.diagnosticPhase(path)]) { _, new in new })
             throw ClientAuthError.network(error.localizedDescription)
         }
         noteServerDate(response)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else {
             let mapped = mapError(status: status, data: data)
+            DiagnosticTimeline.shared.record(.authRefused, fields: ["phase": Self.diagnosticPhase(path), "status": String(status), "server_code": Self.diagnosticServerCode(mapped)])
             DebugLogger.shared.log(.app, "Device auth \(path) failed: status=\(status) error=\(mapped)")
             throw mapped
         }
@@ -1350,6 +1410,7 @@ final class ClientAuthManager: @unchecked Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            DiagnosticTimeline.shared.record(.authRefused, fields: DiagnosticTimeline.errorFields(error).merging(["phase": "read"]) { _, new in new })
             throw ClientAuthError.network(error.localizedDescription)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
@@ -1575,6 +1636,10 @@ final class ClientAuthManager: @unchecked Sendable {
             return token
         }
         guard let (snapshotCredentials, epoch) = snapshot() else { throw ClientAuthError.notEnrolled }
+        let diagnosticID = UUID().uuidString
+        var refreshed = false
+        DiagnosticTimeline.shared.record(.refreshStarted, fields: ["attempt_id": diagnosticID])
+        defer { DiagnosticTimeline.shared.record(refreshed ? .refreshSucceeded : .refreshFailed, fields: ["attempt_id": diagnosticID]) }
         let refreshToken: String? = snapshotCredentials.refreshToken
         do {
             let tokens: TokenResponse
@@ -1597,6 +1662,7 @@ final class ClientAuthManager: @unchecked Sendable {
             // Signed out, revoked or replaced while the grant was in flight: the token belongs
             // to a credential this device no longer holds, so it is not a usable result.
             guard written else { throw ClientAuthError.notEnrolled }
+            refreshed = true
             return tokens.accessToken
         } catch ClientAuthError.revoked {
             // Only the credential that was refused is cleared; a newer one stays.
@@ -1609,6 +1675,7 @@ final class ClientAuthManager: @unchecked Sendable {
             // credential this refresh started with, never one enrolled since.
             let replacement = try await repairUnusableKey(expecting: epoch)
             guard let (repaired, generation) = snapshot(), generation == replacement, let token = repaired.accessToken else { throw ClientAuthError.notEnrolled }
+            refreshed = true
             return token
         }
     }
@@ -1736,12 +1803,14 @@ final class ClientAuthManager: @unchecked Sendable {
         do {
             (data, response) = try await session.data(for: request)
         } catch {
+            DiagnosticTimeline.shared.record(.authRefused, fields: DiagnosticTimeline.errorFields(error).merging(["phase": Self.diagnosticPhase(path)]) { _, new in new })
             throw ClientAuthError.network(error.localizedDescription)
         }
         noteServerDate(response)
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else {
             let mapped = mapError(status: status, data: data)
+            DiagnosticTimeline.shared.record(.authRefused, fields: ["phase": Self.diagnosticPhase(path), "status": String(status), "server_code": Self.diagnosticServerCode(mapped)])
             if case .revoked = mapped {
                 guard clearLocal(reason: "revoke", ifGeneration: generation) else { throw ClientAuthError.notEnrolled }
             }
@@ -1873,7 +1942,7 @@ final class ClientAuthManager: @unchecked Sendable {
 // MARK: - Enrollment policy
 
 /// The managed enrollment policy, moved out of `AppState` so it can be tested without a host
-/// app (docs/enrollment-identity-plan.md, A2). Behaviour is the 3.3.0 `AppState` policy
+/// app (docs/archive/enrollment-identity-plan.md, A2). Behaviour is the 3.3.0 `AppState` policy
 /// ported line for line: enrolled → nothing to do; device id session-only → defer; migrate,
 /// then create on `notEligibleForMigration` or `deviceAlreadyEnrolled`; concurrent callers
 /// share one attempt; a failure is remembered and the next trigger retries. The screenshot

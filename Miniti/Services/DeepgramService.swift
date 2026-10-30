@@ -562,6 +562,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// handshake, and the endpoint can point at a local server. Production leaves both alone.
     var sessionConfiguration: URLSessionConfiguration = .default
     var endpointURL = URL(string: "wss://api.deepgram.com/v1/listen")!
+    var socketStarter: (URLSessionWebSocketTask) -> Void = { $0.resume() }
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
@@ -569,6 +570,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     private var authorizationScheme: DeepgramAuthorizationScheme = .token
     private var isConnected = false
     private var connectionGeneration: UInt64 = 0
+    private var initialConnectionTimeout: Task<Void, Never>?
+    var connectionTimeoutSeconds: TimeInterval = 12
+    private(set) var initialConnectionFailure: DeepgramInitialFailure?
     
     // Concurrent-safe references for sendAudio (avoids main actor hop per buffer).
     // Written from @MainActor (connect/disconnect), read from audio thread (sendAudio).
@@ -786,6 +790,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         finalTranscriptCount = 0
         emptyTranscriptCount = 0
         lastTranscriptAt = 0
+        lastSpeechStartedAt = 0
     }
     
     var lastTranscriptTimestamp: CFAbsoluteTime {
@@ -835,6 +840,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             "Connecting with language=\(language), keyterms=\(keyterms.count), replaces=\(replaceItems.count), channels=\(channelCount), multichannel=\(multichannel)"
         )
         connectionState = .connecting
+        initialConnectionFailure = nil
         speakerHistory = [:]
         confirmedSpeakerIDs = []
         pendingSpeakerEvidence = [:]
@@ -879,10 +885,18 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         
         urlSession = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: OperationQueue.main)
         webSocketTask = urlSession?.webSocketTask(with: request)
-        webSocketTask?.resume()
+        connectionGeneration &+= 1
+        let generation = connectionGeneration
+        initialConnectionTimeout?.cancel()
+        initialConnectionTimeout = Task { [weak self] in
+            guard let self else { return }
+            do { try await Task.sleep(nanoseconds: UInt64(self.connectionTimeoutSeconds * 1_000_000_000)) } catch { return }
+            guard generation == self.connectionGeneration, let task = self.webSocketTask else { return }
+            self.failInitialConnection(task: task, failure: .timeout)
+        }
+        if let webSocketTask { socketStarter(webSocketTask) }
         DebugLogger.shared.log(.deepgram, "WebSocket resume requested")
         
-        connectionGeneration &+= 1
         receiveMessages(generation: connectionGeneration)
     }
     
@@ -973,6 +987,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     }
 
     func disconnect() {
+        initialConnectionTimeout?.cancel(); initialConnectionTimeout = nil
         connectionGeneration &+= 1
         let mbSent = Double(audioBytesSent) / (1024.0 * 1024.0)
         DebugLogger.shared.log(
@@ -1213,6 +1228,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                     self.receiveMessages(generation: generation)
 
                 case .failure(let error):
+                    if self.connectionState == .connecting {
+                        self.failInitialConnection(task: task, failure: .classify(status: (task.response as? HTTPURLResponse)?.statusCode, error: error))
+                        return
+                    }
                     guard self.isConnected else { return }
                     DebugLogger.shared.log(.deepgram, "WS receive error: \(error.localizedDescription)")
                     self.stopKeepAlive()
@@ -1223,6 +1242,21 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 }
             }
         }
+    }
+
+    private func failInitialConnection(task: URLSessionWebSocketTask, failure: DeepgramInitialFailure) {
+        guard webSocketTask === task, connectionState == .connecting else { return }
+        initialConnectionTimeout?.cancel(); initialConnectionTimeout = nil
+        DiagnosticTimeline.shared.record(.connectionFailed, fields: ["reason": failure.rawValue])
+        initialConnectionFailure = failure
+        error = failure
+        isConnected = false; _sendConnected = false; _sendTask = nil
+        connectionState = .error
+        task.cancel(with: .goingAway, reason: nil)
+    }
+
+    func handleInitialCompletion(task: URLSessionWebSocketTask, status: Int?, error: Error?) {
+        failInitialConnection(task: task, failure: .classify(status: status, error: error))
     }
 
     nonisolated private static func jsonString(from message: URLSessionWebSocketTask.Message) -> String? {
@@ -1742,19 +1776,28 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
 }
 
 extension DeepgramService {
+    nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        Task { @MainActor [weak self] in
+            guard let self, let socket = task as? URLSessionWebSocketTask else { return }
+            self.handleInitialCompletion(task: socket, status: (task.response as? HTTPURLResponse)?.statusCode, error: error)
+        }
+    }
+
     nonisolated func urlSession(
         _ session: URLSession,
         webSocketTask: URLSessionWebSocketTask,
         didOpenWithProtocol protocol: String?
     ) {
         Task { @MainActor [weak self] in
-            guard let self, webSocketTask == self.webSocketTask else { return }
+            guard let self, webSocketTask == self.webSocketTask, self.connectionState == .connecting else { return }
+            self.initialConnectionTimeout?.cancel(); self.initialConnectionTimeout = nil
             self.isConnected = true
             self._sendConnected = true
             self._sendTask = webSocketTask
             self.connectionState = .connected
             self.error = nil
             self.startKeepAlive()
+            DiagnosticTimeline.shared.record(.transcriptionConnected)
             DebugLogger.shared.log(.deepgram, "WebSocket connected")
         }
     }
@@ -1767,6 +1810,10 @@ extension DeepgramService {
     ) {
         Task { @MainActor [weak self] in
             guard let self, webSocketTask == self.webSocketTask else { return }
+            if self.connectionState == .connecting {
+                self.failInitialConnection(task: webSocketTask, failure: .classify(status: (webSocketTask.response as? HTTPURLResponse)?.statusCode, error: nil))
+                return
+            }
             self.stopKeepAlive()
             self.isConnected = false
             self._sendConnected = false
@@ -1913,6 +1960,30 @@ struct DeepgramResponse: Codable, Sendable {
 }
 
 // MARK: - Errors
+
+enum DeepgramInitialFailure: String, LocalizedError, Equatable, CaseIterable {
+    static var allMessages: [String] { allCases.compactMap(\.errorDescription) }
+    case auth, quota, rateLimited = "rate_limited", server, network, timeout
+    static func classify(status: Int?, error: Error?) -> Self {
+        switch status ?? 0 {
+        case 401, 403: return .auth
+        case 402: return .quota
+        case 429: return .rateLimited
+        case 500...599: return .server
+        default: return (error as? URLError)?.code == .timedOut ? .timeout : .network
+        }
+    }
+    var errorDescription: String? {
+        switch self {
+        case .auth: return "Transcription could not sign in. Check your account or API key, then try again."
+        case .quota: return "The transcription provider has no available credit. Try again later or contact support."
+        case .rateLimited: return "Transcription is receiving too many requests. Wait a moment, then try again."
+        case .server: return "The transcription provider is unavailable. Try again shortly."
+        case .network: return "Could not connect to transcription. Check your connection and try again."
+        case .timeout: return "Transcription did not connect in time. Check your connection and try again."
+        }
+    }
+}
 
 enum DeepgramError: LocalizedError {
     case noApiKey

@@ -1,7 +1,7 @@
 #!/bin/bash
 # coverage.sh [mac|ios|all]
 # Runs the unit tests with code coverage and prints line coverage per target, per top-level
-# source folder, and per file, so docs/testing.md can carry dated numbers instead of a guess.
+# source folder, and per file, so docs/reference/testing.md can carry dated numbers instead of a guess.
 # Result bundles and JSON land in DerivedDataCoverage/results/.
 set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

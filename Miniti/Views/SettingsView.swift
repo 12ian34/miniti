@@ -169,10 +169,15 @@ struct SettingsView: View {
             PrivacySettingsView()
         case .cloud:
             CloudSettingsView()
-        case .sending:
-            SendingSettingsView()
+        case .models:
+            ModelsSettingsView()
         case .api:
             APIAccessSettingsView()
+        case .help:
+            Form { HelpSettingsSections() }
+                .formStyle(.grouped)
+                .padding()
+                .settingsSearchScrolling(for: .help)
         case .about:
             AboutSettingsView()
         }
@@ -237,12 +242,8 @@ struct AccountSettingsView: View {
     var body: some View {
         Form {
             Section("Mode") {
-                Picker("API Mode", selection: $appState.appModeRaw) {
-                    Text(appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)").tag(AppMode.managed.rawValue)
-                    Text("My own Deepgram and OpenAI accounts").tag(AppMode.byok.rawValue)
-                }
+                APIModeOptions()
                 .id("account.apiMode")
-                .pickerStyle(.radioGroup)
                 .onChange(of: appState.appModeRaw) { _, newValue in
                     if newValue == AppMode.managed.rawValue {
                         Task { await appState.refreshUsage() }
@@ -262,6 +263,7 @@ struct AccountSettingsView: View {
                 ManagedAccountSettingsSection()
 
                 Section("Plan and billing") {
+                    PurchaseReturnStatusView(controller: appState.purchaseReturn)
                     if appState.isPro {
                         HStack {
                             Text("Plan")
@@ -1811,8 +1813,6 @@ struct PrivacySettingsView: View {
         Form {
             Section("Deepgram and OpenAI") {
                 ThirdPartyAIConsentRow()
-                Button("See what leaves this Mac") { appState.jumpToSetting("sending.overview") }
-                    .buttonStyle(.link)
             }
             .id("privacy.thirdPartyAI")
 
@@ -1829,27 +1829,12 @@ struct PrivacySettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Section("Models on this device") {
-                HStack {
-                    Text("Speaker model")
-                    Spacer()
-                    Text("ships inside miniti, about 190 MB")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                OnDeviceTranscriptionModelsRow(service: appState.onDeviceTranscription, isEnabled: appState.onDeviceTranscriptionEnabled)
-                HStack {
-                    Text("Voice model")
-                    Spacer()
-                    Text(appState.voicePrintSelfEnabled || appState.voicePrintOthersEnabled ? "downloaded when Voices is on, about 17 MB" : "not loaded")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Text("Voices (Transcription) keeps voice fingerprints on this Mac only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            DataFlowRowsView { jump in
+                Button("Configure") { appState.jumpToSetting(jump.target) }
+                    .settingsJumpStyle()
+                    .accessibilityLabel("Configure: \(jump.label)")
             }
-            .id("privacy.models")
+            .id("sending.overview")
         }
         .formStyle(.grouped)
         .padding()
@@ -1857,23 +1842,20 @@ struct PrivacySettingsView: View {
     }
 }
 
-/// Setup, Sending: every recipient of anything from this Mac, what it gets right now, and a
-/// link to the setting that decides it. Status only; the controls stay on their own tabs.
-struct SendingSettingsView: View {
+/// Local model inventory and links to the settings that use each model.
+struct ModelsSettingsView: View {
     @EnvironmentObject private var appState: AppState
-
     var body: some View {
         Form {
-            DataFlowRowsView { jump in
-                Button("Configure") { appState.jumpToSetting(jump.target) }
+            LocalModelsSettingsSections(embedder: appState.voicePrintEmbedder) { target in
+                Button("Configure") { appState.jumpToSetting(target) }
                     .settingsJumpStyle()
-                    .accessibilityLabel("Configure: \(jump.label)")
             }
         }
-        .id("sending.overview")
+        .id("privacy.models")
         .formStyle(.grouped)
         .padding()
-        .settingsSearchScrolling(for: .sending)
+        .settingsSearchScrolling(for: .models)
     }
 }
 
@@ -1895,8 +1877,6 @@ struct AboutSettingsView: View {
                         }
                 }
                 .id("about.version")
-                AcknowledgementsSection()
-                .id("about.acknowledgements")
                 Link(destination: URL(string: "https://miniti.app")!) {
                     HStack {
                         Text("Website")
@@ -1934,16 +1914,6 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Link(destination: URL(string: "https://miniti.app/support")!) {
-                    HStack {
-                        Text("Support")
-                        Spacer()
-                        Image(systemName: "arrow.up.right")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .id("about.support")
                 Link(destination: URL(string: "https://miniti.app/privacy")!) {
                     HStack {
                         Text("Privacy")
@@ -1963,6 +1933,8 @@ struct AboutSettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                AcknowledgementsSection()
+                    .id("about.acknowledgements")
             }
         }
         .formStyle(.grouped)
@@ -1998,52 +1970,6 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
-    }
-}
-
-/// One switch for the whole private bundle. The individual toggles under Recording and AI stay
-/// for people who want a mix; this flips them all and restores them on the way back.
-/// The permission the first screen asked for, with the way to withdraw it or give it later.
-private struct ThirdPartyAIConsentRow: View {
-    @EnvironmentObject private var appState: AppState
-    @State private var showingConsent = false
-
-    var body: some View {
-        HStack {
-            Text("Sending meetings")
-            Spacer()
-            Text(appState.hasAcceptedTerms ? "allowed" : "not allowed")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        Text(appState.hasAcceptedTerms
-             ? "When you use these services, Deepgram receives live audio, the meeting title and attendee names for transcription. OpenAI receives the transcript, your notes, the meeting title and attendee names for summaries, action items, questions and speaker names. On the managed plan, text goes to OpenAI through miniti."
-             : "You have not allowed Deepgram transcription or OpenAI meeting insights. Recording asks for permission again. You can still read, import and export your meetings.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        if appState.hasAcceptedTerms {
-            Button("Withdraw permission") {
-                appState.setThirdPartyAIConsent(false)
-            }
-            .disabled(appState.isRecording)
-            if appState.isRecording {
-                Text("Stop the recording first.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        } else {
-            Button("Allow…") {
-                showingConsent = true
-            }
-            .sheet(isPresented: $showingConsent) {
-                TermsAcceptanceView(presentation: .sheet)
-                    #if os(macOS)
-                    .frame(width: 560, height: 520)
-                    #else
-                    .preferredColorScheme(.dark)
-                    #endif
-            }
-        }
     }
 }
 
@@ -2087,32 +2013,6 @@ private struct OnDeviceTranscriptionStatusText: View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
-    }
-}
-
-/// The downloaded speech model: size on disk and a remove button, enabled only while the
-/// model is not in use so an active download or session is never pulled from under it.
-private struct OnDeviceTranscriptionModelsRow: View {
-    @ObservedObject var service: OnDeviceTranscriptionService
-    let isEnabled: Bool
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text("Speech model")
-            Spacer()
-            if service.downloadedBytes > 0 {
-                Text(ByteCountFormatter.string(fromByteCount: service.downloadedBytes, countStyle: .file))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Remove") { service.removeDownloadedModels() }
-                    .disabled(isEnabled)
-                    .help(isEnabled ? "Turn transcription on this Mac off first." : "Delete the downloaded files.")
-            } else {
-                Text("not downloaded")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }
 

@@ -27,6 +27,21 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(SettingsDestination.fromLegacyID("about"), .about)
         XCTAssertEqual(SettingsDestination.fromLegacyID("privacy"), .privacy)
         XCTAssertEqual(SettingsDestination.fromLegacyID("unknown"), .general)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("sending"), .privacy)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("whatLeaves"), .privacy)
+        XCTAssertEqual(SettingsDestination.fromLegacyID("models"), .models)
+        XCTAssertEqual(SettingsGroup.setup.destinations, [.general, .account, .cloud, .models])
+    }
+
+    func testModelConfigureLinksAndMovedSearchResultsKeepTheirOwners() {
+        for target in ["transcription.model", "transcription.speakers", "transcription.voices"] {
+            XCTAssertEqual(SettingsSearchCatalog.items.first { $0.id == target }?.destination, .transcription)
+        }
+        for platform in [SettingsPlatform.macOS, .iOS] {
+            let items = SettingsSearchCatalog.availableItems(on: platform, appMode: .managed)
+            XCTAssertEqual(items.first { $0.id == "sending.overview" }?.destination, .privacy)
+            XCTAssertEqual(items.first { $0.id == "privacy.models" }?.destination, .models)
+        }
     }
 
     func testEveryDestinationSitsInExactlyOneGroupAndCatalogIdsFollowTheirTab() {
@@ -34,12 +49,18 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertEqual(grouped.count, SettingsDestination.allCases.count)
         XCTAssertEqual(Set(grouped), Set(SettingsDestination.allCases))
         XCTAssertEqual(SettingsGroup.privacy.destinations, [.privacy])
-        XCTAssertEqual(SettingsGroup.support.destinations, [.about])
+        XCTAssertEqual(SettingsGroup.support.destinations, [.help, .about])
         for item in SettingsSearchCatalog.items {
             // Legacy "integrations." ids are allowed for calendar, CRM and webhook rows; every other
             // id starts with its tab so a search hit can never scroll the wrong screen.
             if item.id.hasPrefix("integrations.") {
                 XCTAssertTrue([.calendar, .crm, .webhooks].contains(item.destination), item.id)
+            } else if ["account.deviceID", "about.support"].contains(item.id) {
+                XCTAssertEqual(item.destination, .help)
+            } else if item.id == "sending.overview" {
+                XCTAssertEqual(item.destination, .privacy, "Existing overview links must reach Privacy")
+            } else if item.id == "privacy.models" {
+                XCTAssertEqual(item.destination, .models, "Existing model links must reach Models")
             } else {
                 XCTAssertTrue(item.id.hasPrefix(item.destination.rawValue + "."), "\(item.id) is filed under \(item.destination.rawValue)")
             }
@@ -3018,7 +3039,7 @@ final class AppStateComputationTests: XCTestCase {
     @MainActor
     private static func makeInMemoryModelContainer() throws -> ModelContainer {
         let config = ModelConfiguration(isStoredInMemoryOnly: true)
-        return try ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config)
+        return TestSupport.retain(try ModelContainer(for: Meeting.self, TranscriptSegment.self, configurations: config))
     }
 }
 
@@ -3071,7 +3092,7 @@ final class ThirdPartyAIConsentTests: XCTestCase {
         }
     }
 
-    // MARK: U2, the concise consent screen (docs/account-sending-consent-ux-plan.md)
+    // MARK: U2, the concise consent screen (docs/archive/account-sending-consent-ux-plan.md)
 
     func testTheDisclosureStillNamesEveryRecipientAndDataCategory() {
         let text = TermsAcceptanceView.disclosureText.lowercased()
@@ -3091,7 +3112,7 @@ final class ThirdPartyAIConsentTests: XCTestCase {
     }
 
     func testTheConsentVersionIsUnchangedByTheShorterWording() {
-        XCTAssertEqual(AppState.currentTermsVersion, 2, "U2 rewrote the consent screen without changing recipients, data or purposes, so nobody is asked again; bump this only for a material change and say why in docs/account-sending-consent-ux-plan.md")
+        XCTAssertEqual(AppState.currentTermsVersion, 2, "U2 rewrote the consent screen without changing recipients, data or purposes, so nobody is asked again; bump this only for a material change and say why in docs/archive/account-sending-consent-ux-plan.md")
     }
 
     func testCancelOnTheSheetLeavesTheStoredAnswerAlone() {
@@ -3365,3 +3386,199 @@ final class RecordingIndicatorLayoutTests: XCTestCase {
     }
 }
 #endif
+
+@MainActor
+final class SupportReportTests: XCTestCase {
+    func testDiagnosticsExportOnlyFixedLabelsAndCodesNeverRawContext() throws {
+        let entry = DebugLogger.Entry(timestamp: Date(), category: .audio, level: .error,
+            message: "Mic capture FAILED: Code=-10877, private meeting title, alice@example.com /Users/alice/secret secret-key")
+        let event = try XCTUnwrap(SupportDiagnostic.make(entry))
+        XCTAssertEqual(event.code, "capture_failed")
+        XCTAssertEqual(event.error_codes, [-10877])
+        let encoded = String(decoding: try JSONEncoder().encode(event), as: UTF8.self)
+        for value in ["private", "alice", "/Users", "secret", "FAILED"] { XCTAssertFalse(encoded.contains(value)) }
+        XCTAssertNil(SupportDiagnostic.make(DebugLogger.Entry(timestamp: Date(), category: .app, level: .routine, message: "meeting title")))
+        XCTAssertEqual(SupportDiagnostic.make(DebugLogger.Entry(timestamp: Date(), category: .app, level: .error, message: "unknown failure with content"))?.code, "error")
+    }
+
+    func testCopyIncludesChosenDiagnosticsAndOptionalReplyOnly() {
+        let entry = DebugLogger.Entry(timestamp: Date(), category: .app, level: .warning, message: "timed out Code=-1001")
+        var report = SupportReport(message: "What happened", reply_email: "person@example.com", details: ["device_id": "device", "app": "3.4.0 (141)"], diagnostics: [SupportDiagnostic.make(entry)!])
+        XCTAssertTrue(report.text.contains("What happened"))
+        XCTAssertTrue(report.text.contains("person@example.com"))
+        XCTAssertTrue(report.text.contains("Device ID: device"))
+        XCTAssertTrue(report.text.contains("-1001"))
+        report.diagnostics = []
+        XCTAssertFalse(report.text.contains("-1001"))
+        XCTAssertTrue(SupportReport.validEmail(""))
+        XCTAssertFalse(SupportReport.validEmail("a@example.com\r\nBcc: b@example.com"))
+    }
+
+    func testSendingUsesNoCredentialsAndRequiresAMatchingReceipt() async throws {
+        StubURLProtocol.reset(); defer { StubURLProtocol.reset() }
+        let report = SupportReport(message: "A bug", details: ["device_id": "device"], diagnostics: [])
+        StubURLProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/support/report")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
+            XCTAssertNil(request.value(forHTTPHeaderField: "X-Request-Proof"))
+            return (200, Data("{\"accepted\":true,\"id\":\"\(report.id)\"}".utf8))
+        }
+        try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: SupportSubmissionGate())
+        StubURLProtocol.handler = { _ in (200, Data(#"{"accepted":true,"id":"wrong"}"#.utf8)) }
+        do { try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: SupportSubmissionGate()); XCTFail("Wrong receipt must not mean sent") }
+        catch { XCTAssertTrue(error is SupportReportFailure) }
+        for status in [400, 413, 429, 503, 404] {
+            StubURLProtocol.handler = { _ in (status, Data()) }
+            do { try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: SupportSubmissionGate()); XCTFail("Failure must stay retryable") }
+            catch { XCTAssertTrue(error is SupportReportFailure) }
+        }
+        StubURLProtocol.handler = nil
+        StubURLProtocol.script = { _ in throw URLError(.notConnectedToInternet) }
+        do { try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: SupportSubmissionGate()); XCTFail("Offline must not mean sent") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("Your report is still here")) }
+    }
+}
+
+final class DiagnosticTimelineTests: XCTestCase {
+    private func location() -> URL {
+        FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("timeline.json")
+    }
+
+    func testOnlyFixedMetadataSurvivesAndLegacyKeychainStatusIsPreserved() throws {
+        let safe = DiagnosticTimeline.sanitize(["status": "-34018", "phase": "sign", "recovery": "no",
+            "error_domain": "CryptoTokenKit", "error_code": "-10", "message": "private meeting",
+            "token": "secret", "phase_with_email": "alice@example.com", "route": "/Users/alice",
+            "server_code": "a provider response with content", "attempt_id": "account-id"])
+        XCTAssertEqual(safe, ["status": "-34018", "phase": "sign", "recovery": "no", "error_domain": "CryptoTokenKit", "error_code": "-10"])
+        let legacy = SupportDiagnostic.make(DebugLogger.Entry(timestamp: Date(), category: .app, level: .error, message: "Keychain failed: status=-34018 private value"))
+        XCTAssertEqual(legacy?.error_codes, [-34018])
+        let unknown = DiagnosticTimeline.errorFields(NSError(domain: "secret@example.com", code: 42, userInfo: [NSLocalizedDescriptionKey: "secret"]))
+        XCTAssertEqual(unknown, ["error_domain": "other", "error_code": "42"])
+    }
+
+    func testAnHourOfRepeatedFailuresIsOneCountedEventAndKeepsSuccessfulMilestones() throws {
+        let timeline = DiagnosticTimeline(fileURL: nil)
+        let start = Date().addingTimeInterval(-3600)
+        let id = UUID().uuidString
+        timeline.record(.recordingAttempt, fields: ["attempt_id": id], at: start)
+        timeline.record(.audioReceived, fields: ["attempt_id": id], at: start)
+        _ = timeline.snapshot()
+        for second in 0..<3600 {
+            timeline.record(.connectionFailed, fields: ["reason": "network"], at: start.addingTimeInterval(Double(second)))
+            if second % 32 == 0 { _ = timeline.snapshot() }
+        }
+        timeline.record(.transcriptionConnected)
+        timeline.record(.transcriptReceived, fields: ["attempt_id": id])
+        let events = timeline.snapshot()
+        XCTAssertEqual(events.count, 5)
+        let failures = try XCTUnwrap(events.first { $0.code == .connectionFailed })
+        XCTAssertEqual(failures.count, 3600)
+        XCTAssertEqual(failures.last.timeIntervalSince(failures.first), 3599, accuracy: 0.01)
+        XCTAssertLessThan(try JSONEncoder().encode(events).count, 4096)
+        XCTAssertTrue(SupportDiagnostic.make(events.last!).text.contains("transcript_received"))
+    }
+
+    func testRetentionIsBoundedByCountBytesAndAge() throws {
+        let timeline = DiagnosticTimeline(fileURL: nil)
+        let start = Date()
+        for index in 0..<650 {
+            timeline.record(.cloudStarted, fields: ["attempt_id": UUID().uuidString], at: start.addingTimeInterval(Double(index) / 10))
+            if index % 16 == 0 { _ = timeline.snapshot(now: start.addingTimeInterval(65)) }
+        }
+        let events = timeline.snapshot(now: start.addingTimeInterval(65))
+        XCTAssertLessThanOrEqual(events.count, DiagnosticTimeline.maxEvents)
+        XCTAssertLessThanOrEqual(try JSONEncoder().encode(events).count, DiagnosticTimeline.maxBytes)
+        XCTAssertTrue(timeline.snapshot(now: start.addingTimeInterval(DiagnosticTimeline.maxAge + 100)).isEmpty)
+    }
+
+    func testRelaunchKeepsSanitizedHistoryAndClearPersists() throws {
+        let file = location()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let original = DiagnosticTimeline(fileURL: file)
+        original.record(.keyUnavailable, fields: ["error_domain": "CryptoTokenKit", "error_code": "-10", "phase": "sign", "recovery": "no", "raw": "secret"])
+        original.flushForTesting()
+        let restarted = DiagnosticTimeline(fileURL: file)
+        XCTAssertEqual(restarted.snapshot().count, 1)
+        let text = try String(contentsOf: file, encoding: .utf8)
+        XCTAssertFalse(text.contains("secret"))
+        XCTAssertTrue(restarted.snapshot()[0].text.contains("phase=sign"))
+        restarted.clear(); restarted.flushForTesting()
+        XCTAssertTrue(DiagnosticTimeline(fileURL: file).snapshot().isEmpty)
+    }
+
+    func testCorruptOversizeAndUnwritableFilesNeverBreakRecordingOfEvents() throws {
+        let file = location()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        for data in [Data("not json".utf8), Data(repeating: 32, count: DiagnosticTimeline.maxBytes + 1)] {
+            try data.write(to: file)
+            let timeline = DiagnosticTimeline(fileURL: file)
+            XCTAssertTrue(timeline.snapshot().isEmpty)
+        }
+        // A regular file cannot be the parent directory of a diagnostic file.
+        let blocked = DiagnosticTimeline(fileURL: file.appendingPathComponent("blocked.json"))
+        blocked.record(.purchaseReady)
+        blocked.flushForTesting()
+        XCTAssertTrue(blocked.snapshot().contains { $0.code == .purchaseReady })
+        XCTAssertEqual(blocked.snapshot().last?.code, .storageUnavailable)
+    }
+
+    func testPersistedUnknownFieldsAreNotExported() throws {
+        let file = location()
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let entry = DiagnosticTimeline.Event(code: .keyUnavailable, first: Date(), last: Date(), count: 1, fields: ["raw": "secret"])
+        try JSONEncoder().encode([entry]).write(to: file)
+        XCTAssertTrue(DiagnosticTimeline(fileURL: file).snapshot().isEmpty)
+    }
+}
+
+@MainActor
+final class FeedbackSubmissionTests: XCTestCase {
+    func testFeedbackContainsOnlyTheMessageReplyAndBasicAppDetails() throws {
+        let report = FeedbackSheet.report(id: UUID().uuidString.lowercased(), message: "  An idea  ", reply: " person@example.com ")
+        XCTAssertEqual(report.kind, "feedback")
+        XCTAssertEqual(report.message, "An idea")
+        XCTAssertEqual(report.reply_email, "person@example.com")
+        XCTAssertEqual(Set(report.details.keys), ["app", "platform"])
+        XCTAssertTrue(report.diagnostics.isEmpty)
+        let data = try JSONEncoder().encode(report)
+        XCTAssertEqual(try JSONDecoder().decode(SupportReport.self, from: data), report)
+    }
+
+    func testSharedAdmissionAllowsOnlyOneSendAndHonoursCooldown() throws {
+        let gate = SupportSubmissionGate()
+        var now = Date()
+        gate.now = { now }
+        try gate.begin()
+        XCTAssertThrowsError(try gate.begin()) { error in
+            guard case SupportReportFailure.sending = error else { return XCTFail("Expected in-flight protection") }
+        }
+        gate.wait(30); gate.finish()
+        XCTAssertThrowsError(try gate.begin()) { error in
+            guard case SupportReportFailure.cooldown(30) = error else { return XCTFail("Expected cooldown") }
+        }
+        now = now.addingTimeInterval(30)
+        try gate.begin(); gate.finish()
+        XCTAssertFalse(gate.busy)
+    }
+
+    func testSuccessAndRateLimitBlockASecondRequestWithoutDroppingThePayload() async throws {
+        StubURLProtocol.reset(); defer { StubURLProtocol.reset() }
+        let report = FeedbackSheet.report(id: UUID().uuidString.lowercased(), message: "Feedback", reply: "")
+        let gate = SupportSubmissionGate()
+        let now = Date(); gate.now = { now }
+        StubURLProtocol.handler = { _ in (200, Data("{\"accepted\":true,\"id\":\"\(report.id)\"}".utf8)) }
+        try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: gate)
+        StubURLProtocol.handler = { _ in XCTFail("Must not send during cooldown"); return (500, Data()) }
+        do { try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: gate); XCTFail("Expected cooldown") }
+        catch { guard case SupportReportFailure.cooldown(30) = error else { return XCTFail("Wrong error") } }
+        let limited = SupportSubmissionGate(); limited.now = { now }
+        StubURLProtocol.handler = { _ in (429, Data()) }
+        do { try await SupportReportSender.send(report, session: TestSupport.stubbedSession(), gate: limited); XCTFail("Expected rate limit") }
+        catch { guard case SupportReportFailure.cooldown(60) = error else { return XCTFail("Expected server wait fallback") } }
+        XCTAssertFalse(limited.busy)
+        XCTAssertEqual(report.message, "Feedback")
+        XCTAssertEqual(limited.retryAt, now.addingTimeInterval(60))
+    }
+}

@@ -15,7 +15,7 @@ Three Xcode targets in `Miniti.xcodeproj`:
 | `MinitiMobile` | iOS | `com.miniti.mobile` |
 | `MinitiLiveActivityExtension` | iOS | `com.miniti.mobile.live-activity` |
 
-Plus two XCTest targets (`MinitiTests`, `MinitiMobileTests`) — see the `testing` section in [`docs/testing.md`](../../../docs/testing.md).
+Plus two XCTest targets (`MinitiTests`, `MinitiMobileTests`) — see the `testing` section in [`docs/reference/testing.md`](../../../docs/reference/testing.md).
 
 ## File placement rules
 
@@ -73,7 +73,7 @@ Target: **MinitiLiveActivityExtension only** (plus shared attributes).
 - Each platform has its own `AudioCaptureService` with the same class name and public interface. AppState references it by name — no `#if os()` needed for the type.
 - Shared views use `@Environment(\.horizontalSizeClass)` for responsive layout, not `#if os()`.
 - `appState.modelContext` must be set from `@Environment(\.modelContext)` in the first view: `MainWindow.swift` (macOS) or `MainTabView.swift` (iOS).
-- For the full architecture reference (every file's purpose + target membership), see [`docs/architecture.md`](../../../docs/architecture.md).
+- For the full architecture reference (every file's purpose + target membership), see [`docs/reference/architecture.md`](../../../docs/reference/architecture.md).
 
 ## "Cannot find 'X' in scope" when building
 

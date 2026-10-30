@@ -1070,3 +1070,49 @@ final class FirstWordSpeakerGatingTests: XCTestCase {
         XCTAssertFalse(DeepgramService.isSpeechStartedMessage(#"{"type":"Results","channel":{"alternatives":[{"transcript":"SpeechStarted","words":[]}]}}"#))
     }
 }
+
+@MainActor
+final class DeepgramConnectionLifecycleTests: XCTestCase {
+    func testEveryInitialRefusalEndsConnectingOnceAndOldTaskCannotFailItsReplacement() async {
+        let service = DeepgramService()
+        service.configure(credential: "test-only", authorizationScheme: .token)
+        var task: URLSessionWebSocketTask?
+        service.socketStarter = { task = $0 } // Native task, deliberately never resumed onto a network.
+        for (status, expected) in [(401, DeepgramInitialFailure.auth), (402, .quota), (429, .rateLimited), (503, .server)] {
+            service.connect()
+            let failed = task!
+            XCTAssertEqual(service.connectionState, .connecting)
+            service.handleInitialCompletion(task: failed, status: status, error: nil)
+            XCTAssertEqual(service.connectionState, .error)
+            XCTAssertEqual(service.initialConnectionFailure, expected)
+            service.handleInitialCompletion(task: failed, status: 500, error: nil)
+            XCTAssertEqual(service.initialConnectionFailure, expected)
+            service.connect()
+            service.handleInitialCompletion(task: failed, status: 401, error: nil)
+            XCTAssertEqual(service.connectionState, .connecting)
+        }
+        service.disconnect()
+    }
+
+    func testTimeoutCancelAndHealthySilence() async throws {
+        let service = DeepgramService()
+        service.configure(credential: "test-only", authorizationScheme: .token)
+        service.connectionTimeoutSeconds = 0.02
+        var task: URLSessionWebSocketTask?
+        service.socketStarter = { task = $0 }
+        service.connect()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.initialConnectionFailure, .timeout)
+        XCTAssertEqual(service.connectionState, .error)
+        service.connect()
+        service.disconnect()
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.connectionState, .disconnected)
+        service.connect()
+        service.urlSession(URLSession.shared, webSocketTask: task!, didOpenWithProtocol: nil)
+        try await Task.sleep(nanoseconds: 50_000_000)
+        XCTAssertEqual(service.connectionState, .connected, "Silence after a handshake is not a connection timeout")
+        XCTAssertNil(service.initialConnectionFailure)
+        service.disconnect()
+    }
+}

@@ -3,7 +3,7 @@ import Foundation
 // Pure call-lifecycle types and policy for macOS call detection. Platform-neutral on purpose:
 // the Core Audio monitor that produces snapshots lives in CallActivityMonitor.swift (macOS
 // only), while everything here is deterministic value-type logic covered by both test bundles.
-// See docs/call-lifecycle-and-recording-presence-plan.md.
+// See docs/archive/call-lifecycle-and-recording-presence-plan.md.
 
 // MARK: - Snapshot types
 

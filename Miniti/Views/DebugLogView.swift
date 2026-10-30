@@ -31,6 +31,8 @@ struct DebugLogView: View {
 
     private var rawFilteredText: String {
         filtered.map(DebugLogger.format).joined(separator: "\n")
+            + "\n\nDiagnostic timeline (up to 48 hours, repeated events counted):\n"
+            + DiagnosticTimeline.shared.snapshot().map(\.text).joined(separator: "\n")
     }
 
     private func scrollToBottom(_ id: String, proxy: ScrollViewProxy) {

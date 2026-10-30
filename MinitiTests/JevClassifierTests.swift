@@ -5,7 +5,7 @@ import XCTest
 @testable import miniti
 #endif
 
-/// Client side of the managed Jev classifier (docs/jev-system-one-plan.md, slice 1).
+/// Client side of the managed Jev classifier (docs/archive/jev-system-one-plan.md, slice 1).
 final class JevClassifierTests: XCTestCase {
 
     private func segment(_ speaker: Int, _ text: String, final: Bool = true) -> AppState.LiveSegment {

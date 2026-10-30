@@ -510,6 +510,7 @@ final class MinitiAPIService: @unchecked Sendable {
     }
 
     struct ClientEventPayload: Codable {
+        var id: UUID = UUID()
         enum EventCategory: String, Codable {
             case app
             case audio
@@ -533,6 +534,7 @@ final class MinitiAPIService: @unchecked Sendable {
         let details: [String: String]?
 
         enum CodingKeys: String, CodingKey {
+            case id = "event_id"
             case name
             case category
             case level
@@ -541,6 +543,26 @@ final class MinitiAPIService: @unchecked Sendable {
             case appMode = "app_mode"
             case meetingId = "meeting_id"
             case details
+        }
+
+        init(name: String, category: EventCategory, level: EventLevel, occurredAt: Date,
+             diagnosticsSessionId: String, appMode: String, meetingId: String?, details: [String: String]?) {
+            self.name = name; self.category = category; self.level = level; self.occurredAt = occurredAt
+            self.diagnosticsSessionId = diagnosticsSessionId; self.appMode = appMode
+            self.meetingId = meetingId; self.details = details
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+            name = try c.decode(String.self, forKey: .name)
+            category = try c.decode(EventCategory.self, forKey: .category)
+            level = try c.decode(EventLevel.self, forKey: .level)
+            occurredAt = try c.decode(Date.self, forKey: .occurredAt)
+            diagnosticsSessionId = try c.decode(String.self, forKey: .diagnosticsSessionId)
+            appMode = try c.decode(String.self, forKey: .appMode)
+            meetingId = try c.decodeIfPresent(String.self, forKey: .meetingId)
+            details = try c.decodeIfPresent([String: String].self, forKey: .details)
         }
     }
 
@@ -1678,8 +1700,8 @@ final class MinitiAPIService: @unchecked Sendable {
         return cleaned
     }
 
-    func sendClientEvents(deviceId: String, events: [ClientEventPayload]) async throws {
-        guard !events.isEmpty else { return }
+    func sendClientEvents(deviceId: String, events: [ClientEventPayload]) async throws -> Set<UUID> {
+        guard !events.isEmpty else { return [] }
 
         struct ClientEventsRequest: Encodable {
             let events: [ClientEventPayload]
@@ -1694,9 +1716,30 @@ final class MinitiAPIService: @unchecked Sendable {
 
         let (data, response) = try await send(request)
         try validateResponse(response, data: data)
+        struct Receipt: Decodable { let accepted_ids: [UUID]?; let rejected_ids: [UUID]?; let accepted: Int }
+        let receipt = try Self.decoder.decode(Receipt.self, from: data)
+        // Deploy the additive server receipt first. An old server's full-batch response
+        // remains compatible; a partial response cannot identify which events it accepted.
+        if let ids = receipt.accepted_ids { return Set(ids + (receipt.rejected_ids ?? [])) }
+        return receipt.accepted == events.count ? Set(events.map(\.id)) : []
     }
 
     // MARK: - Subscription
+
+    func purchaseStatus(checkoutID: UUID) async throws -> String {
+        let request = makeRequest(path: "/subscribe/status?checkout_id=\(checkoutID.uuidString.lowercased())",
+            deviceId: DeviceIdentifier.getOrCreateDeviceId(), timeoutInterval: 5)
+        let (data, response) = try await send(request)
+        guard let http = response as? HTTPURLResponse else { throw PurchaseConfirmationError.unavailable }
+        let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        if http.statusCode == 429 {
+            throw PurchaseConfirmationError.throttled(Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 60)
+        }
+        if body?["error"] as? String == "purchase_account_changed" { throw PurchaseConfirmationError.differentAccount }
+        if http.statusCode == 404 { throw PurchaseConfirmationError.missing }
+        guard http.statusCode == 200, let status = body?["status"] as? String else { throw PurchaseConfirmationError.unavailable }
+        return status
+    }
     
     /// Get a Polar checkout URL for upgrading to Pro.
     func getSubscribeURL(deviceId: String) async throws -> URL {

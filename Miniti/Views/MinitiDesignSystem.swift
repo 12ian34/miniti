@@ -418,3 +418,23 @@ enum MinitiPasteboard {
     }
 }
 
+
+
+/// Home utility actions share typography as well as compact control chrome.
+struct MinitiHomeActionLabel: View {
+    let icon: String
+    let label: String
+    var shortcut: String? = nil
+    var body: some View {
+        MinitiControlLabel(role: .secondary) {
+            HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                Text(label).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                if let shortcut, !shortcut.isEmpty {
+                    Text(shortcut).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.meta).lineLimit(1)
+                }
+            }
+        }
+    }
+}

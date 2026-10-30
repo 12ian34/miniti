@@ -1,6 +1,6 @@
 # Release Process
 
-Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/distribution.md](docs/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
+Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
 ## Before you start
 
@@ -12,6 +12,17 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ln -sf ~/Library/Developer/Xcode/DerivedData/Miniti-*/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_keys /opt/homebrew/bin/generate_keys
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
+
+## Required deployment order for the current follow-up release
+
+This is a release blocker, not a preference. Complete and record these prerequisites before publishing a DMG/appcast or uploading the new client to TestFlight/App Review:
+
+1. Deploy and verify the site's purchase-return page, including Open miniti and the no-app fallback. Push only the page and its test script: the regenerated changelog, new screenshots and LLM text in the same working tree describe the unreleased build and go live with the apps.
+2. Deploy the additive backend and verify event-ID receipts on `/api/client-events`, explicit deleted-meeting restore support, purchase-status confirmation and the Help/Feedback report contract. Old count-only event responses cannot acknowledge the new durable queue; shipping the client first makes it retry until expiry. Keep older clients supported.
+3. With both live, run the QA that depends on them: two-device cloud deletion and restore, the sandbox purchase return, one authorised Help report and one Feedback message confirmed in the inbox, cron state, UptimeRobot activation and the approved alert-mail check.
+4. Only then distribute the Apple apps. Record exact site/backend revisions and live contract checks in [the QA handoff](docs/releases/monitoring-cloud-purchase-qa.md). Passing local tests or having uncommitted code is not deployment evidence.
+
+Do not roll the backend back to a version missing these contracts while dependent clients are in use. None of these steps is authorized merely by reading this checklist.
 
 ## The 10 steps
 
@@ -47,7 +58,7 @@ fastlane mac release
 
 This runs build → re-sign Sparkle framework (preserving entitlements) → verify entitlements → notarize/staple app → create and Developer ID-sign the DMG → notarize/staple DMG → generate the Sparkle signature from the final bytes. It makes two Apple notarization submissions and normally takes a few minutes.
 
-If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped entitlements. Do not work around this — investigate. See the v1.24.0 postmortem in `docs/distribution.md`.
+If it aborts with "app-sandbox entitlement MISSING", the re-sign step stripped entitlements. Do not work around this — investigate. See the v1.24.0 postmortem in `docs/reference/distribution.md`.
 
 ### 3. Verify and collect appcast values
 
@@ -201,13 +212,13 @@ git push origin main vX.Y.Z
 ### 10. Cleanup (not blocking)
 
 - Delete stale/broken blobs if any: `netlify blobs:delete downloads miniti-OLD.dmg`.
-- If any release-process behavior changed during this ship, update [AGENTS.md](AGENTS.md), [docs/distribution.md](docs/distribution.md), and [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md) if their guidance would otherwise go stale.
+- If any release-process behavior changed during this ship, update [AGENTS.md](AGENTS.md), [docs/reference/distribution.md](docs/reference/distribution.md), and [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md) if their guidance would otherwise go stale.
 
 ## Common failures and fixes
 
 | Symptom | Fix |
 |---|---|
-| `fastlane mac release` aborts with "app-sandbox entitlement MISSING" | The Sparkle re-sign step stripped entitlements. Do NOT ship. See the v1.24.0 postmortem in `docs/distribution.md` — the `resign_sparkle_framework` lane must pass `--entitlements` when re-signing the outer app. |
+| `fastlane mac release` aborts with "app-sandbox entitlement MISSING" | The Sparkle re-sign step stripped entitlements. Do NOT ship. See the v1.24.0 postmortem in `docs/reference/distribution.md` — the `resign_sparkle_framework` lane must pass `--entitlements` when re-signing the outer app. |
 | Notarization rejects Sparkle nested binaries | Sparkle framework's Updater.app / Autoupdate / XPC services weren't signed with Developer ID + timestamp. The `resign_sparkle_framework` lane handles this; confirm it ran. |
 | Sparkle says "update improperly signed" | Public key in `Info.plist` doesn't match the signature on the DMG. Re-run `sign_update miniti.dmg`, redeploy appcast. |
 | Sparkle says "up to date" when it shouldn't | `sparkle:version` in appcast ≤ installed build's `CFBundleVersion`. Bump and redeploy. |

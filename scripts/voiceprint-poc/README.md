@@ -1,6 +1,6 @@
 # Voice print POC (2026-10-18)
 
-Does the CAM++ speaker embedding in FluidAudio 0.17.4 (the package miniti ships) recognise the same person across meetings and microphones? Feeds `docs/voice-prints-plan.md`. Nothing in the app changed.
+Does the CAM++ speaker embedding in FluidAudio 0.17.4 (the package miniti ships) recognise the same person across meetings and microphones? Feeds `docs/archive/voice-prints-plan.md`. Nothing in the app changed.
 
 - `fetch.sh`: AMI ES2004a/b/c and IS1009a/b/c (the same four people per series), headset mix and far-field array mic at 16 kHz, plus pyannote `only_words` RTTMs. Reuses the diarization spike's files. `data/` is gitignored.
 - `harness/`: Swift package. `harness <rttm> <wav> <out.json>` embeds 6 s windows of each reference speaker's non-overlapping speech. First run downloads the CAM++ models (two Core ML stages) into FluidAudio's model directory.

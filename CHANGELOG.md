@@ -1,8 +1,13 @@
 # Changelog
 
-Public-facing changelog. End-user documentation lives at `https://miniti.app/docs`; the hosted changelog lives at `https://miniti.app/changelog`. Entries are tagged `(macOS)`, `(iOS)`, `(macOS and iOS)`, or `(Linux)` and prefixed `new:`, `improvement:`, or `fix:`.
+### Unreleased - v3.5.0
 
-## Releases
+- new: (macOS and iOS) choose Cloud or Local in a live or saved meeting. Add title rules in Settings, Cloud to keep matching meetings off the cloud
+- new: (macOS) return to miniti after buying Pro to confirm your purchase
+- new: (macOS and iOS) send feedback from Home or report a problem in Settings, Help, with optional diagnostics
+- improvement: (macOS and iOS) see what leaves your device in Settings, Privacy. Find local models in Models, under Setup
+- improvement: (macOS and iOS) better error reporting helps us spot recording and sign-in problems sooner
+- fix: (macOS and iOS) transcription connection failures show a useful error instead of hanging
 
 ### 2026-10-27 - v3.4.0
 

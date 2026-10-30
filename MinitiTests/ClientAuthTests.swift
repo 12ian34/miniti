@@ -666,7 +666,9 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(after.enrollmentPath, "restore")
         XCTAssertTrue(after.recoveryKeyAcknowledged)
         XCTAssertNotEqual(Restore.jwkX.first, original.publicJWK["x"], "the restore was proved with the new key")
-        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_key_repaired"])
+        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_repair_attempt", "client_auth_key_repaired", "client_auth_repair_outcome"])
+        XCTAssertEqual(events.all[1].details["attempt_id"], events.all[3].details["attempt_id"])
+        XCTAssertEqual(events.all[3].details["outcome"], "success")
         XCTAssertEqual(events.all[0].details["recovery"], "yes")
         XCTAssertEqual(events.all[0].details["phase"], "load")
         XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.enrolled)
@@ -691,9 +693,12 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNotNil(request.value(forHTTPHeaderField: "X-Request-Proof"))
         XCTAssertEqual(Restore.hits, 1)
         XCTAssertNotEqual(store.load()?.installationKey, stored.installationKey)
-        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_key_repaired"])
+        XCTAssertEqual(events.names, ["client_auth_key_unusable", "client_auth_repair_attempt", "client_auth_key_repaired", "client_auth_repair_outcome"])
+        XCTAssertEqual(events.all[1].details["attempt_id"], events.all[3].details["attempt_id"])
+        XCTAssertEqual(events.all[3].details["outcome"], "success")
         XCTAssertEqual(events.all[0].details["phase"], "sign")
-        XCTAssertEqual(events.all[0].details["reason"], "sign:\(TKErrorDomain):-10")
+        XCTAssertEqual(events.all[0].details["error_domain"], TKErrorDomain)
+        XCTAssertEqual(events.all[0].details["error_code"], "-10")
     }
 
     func testATemporarySigningFailureKeepsTheKeyOffersRetryAndRecoversOnItsOwn() async throws {
@@ -1755,7 +1760,7 @@ final class ClientAuthTests: XCTestCase {
 
     /// Captured shapes of the stored credential JSON, one per shipped format. Never edit a
     /// fixture; add one for each format change together with a test that the older ones still
-    /// decode to the expected values (docs/enrollment-identity-plan.md, A2b). Key material is fake.
+    /// decode to the expected values (docs/archive/enrollment-identity-plan.md, A2b). Key material is fake.
     private enum CredentialFixtures {
         /// 3.3.0, enrolled by recovery key, software key, acknowledged.
         static let enrolled_3_3_0 = """
@@ -2586,13 +2591,10 @@ final class AccountSectionModelTests: XCTestCase {
         XCTAssertEqual(make { _ in }.planLine, "Free")
     }
 
-    func testDeviceIDSearchOpensSupportDetails() {
-        XCTAssertTrue(M.revealsSupportDetails(target: "account.deviceID"))
-        XCTAssertFalse(M.revealsSupportDetails(target: "account.email"))
-        XCTAssertFalse(M.revealsSupportDetails(target: nil))
+    func testDeviceIDSearchOpensExpandedHelpDetails() {
         let item = SettingsSearchCatalog.items.first { $0.id == "account.deviceID" }
-        XCTAssertEqual(item?.destination, .account)
-        XCTAssertEqual(item?.section, "Your account, Support details")
+        XCTAssertEqual(item?.destination, .help)
+        XCTAssertEqual(item?.section, "Support details")
     }
 
     func testNoSentenceCallsTheKeyTheAccountOrTheOnlyWayBack() {
@@ -2706,7 +2708,13 @@ final class AccountEmailStateTests: XCTestCase {
         app.clientAuthManager = manager
         app.minitiAPIService = MinitiAPIService(session: session, auth: manager)
         app.refreshClientAuthStatus()
-        try? await settle()
+        // Wait for that read to land rather than pausing a fixed 120 ms: on 2026-10-27 the CI
+        // runner was still mid-read when the refresh-queue scenario started, so its slow read
+        // was merely queued, the state stayed loading and the log showed one GET instead of two.
+        for _ in 0..<600 {
+            if !app.accountEmailInFlight, app.accountEmailPending == nil, app.accountEmailState != .loading { break }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
         return app
     }
 
@@ -3064,7 +3072,7 @@ final class SettingsNavigationPlanTests: XCTestCase {
         XCTAssertNil(SettingsNavigationPlan.path(for: unavailable, current: [], available: available), "CRM is Mac only")
         let regular = SettingsNavigationPlan.regular(for: account, available: available)
         XCTAssertEqual(regular?.selection, .account)
-        XCTAssertEqual(regular?.detailPath, [], "an iPad request clears whatever Sending's Configure pushed under the previous selection")
+        XCTAssertEqual(regular?.detailPath, [], "an iPad request clears whatever Privacy's Configure pushed under the previous selection")
         XCTAssertNil(SettingsNavigationPlan.regular(for: unavailable, available: available))
         XCTAssertEqual(SettingsNavigationPlan.sidebarSelection(for: account, available: available), .account)
         XCTAssertNil(SettingsNavigationPlan.sidebarSelection(for: unavailable, available: available))
@@ -3072,17 +3080,17 @@ final class SettingsNavigationPlanTests: XCTestCase {
 
     func testResizingCarriesTheVisibleScreenBetweenLayoutsAndClearsTheOtherStack() {
         let available = Set(SettingsDestination.available(on: .iOS))
-        // Regular: Sending selected, Configure Cloud pushed.
+        // Regular: Privacy selected, Configure Cloud pushed.
         let pushed = [SettingsRoute(destination: .cloud, target: "cloud.sync")]
-        // To compact: the visible Cloud screen, not Sending, is what the stack shows.
-        let compact = SettingsNavigationPlan.toCompact(selection: .sending, detailPath: pushed)
+        // To compact: the visible Cloud screen, not Privacy, is what the stack shows.
+        let compact = SettingsNavigationPlan.toCompact(selection: .privacy, detailPath: pushed)
         XCTAssertEqual(compact, pushed)
         // An Account request while compact replaces it.
         let request = SettingsNavigationRequest(destination: .account, target: "account.email")
         let afterRequest = SettingsNavigationPlan.path(for: request, current: compact, available: available)
         XCTAssertEqual(afterRequest, [SettingsRoute(destination: .account, target: "account.email")])
         // Back to regular: Account is the selection with a fresh detail stack and the target to scroll to.
-        let regular = SettingsNavigationPlan.toRegular(path: afterRequest!, selection: .sending)
+        let regular = SettingsNavigationPlan.toRegular(path: afterRequest!, selection: .privacy)
         XCTAssertEqual(regular.selection, .account)
         XCTAssertEqual(regular.detailPath, [], "the old Cloud push never resurfaces")
         XCTAssertEqual(regular.target, "account.email")

@@ -136,7 +136,7 @@ protocol CloudSyncTransport: AnyObject, Sendable {
     func changes(since: Int, limit: Int) async throws -> CloudChangesPage
     func fetchMeeting(id: UUID) async throws -> CloudMeetingState?
     func fetchMeetings(ids: [UUID]) async throws -> [CloudMeetingState]
-    func putMeeting(id: UUID, baseRevision: Int, document: Data) async throws -> CloudPutResult
+    func putMeeting(id: UUID, baseRevision: Int, document: Data, restoreDeleted: Bool) async throws -> CloudPutResult
     func deleteMeeting(id: UUID, baseRevision: Int) async throws -> CloudDeleteResult
     func status() async throws -> CloudStatus
     func deleteCloudCopy() async throws
@@ -242,8 +242,8 @@ extension MinitiAPIService: CloudSyncTransport {
         return ((json["meetings"] as? [[String: Any]]) ?? []).compactMap { CloudMeetingState(json: $0, fallbackID: nil) }
     }
 
-    func putMeeting(id: UUID, baseRevision: Int, document: Data) async throws -> CloudPutResult {
-        var body = Data("{\"base_revision\":\(baseRevision),\"document\":".utf8)
+    func putMeeting(id: UUID, baseRevision: Int, document: Data, restoreDeleted: Bool = false) async throws -> CloudPutResult {
+        var body = Data("{\"base_revision\":\(baseRevision),\"restore_deleted\":\(restoreDeleted),\"document\":".utf8)
         body.append(document)
         body.append(Data("}".utf8))
         let (status, json) = try await cloudCall(cloudRequest(path: "/sync/meetings/\(id.uuidString.lowercased())", method: "PUT", body: body))

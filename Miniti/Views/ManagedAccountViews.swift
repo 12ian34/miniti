@@ -1,5 +1,21 @@
 import SwiftUI
 
+struct PurchaseReturnStatusView: View {
+    @ObservedObject var controller: PurchaseReturnController
+    var body: some View {
+        if let message = controller.state.message {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                Text(message)
+                switch controller.state {
+                case .checking: ProgressView().controlSize(.small)
+                case .retry, .signIn: Button("Retry") { controller.retry() }
+                default: EmptyView()
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Managed account UI (shared by macOS and iOS)
 //
 // The account is identified by its verified email when it has one and by the anonymous
@@ -329,12 +345,6 @@ struct AccountSectionModel: Equatable {
         )
     }
 
-    /// Search targets that live inside the Support details disclosure (L2): opening one
-    /// expands the disclosure before the scroll.
-    static func revealsSupportDetails(target: String?) -> Bool {
-        target == "account.deviceID"
-    }
-
     /// Whether an action sends a signed request (and so is disabled on a temporary failure).
     static func needsSignature(_ action: Action) -> Bool {
         switch action {
@@ -552,8 +562,6 @@ struct ManagedAccountSettingsSection: View {
     @State private var emailNotice: String?
     /// True while `emailNotice` confirms a sent link; it reads as a status, not an error.
     @State private var emailNoticeIsConfirmation = false
-    @State private var supportDetailsExpanded = false
-    @State private var copiedSupportDetails = false
     @FocusState private var emailFieldFocused: Bool
 
     private var status: ClientAuthStatus { appState.clientAuthStatus }
@@ -584,10 +592,6 @@ struct ManagedAccountSettingsSection: View {
                 isEditingEmail = true
                 emailFieldFocused = true
             }
-            if AccountSectionModel.revealsSupportDetails(target: target) { supportDetailsExpanded = true }
-        }
-        .onAppear {
-            if AccountSectionModel.revealsSupportDetails(target: appState.pendingSettingsSearchTarget) { supportDetailsExpanded = true }
         }
         .sheet(isPresented: $isPresentingRestore) {
             RestoreRecoveryKeySheet()
@@ -674,57 +678,6 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            DisclosureGroup(isExpanded: $supportDetailsExpanded) {
-                ForEach(supportDetails, id: \.label) { item in
-                    detailRow(item.label, item.value)
-                        .id(item.label == "Device id" ? "account.deviceID" : "support.\(item.label)")
-                }
-                HStack {
-                    Spacer()
-                    Button(copiedSupportDetails ? "Copied" : "Copy all") {
-                        MinitiPasteboard.copy(supportDetails.map { "\($0.label): \($0.value)" }.joined(separator: "\n"))
-                        copiedSupportDetails = true
-                    }
-                    .font(.caption)
-                }
-            } label: {
-                Text("Support details")
-            }
-            .disclosureGroupStyle(MinitiDisclosureStyle())
-            .font(.callout)
-        }
-    }
-
-    /// The ids support asks for, in copyable form (Ian, 2026-10-27).
-    private var supportDetails: [(label: String, value: String)] {
-        [
-            ("Account id", status.accountID ?? "none"),
-            ("Device id", DeviceIdentifier.getOrCreateDeviceId()),
-            ("Sign-in key", status.isHardwareBacked ? "Secure Enclave" : "Software"),
-            ("App", "\(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?") (\(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"))"),
-        ]
-    }
-
-    private func detailRow(_ label: String, _ value: String) -> some View {
-        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
-            Text(label)
-            Spacer()
-            Text(value)
-                .foregroundStyle(.secondary)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Button {
-                MinitiPasteboard.copy(value)
-            } label: {
-                Image(systemName: "doc.on.doc")
-                    .font(.system(size: 11))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(ColorPalette.Text.secondary)
-            .help("Copy \(label.lowercased())")
-            .accessibilityLabel("Copy \(label.lowercased())")
         }
     }
 
@@ -1428,5 +1381,32 @@ struct EmailSignInSheet: View {
             error = lastCheckFailed ? "miniti's servers could not be reached. Send a new link when you are back online." : "The link expired. Send a new one."
             linkID = nil
         }
+    }
+}
+
+
+struct APIModeOptions: View {
+    @EnvironmentObject private var appState: AppState
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+            option(appState.shouldShowManagedSubscriptionPlaceholder ? "miniti (checking plan…)" : appState.isPro ? "miniti Pro (5,000 min/month)" : "miniti Free (500 min/month)", mode: .managed)
+            option("My own Deepgram and OpenAI accounts", mode: .byok)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("API mode")
+    }
+    private func option(_ title: String, mode: AppMode) -> some View {
+        Button { appState.appModeRaw = mode.rawValue } label: {
+            HStack(alignment: .firstTextBaseline, spacing: MinitiDesignSystem.Spacing.standard) {
+                Image(systemName: appState.appMode == mode ? "largecircle.fill.circle" : "circle")
+                Text(title).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(ColorPalette.Text.primary)
+            .padding(.vertical, MinitiDesignSystem.Spacing.small)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(appState.appMode == mode ? .isSelected : [])
     }
 }

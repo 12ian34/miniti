@@ -548,16 +548,8 @@ private struct SettingsDetailView_iOS: View {
                 }
 
                 Section("Mode") {
-                    Picker("API Mode", selection: $appState.appModeRaw) {
-                        Text(
-                            appState.shouldShowManagedSubscriptionPlaceholder
-                                ? "Miniti (checking plan…)"
-                                : (appState.isPro ? "Miniti Pro (5,000 min/month)" : "Miniti Free (500 min/month)")
-                        )
-                        .tag(AppMode.managed.rawValue)
-                        Text("My own Deepgram and OpenAI accounts").tag(AppMode.byok.rawValue)
-                    }
-                    .id("account.apiMode")
+                    APIModeOptions()
+                .id("account.apiMode")
                     .onChange(of: appState.appModeRaw) { _, newValue in
                         if newValue == AppMode.managed.rawValue {
                             Task { await appState.refreshUsage() }
@@ -929,24 +921,13 @@ private struct SettingsDetailView_iOS: View {
                     .id("playbook.server")
                 }
 
-                if category == .sending {
-                DataFlowRowsView { jump in
-                    if let item = SettingsSearchCatalog.items.first(where: { $0.id == jump.target }) {
-                        // Value based, so both the compact stack and the iPad detail stack own it
-                        // and a navigation request can clear it.
-                        NavigationLink("Configure", value: SettingsRoute(destination: item.destination, target: item.id))
-                            .accessibilityLabel("Configure: \(jump.label)")
-                    }
-                }
-                .id("sending.overview")
-                }
-
                 if category == .privacy {
+                Section("Deepgram and OpenAI") {
+                    ThirdPartyAIConsentRow()
+                }
+                .id("privacy.thirdPartyAI")
                 Section("Privacy") {
-                    Text("What leaves this device, and who gets it, is listed under Setup, Sending.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("Private mode, where a meeting never leaves the device, is on the Mac app for now.")
+                    Text("Private mode is available in the Mac app. On this device, you can choose Local in a meeting to keep it off miniti cloud.")
                     Text("Voices (Settings, Transcription) keeps voice fingerprints on this device only: 192 numbers per person, never synced, exported or sent anywhere. Forget any of them there; turning Remember voices off deletes them all.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -961,6 +942,32 @@ private struct SettingsDetailView_iOS: View {
                 }
                 }
 
+                if category == .privacy {
+                DataFlowRowsView { jump in
+                    if let item = SettingsSearchCatalog.items.first(where: { $0.id == jump.target }) {
+                        // Value based, so both the compact stack and the iPad detail stack own it
+                        // and a navigation request can clear it.
+                        if item.destination == .privacy {
+                            Button("Configure") { appState.jumpToSetting(item.id) }
+                                .accessibilityLabel("Configure: \(jump.label)")
+                        } else {
+                            NavigationLink("Configure", value: SettingsRoute(destination: item.destination, target: item.id))
+                                .accessibilityLabel("Configure: \(jump.label)")
+                        }
+                    }
+                }
+                .id("sending.overview")
+                }
+
+                if category == .models {
+                    LocalModelsSettingsSections(embedder: appState.voicePrintEmbedder) { target in
+                        if let item = SettingsSearchCatalog.items.first(where: { $0.id == target }) {
+                            NavigationLink("Configure", value: SettingsRoute(destination: item.destination, target: item.id))
+                        }
+                    }
+                    .id("privacy.models")
+                }
+
                 if category == .api {
                     CloudSettingsSections(engine: appState.cloudSync, mode: .api)
                 }
@@ -968,6 +975,8 @@ private struct SettingsDetailView_iOS: View {
                 if category == .cloud {
                     CloudSettingsSections(engine: appState.cloudSync)
                 }
+
+                if category == .help { HelpSettingsSections() }
 
                 if category == .about {
                 Section("About") {
@@ -981,8 +990,6 @@ private struct SettingsDetailView_iOS: View {
                             }
                     }
                     .id("about.version")
-                    AcknowledgementsSection()
-                    .id("about.acknowledgements")
                     Text("Pro is an auto-renewable subscription. Cancel anytime in Apple ID subscriptions.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1023,16 +1030,6 @@ private struct SettingsDetailView_iOS: View {
                             .foregroundStyle(.secondary)
                         }
                     }
-                    Link(destination: URL(string: "https://miniti.app/support")!) {
-                        HStack {
-                            Text("Support")
-                            Spacer()
-                            Image(systemName: "arrow.up.right")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .id("about.support")
                     Link(destination: URL(string: "https://miniti.app/privacy")!) {
                         HStack {
                             Text("Privacy")
@@ -1061,6 +1058,8 @@ private struct SettingsDetailView_iOS: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+                    AcknowledgementsSection()
+                        .id("about.acknowledgements")
                 }
                 }
             }
