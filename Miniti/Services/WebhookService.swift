@@ -2,9 +2,24 @@ import Foundation
 
 enum WebhookService {
 
+    /// Additive, content-free completion metadata. Existing receivers can ignore it.
+    struct Processing: Codable, Equatable {
+        enum State: String, Codable { case complete, partial, failed, skipped, interrupted }
+        enum Outcome: String, Codable { case complete, failed, skipped, interrupted, stale }
+        let inputTranscriptRevision: Int
+        let state: State
+        let outcomes: [String: Outcome]
+
+        enum CodingKeys: String, CodingKey {
+            case inputTranscriptRevision = "input_transcript_revision"
+            case state, outcomes
+        }
+    }
+
     struct MeetingPayload: Encodable {
         let event: String
         let meeting: MeetingData
+        var processing: Processing? = nil
 
         struct MeetingData: Encodable {
             let id: String
@@ -295,7 +310,7 @@ enum WebhookService {
 
     // MARK: - Payload from persisted Meeting (used by generateInsightsForMeeting)
 
-    static func payloadFromMeeting(_ meeting: Meeting) -> MeetingPayload {
+    static func payloadFromMeeting(_ meeting: Meeting, event: String = "meeting.updated", processing: Processing? = nil, insightsStale: Bool = false) -> MeetingPayload {
         let fmt = ISO8601DateFormatter()
         let duration = meeting.endTime.map { Int($0.timeIntervalSince(meeting.startTime)) } ?? 0
         let finalSegments = meeting.segments.filter(\.isFinal).sorted { $0.timestamp < $1.timestamp }
@@ -331,7 +346,7 @@ enum WebhookService {
             )
         }
         return MeetingPayload(
-            event: "meeting.updated",
+            event: event,
             meeting: .init(
                 id: meeting.id.uuidString,
                 title: meeting.displayTitle,
@@ -339,18 +354,18 @@ enum WebhookService {
                 endTime: meeting.endTime.map { fmt.string(from: $0) },
                 durationSeconds: duration,
                 language: meeting.language,
-                summary: meeting.summaryText,
-                actionItems: meeting.actionItems,
-                keyDecisions: meeting.keyDecisions,
-                topics: meeting.topics,
-                discussionFlow: meeting.discussionFlow,
+                summary: insightsStale ? nil : meeting.summaryText,
+                actionItems: insightsStale ? [] : meeting.actionItems,
+                keyDecisions: insightsStale ? [] : meeting.keyDecisions,
+                topics: insightsStale ? [] : meeting.topics,
+                discussionFlow: insightsStale ? [] : meeting.discussionFlow,
                 notes: meeting.notes,
-                meddpicc: meddpicc.isEmpty ? nil : meddpicc,
+                meddpicc: insightsStale || meddpicc.isEmpty ? nil : meddpicc,
                 training: training,
-                questions: meeting.suggestedQuestions.isEmpty ? nil : meeting.suggestedQuestions.map {
+                questions: insightsStale || meeting.suggestedQuestions.isEmpty ? nil : meeting.suggestedQuestions.map {
                     MeetingPayload.QuestionEntry(question: $0.question, type: $0.type, context: $0.context)
                 },
-                docs: meeting.docsPlaybook.isEmpty ? nil : meeting.docsPlaybook.map {
+                docs: insightsStale || meeting.docsPlaybook.isEmpty ? nil : meeting.docsPlaybook.map {
                     MeetingPayload.DocEntry(
                         topic: $0.topic,
                         answer: $0.answer,
@@ -360,17 +375,18 @@ enum WebhookService {
                         priority: $0.priority
                     )
                 },
-                template: MeetingPayload.TemplateData(template: meeting.insightTemplate, sections: meeting.templateSections),
+                template: insightsStale ? nil : MeetingPayload.TemplateData(template: meeting.insightTemplate, sections: meeting.templateSections),
                 speakerCount: speakers.count,
                 speakerNames: speakerNames.isEmpty ? nil : speakerNames,
                 speakerEmails: speakerEmails.isEmpty ? nil : speakerEmails,
                 transcript: transcript,
                 transcriptEditedAt: meeting.transcriptEditedAt.map { fmt.string(from: $0) },
                 transcriptRevision: meeting.hasTranscriptEdits ? meeting.transcriptRevision : nil,
-                insightsStale: false,
+                insightsStale: insightsStale,
                 calendarEventId: meeting.calendarEventId,
                 attendees: attendeeEntries
-            )
+            ),
+            processing: processing
         )
     }
 

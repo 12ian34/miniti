@@ -2158,6 +2158,12 @@ struct DeliveryStatusRow: View {
     }
 
     var body: some View {
+        if kind == .webhook, let error = appState.webhookResendError ?? outbox.persistenceError {
+            HStack {
+                Text(error).font(.caption).foregroundStyle(ColorPalette.Status.error)
+                Button("Try again") { appState.retryWebhookDeliveries() }.controlSize(.small)
+            }
+        }
         if let line = outbox.statusLine(for: kind) {
             HStack(spacing: 10) {
                 Label(line, systemImage: outbox.failed(kind).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
@@ -2165,7 +2171,11 @@ struct DeliveryStatusRow: View {
                     .foregroundStyle(outbox.failed(kind).isEmpty ? Color.secondary : ColorPalette.Status.error)
                     .lineLimit(2)
                 Spacer()
-                Button("Retry now") { outbox.retryNow(kind) }
+                Button(kind == .webhook && !outbox.failed(kind).isEmpty ? "Resend current meeting" : "Retry now") {
+                    if kind == .webhook && !outbox.failed(kind).isEmpty { appState.resendFailedWebhooks() }
+                    else if kind == .webhook { appState.retryWebhookDeliveries() }
+                    else { outbox.retryNow(kind) }
+                }
                     .controlSize(.small)
                 if !outbox.failed(kind).isEmpty {
                     Button("Discard failed") { outbox.discardFailed(kind) }

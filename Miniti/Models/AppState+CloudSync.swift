@@ -80,6 +80,15 @@ extension AppState: CloudSyncHost {
 
     var liveMeetingID: UUID? { currentMeeting?.id }
 
+    var cloudUploadProtectedMeetingID: UUID? {
+        guard isStartingMeeting || isRecording || isResumingRecording || isFinalizingMeeting else { return nil }
+        return currentMeeting?.id
+    }
+
+    func cloudProtectsIncoming(_ id: UUID) -> Bool {
+        currentMeeting?.id == id || finalizingInsightMeetingIDs.contains(id)
+    }
+
     var cloudAccountID: String? { clientAuthStatus.accountID }
 
     /// Nil when every gate is open: switch on, managed mode, enrolled, private mode off, Pro.

@@ -51,6 +51,10 @@ final class DeliveryOutbox: ObservableObject {
         /// transcript, so it lives only until delivery or terminal failure.
         var body: Data?
         var destination: String?
+        /// Optional for decoding pre-3.6 stores. Held rows cannot dispatch until the
+        /// meeting-side handoff is durable. An attempted body is immutable across retries.
+        var held: Bool? = nil
+        var hasBeenAttempted: Bool? = nil
     }
 
     /// What a sender reports back.
@@ -67,6 +71,14 @@ final class DeliveryOutbox: ObservableObject {
     typealias Sender = @MainActor (Item) async -> Outcome
 
     @Published private(set) var items: [Item] = []
+    @Published private(set) var persistenceError: String?
+    private(set) var hasStorageFailure = false
+    private var unreadableStore = false
+    var isStoreReadable: Bool { !unreadableStore }
+    private var inFlightID: UUID?
+    /// Deletion/discard must fence a held sender even if the disk is temporarily unwritable.
+    private var invalidatedIDs: Set<UUID> = []
+    private let writeStore: ((Data, URL) throws -> Void)?
 
     private let storeURL: URL
     private let now: () -> Date
@@ -88,9 +100,10 @@ final class DeliveryOutbox: ObservableObject {
         URL.applicationSupportDirectory.appendingPathComponent("deliveries-outbox.json")
     }
 
-    init(storeURL: URL = DeliveryOutbox.defaultStoreURL(), now: @escaping () -> Date = Date.init) {
+    init(storeURL: URL = DeliveryOutbox.defaultStoreURL(), now: @escaping () -> Date = Date.init, writeStore: ((Data, URL) throws -> Void)? = nil) {
         self.storeURL = storeURL
         self.now = now
+        self.writeStore = writeStore
         load()
     }
 
@@ -100,40 +113,84 @@ final class DeliveryOutbox: ObservableObject {
 
     // MARK: - Enqueue
 
-    /// A webhook for one meeting and event. A pending delivery of the same meeting and event
-    /// is superseded in place (one `meeting.updated` per meeting, with the latest body).
-    func enqueueWebhook(meetingID: UUID, event: String, body: Data, destination: String) {
-        let now = now()
-        if let index = items.firstIndex(where: {
-            $0.kind == .webhook && $0.meetingID == meetingID && $0.event == event && $0.state == .pending
-        }) {
-            items[index].body = body
-            items[index].destination = destination
-            DebugLogger.shared.log(.app, "Outbox: superseded pending webhook \(event) for meeting")
-        } else {
-            items.append(Item(
-                id: UUID(), kind: .webhook, meetingID: meetingID, event: event, createdAt: now,
-                attempts: 0, nextAttemptAt: now, state: .pending, lastError: nil,
-                body: body, destination: destination
-            ))
-        }
-        persist()
-        kick()
+    /// New content always gets a new identity. Only the actual in-flight row is kept
+    /// alongside its newest successor; a failed old retry cannot overtake new content.
+    @discardableResult
+    func enqueueWebhook(meetingID: UUID, event: String, body: Data, destination: String, id: UUID = UUID()) -> Bool {
+        let accepted = insertWebhook(id: id, meetingID: meetingID, event: event, body: body, destination: destination, held: false)
+        if accepted { kick() }
+        return accepted
     }
 
-    /// An automatic CRM send. The payload is rebuilt from the saved meeting at send time, so
-    /// no transcript copy is kept here. One pending item per meeting and CRM.
-    func enqueueCRM(_ kind: Kind, meetingID: UUID) {
-        precondition(kind != .webhook)
-        guard !items.contains(where: { $0.kind == kind && $0.meetingID == meetingID && $0.state == .pending }) else { return }
-        let now = now()
-        items.append(Item(
-            id: UUID(), kind: kind, meetingID: meetingID, event: "auto-sync", createdAt: now,
-            attempts: 0, nextAttemptAt: now, state: .pending, lastError: nil,
-            body: nil, destination: nil
-        ))
-        persist()
+    /// Persist before acknowledging the meeting marker. Repeating the exact handoff is
+    /// idempotent; a supplied ID can never acquire a different body.
+    @discardableResult
+    func stageWebhook(id: UUID, meetingID: UUID, event: String, body: Data, destination: String, createdAt: Date? = nil) -> Bool {
+        insertWebhook(id: id, meetingID: meetingID, event: event, body: body, destination: destination, held: true, createdAt: createdAt)
+    }
+
+    @discardableResult
+    func releaseWebhook(id: UUID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id && $0.kind == .webhook }), !invalidatedIDs.contains(id) else { return false }
+        if items[index].held != true { return !hasStorageFailure }
+        var next = items
+        next[index].held = false
+        guard commit(next) else { return false }
         kick()
+        return true
+    }
+
+    /// Retry a temporary disk failure explicitly, including an empty queue. A corrupt
+    /// existing file is kept intact and requires recovery rather than an empty overwrite.
+    @discardableResult
+    func retryStorage() -> Bool {
+        commit(items.filter { !invalidatedIDs.contains($0.id) })
+    }
+
+    func item(id: UUID) -> Item? { items.first { $0.id == id } }
+    var heldWebhooks: [Item] { items.filter { $0.kind == .webhook && $0.held == true } }
+
+    /// R6 resolves this meeting's bodyless failures only after its current-state replacement is durably queued.
+    /// Repeated taps with the same replacement identity do not duplicate the delivery.
+    @discardableResult
+    func replaceFailedWebhook(id: UUID, replacementID: UUID, meetingID: UUID, event: String, body: Data, destination: String) -> Bool {
+        if let existing = item(id: replacementID) {
+            return existing.meetingID == meetingID && existing.event == event && existing.body == body && existing.destination == destination
+        }
+        guard let old = item(id: id), old.kind == .webhook, old.state == .failed, old.meetingID == meetingID else { return false }
+        let accepted = insertWebhook(id: replacementID, meetingID: meetingID, event: event, body: body, destination: destination, held: false, replacingFailure: id)
+        if accepted { kick() }
+        return accepted
+    }
+
+    private func insertWebhook(id: UUID, meetingID: UUID, event: String, body: Data, destination: String, held: Bool, createdAt: Date? = nil, replacingFailure: UUID? = nil) -> Bool {
+        guard !unreadableStore else { return false }
+        if let old = item(id: id) {
+            return !invalidatedIDs.contains(id) && old.kind == .webhook && old.meetingID == meetingID && old.event == event && old.body == body && old.destination == destination
+        }
+        let date = createdAt ?? now()
+        var next = items.filter { item in
+            if replacingFailure != nil && item.kind == .webhook && item.meetingID == meetingID && item.state == .failed { return false }
+            return !(item.kind == .webhook && item.meetingID == meetingID && item.event == event && item.state == .pending && item.id != inFlightID)
+        }
+        next.append(Item(id: id, kind: .webhook, meetingID: meetingID, event: event, createdAt: date,
+                         attempts: 0, nextAttemptAt: now(), state: .pending, lastError: nil,
+                         body: body, destination: destination, held: held, hasBeenAttempted: false))
+        return commit(next)
+    }
+
+    /// CRM bodies still rebuild from saved state at dispatch; its retry policy is unchanged.
+    @discardableResult
+    func enqueueCRM(_ kind: Kind, meetingID: UUID) -> Bool {
+        precondition(kind != .webhook)
+        guard !items.contains(where: { $0.kind == kind && $0.meetingID == meetingID && $0.state == .pending }) else { return true }
+        let date = now()
+        var next = items
+        next.append(Item(id: UUID(), kind: kind, meetingID: meetingID, event: "auto-sync", createdAt: date,
+                         attempts: 0, nextAttemptAt: date, state: .pending, lastError: nil, body: nil, destination: nil))
+        guard commit(next) else { return false }
+        kick()
+        return true
     }
 
     // MARK: - Queries for the UI
@@ -147,13 +204,19 @@ final class DeliveryOutbox: ObservableObject {
     func statusLine(for kind: Kind) -> String? {
         let waiting = pending(kind)
         let dead = failed(kind)
+        if let persistenceError { return persistenceError }
         if dead.isEmpty && waiting.isEmpty { return nil }
         var parts: [String] = []
         if !waiting.isEmpty {
-            let next = waiting.map(\.nextAttemptAt).min() ?? now()
-            let secs = max(0, Int(next.timeIntervalSince(now())))
-            let when = secs < 60 ? "shortly" : "in \(Int((Double(secs) / 60).rounded(.up))) min"
-            parts.append("\(waiting.count) waiting, next retry \(when)")
+            let ready = waiting.filter { $0.held != true }
+            if ready.isEmpty {
+                parts.append("\(waiting.count) waiting for saved meeting")
+            } else {
+                let next = ready.map(\.nextAttemptAt).min() ?? now()
+                let secs = max(0, Int(next.timeIntervalSince(now())))
+                let when = secs < 60 ? "shortly" : "in \(Int((Double(secs) / 60).rounded(.up))) min"
+                parts.append("\(waiting.count) waiting, next retry \(when)")
+            }
         }
         if !dead.isEmpty {
             let reason = dead.last?.lastError ?? "unknown error"
@@ -165,98 +228,132 @@ final class DeliveryOutbox: ObservableObject {
     // MARK: - Actions
 
     func retryNow(_ kind: Kind? = nil) {
-        let now = now()
-        for index in items.indices where (kind == nil || items[index].kind == kind) {
-            if items[index].state == .failed {
-                items[index].state = .pending
-                items[index].attempts = 0
-                items[index].lastError = nil
+        var next = items
+        let date = now()
+        for index in next.indices where (kind == nil || next[index].kind == kind) {
+            // A terminal webhook has no body. R6 rebuilds it from current saved data.
+            if next[index].state == .failed && next[index].kind != .webhook {
+                next[index].state = .pending
+                next[index].attempts = 0
+                next[index].lastError = nil
             }
-            if items[index].state == .pending {
-                items[index].nextAttemptAt = now
-            }
+            if next[index].state == .pending { next[index].nextAttemptAt = date }
         }
-        persist()
-        kick()
+        if commit(next) { kick() }
     }
 
     func discardFailed(_ kind: Kind? = nil) {
-        items.removeAll { ($0.state == .failed || $0.state == .skipped) && (kind == nil || $0.kind == kind) }
-        persist()
+        let removing = items.filter { ($0.state == .failed || $0.state == .skipped) && (kind == nil || $0.kind == kind) }
+        invalidatedIDs.formUnion(removing.map(\.id))
+        _ = commit(items.filter { !invalidatedIDs.contains($0.id) })
     }
 
-    /// The meeting is gone: nothing of it may be delivered later.
-    func removeAll(forMeeting meetingID: UUID) {
-        let before = items.count
-        items.removeAll { $0.meetingID == meetingID }
-        if items.count != before { persist() }
+    @discardableResult
+    func removeAll(forMeeting meetingID: UUID) -> Bool {
+        invalidatedIDs.formUnion(items.filter { $0.meetingID == meetingID }.map(\.id))
+        return commit(items.filter { !invalidatedIDs.contains($0.id) })
+    }
+
+    /// Cancel an obsolete held handoff without affecting another revision's delivery.
+    @discardableResult
+    func discard(id: UUID) -> Bool {
+        invalidatedIDs.insert(id)
+        return commit(items.filter { $0.id != id })
     }
 
     // MARK: - Processing
 
-    /// Called on enqueue, on a timer while anything is pending, on app activation and on
-    /// network recovery. Safe to call often; one pass runs at a time.
-    func kick() {
-        Task { await processDue() }
-    }
+    func kick() { Task { await processDue() } }
 
     func processDue() async {
-        guard !isProcessing else { return }
+        guard !isProcessing, !unreadableStore else { return }
         isProcessing = true
-        defer { isProcessing = false; scheduleTimer() }
+        defer { inFlightID = nil; isProcessing = false; scheduleTimer() }
 
-        pruneSkipped()
-        let now = now()
-        let due = items.filter { $0.state == .pending && $0.nextAttemptAt <= now }
-        for item in due {
-            guard let sender = senders[item.kind] else { continue }
-            let outcome = await sender(item)
-            apply(outcome, to: item.id)
+        // Retry a failed persistence operation before allowing another network send.
+        let cutoff = now().addingTimeInterval(-Self.skippedRetention)
+        let retained = items.filter { !invalidatedIDs.contains($0.id) && !($0.state == .skipped && $0.createdAt < cutoff) }
+        if retained != items || hasStorageFailure {
+            guard commit(retained) else { return }
         }
-        persist()
+        let dueIDs = items.filter { $0.state == .pending && $0.held != true && $0.nextAttemptAt <= now() }.map(\.id)
+        for id in dueIDs {
+            // An await above can replace/delete another row captured by this pass.
+            guard let index = items.firstIndex(where: { $0.id == id }), !invalidatedIDs.contains(id),
+                  items[index].state == .pending, items[index].held != true,
+                  let sender = senders[items[index].kind] else { continue }
+            let item = items[index]
+            if item.kind == .webhook && item.event == "meeting.updated" && items.contains(where: {
+                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved" && $0.state == .pending
+            }) { continue }
+            if item.kind == .webhook && now().timeIntervalSince(item.createdAt) >= Self.maxAge {
+                guard apply(.reject(reason: "Delivery expired"), to: id) else { return }
+                continue
+            }
+            // Persist the attempted identity before leaving the process. A restart retries
+            // this immutable body even if its previous response was lost.
+            var attempted = items
+            attempted[index].hasBeenAttempted = true
+            guard commit(attempted) else { return }
+            inFlightID = id
+            let outcome = await sender(attempted[index])
+            inFlightID = nil
+            guard apply(outcome, to: id) else { return }
+        }
     }
 
-    private func apply(_ outcome: Outcome, to id: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
-        let now = now()
+    @discardableResult
+    private func apply(_ outcome: Outcome, to id: UUID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }), !invalidatedIDs.contains(id) else { return true }
+        var next = items
+        let item = next[index]
+        let successor = item.kind == .webhook && next.contains {
+            $0.id != id && $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == item.event && $0.state == .pending
+        }
         switch outcome {
         case .delivered:
-            DebugLogger.shared.log(.app, "Outbox: delivered \(items[index].kind.label) \(items[index].event) after \(items[index].attempts + 1) attempt(s)")
-            items.remove(at: index)
+            next.remove(at: index)
         case .skip(let reason):
-            items[index].state = .skipped
-            items[index].lastError = reason
-            items[index].body = nil
+            next[index].state = .skipped; next[index].lastError = reason; next[index].body = nil
         case .reject(let reason):
-            items[index].state = .failed
-            items[index].lastError = reason
-            items[index].body = nil
-            DebugLogger.shared.log(.app, "Outbox: \(items[index].kind.label) rejected: \(reason)", level: .warning)
+            next[index].state = .failed; next[index].lastError = reason; next[index].body = nil
         case .retry(let reason):
-            items[index].attempts += 1
-            items[index].lastError = reason
-            let tooOld = now.timeIntervalSince(items[index].createdAt) > Self.maxAge
-            if let delay = Self.nextDelay(afterAttempts: items[index].attempts), !tooOld {
-                items[index].nextAttemptAt = now.addingTimeInterval(delay)
-                DebugLogger.shared.log(.app, "Outbox: \(items[index].kind.label) attempt \(items[index].attempts) failed (\(reason)); retry in \(Int(delay))s")
+            if successor {
+                next.remove(at: index)
             } else {
-                items[index].state = .failed
-                items[index].body = nil
-                DebugLogger.shared.log(.app, "Outbox: \(items[index].kind.label) gave up after \(items[index].attempts) attempt(s): \(reason)", level: .warning)
+                next[index].attempts += 1
+                next[index].lastError = reason
+                if let delay = Self.nextDelay(afterAttempts: next[index].attempts), now().timeIntervalSince(item.createdAt) < Self.maxAge {
+                    next[index].nextAttemptAt = now().addingTimeInterval(delay)
+                } else {
+                    next[index].state = .failed; next[index].body = nil
+                }
             }
         }
-    }
-
-    private func pruneSkipped() {
-        let cutoff = now().addingTimeInterval(-Self.skippedRetention)
-        items.removeAll { $0.state == .skipped && $0.createdAt < cutoff }
+        guard commit(next) else { return false }
+        switch outcome {
+        case .delivered:
+            DebugLogger.shared.log(.app, "Outbox: delivered \(item.kind.label) \(item.event) after \(item.attempts + 1) attempt(s)")
+        case .retry:
+            DebugLogger.shared.log(.app, successor ? "Outbox: superseded old retry" : "Outbox: delivery retry scheduled or exhausted")
+        case .reject:
+            DebugLogger.shared.log(.app, "Outbox: \(item.kind.label) rejected", level: .warning)
+        case .skip:
+            break
+        }
+        return true
     }
 
     private func scheduleTimer() {
-        timer?.invalidate()
-        timer = nil
-        guard let next = pending.map(\.nextAttemptAt).min() else { return }
-        let delay = max(1, next.timeIntervalSince(now()))
+        timer?.invalidate(); timer = nil
+        let candidates = pending.filter { item in
+            guard item.held != true, !invalidatedIDs.contains(item.id) else { return false }
+            return !(item.kind == .webhook && item.event == "meeting.updated" && pending.contains {
+                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved"
+            })
+        }
+        guard !unreadableStore, let next = candidates.map(\.nextAttemptAt).min() else { return }
+        let delay = hasStorageFailure ? 30 : max(1, next.timeIntervalSince(now()))
         timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.kick() }
         }
@@ -265,31 +362,45 @@ final class DeliveryOutbox: ObservableObject {
     // MARK: - Persistence
 
     private func load() {
-        guard let data = try? Data(contentsOf: storeURL) else { return }
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        if let loaded = try? decoder.decode([Item].self, from: data) {
-            items = loaded
-            if !items.isEmpty {
-                DebugLogger.shared.log(.app, "Outbox: restored \(items.count) delivery item(s)")
-            }
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return }
+        do {
+            let data = try Data(contentsOf: storeURL)
+            let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .iso8601
+            items = try decoder.decode([Item].self, from: data)
+        } catch {
+            unreadableStore = true
+            recordStorageFailure()
         }
     }
 
-    private func persist() {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
+    /// Disk first, then publish. A failed write cannot report a durable enqueue/settlement.
+    private func commit(_ next: [Item]) -> Bool {
+        guard !unreadableStore else { return false }
         do {
-            if items.isEmpty {
-                try? FileManager.default.removeItem(at: storeURL)
-                return
+            let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(next)
+            if let writeStore {
+                try writeStore(data, storeURL)
+            } else if next.isEmpty {
+                if FileManager.default.fileExists(atPath: storeURL.path) { try FileManager.default.removeItem(at: storeURL) }
+            } else {
+                try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try data.write(to: storeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
             }
-            let data = try encoder.encode(items)
-            try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try data.write(to: storeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+            items = next
+            hasStorageFailure = false; persistenceError = nil
+            invalidatedIDs = invalidatedIDs.intersection(Set(next.map(\.id)))
+            return true
         } catch {
-            DebugLogger.shared.log(.app, "Outbox: persist FAILED: \(type(of: error))", level: .warning)
+            recordStorageFailure()
+            return false
         }
+    }
+
+    private func recordStorageFailure() {
+        hasStorageFailure = true
+        persistenceError = "Could not save deliveries. Try again when storage is available."
+        DebugLogger.shared.log(.app, "Outbox: storage unavailable", level: .warning)
     }
 
     // MARK: - Classification helpers for senders

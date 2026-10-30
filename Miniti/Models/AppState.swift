@@ -681,7 +681,12 @@ final class AppState: ObservableObject {
     
     // MARK: - Session Management
     var modelContext: ModelContext? {
-        didSet { if modelContext != nil { configureCloudSyncIfNeeded() } }
+        didSet {
+            if modelContext != nil {
+                configureCloudSyncIfNeeded()
+                if !Self.isRunningUnderXCTest { reconcileWebhookCompletions() }
+            }
+        }
     }
     @Published var hasUnsavedSession = false
     let audioLevels = AudioLevelsState()
@@ -1684,7 +1689,12 @@ final class AppState: ObservableObject {
     }
     /// Webhooks and automatic CRM sends go through here: persisted, retried with backoff,
     /// visible in Settings (roadmap P1.2, 2.11.0).
-    let deliveryOutbox = DeliveryOutbox()
+    var deliveryOutbox = DeliveryOutbox(storeURL: AppState.isRunningUnderXCTest ? URL.temporaryDirectory.appendingPathComponent("miniti-test-outbox-\(UUID().uuidString).json") : DeliveryOutbox.defaultStoreURL())
+    var savedAIRequests: [String: UUID] = [:]
+    var stoppedFinalizationTasks: Set<UUID> = []
+    var historyInsightActivity: UUID?
+    var historyTopicsActivity: UUID?
+    @Published var webhookResendError: String?
     /// Cloud sync (3.0.0): default off, Pro only, managed accounts only. The engine is always
     /// constructed; `AppState+CloudSync.swift` decides when it runs and wires it to the store.
     @AppStorage("cloudSyncEnabled") var cloudSyncEnabled: Bool = false
@@ -4681,23 +4691,32 @@ final class AppState: ObservableObject {
         let transcript = meeting.fullTranscript
         let language = meeting.language
         guard transcript.count >= docsMinTranscriptChars, !isExtractingDocsTopics else { return }
+        let request = beginSavedAIRequest(meeting, scope: "topics")
+        historyTopicsActivity = request.id
         isExtractingDocsTopics = true
-        defer { isExtractingDocsTopics = false }
+        defer {
+            finishSavedAIRequest(request)
+            if historyTopicsActivity == request.id {
+                historyTopicsActivity = nil
+                isExtractingDocsTopics = false
+            }
+        }
 
-        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: language) else {
+        guard let labels = await extractDocsTopicLabels(transcript: transcript, language: language, mayApply: { self.savedAIRequestIsCurrent(request, meeting: meeting) }) else {
             return
         }
         // The meeting can be deleted from history while extraction is in flight.
-        guard !isMeetingDeleted(meetingID) else { return }
+        guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
         let merged = Self.mergeDocTopics(existing: meeting.docTopics, newLabels: labels)
+        let oldTopics = meeting.docTopicsJSON
         meeting.docTopics = merged
+        guard commit(.docsTopics, revert: { meeting.docTopicsJSON = oldTopics }) else { return }
         if currentMeeting?.id == meetingID { liveDocTopics = merged }
         if !merged.isEmpty { docsSuccessCount += 1 }
-        commit(.docsTopics)
 
         if canAutoLookupDocs {
             for topic in merged where topic.lookupState == .pending {
-                guard !isMeetingDeleted(meetingID) else { return }
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 await lookupDocTopic(id: topic.id, for: meeting)
             }
         }
@@ -4705,7 +4724,7 @@ final class AppState: ObservableObject {
 
     /// Extract topic labels via the managed backend or BYOK. Returns nil on
     /// failure (message surfaced through `docsLookupError`).
-    private func extractDocsTopicLabels(transcript: String, language: String) async -> [String]? {
+    private func extractDocsTopicLabels(transcript: String, language: String, mayApply: () -> Bool = { true }) async -> [String]? {
         guard let mcpURL = validatedDocsMCPURL else { return nil }
         do {
             if appMode == .managed, let minitiAPIService {
@@ -4717,6 +4736,7 @@ final class AppState: ObservableObject {
                     model: OpenAIModel.gpt5Mini.rawValue,
                     language: language
                 )
+                guard mayApply() else { return nil }
                 docsLookupError = nil
                 return response.topics
             }
@@ -4729,9 +4749,11 @@ final class AppState: ObservableObject {
                 apiKey: openaiApiKey,
                 language: language
             )
+            guard mayApply() else { return nil }
             docsLookupError = nil
             return topics
         } catch {
+            guard mayApply() else { return nil }
             DebugLogger.shared.log(.app, "Docs topic extraction FAILED: \(error.localizedDescription)")
             docsLookupError = (error as? DocsMCPService.MCPError)?.errorDescription
                 ?? "Couldn't refresh docs topics. Check the MCP URL and your connection."
@@ -4898,7 +4920,15 @@ final class AppState: ObservableObject {
             docsLookupError = docsQuotaReachedMessage
             return
         }
-        let meetingID = meeting.id
+        let request = beginSavedAIRequest(meeting, scope: "doc:" + id)
+        defer {
+            if savedAIRequests[request.key] == request.id, !isMeetingDeleted(meeting.id),
+               meeting.docTopics.first(where: { $0.id == id })?.lookupState == .lookingUp {
+                updateHistoryDocTopic(id: id, in: meeting) { $0.lookupState = .pending }
+            }
+            finishSavedAIRequest(request)
+        }
+        let oldTopics = meeting.docTopicsJSON
         let transcript = meeting.fullTranscript
         let language = meeting.language
         updateHistoryDocTopic(id: id, in: meeting) { t in
@@ -4907,7 +4937,7 @@ final class AppState: ObservableObject {
         }
         let outcome = await resolveDocCard(topic: topic.label, transcript: transcript, language: language)
         // The meeting can be deleted from history while the lookup is in flight.
-        guard !isMeetingDeleted(meetingID) else { return }
+        guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
         updateHistoryDocTopic(id: id, in: meeting) { t in
             switch outcome {
             case .answered(let card):
@@ -4931,7 +4961,10 @@ final class AppState: ObservableObject {
                 self.docsLookupError = self.docsQuotaReachedMessage
             }
         }
-        commit(.docsLookup)
+        guard commit(.docsLookup, revert: {
+            meeting.docTopicsJSON = oldTopics
+            if self.currentMeeting?.id == meeting.id { self.liveDocTopics = meeting.docTopics }
+        }) else { return }
 
         if case .answered = outcome {
             docsSuccessCount += 1
@@ -6481,10 +6514,66 @@ final class AppState: ObservableObject {
         markInsightsUpdated(mode)
     }
 
+    func publishSavedInsightsToCurrentMeeting(_ meeting: Meeting) {
+        guard currentMeeting?.id == meeting.id, !isRecording else { return }
+        liveSummary = meeting.summaryText ?? ""
+        liveActionItems = meeting.actionItems
+        liveTopics = meeting.topics
+        liveDiscussionFlow = meeting.discussionFlow
+        liveMetrics = meeting.meddpiccMetrics
+        liveEconomicBuyer = meeting.meddpiccEconomicBuyer
+        liveDecisionCriteria = meeting.meddpiccDecisionCriteria
+        liveDecisionProcess = meeting.meddpiccDecisionProcess
+        livePaperProcess = meeting.meddpiccPaperProcess
+        liveIdentifiedPain = meeting.meddpiccIdentifiedPain
+        liveChampion = meeting.meddpiccChampion
+        liveCompetition = meeting.meddpiccCompetition
+        liveQuestions = meeting.suggestedQuestions
+        liveTemplateSections = meeting.templateSections
+    }
+
+    func liveInsightRevert(for meetingID: UUID) -> () -> Void {
+        let liveSummary = self.liveSummary
+        let liveActionItems = self.liveActionItems
+        let liveTopics = self.liveTopics
+        let liveDiscussionFlow = self.liveDiscussionFlow
+        let currentTitleSuffix = self.currentTitleSuffix
+        let liveMetrics = self.liveMetrics
+        let liveEconomicBuyer = self.liveEconomicBuyer
+        let liveDecisionCriteria = self.liveDecisionCriteria
+        let liveDecisionProcess = self.liveDecisionProcess
+        let livePaperProcess = self.livePaperProcess
+        let liveIdentifiedPain = self.liveIdentifiedPain
+        let liveChampion = self.liveChampion
+        let liveCompetition = self.liveCompetition
+        let liveQuestions = self.liveQuestions
+        let liveTemplateSections = self.liveTemplateSections
+        return { [weak self] in
+            guard let self, self.currentMeeting?.id == meetingID else { return }
+            self.liveSummary = liveSummary
+            self.liveActionItems = liveActionItems
+            self.liveTopics = liveTopics
+            self.liveDiscussionFlow = liveDiscussionFlow
+            self.currentTitleSuffix = currentTitleSuffix
+            self.liveMetrics = liveMetrics
+            self.liveEconomicBuyer = liveEconomicBuyer
+            self.liveDecisionCriteria = liveDecisionCriteria
+            self.liveDecisionProcess = liveDecisionProcess
+            self.livePaperProcess = livePaperProcess
+            self.liveIdentifiedPain = liveIdentifiedPain
+            self.liveChampion = liveChampion
+            self.liveCompetition = liveCompetition
+            self.liveQuestions = liveQuestions
+            self.liveTemplateSections = liveTemplateSections
+        }
+    }
+
+    func restoreInsightFreshness(_ value: [InsightsMode: Date]) { lastInsightsUpdatedAt = value }
+
     private func markInsightsUpdated(_ mode: InsightsMode, meeting: Meeting? = nil) {
         let now = Date()
-        lastInsightsUpdatedAt[mode] = now
         let target = meeting ?? currentMeeting
+        if target?.id == currentMeeting?.id { lastInsightsUpdatedAt[mode] = now }
         target?.insightsUpdatedAt = now
     }
     
@@ -6774,61 +6863,7 @@ final class AppState: ObservableObject {
         }
         #endif
 
-        // Fire webhook with live in-memory state before clearing
-        if !webhookURL.isEmpty, let meeting = currentMeeting {
-            let names = liveSpeakerNames
-            let selfIDs = liveSpeakerLabelSelfIDs
-            let transcriptEntries = liveSegments
-                .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                .sorted { $0.timestamp < $1.timestamp }
-                .map { seg in
-                    WebhookService.MeetingPayload.TranscriptEntry(
-                        speaker: resolvedSpeakerLabel(for: seg.speaker, names: names, selfIDs: selfIDs),
-                        text: seg.text,
-                        timestamp: seg.timestamp
-                    )
-                }
-            if trainingMetrics == nil {
-                let segs = liveSegments.map {
-                    TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
-                }
-                trainingMetrics = TrainingMetrics.compute(from: segs, duration: recordingDuration, language: meetingLanguage, names: names, selfIDs: selfIDs)
-            }
-            let training = WebhookService.trainingData(from: trainingMetrics)
-            let payload = WebhookService.payloadFromLiveState(
-                meetingID: meeting.id,
-                title: meeting.displayTitle,
-                startTime: meeting.startTime,
-                endTime: meeting.endTime,
-                durationSeconds: Int(recordingDuration),
-                language: meetingLanguage,
-                summary: liveSummary,
-                actionItems: liveActionItems,
-                keyDecisions: meeting.keyDecisions,
-                topics: liveTopics,
-                discussionFlow: liveDiscussionFlow,
-                notes: liveNotes,
-                metrics: liveMetrics,
-                economicBuyer: liveEconomicBuyer,
-                decisionCriteria: liveDecisionCriteria,
-                decisionProcess: liveDecisionProcess,
-                paperProcess: livePaperProcess,
-                identifiedPain: liveIdentifiedPain,
-                champion: liveChampion,
-                competition: liveCompetition,
-                speakerCount: detectedSpeakers.count,
-                speakerNames: names,
-                transcript: transcriptEntries,
-                training: training,
-                questions: liveQuestions,
-                docs: liveDocTopics.compactMap { $0.card },
-                template: insightTemplate(id: liveTemplateID),
-                templateSections: liveTemplateSections,
-                calendarEventId: meeting.calendarEventId,
-                attendees: meeting.attendees
-            )
-            enqueueWebhook(payload)
-        }
+        // Completion webhooks belong to the durable final-processing run, never navigation.
 
         // Auto-sync to configured CRMs using calendar attendee domains.
         if let meeting = currentMeeting, !meeting.attendees.isEmpty {
@@ -6996,7 +7031,6 @@ final class AppState: ObservableObject {
         // Snapshot everything read across the awaits below: the user can delete this meeting from
         // history mid-generation, after which touching the model is unsafe and writing to it
         // resurrects the row.
-        let meetingID = meeting.id
         let transcript = meeting.fullTranscript
         let language = meeting.language
         let requestedMode = insightsMode
@@ -7004,8 +7038,19 @@ final class AppState: ObservableObject {
         let summaryForContext = meeting.summaryText
         guard !transcript.isEmpty else { return }
         
+        var request = beginSavedAIRequest(meeting, scope: "insights")
+        let selectedTemplate = meeting.insightTemplate ?? selectedInsightTemplate
+        historyInsightActivity = request.id
         isGeneratingInsights = true
-        defer { isGeneratingInsights = false }
+        defer {
+            finishSavedAIRequest(request)
+            if historyInsightActivity == request.id {
+                historyInsightActivity = nil
+                isGeneratingInsights = false
+            }
+        }
+        var applied = false
+        var revertInsights: (() -> Void)?
         let model = OpenAIModel.gpt5Mini
         
         if requestedMode == .standard {
@@ -7019,7 +7064,8 @@ final class AppState: ObservableObject {
                         mode: InsightsMode.standard.rawValue, model: model.rawValue,
                         language: language
                     )
-                    guard !isMeetingDeleted(meetingID) else { return }
+                    guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+                    revertInsights = savedInsightRevert(meeting)
                     let insights = response.toLiveInsights()
                     meeting.summaryText = insights.summary
                     meeting.actionItems = insights.actionItems
@@ -7030,14 +7076,17 @@ final class AppState: ObservableObject {
                         transcript: transcript,
                         model: model, apiKey: openaiApiKey, language: language
                     )
-                    guard !isMeetingDeleted(meetingID) else { return }
+                    guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+                    revertInsights = savedInsightRevert(meeting)
                     meeting.summaryText = insights.summary
                     meeting.actionItems = insights.actionItems
                     meeting.keyDecisions = insights.decisions
                     meeting.topics = insights.topics
                 }
+                applied = true
                 markInsightsUpdated(.standard, meeting: meeting)
             } catch {
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_history_standard_failed", category: .insights, level: .warning)
             }
@@ -7054,7 +7103,8 @@ final class AppState: ObservableObject {
                         existingSummary: summaryForContext, existingTitle: nil,
                         mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
                         language: language,
-                        requiresPermission: true
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                     )
                     meddpiccInsights = response.toLiveInsights()
                 } else {
@@ -7064,7 +7114,8 @@ final class AppState: ObservableObject {
                         model: model, apiKey: openaiApiKey, language: language
                     )
                 }
-                guard !isMeetingDeleted(meetingID) else { return }
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+                revertInsights = savedInsightRevert(meeting)
                 meeting.meddpiccMetrics = meddpiccInsights.metrics
                 meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
                 meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
@@ -7073,8 +7124,10 @@ final class AppState: ObservableObject {
                 meeting.meddpiccIdentifiedPain = meddpiccInsights.identifiedPain
                 meeting.meddpiccChampion = meddpiccInsights.champion
                 meeting.meddpiccCompetition = meddpiccInsights.competition
+                applied = true
                 markInsightsUpdated(.meddpicc, meeting: meeting)
             } catch {
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
             }
@@ -7091,7 +7144,8 @@ final class AppState: ObservableObject {
                         existingSummary: nil, existingTitle: nil,
                         mode: InsightsMode.questions.rawValue, model: model.rawValue,
                         language: language,
-                        requiresPermission: true
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                     )
                     questionsInsights = response.toLiveInsights()
                 } else {
@@ -7101,17 +7155,20 @@ final class AppState: ObservableObject {
                         model: model, apiKey: openaiApiKey, language: language
                     )
                 }
-                guard !isMeetingDeleted(meetingID) else { return }
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+                revertInsights = savedInsightRevert(meeting)
                 meeting.suggestedQuestions = questionsInsights.questions
+                applied = true
                 markInsightsUpdated(.questions, meeting: meeting)
             } catch {
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
             }
         }
 
         if requestedMode == .template {
             guard aiContentPermitted else { return }
-            let template = meeting.insightTemplate ?? selectedInsightTemplate
+            let template = selectedTemplate
             let baseline = meeting.insightTemplateID == template.id ? meeting.templateSections : [:]
             do {
                 let templateInsights: InsightsService.LiveInsights
@@ -7124,7 +7181,8 @@ final class AppState: ObservableObject {
                         language: language,
                         template: template,
                         previousTemplateSections: baseline.isEmpty ? nil : baseline,
-                        requiresPermission: true
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                     )
                     templateInsights = response.toLiveInsights(template: template)
                 } else {
@@ -7136,18 +7194,25 @@ final class AppState: ObservableObject {
                         previousTemplateSections: baseline.isEmpty ? nil : baseline
                     )
                 }
-                guard !isMeetingDeleted(meetingID) else { return }
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+                revertInsights = savedInsightRevert(meeting)
                 meeting.applyInsightTemplate(template)
                 meeting.templateSections = templateInsights.templateSections
+                applied = true
                 markInsightsUpdated(.template, meeting: meeting)
+                request.input = savedAIInput(meeting)
             } catch {
+                guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (template): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_history_template_failed", category: .insights, level: .warning)
             }
         }
 
-        guard !isMeetingDeleted(meetingID) else { return }
-        commit(.insightsRegeneration)
+        guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
+        guard applied, commit(.insightsRegeneration, revert: revertInsights) else { return }
+
+        publishSavedInsightsToCurrentMeeting(meeting)
+        noteSavedProcessingSuccess(meeting, mode: requestedMode.rawValue)
 
         // Re-export markdown with updated insights
         #if os(macOS)
@@ -7159,7 +7224,7 @@ final class AppState: ObservableObject {
 
         // Fire webhook with updated meeting data
         if !webhookURL.isEmpty {
-            let payload = WebhookService.payloadFromMeeting(meeting)
+            let payload = WebhookService.payloadFromMeeting(meeting, processing: meeting.webhookCompletion?.processing)
             enqueueWebhook(payload)
         }
     }
@@ -8650,6 +8715,9 @@ final class AppState: ObservableObject {
             #endif
 
             if hasContent {
+                // Save the completion intent with the first stopped transcript, so a hard
+                // exit after that save can recover it without guessing about legacy rows.
+                _ = beginMeetingCompletion(meeting, persist: false)
                 // Persist any finals already in memory immediately. A second save after graceful
                 // shutdown captures its last final result or the visible-interim fallback.
                 saveCurrentMeetingIfNeeded()
@@ -8680,66 +8748,88 @@ final class AppState: ObservableObject {
                     flushAllPendingMicSegments()
                     flushAllPendingOrderedFinalSegments()
                     #endif
-                    // Make the transcript durable before slower, failure-prone AI requests.
-                    _ = await saveCurrentMeetingAndWait()
-                    let finalSegments = liveSegments
-                        .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                        .sorted { $0.timestamp < $1.timestamp }
-                    let finalTranscript = transcriptText(from: finalSegments)
-                    let finalLanguage = meetingLanguage
-                    let finalTitleContext = currentTitleSuffix
-                    let shouldGenerateSales = salesInsightsEnabled
-                    let finalTemplate: InsightTemplate? = templateInsightsEnabled ? liveTemplate : nil
-
-                    // End-of-meeting naming pass: one request with the full transcript
-                    // when automatic naming is on and any non-self speaker still lacks a name.
-                    // The pass is fenced by meeting ID inside updateSpeakerNamesInBackground and
-                    // runs concurrently with final insights: naming must never delay the
-                    // summary or the "finishing" state (plan B5 contract).
-                    if autoInferSpeakerNames, hasUnnamedNonSelfSpeaker(in: finalSegments) {
-                        let passSegments = finalSegments
-                        // The enclosing stop task already holds self strongly; a weak inner
-                        // capture changes nothing and trips Xcode 27's capture diagnostic.
-                        Task { @MainActor in
-                            await updateSpeakerNamesInBackground(
-                                finalSegments: passSegments,
-                                segmentCount: passSegments.count,
-                                meetingID: meetingIDAtStop
-                            )
-                            saveCurrentMeetingIfNeeded()
-                        }
-                    }
-
-                    // From here on, insight generation is scoped to the saved Meeting rather than
-                    // the live session. This lets the user return home and record another meeting
-                    // without an older response writing into the new meeting's state.
-                    finalizingInsightMeetingIDs.insert(meetingIDAtStop)
-                    isGeneratingInsights = false
-                    completeMeetingFinalization()
-                    await generateFinalInsightsAndSave(
-                        for: meeting,
-                        transcript: finalTranscript,
-                        language: finalLanguage,
-                        existingTitle: finalTitleContext,
-                        includeSales: shouldGenerateSales,
-                        template: finalTemplate
-                    )
-                    finalizingInsightMeetingIDs.remove(meetingIDAtStop)
-                    if currentMeeting?.id == meetingIDAtStop, !isRecording {
-                        finalizationStatusText = "Saved automatically"
-                    }
+                    await finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop)
                 }
             } else {
                 deepgramService?.disconnect()
                 onDeviceTranscription.noteSessionEnded()
-                saveCurrentMeetingIfNeeded()
-                finalizationStatusText = "Saved automatically"
-                completeMeetingFinalization()
+                if meeting.modelContext != nil {
+                    _ = beginMeetingCompletion(meeting, persist: false)
+                    isFinalizingMeeting = true
+                    Task { await finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop) }
+                } else {
+                    finalizationStatusText = "Saved automatically"
+                    completeMeetingFinalization()
+                }
             }
         } else {
             deepgramService?.disconnect()
             onDeviceTranscription.noteSessionEnded()
             completeMeetingFinalization()
+        }
+    }
+
+    private func finishStoppedMeeting(_ meeting: Meeting, meetingIDAtStop: UUID) async {
+        guard currentMeeting?.id == meetingIDAtStop, !isMeetingDeleted(meetingIDAtStop), !isRecording else { return }
+        guard stoppedFinalizationTasks.insert(meetingIDAtStop).inserted else { return }
+        defer { stoppedFinalizationTasks.remove(meetingIDAtStop) }
+        // Make the transcript durable before slower, failure-prone AI requests.
+        guard await saveCurrentMeetingAndWait() else {
+            finalizationStatusText = "Transcript could not be saved. Try again."
+            persistenceRetryAction = { [weak self, weak meeting] in
+                guard let self, let meeting else { return }
+                Task { await self.finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop) }
+            }
+            return
+        }
+        guard currentMeeting?.id == meetingIDAtStop, !isMeetingDeleted(meetingIDAtStop) else { return }
+        let finalSegments = liveSegments
+            .filter { $0.isFinal && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .sorted { $0.timestamp < $1.timestamp }
+        let finalTranscript = transcriptText(from: finalSegments)
+        let finalLanguage = meetingLanguage
+        let finalTitleContext = currentTitleSuffix
+        let shouldGenerateSales = salesInsightsEnabled
+        let finalTemplate: InsightTemplate? = templateInsightsEnabled ? liveTemplate : nil
+
+        // End-of-meeting naming pass: one request with the full transcript
+        // when automatic naming is on and any non-self speaker still lacks a name.
+        // The pass is fenced by meeting ID inside updateSpeakerNamesInBackground and
+        // runs concurrently with final insights: naming must never delay the
+        // summary or the "finishing" state (plan B5 contract).
+        if autoInferSpeakerNames, hasUnnamedNonSelfSpeaker(in: finalSegments) {
+            let passSegments = finalSegments
+            // The enclosing stop task already holds self strongly; a weak inner
+            // capture changes nothing and trips Xcode 27's capture diagnostic.
+            Task { @MainActor in
+                await updateSpeakerNamesInBackground(
+                    finalSegments: passSegments,
+                    segmentCount: passSegments.count,
+                    meetingID: meetingIDAtStop
+                )
+                saveCurrentMeetingIfNeeded()
+            }
+        }
+
+        // From here on, insight generation is scoped to the saved Meeting rather than
+        // the live session. This lets the user return home and record another meeting
+        // without an older response writing into the new meeting's state.
+        _ = beginMeetingCompletion(meeting)
+        finalizingInsightMeetingIDs.insert(meetingIDAtStop)
+        isGeneratingInsights = false
+        completeMeetingFinalization()
+        await generateFinalInsightsAndSave(
+            for: meeting,
+            transcript: finalTranscript,
+            language: finalLanguage,
+            existingTitle: finalTitleContext,
+            includeSales: shouldGenerateSales,
+            template: finalTemplate
+        )
+        finalizingInsightMeetingIDs.remove(meetingIDAtStop)
+        cloudSync.noteLifecycleChange()
+        if currentMeeting?.id == meetingIDAtStop, !isRecording {
+            finalizationStatusText = "Saved automatically"
         }
     }
 
@@ -8807,6 +8897,7 @@ final class AppState: ObservableObject {
         #endif
         recordingErrorMessage = nil
         currentMeeting = nil
+        cloudSync.noteLifecycleChange()
         isStartingMeeting = false
         isResumingRecording = false
         liveSegments = []
@@ -8904,6 +8995,7 @@ final class AppState: ObservableObject {
 
     private func completeMeetingFinalization() {
         isFinalizingMeeting = false
+        cloudSync.noteLifecycleChange()
         finalizationStatusText = "Saved automatically"
         guard !isRecording else {
             // Defensive only: startRecording() rejects this transition while finalizing, but never
@@ -8950,14 +9042,28 @@ final class AppState: ObservableObject {
         includeSales: Bool,
         template: InsightTemplate? = nil
     ) async {
-        guard !privateModeEnabled else {
-            DebugLogger.shared.log(.app, "Final insights skipped: private mode")
-            return
-        }
+        let completionID = beginMeetingCompletion(meeting)
+        var request = beginSavedAIRequest(meeting, scope: "insights", resolvedNames: false)
         let meetingIDAtRequest = meeting.id
-        let transcriptRevisionAtRequest = meeting.transcriptRevision
         let requestAppMode = appMode
         let requestAPIKey = openaiApiKey
+        let titleAtRequest = meeting.title
+        var outcomes: [String: WebhookService.Processing.Outcome] = [:]
+        let requestedModes = ["standard", "questions"] + (includeSales ? ["meddpicc"] : []) + (template == nil ? [] : ["template"])
+        if var marker = meeting.webhookCompletion, marker.id == completionID {
+            marker.requestedModes = requestedModes
+            meeting.webhookCompletion = marker
+            _ = commit(.finalInsights)
+        }
+        defer {
+            let valid = savedAIRequestIsCurrent(request, meeting: meeting)
+            finishSavedAIRequest(request)
+            settleMeetingCompletion(meeting, id: completionID, outcomes: outcomes, interrupted: !valid)
+        }
+        guard !privateModeEnabled, aiContentPermitted else {
+            outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .skipped) })
+            return
+        }
 
         // Check if we can generate insights (mode-aware)
         let canGenerate: Bool
@@ -8968,20 +9074,20 @@ final class AppState: ObservableObject {
         }
         
         guard canGenerate else {
-            commit(.finalInsights)
+            outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .skipped) })
             return
         }
 
         guard !transcript.isEmpty else {
-            commit(.finalInsights)
+            outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .skipped) })
             return
         }
 
         func isFinalInsightsRequestStillCurrent() -> Bool {
-            !isMeetingDeleted(meetingIDAtRequest) &&
-                meeting.transcriptRevision == transcriptRevisionAtRequest
+            savedAIRequestIsCurrent(request, meeting: meeting)
         }
         
+        outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .failed) })
         DebugLogger.shared.log(.app, "Generating final insights before save")
         
         let model = OpenAIModel.gpt5Mini
@@ -9007,7 +9113,7 @@ final class AppState: ObservableObject {
                 )
             }
             
-            guard isFinalInsightsRequestStillCurrent() else {
+            guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                 DebugLogger.shared.log(
                     .app,
                     "Dropping stale final standard insights response (meeting changed/resumed/segments advanced)"
@@ -9015,6 +9121,7 @@ final class AppState: ObservableObject {
                 return
             }
 
+            let revertInsights = savedInsightRevert(meeting)
             meeting.summaryText = insights.summary
             meeting.actionItems = insights.actionItems
             meeting.topics = insights.topics
@@ -9028,7 +9135,8 @@ final class AppState: ObservableObject {
                 liveDiscussionFlow = insights.discussionFlow
             }
             
-            if let suggestedTitle = insights.suggestedTitle,
+            if meeting.title == titleAtRequest,
+               let suggestedTitle = insights.suggestedTitle,
                !suggestedTitle.isEmpty,
                Self.shouldAcceptSuggestedTitle(calendarEventId: meeting.calendarEventId) {
                 meeting.title = suggestedTitle
@@ -9042,8 +9150,11 @@ final class AppState: ObservableObject {
                 }
                 #endif
             }
-            commit(.finalInsights)
+            guard commit(.finalInsights, revert: revertInsights) else { return }
+            outcomes["standard"] = .complete
+            request.input = savedAIInput(meeting, resolvedNames: false)
         } catch {
+            guard isFinalInsightsRequestStillCurrent() else { return }
             DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
             enqueueDiagnosticEvent("insights_final_standard_failed", category: .insights, level: .warning)
         }
@@ -9052,7 +9163,7 @@ final class AppState: ObservableObject {
         // the person has explicitly enabled the Sales view.
         if includeSales {
             do {
-                guard isFinalInsightsRequestStillCurrent() else {
+                guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(
                         .app,
                         "Skipping final meddpicc insights request (meeting changed/resumed/segments advanced)"
@@ -9069,7 +9180,9 @@ final class AppState: ObservableObject {
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: meeting.summaryText, existingTitle: existingTitle,
                         mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
-                        language: language
+                        language: language,
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                     )
                     meddpiccInsights = response.toLiveInsights()
                 } else {
@@ -9080,7 +9193,7 @@ final class AppState: ObservableObject {
                     )
                 }
 
-                guard isFinalInsightsRequestStillCurrent() else {
+                guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(
                         .app,
                         "Dropping stale final meddpicc insights response (meeting changed/resumed/segments advanced)"
@@ -9088,6 +9201,7 @@ final class AppState: ObservableObject {
                     return
                 }
 
+                let revertInsights = savedInsightRevert(meeting)
                 meeting.meddpiccMetrics = meddpiccInsights.metrics
                 meeting.meddpiccEconomicBuyer = meddpiccInsights.economicBuyer
                 meeting.meddpiccDecisionCriteria = meddpiccInsights.decisionCriteria
@@ -9107,9 +9221,12 @@ final class AppState: ObservableObject {
                     liveChampion = meddpiccInsights.champion
                     liveCompetition = meddpiccInsights.competition
                 }
-                commit(.finalInsights)
+                guard commit(.finalInsights, revert: revertInsights) else { return }
+            outcomes["meddpicc"] = .complete
+            request.input = savedAIInput(meeting, resolvedNames: false)
                 DebugLogger.shared.log(.app, "Final insights complete (meddpicc)")
             } catch {
+                guard isFinalInsightsRequestStillCurrent() else { return }
                 DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
             }
@@ -9119,7 +9236,7 @@ final class AppState: ObservableObject {
         // the Templates view for this meeting.
         if let template {
             do {
-                guard isFinalInsightsRequestStillCurrent() else {
+                guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(.app, "Skipping final template insights request (meeting changed/resumed/segments advanced)")
                     return
                 }
@@ -9136,7 +9253,9 @@ final class AppState: ObservableObject {
                         mode: InsightsMode.template.rawValue, model: model.rawValue,
                         language: language,
                         template: template,
-                        previousTemplateSections: baseline.isEmpty ? nil : baseline
+                        previousTemplateSections: baseline.isEmpty ? nil : baseline,
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                     )
                     templateInsights = response.toLiveInsights(template: template)
                 } else {
@@ -9149,11 +9268,12 @@ final class AppState: ObservableObject {
                     )
                 }
 
-                guard isFinalInsightsRequestStillCurrent() else {
+                guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(.app, "Dropping stale final template insights response")
                     return
                 }
 
+                let revertInsights = savedInsightRevert(meeting)
                 meeting.applyInsightTemplate(template)
                 if !templateInsights.templateSections.isEmpty {
                     meeting.templateSections = templateInsights.templateSections
@@ -9163,14 +9283,18 @@ final class AppState: ObservableObject {
                    !templateInsights.templateSections.isEmpty {
                     liveTemplateSections = templateInsights.templateSections
                 }
-                commit(.finalInsights)
+                guard commit(.finalInsights, revert: revertInsights) else { return }
+            outcomes["template"] = .complete
+            request.input = savedAIInput(meeting, resolvedNames: false)
                 DebugLogger.shared.log(.app, "Final insights complete (template): sections=\(templateInsights.templateSections.count)")
             } catch {
+                guard isFinalInsightsRequestStillCurrent() else { return }
                 DebugLogger.shared.log(.app, "Final insights FAILED (template): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_final_template_failed", category: .insights, level: .warning)
             }
         }
 
+        guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else { return }
         // Questions complete as part of the meeting-scoped background work.
         do {
             let questionsInsights: InsightsService.LiveInsights
@@ -9181,7 +9305,9 @@ final class AppState: ObservableObject {
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: existingTitle,
                     mode: InsightsMode.questions.rawValue, model: model.rawValue,
-                    language: language
+                    language: language,
+                        requiresPermission: true,
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
                 )
                 questionsInsights = response.toLiveInsights()
             } else {
@@ -9192,24 +9318,28 @@ final class AppState: ObservableObject {
                 )
             }
             
-            guard isFinalInsightsRequestStillCurrent() else {
+            guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                 DebugLogger.shared.log(.app, "Dropping stale final questions insights response")
                 return
             }
             
+            let revertInsights = savedInsightRevert(meeting)
             meeting.suggestedQuestions = questionsInsights.questions
             markInsightsUpdated(.questions, meeting: meeting)
             if currentMeeting?.id == meetingIDAtRequest {
                 liveQuestions = questionsInsights.questions
             }
-            commit(.finalInsights)
+            guard commit(.finalInsights, revert: revertInsights) else { return }
+            outcomes["questions"] = .complete
+            request.input = savedAIInput(meeting, resolvedNames: false)
             DebugLogger.shared.log(.app, "Final insights complete (questions): count=\(questionsInsights.questions.count)")
         } catch {
+            guard isFinalInsightsRequestStillCurrent() else { return }
             DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
         }
 
-        guard isFinalInsightsRequestStillCurrent() else { return }
-        commit(.finalInsights)
+        guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else { return }
+        guard commit(.finalInsights) else { return }
 
         #if os(macOS)
         if autoExportMarkdown {
@@ -9217,13 +9347,16 @@ final class AppState: ObservableObject {
         }
         #endif
 
-        if !webhookURL.isEmpty, currentMeeting?.id != meetingIDAtRequest {
-            enqueueWebhook(WebhookService.payloadFromMeeting(meeting))
-        }
+
     }
     
     func generateInsights() async {
         guard let meeting = currentMeeting, !privateModeEnabled else { return }
+        if !isRecording {
+            guard !isFinalizingMeeting, await saveCurrentMeetingAndWait() else { return }
+            await generateInsightsForMeeting(meeting)
+            return
+        }
 
         if insightsMode == .training {
             recomputeTrainingMetrics()
@@ -9503,7 +9636,8 @@ final class AppState: ObservableObject {
         attendees: [[String: String]]? = nil,
         template: InsightTemplate? = nil,
         previousTemplateSections: [String: String]? = nil,
-        requiresPermission: Bool = false
+        requiresPermission: Bool = false,
+        mayContinue: () -> Bool = { true }
     ) async throws -> ManagedInsightsResponse {
         guard let minitiAPIService else {
             throw MinitiAPIService.ServiceError.invalidResponse
@@ -9516,6 +9650,7 @@ final class AppState: ObservableObject {
         var attempt = 1
         var lastError: Error?
         while true {
+            guard mayContinue() else { throw CancellationError() }
             // Narrowed R2: a retry is a new request and needs the permission at the moment it
             // leaves, after the delay, not when the first attempt failed.
             if attempt > 1, requiresPermission, !aiContentPermitted, let lastError {
@@ -10621,6 +10756,14 @@ final class AppState: ObservableObject {
     func enqueueWebhook(_ payload: WebhookService.MeetingPayload) {
         guard !webhookURL.isEmpty else { return }
         guard let meetingID = UUID(uuidString: payload.meeting.id) else { return }
+        if let meeting = savedMeeting(id: meetingID), let marker = meeting.webhookCompletion {
+            if marker.phase == .processing { return }
+            if marker.phase == .ready {
+                // Coalesce edits into the initial snapshot until its handoff is durable.
+                handOffWebhookCompletion(meeting)
+                return
+            }
+        }
         do {
             let body = try WebhookService.encode(payload)
             deliveryOutbox.enqueueWebhook(meetingID: meetingID, event: payload.event, body: body, destination: webhookURL)

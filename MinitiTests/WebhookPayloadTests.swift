@@ -1,5 +1,12 @@
 import XCTest
 import SwiftData
+import SwiftUI
+import ImageIO
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -657,4 +664,435 @@ final class WebhookPayloadTests: XCTestCase, @unchecked Sendable {
         XCTAssertEqual(payload.meeting.template?.id, "standup")
         XCTAssertEqual(payload.meeting.template?.sections.map(\.value), ["Ship the fix"])
     }
+
+    @MainActor
+    func testSettledWebhookIsSelfContainedWithAdditiveProcessing() throws {
+        let meeting = Meeting(title: "Finished", summaryText: "Final summary", actionItems: ["Follow up"])
+        context.insert(meeting)
+        meeting.segments = [TranscriptSegment(text: "Saved final words", speaker: 0, timestamp: 1, isFinal: true)]
+        meeting.transcriptRevision = 7
+        let processing = WebhookService.Processing(inputTranscriptRevision: 7, state: .partial, outcomes: ["standard": .complete, "questions": .failed])
+        let payload = WebhookService.payloadFromMeeting(meeting, event: "meeting.saved", processing: processing)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: WebhookService.encode(payload)) as? [String: Any])
+        XCTAssertEqual(json["event"] as? String, "meeting.saved")
+        let data = try XCTUnwrap(json["meeting"] as? [String: Any])
+        XCTAssertEqual(data["summary"] as? String, "Final summary")
+        let transcript = try XCTUnwrap(data["transcript"] as? [[String: Any]])
+        XCTAssertEqual(transcript.first?["text"] as? String, "Saved final words")
+        let state = try XCTUnwrap(json["processing"] as? [String: Any])
+        XCTAssertEqual(state["input_transcript_revision"] as? Int, 7)
+        XCTAssertEqual(state["state"] as? String, "partial")
+        XCTAssertEqual(state["outcomes"] as? [String: String], ["standard": "complete", "questions": "failed"])
+        XCTAssertEqual(try JSONDecoder().decode(WebhookService.Processing.self, from: JSONEncoder().encode(processing)), processing, "local completion marker uses the same Codable outcome")
+        let legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: WebhookService.encode(WebhookService.payloadFromMeeting(meeting))) as? [String: Any])
+        XCTAssertNil(legacy["processing"], "metadata is additive, not required by older call sites")
+    }
+
+    @MainActor
+    func testStaleWebhookKeepsTranscriptButOmitsGeneratedContent() throws {
+        let meeting = Meeting(title: "Edited", summaryText: "Old summary", actionItems: ["Old action"], keyDecisions: ["Old decision"], topics: ["Old topic"], notes: "My notes")
+        context.insert(meeting)
+        meeting.segments = [TranscriptSegment(text: "Remaining words", speaker: 0, timestamp: 1, isFinal: true)]
+        meeting.meddpiccChampion = "Old champion"
+        let payload = WebhookService.payloadFromMeeting(meeting, processing: .init(inputTranscriptRevision: 2, state: .interrupted, outcomes: ["standard": .stale]), insightsStale: true)
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: WebhookService.encode(payload)) as? [String: Any])
+        let data = try XCTUnwrap(json["meeting"] as? [String: Any])
+        XCTAssertEqual(data["insights_stale"] as? Bool, true)
+        XCTAssertNil(data["summary"])
+        XCTAssertNil(data["meddpicc"])
+        XCTAssertNil(data["template"])
+        XCTAssertNil(data["questions"])
+        XCTAssertNil(data["docs"])
+        XCTAssertEqual(data["action_items"] as? [String], [])
+        XCTAssertEqual(data["topics"] as? [String], [])
+        XCTAssertEqual(data["notes"] as? String, "My notes")
+        XCTAssertEqual((data["transcript"] as? [[String: Any]])?.first?["text"] as? String, "Remaining words")
+    }
+
+}
+
+// Frozen 3.5.0 persisted fields, without computed helpers. Exercises the actual additive
+// migration on SQLite, rather than creating a new store with today's schema.
+private enum DeliveryStore350 {
+@Model
+final class Meeting {
+    var id: UUID
+    var title: String
+    var startTime: Date
+    var endTime: Date?
+    @Relationship(deleteRule: .cascade) var segments: [TranscriptSegment]
+    var summaryText: String?
+    var actionItems: [String]
+    var keyDecisions: [String]
+    var topics: [String]
+    var discussionFlow: [String] = []
+    var notes: String = ""
+    var transcriptEditedAt: Date?
+    /// Name of the markdown file this meeting was last exported as, so a later export
+    /// after a rename replaces it instead of leaving two files (2.11.0).
+    var lastExportedMarkdownFilename: String?
+    var transcriptRevision: Int = 0
+    var isPinned: Bool = false
+    var insightsUpdatedAt: Date?
+
+    var managedSessionId: String?
+    var language: String = "en"
+
+    var calendarEventId: String?
+    /// The calendar event's own title, kept even if the meeting is renamed, so `title:`
+    /// search finds the call by what the calendar called it (2.11.0; nil before).
+    var calendarEventTitle: String?
+    var attendeesJSON: String?
+
+    // Import provenance. Optional fields keep existing SwiftData stores lightweight-migratable.
+    var externalSource: String?
+    var externalID: String?
+    var externalURL: String?
+    var importedAt: Date?
+    /// Where the audio was captured (`RecordingDevice` raw value), set when a recording starts
+    /// and carried through the cloud as `recorded_on`. Nil for meetings from before 3.1.0,
+    /// which the device filter therefore never matches.
+    var recordedOnRaw: String?
+
+    // MEDDPICC fields
+    var meddpiccMetrics: String?
+    var meddpiccEconomicBuyer: String?
+    var meddpiccDecisionCriteria: String?
+    var meddpiccDecisionProcess: String?
+    var meddpiccPaperProcess: String?
+    var meddpiccIdentifiedPain: String?
+    var meddpiccChampion: String?
+    var meddpiccCompetition: String?
+
+    // Suggested questions (JSON-encoded [SuggestedQuestion])
+    var suggestedQuestionsJSON: String?
+
+    // Templates specialist view: which built-in template this meeting uses, and its filled
+    // sections (JSON-encoded [String: String], section key -> text). Optional columns keep
+    // existing stores lightweight-migratable.
+    var insightTemplateID: String?
+    var templateSectionsJSON: String?
+    // JSON-encoded InsightTemplate for custom templates, so a meeting keeps rendering its
+    // sections after the template is edited or deleted (2.9.0). Nil for built-ins.
+    var templateDefinitionJSON: String?
+
+    // Docs topics + their resolved lookup cards (JSON-encoded [DocTopic])
+    var docTopicsJSON: String?
+
+    // Inferred speaker names (JSON-encoded [String: String] where key is speaker ID as string)
+    var speakerNamesJSON: String?
+
+    // Speaker IDs (as strings) that the user has manually named/overridden.
+    // Present entries — even if the name is the same as the inference — are excluded
+    // from automatic inference merges. JSON-encoded [String] for backward compat.
+    var speakerOverridesJSON: String?
+    /// Speaker id to attendee email, only for picks made by hand or received from another device
+    /// (3.2.0). Matches derived from the name and the attendee list are computed on read, see
+    /// `speakerEmail(for:)`, so they follow a rename without bookkeeping.
+    var speakerEmailsJSON: String?
+
+    // Legacy single-speaker "self" marker. Kept for SwiftData backward compat with meetings
+    // saved before multi-self support landed. New code should read/write `selfSpeakerIDs`.
+    var selfSpeakerID: Int?
+
+    // All speaker IDs the user has marked as themselves ("You"). JSON-encoded [Int].
+    // Supports the case where diarization splits one person across multiple speaker IDs —
+    // marking each of those IDs as "You" unifies their training stats and transcript label.
+    var selfSpeakerIDsJSON: String?
+
+    // Optional internal environment inference (InferredMeetingEnvironment raw value).
+    // Diagnostic metadata only — never user-facing, never required to load, trim,
+    // export, search, or regenerate insights. Nil (all legacy meetings) = unknown.
+    var inferredEnvironmentRaw: String?
+
+    // Cloud sync bookkeeping (3.0.0). All optional or defaulted so existing stores
+    // lightweight-migrate; none of it is read while cloud sync is off.
+    /// When the meeting last changed on any device, the last-writer-wins key on the wire.
+    /// Set by the sync engine when it notices a fingerprint change, or from the server.
+    var updatedAt: Date?
+    /// When this device last agreed with the cloud copy.
+    var syncedAt: Date?
+    /// Server revision of the cloud copy this device last saw; 0 = never synced.
+    var cloudRevision: Int = 0
+    /// Fingerprint of the content the cloud copy holds (what was last pushed or pulled).
+    var syncFingerprint: String?
+    /// Fingerprint the engine last observed locally; a difference from `syncFingerprint`
+    /// means the meeting is dirty.
+    var localFingerprint: String?
+    /// Never upload this meeting. Set for meetings recorded under private mode and by the
+    /// per-meeting "Keep off the cloud" action.
+    var syncExcluded: Bool = false
+    /// Explicit user request to put a retained local original back after cloud deletion.
+    /// Never populated from a downloaded sync document.
+    var cloudRestoreRequested: Bool = false
+    /// `skipped_too_large` or nil. Shown in Settings → Cloud.
+    var syncStateRaw: String?
+    /// Fields from another client (Linux) this build does not model, echoed back untouched.
+    var syncExtraJSON: String?
+
+    init(
+        id: UUID = UUID(),
+        title: String = "new",
+        startTime: Date = Date(),
+        endTime: Date? = nil,
+        segments: [TranscriptSegment] = [],
+        summaryText: String? = nil,
+        actionItems: [String] = [],
+        keyDecisions: [String] = [],
+        topics: [String] = [],
+        discussionFlow: [String] = [],
+        notes: String = "",
+        transcriptEditedAt: Date? = nil,
+        transcriptRevision: Int = 0,
+        isPinned: Bool = false,
+        insightsUpdatedAt: Date? = nil,
+        externalSource: String? = nil,
+        externalID: String? = nil,
+        externalURL: String? = nil,
+        importedAt: Date? = nil,
+        meddpiccMetrics: String? = nil,
+        meddpiccEconomicBuyer: String? = nil,
+        meddpiccDecisionCriteria: String? = nil,
+        meddpiccDecisionProcess: String? = nil,
+        meddpiccPaperProcess: String? = nil,
+        meddpiccIdentifiedPain: String? = nil,
+        meddpiccChampion: String? = nil,
+        meddpiccCompetition: String? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.startTime = startTime
+        self.endTime = endTime
+        self.segments = segments
+        self.summaryText = summaryText
+        self.actionItems = actionItems
+        self.keyDecisions = keyDecisions
+        self.topics = topics
+        self.discussionFlow = discussionFlow
+        self.notes = notes
+        self.transcriptEditedAt = transcriptEditedAt
+        self.transcriptRevision = transcriptRevision
+        self.isPinned = isPinned
+        self.insightsUpdatedAt = insightsUpdatedAt
+        self.externalSource = externalSource
+        self.externalID = externalID
+        self.externalURL = externalURL
+        self.importedAt = importedAt
+        self.meddpiccMetrics = meddpiccMetrics
+        self.meddpiccEconomicBuyer = meddpiccEconomicBuyer
+        self.meddpiccDecisionCriteria = meddpiccDecisionCriteria
+        self.meddpiccDecisionProcess = meddpiccDecisionProcess
+        self.meddpiccPaperProcess = meddpiccPaperProcess
+        self.meddpiccIdentifiedPain = meddpiccIdentifiedPain
+        self.meddpiccChampion = meddpiccChampion
+        self.meddpiccCompetition = meddpiccCompetition
+    }
+
+}
+@Model
+final class TranscriptSegment {
+    var id: UUID
+    var text: String
+    var speaker: Int
+    var timestamp: TimeInterval
+    var isFinal: Bool
+    var confidence: Double
+    /// Explicit capture source (TranscriptSource raw value). Optional and additive so
+    /// existing stores lightweight-migrate; nil (all legacy segments) falls back to the
+    /// reserved mic ID range where source matters.
+    var sourceRaw: String?
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        speaker: Int = 0,
+        timestamp: TimeInterval,
+        isFinal: Bool = false,
+        confidence: Double = 1.0,
+        sourceRaw: String? = nil
+    ) {
+        self.id = id
+        self.text = text
+        self.speaker = speaker
+        self.timestamp = timestamp
+        self.isFinal = isFinal
+        self.confidence = confidence
+        self.sourceRaw = sourceRaw
+    }
+
+}
+}
+
+@MainActor
+final class DeliveryStoreMigrationTests: XCTestCase {
+    func test350StoreUpgradesAndCompletionMarkerSurvivesReopen() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("meetings.store")
+        let id = UUID()
+        try autoreleasepool {
+            let legacy = try ModelContainer(for: DeliveryStore350.Meeting.self, DeliveryStore350.TranscriptSegment.self, MeetingTombstone.self,
+                configurations: ModelConfiguration(url: url))
+            let meeting = DeliveryStore350.Meeting(id: id, title: "existing meeting", endTime: Date(),
+                segments: [DeliveryStore350.TranscriptSegment(text: "keep this transcript", timestamp: 1, isFinal: true)], summaryText: "keep this summary")
+            meeting.syncExcluded = true
+            meeting.cloudRevision = 12
+            legacy.mainContext.insert(meeting)
+            try legacy.mainContext.save()
+        }
+        let deliveryID = UUID()
+        try autoreleasepool {
+            let upgraded = try ModelContainer(for: Meeting.self, TranscriptSegment.self, MeetingTombstone.self,
+                configurations: ModelConfiguration(url: url))
+            let meeting = try XCTUnwrap(upgraded.mainContext.fetch(FetchDescriptor<Meeting>()).first)
+            XCTAssertEqual(meeting.id, id)
+            XCTAssertEqual(meeting.title, "existing meeting")
+            XCTAssertEqual(meeting.segments.first?.text, "keep this transcript")
+            XCTAssertEqual(meeting.summaryText, "keep this summary")
+            XCTAssertTrue(meeting.syncExcluded)
+            XCTAssertEqual(meeting.cloudRevision, 12)
+            XCTAssertNil(meeting.webhookCompletion)
+            meeting.webhookCompletion = WebhookCompletion(id: deliveryID, phase: .ready, revision: 0, createdAt: Date(), accountID: nil, processing: nil)
+            try upgraded.mainContext.save()
+        }
+        try autoreleasepool {
+            let reopened = try ModelContainer(for: Meeting.self, TranscriptSegment.self, MeetingTombstone.self,
+                configurations: ModelConfiguration(url: url))
+            let meeting = try XCTUnwrap(reopened.mainContext.fetch(FetchDescriptor<Meeting>()).first)
+            XCTAssertEqual(meeting.webhookCompletion?.id, deliveryID)
+            XCTAssertEqual(meeting.webhookCompletion?.phase, .ready)
+            XCTAssertEqual(meeting.segments.first?.text, "keep this transcript")
+        }
+    }
+}
+
+/// Real SwiftUI controls hosted by the platform view system. The PNGs are release-review
+/// evidence; model/action tests elsewhere cover current-data resend and its durability.
+@MainActor
+final class DeliveryControlsRenderingTests: XCTestCase {
+    private func failedOutbox(in directory: URL) throws -> DeliveryOutbox {
+        let item = DeliveryOutbox.Item(id: UUID(), kind: .webhook, meetingID: UUID(),
+            event: "meeting.saved", createdAt: Date(), attempts: 6, nextAttemptAt: Date(),
+            state: .failed, lastError: "Delivery expired", body: nil, destination: nil)
+        let url = directory.appendingPathComponent("render-outbox.json")
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode([item]).write(to: url, options: .atomic)
+        let outbox = DeliveryOutbox(storeURL: url)
+        XCTAssertNil(outbox.persistenceError, "render fixture must decode using the production date format")
+        XCTAssertEqual(outbox.failed(.webhook).count, 1)
+        return outbox
+    }
+
+    private func saveRender(_ data: Data, name: String) throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("miniti-360-delivery-renders")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(name + ".png")
+        try data.write(to: url, options: .atomic)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        let pixels = try XCTUnwrap(image.dataProvider?.data) as Data
+        XCTAssertGreaterThan(Set(pixels).count, 16, "a blank/offscreen bitmap is not rendered QA evidence")
+        print("DELIVERY_RENDER: \(url.path)")
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    #if os(macOS)
+    func testFailedWebhookControlsRenderAtMacSettingsWidth() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = try failedOutbox(in: directory)
+        let state = AppState()
+        state.deliveryOutbox = outbox
+        let root = VStack(alignment: .leading, spacing: 12) {
+            Text("Webhooks").font(.headline)
+            DeliveryStatusRow(kind: .webhook, outbox: outbox)
+        }
+        .padding(20)
+        .frame(width: 600, alignment: .leading)
+        .background(ColorPalette.Background.primary)
+        .environmentObject(state)
+        .environment(\.colorScheme, .dark)
+        let host = NSHostingView(rootView: root)
+        let fitting = host.fittingSize
+        XCTAssertEqual(fitting.width, 600, accuracy: 1)
+        XCTAssertGreaterThan(fitting.height, 50)
+        XCTAssertLessThan(fitting.height, 260)
+        let previousWindow = NSApp.keyWindow
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: fitting),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: fitting)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close(); previousWindow?.makeKey() }
+        host.layoutSubtreeIfNeeded()
+        host.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        try saveRender(XCTUnwrap(bitmap.representation(using: .png, properties: [:])), name: "mac-failed-webhook-600")
+        XCTAssertEqual(outbox.failed(.webhook).count, 1, "presenting controls must not retry or discard")
+    }
+    #else
+    func testFailedWebhookControlsRenderAtPhoneAccessibilityAndTabletWidths() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let outbox = try failedOutbox(in: directory)
+        let state = AppState()
+        state.deliveryOutbox = outbox
+        let cases: [(String, CGFloat, DynamicTypeSize)] = [
+            ("iphone-failed-webhook-390", 390, .large),
+            ("iphone-failed-webhook-accessibility-390", 390, .accessibility3),
+            ("ipad-failed-webhook-768", 768, .large)
+        ]
+        for (name, width, typeSize) in cases {
+            let root = VStack(alignment: .leading, spacing: 12) {
+                Text("Webhooks").font(.headline)
+                DeliveryStatusRow_iOS(outbox: outbox)
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(ColorPalette.Background.primary)
+            .environmentObject(state)
+            .environment(\.colorScheme, .dark)
+            .environment(\.dynamicTypeSize, typeSize)
+            let host = UIHostingController(rootView: root)
+            host.loadViewIfNeeded()
+            let size = host.sizeThatFits(in: CGSize(width: width, height: 1000))
+            XCTAssertEqual(size.width, width, accuracy: 1)
+            XCTAssertGreaterThan(size.height, 60)
+            XCTAssertLessThan(size.height, 600, "controls must fit a compact phone without clipping")
+            let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+            let previousWindow = scene.windows.first(where: \.isKeyWindow)
+            let window = UIWindow(windowScene: scene)
+            window.frame = CGRect(origin: .zero, size: size)
+            window.rootViewController = host
+            window.makeKeyAndVisible()
+            defer { window.isHidden = true; previousWindow?.makeKey() }
+            host.view.frame = CGRect(origin: .zero, size: size)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            try await Task.sleep(for: .milliseconds(80))
+            host.view.layoutIfNeeded()
+            let renderer = UIGraphicsImageRenderer(size: size)
+            var drewHierarchy = false
+            let data = renderer.pngData { _ in
+                drewHierarchy = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+            }
+            XCTAssertTrue(drewHierarchy, "native hosting hierarchy must finish drawing")
+            try saveRender(data, name: name)
+            window.isHidden = true
+            previousWindow?.makeKey()
+            XCTAssertEqual(outbox.failed(.webhook).count, 1, "presenting controls must not retry or discard")
+        }
+    }
+    #endif
 }

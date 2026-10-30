@@ -235,7 +235,7 @@ struct CloudSettingsSections: View {
             }
             if let status = engine.status {
                 HStack {
-                    Text("In the cloud")
+                    Text(engine.statusIsStale ? "In the cloud (last known)" : "In the cloud")
                     Spacer()
                     Text("\(status.meetingCount) meetings, \(CloudSettingsSections.format(bytes: status.bytes))")
                         .foregroundStyle(.secondary)
@@ -243,11 +243,26 @@ struct CloudSettingsSections: View {
             }
             if let last = engine.lastSyncedAt {
                 HStack {
-                    Text("Last synced")
+                    Text("Last checked")
                     Spacer()
                     Text(last, style: .relative)
                         .foregroundStyle(.secondary)
                 }
+            }
+            if let fetched = engine.statusFetchedAt {
+                HStack {
+                    Text("Cloud count checked")
+                    Spacer()
+                    Text(fetched, style: .relative).foregroundStyle(.secondary)
+                }
+            }
+            if engine.statusRefreshFailed {
+                Text("Could not refresh the cloud count. Uploaded meetings are still saved.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if engine.pendingUploadCount > 0 || engine.pendingRemovalCount > 0 {
+                Text("This device: \(engine.pendingUploadCount) uploads and \(engine.pendingRemovalCount) removals waiting.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             if !engine.skippedMeetingIDs.isEmpty {
                 Text("\(engine.skippedMeetingIDs.count) meeting\(engine.skippedMeetingIDs.count == 1 ? "" : "s") too large for the cloud and kept on this device only.")
@@ -275,7 +290,7 @@ struct CloudSettingsSections: View {
 
     private var phaseLabel: String {
         switch engine.phase {
-        case .idle: return "Up to date"
+        case .idle: return engine.idleLabel
         case .reconciling: return "Checking the cloud"
         case .pushing(let done, let total): return "Uploading \(done) of \(total)"
         case .pulling: return "Downloading"

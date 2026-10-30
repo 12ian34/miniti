@@ -1640,16 +1640,24 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
 
 /// Webhook delivery health on iOS: waiting and failed counts with retry and discard.
 struct DeliveryStatusRow_iOS: View {
+    @EnvironmentObject var appState: AppState
     @ObservedObject var outbox: DeliveryOutbox
 
     var body: some View {
+        if let error = appState.webhookResendError ?? outbox.persistenceError {
+            Text(error).font(.caption).foregroundStyle(ColorPalette.Status.error)
+            Button("Try again") { appState.retryWebhookDeliveries() }
+        }
         if let line = outbox.statusLine(for: .webhook) {
             VStack(alignment: .leading, spacing: 6) {
                 Label(line, systemImage: outbox.failed(.webhook).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(outbox.failed(.webhook).isEmpty ? Color.secondary : ColorPalette.Status.error)
                 HStack(spacing: 12) {
-                    Button("Retry now") { outbox.retryNow(.webhook) }
+                    Button(outbox.failed(.webhook).isEmpty ? "Retry now" : "Resend current meeting") {
+                        if outbox.failed(.webhook).isEmpty { appState.retryWebhookDeliveries() }
+                        else { appState.resendFailedWebhooks() }
+                    }
                     if !outbox.failed(.webhook).isEmpty {
                         Button("Discard failed") { outbox.discardFailed(.webhook) }
                     }

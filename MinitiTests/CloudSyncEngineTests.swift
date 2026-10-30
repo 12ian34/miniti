@@ -47,6 +47,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var oldestRetainedSeq = 1
     var calls: [String] = []
     var failNext: CloudSyncError?
+    var failStatus: CloudSyncError?
     var tooLargeTitles: Set<String> = []
     var tier = "pro"
     var accountCloud: (enabled: Bool?, version: Int) = (nil, 0)
@@ -104,7 +105,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     func fetchMeetings(ids: [UUID]) async throws -> [CloudMeetingState] {
-        calls.append("batch:\(ids.count)"); try throwIfArmed()
+        calls.append("batch:\(ids.count)"); await gate.wait("batch"); try throwIfArmed()
         return ids.compactMap { id in rows[id].map { state(id, $0) } }
     }
 
@@ -149,6 +150,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
 
     func status() async throws -> CloudStatus {
         calls.append("status"); await gate.wait("status"); try throwIfArmed()
+        if let failStatus { throw failStatus }
         let live = rows.values.filter { !$0.deleted }
         return CloudStatus(tier: tier, syncAllowed: tier == "pro", bytes: live.count * 1000, meetingCount: live.count, latestSeq: seq, email: nil, connectedApps: 0, tokens: 0)
     }
@@ -182,6 +184,10 @@ final class TestCloudHost: CloudSyncHost {
     let context: ModelContext
     var pause: CloudSyncPause?
     var liveMeetingID: UUID?
+    var allowSelectedUpload = false
+    var cloudUploadProtectedMeetingID: UUID? { allowSelectedUpload ? nil : liveMeetingID }
+    var fetchFails = false
+    var commitFails = false
     var cloudAccountID: String? = "acct_test"
     var deleted: Set<UUID> = []
     var inserted: [UUID] = []
@@ -197,8 +203,8 @@ final class TestCloudHost: CloudSyncHost {
     var cloudPauseReason: CloudSyncPause? { pause }
     func isMeetingDeleted(_ id: UUID) -> Bool { deleted.contains(id) }
     func cloudRemoveLocally(_ meeting: Meeting) { deleted.insert(meeting.id); context.delete(meeting) }
-    func cloudCommit(_ mutate: @escaping () -> Void) -> Bool { mutate(); do { try context.save(); return true } catch { return false } }
-    func cloudFetchMeetings(_ descriptor: FetchDescriptor<Meeting>) -> [Meeting]? { try? context.fetch(descriptor) }
+    func cloudCommit(_ mutate: @escaping () -> Void) -> Bool { mutate(); if commitFails { return false }; do { try context.save(); return true } catch { return false } }
+    func cloudFetchMeetings(_ descriptor: FetchDescriptor<Meeting>) -> [Meeting]? { fetchFails ? nil : try? context.fetch(descriptor) }
     func cloudFetchTombstones() -> [MeetingTombstone]? { try? context.fetch(FetchDescriptor<MeetingTombstone>()) }
     func cloudDidInsertMeetings(_ meetings: [Meeting]) { inserted += meetings.map(\.id) }
     func cloudDidChangeMeetings(_ updated: [Meeting]) { changedCount += 1 }
@@ -264,6 +270,238 @@ final class CloudSyncEngineTests: XCTestCase {
         // A kicked pass starts on a later main-actor turn: give it a moment to begin, then wait.
         try? await Task.sleep(nanoseconds: 20_000_000)
         for _ in 0..<400 where engine.isRunning { try? await Task.sleep(nanoseconds: 5_000_000) }
+    }
+
+    // MARK: 3.6.0 automatic completion and truthful status
+
+    func testStoppedSelectedMeetingUploadsOnLifecycleChangeWithoutOpeningSettings() async throws {
+        let meeting = finished("Stopped and visible")
+        host.liveMeetingID = meeting.id
+        await engine.sync(reason: "poll")
+        XCTAssertNil(transport.rows[meeting.id])
+        XCTAssertEqual(engine.protectedMeetingCount, 1)
+        host.allowSelectedUpload = true
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, meeting.title)
+        XCTAssertEqual(engine.status?.meetingCount, 1)
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+        XCTAssertEqual(host.liveMeetingID, meeting.id)
+    }
+
+    func testAutomaticChangesRefreshCountWithoutManualSyncAndNoopPollUsesFreshness() async throws {
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(engine.status?.meetingCount, 0)
+        let meeting = finished("Automatic")
+        engine.noteLocalChange()
+        await settle()
+        XCTAssertEqual(engine.status?.meetingCount, 1)
+        let count = transport.calls.filter { $0 == "status" }.count
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, count)
+        clock = clock.addingTimeInterval(CloudSyncEngine.statusFreshness)
+        XCTAssertTrue(engine.statusIsStale)
+        await engine.sync(reason: "poll")
+        XCTAssertFalse(engine.statusIsStale)
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, count + 1)
+        host.userDelete(meeting)
+        engine.noteLocalChange()
+        await settle()
+        XCTAssertEqual(engine.status?.meetingCount, 0)
+        XCTAssertEqual(engine.pendingRemovalCount, 0)
+    }
+
+    func testFailedCountRefreshRetainsAcceptedUploadAndMarksCountLastKnown() async throws {
+        await engine.sync(reason: "poll")
+        let checked = engine.statusFetchedAt
+        transport.failStatus = .offline
+        let meeting = finished("Saved remotely")
+        await engine.sync(reason: "change")
+        XCTAssertEqual(meeting.cloudRevision, 1)
+        XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
+        XCTAssertEqual(engine.status?.meetingCount, 0)
+        XCTAssertEqual(engine.statusFetchedAt, checked)
+        XCTAssertTrue(engine.statusRefreshFailed)
+        XCTAssertTrue(engine.statusIsStale)
+        XCTAssertEqual(engine.phase, .idle)
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+        transport.failStatus = nil
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(engine.status?.meetingCount, 1)
+        XCTAssertFalse(engine.statusRefreshFailed)
+    }
+
+    func testFailedLocalScanOrSaveDoesNotUploadOrClaimFreshCheck() async throws {
+        let meeting = finished("Uncommitted scan")
+        host.fetchFails = true
+        await engine.sync(reason: "change")
+        XCTAssertNil(engine.lastSyncedAt)
+        XCTAssertTrue(engine.scanFailed)
+        XCTAssertFalse(transport.calls.contains("put"))
+        host.fetchFails = false
+        host.commitFails = true
+        await engine.sync(reason: "change")
+        XCTAssertNil(engine.lastSyncedAt)
+        XCTAssertFalse(transport.calls.contains("put"))
+        host.commitFails = false
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(transport.rows[meeting.id]?.revision, 1)
+        XCTAssertFalse(engine.scanFailed)
+    }
+
+    func testResumeDuringUploadNeverCertifiesNewerTranscriptOrAppliesConflict() async throws {
+        let meeting = finished("Before resume")
+        transport.gate.holdNames = ["put"]
+        let task = Task { await self.engine.sync(reason: "change") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        host.liveMeetingID = meeting.id
+        meeting.endTime = nil
+        meeting.segments.append(TranscriptSegment(text: "New speech", speaker: 0, timestamp: 601, isFinal: true))
+        try host.context.save()
+        transport.gate.release()
+        await task.value
+        XCTAssertEqual(meeting.segments.last?.text, "New speech")
+        XCTAssertNil(meeting.endTime)
+        XCTAssertNotEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
+        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 1)
+        XCTAssertEqual(engine.protectedMeetingCount, 1)
+    }
+
+    func testEditDuringAcceptedUploadSchedulesSuccessorAndKeepsLatestContent() async throws {
+        let meeting = finished("First revision")
+        transport.onPut = { [unowned self] id in
+            self.transport.onPut = nil
+            meeting.title = "Second revision"
+            try? self.host.context.save()
+            self.engine.noteLocalChange()
+        }
+        await engine.sync(reason: "change")
+        await settle()
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "Second revision")
+        XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+        XCTAssertEqual(engine.status?.meetingCount, 1)
+    }
+
+    func testSelectedStoppedMeetingKeepsLocalStateWhenRemoteConflictArrives() async throws {
+        let meeting = finished("Visible local")
+        host.liveMeetingID = meeting.id
+        host.allowSelectedUpload = true
+        _ = transport.seed(remoteDocument(meeting.id, title: "Remote", updatedAt: clock.addingTimeInterval(100)), updatedAt: clock.addingTimeInterval(100))
+        await engine.sync(reason: "change")
+        XCTAssertEqual(meeting.title, "Visible local")
+        XCTAssertEqual(engine.pendingUploadCount, 1)
+        XCTAssertEqual(engine.idleLabel, "Changes waiting to sync")
+        host.liveMeetingID = nil
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(meeting.title, "Remote")
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+    }
+
+    func testACommitDuringPullKeepsNewerLocalEditsAndRerunsAutomatically() async throws {
+        let meeting = finished("Before pull")
+        await engine.sync(reason: "change")
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(1)) { $0["title"] = "Remote edit" }
+        transport.gate.holdNames = ["changes"]
+        let task = Task { await self.engine.sync(reason: "poll") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        clock = clock.addingTimeInterval(20)
+        meeting.title = "Local edited during pull"
+        try host.context.save()
+        engine.noteLocalChange()
+        transport.gate.release()
+        await task.value
+        await settle()
+        XCTAssertEqual(meeting.title, "Local edited during pull")
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, meeting.title)
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+    }
+
+    func testFailedPulledCommitDoesNotAdvanceCursorAndRetriesDurability() async throws {
+        await engine.sync(reason: "poll")
+        let cursorKey = CloudSyncEngine.cursorKey("acct_test")
+        let before = engine.defaults.integer(forKey: cursorKey)
+        // Ensure a change strictly beyond the initial cursor.
+        _ = transport.seed(remoteDocument(title: "First", updatedAt: clock), updatedAt: clock)
+        let remote = transport.seed(remoteDocument(title: "Second", updatedAt: clock), updatedAt: clock)
+        transport.gate.holdNames = ["changes"]
+        let task = Task { await self.engine.sync(reason: "poll") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        host.commitFails = true
+        transport.gate.release()
+        await task.value
+        XCTAssertEqual(engine.defaults.integer(forKey: cursorKey), before)
+        XCTAssertTrue(engine.scanFailed)
+        host.commitFails = false
+        await engine.sync(reason: "poll")
+        XCTAssertNotNil(host.meeting(remote))
+        XCTAssertGreaterThan(engine.defaults.integer(forKey: cursorKey), before)
+        XCTAssertFalse(engine.scanFailed)
+    }
+
+    func testChangesBeyondTheFivePassCapAreNotDropped() async throws {
+        let meeting = finished("Revision 0")
+        var changes = 0
+        transport.onPut = { [unowned self] _ in
+            guard changes < 6 else { self.transport.onPut = nil; return }
+            changes += 1
+            meeting.title = "Revision \(changes)"
+            try? self.host.context.save()
+            self.engine.noteLocalChange()
+        }
+        await engine.sync(reason: "change")
+        await settle()
+        XCTAssertEqual(changes, 6)
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "Revision 6")
+        XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
+        XCTAssertEqual(engine.pendingUploadCount, 0)
+    }
+
+    func testFailedLifecycleReconcileRetainsSkippedIncomingChangesForNextPoll() async throws {
+        let meeting = finished("Before remote change")
+        await engine.sync(reason: "change")
+        host.liveMeetingID = meeting.id
+        host.allowSelectedUpload = true
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(10)) { $0["title"] = "Remote while selected" }
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(meeting.title, "Before remote change")
+        let skippedCursor = engine.defaults.integer(forKey: CloudSyncEngine.cursorKey("acct_test"))
+        XCTAssertEqual(skippedCursor, transport.seq)
+
+        host.liveMeetingID = nil
+        transport.failNext = .offline
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(engine.phase, .paused(.offline))
+        XCTAssertEqual(meeting.title, "Before remote change")
+        let manifests = transport.calls.filter { $0 == "manifest" }.count
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, manifests + 1)
+        XCTAssertEqual(meeting.title, "Remote while selected")
+    }
+
+    func testUnsavedEditDuringHeldPullCannotBeOverwrittenBeforeItsSaveNotification() async throws {
+        let meeting = finished("Before pull")
+        await engine.sync(reason: "change")
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(10)) { $0["title"] = "Remote edit" }
+        let cursorKey = CloudSyncEngine.cursorKey("acct_test")
+        let previousCursor = engine.defaults.integer(forKey: cursorKey)
+        transport.gate.holdNames = ["changes"]
+        let task = Task { await self.engine.sync(reason: "poll") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        clock = clock.addingTimeInterval(20)
+        meeting.title = "Unsaved local edit"
+        XCTAssertTrue(host.context.hasChanges)
+        // Deliberately no context.save or noteLocalChange: this is the UI-to-save window.
+        transport.gate.release()
+        await task.value
+        XCTAssertEqual(meeting.title, "Unsaved local edit")
+        XCTAssertEqual(engine.defaults.integer(forKey: cursorKey), previousCursor)
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(meeting.title, "Unsaved local edit")
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "Unsaved local edit")
+        XCTAssertEqual(engine.pendingUploadCount, 0)
     }
 
     // MARK: Push
@@ -805,6 +1043,28 @@ extension CloudSyncEngineTests {
 
 @MainActor
 final class CloudSyncAppStateTests: XCTestCase {
+    func testSelectedFinishedMeetingHasDifferentUploadAndIncomingProtection() throws {
+        let state = AppState()
+        let meeting = Meeting(title: "Stopped", startTime: Date(), endTime: Date())
+        state.currentMeeting = meeting
+        state.isRecording = false
+        state.isStartingMeeting = false
+        state.isResumingRecording = false
+        XCTAssertNil(state.cloudUploadProtectedMeetingID)
+        XCTAssertTrue(state.cloudProtectsIncoming(meeting.id))
+        for phase in 0..<3 {
+            state.isRecording = phase == 0
+            state.isStartingMeeting = phase == 1
+            state.isResumingRecording = phase == 2
+            XCTAssertEqual(state.cloudUploadProtectedMeetingID, meeting.id)
+        }
+        state.isRecording = false
+        state.isStartingMeeting = false
+        state.isResumingRecording = false
+        state.currentMeeting = nil
+        XCTAssertFalse(state.cloudProtectsIncoming(meeting.id))
+    }
+
     func testTitleRulesAreLiteralAndPrivateModeWins() {
         let rules = ["  ", " therapy ", "[private]"]
         XCTAssertEqual(CloudExclusionPolicy.matchingRule(title: "THERAPY appointment", rules: rules), "therapy")
