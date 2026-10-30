@@ -1,10 +1,10 @@
 # Monitoring, cloud privacy and purchase return: QA handoff
 
-Updated 2026-10-30. Local implementation only. No push, deployment, production test mail or app release. Release identity assigned 2026-10-30: 3.5.0 build 142 on both Apple targets; the deployment order in RELEASE.md still gates distribution. The earlier documentation reorganization is also uncommitted and must be preserved.
+Release reconciliation, 2026-10-30: macOS 3.5.0 build 142 is live; backend/site are deployed; iOS build 142 is submitted, not confirmed available. [Release record](3.5.0.md) is authoritative for current delivery status. This handoff retains dated pre-release checks and commands; historical "local/unreleased" or "nothing sent" statements below describe those checks, not current deployment. Ian reported the grouped device/provider QA good; individual checks were not independently witnessed in this record.
 
 Plans: [O1–O6](../plans/logging-and-monitoring.md), [C1](../plans/selective-cloud-privacy.md), [B6d](../plans/purchase-return.md). [Implementation contract](../reference/monitoring-cloud-purchase.md). Completing one plan does not imply the others are released.
 
-## Latest status (2026-10-30)
+## Pre-release automated snapshot (superseded by release record)
 
 Latest Apple lanes (2026-10-30, `fastlane mac test` and `fastlane ios test` after the runner-only test fixes): macOS 1,072 executed / 3 skipped, iOS 1,010 executed / 3 skipped, zero failures; an earlier same-day run on this Mac showed 4 Mac skips because audio was playing. Latest backend: 658 passed / 5 skipped, typecheck/lint clean. Exact logs and change-specific evidence are recorded in the dated sections below; earlier totals are historical runs. Mac Home/feedback, Account mode layout and other listed Mac renders are verified. Real two-device cloud checks, sandbox checkout, compact/accessibility renders, inbox/alert delivery and UptimeRobot activation remain open. No commit, deployment or release is implied.
 

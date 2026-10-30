@@ -1,6 +1,6 @@
 # Settings, Privacy, Models and consent
 
-Current working-tree reference. The Privacy/Models navigation change below is unreleased; Apple 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).
+3.5.0 reference: Privacy/Models/Help changes are live on Mac and submitted on iOS; 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).
 
 ## Navigation and layout
 
@@ -44,4 +44,10 @@ About puts Acknowledgements last. Both its outer disclosure and per-licence disc
 
 CAM++ status distinguishes configured voice features from model residency: Off only when both voice options are off; otherwise show the missing local-speaker requirement, unsupported hardware, not-loaded/preparing/ready/error state. Models and the Voices section use the same state-aware copy. Opening Models never changes the options or starts a download.
 
-Home Feedback (unreleased): a bottom-right control opens a short message/optional-reply sheet. Uses Help's server-only delivery path with a fixed feedback subject, but no diagnostic log/account details. Both forms share in-flight/cooldown admission and backend burst/hour/day limits. Account's API mode choices use shared `APIModeOptions`, two stacked full-width selectable rows on Mac and iOS, preserving the existing mode/usage-refresh handling.
+Home Feedback (3.5.0): a bottom-right control opens a short message/optional-reply sheet. Uses Help's server-only delivery path with a fixed feedback subject, but no diagnostic log/account details. Both forms share in-flight/cooldown admission and backend burst/hour/day limits. Account's API mode choices use shared `APIModeOptions`, two stacked full-width selectable rows on Mac and iOS, preserving the existing mode/usage-refresh handling.
+
+## Local 3.6.0 delivery and sync status, not released
+
+Cloud now separates Last checked (a completed pass) from Cloud count checked (a successful status read). Old or failed counts are labelled last known; local pending uploads/removals, protected recording/edits and oversized meetings stay visible. A failed count refresh does not undo uploads. See [cloud behavior](cloud-sync.md#local-360-implementation-not-released).
+
+The shared delivery row offers Retry now for pending webhooks and Resend current meeting for terminal failures. Resend rebuilds from current saved data with a new delivery ID, rather than reviving a discarded body. Unavailable/deleted meetings, unfinished processing, missing configuration or save failure explain why it cannot proceed. Storage errors offer Try again; Discard failed remains separate. The same row is used on Mac and iOS. CRM retry behavior is unchanged. [Delivery mechanics and downgrade constraint](patterns.md#saved-ai-and-webhook-delivery-local-360-not-released) and [3.6.0 QA](../releases/3.6.0.md) are authoritative.

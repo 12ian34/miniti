@@ -1,6 +1,6 @@
 # Per-meeting cloud storage and calendar-title rules
 
-Status: implemented locally, not released. Version unassigned. Updated 2026-10-29 after Ian's rendered QA. [Roadmap](../roadmap.md) owns priority; this plan owns scope and acceptance. [QA handoff](../releases/monitoring-cloud-purchase-qa.md).
+Status: delivered in macOS 3.5.0 build 142 on 2026-10-30; shared backend/site deployed. iOS build 142 submitted, availability not confirmed. This is the implementation record, not future build scope. [Release evidence](../releases/3.5.0.md) owns delivery and remaining evidence; [roadmap](../roadmap.md) owns subsequent work.
 
 ## Product contract
 

@@ -1,10 +1,10 @@
 NEW
-- Choose Cloud or Local in a live or saved meeting. Add title rules in Settings, Cloud to keep matching meetings off the cloud.
-- Send feedback from Home, or report a problem in Settings, Help. Preview, copy or send your report with optional diagnostics.
+Resend a failed webhook with the meeting's latest saved transcript and summary.
 
 IMPROVED
-- See what leaves your device in Settings, Privacy. Find local models in Models, under Setup.
-- Better error reporting helps us spot recording and sign-in problems sooner.
+Cloud shows pending work and when its meeting count was last checked.
 
 FIXED
-- Transcription connection failures show a useful error instead of hanging.
+Finished meetings sync while you stay on the meeting screen.
+Webhooks wait for final AI processing and keep newer updates when an older delivery is still sending.
+Late AI responses no longer overwrite edits or renamed meetings.

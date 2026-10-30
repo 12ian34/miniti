@@ -1,14 +1,14 @@
-# Watch retries, delivery, History and single-use links
+# Remaining reliability: Watch retries and single-use links
 
-Status: planned, not implemented. Version: unassigned. Scope reconciled 2026-10-27. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: planned, not implemented. Version: unassigned. Scope reconciled 2026-10-30 after splitting customer-reported sync/delivery work into its own bounded plan. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
 ## Deliverable and boundary
 
-Finish R4–R8 as one bounded reliability release. R1, narrowed R2 and R3 already shipped; the wider AI-consent audit is deferred, not silently re-added here.
+Finish R4 and R8 in a later bounded reliability release. R5–R7 moved to the 3.6.0 [sync/delivery plan](sync-and-delivery-reliability.md) on 2026-10-30; that plan is their sole implementation owner. R1, narrowed R2 and R3 already shipped; the wider AI-consent audit is deferred, not silently re-added here.
 
 ## Prerequisites and decisions
 
-Preserve 3.4.0 authorization generations, permission guards and sync fences. R5 precedes R6. R8 needs a real isolated Postgres concurrency test. No ownership migration or unrelated settings redesign.
+Preserve 3.4.0 authorization generations, permission guards and sync fences. R5/R6 ordering is now owned by the 3.6.0 plan. R8 needs a real isolated Postgres concurrency test. No ownership migration or unrelated settings redesign.
 
 ## Implementation contract
 
@@ -22,27 +22,15 @@ Tests: offline immediate failure makes one attempt until eligible; persistent li
 
 ### R5: coalescing an in-flight webhook
 
-Reproduced with production `DeliveryOutbox`: v1 is being sent, enqueue v2 under the same item ID, v1 succeeds, `apply` removes the item and v2 never goes out.
-
-Give each payload revision its own completion identity, or keep one immutable in-flight item plus one coalesced successor. A completion can settle only the revision it sent. Newer content must survive successes, retries and terminal failures of the older revision. Preserve stable delivery IDs for retries of identical content; new content must not accidentally be deduplicated as the old payload by receivers. Persist the successor before considering it accepted. Deletion/discard must not resurrect it.
-
-Tests with a suspended sender: enqueue v2/v3 during v1; v1 delivered/retry/rejected; persist/reload; deletion while outstanding; changed destination under the existing routing policy. Assert payloads delivered, not only queue length.
+Moved, not completed: [sync/delivery R5](sync-and-delivery-reliability.md#r5-immutable-in-flight-webhook-completion-identity) owns the fix and held-sender tests. Complete it before R6. This anchor remains for historical links; do not implement a second competing outbox design here.
 
 ### R6: useful manual webhook retry
 
-Terminal failures intentionally discard the transcript body. `retryNow` makes the item pending without rebuilding it, so the production sender rejects it as "missing body". The old test replaces that sender with one that accepts any item and misses the failure.
-
-Keep terminal payload disposal. Make the UI action explicitly resend the current saved meeting: fetch it safely, encode its current permitted payload and create a new delivery identity. Do not resurrect trimmed text or a deleted meeting, and do not claim to replay a historical body that no longer exists. If the meeting or destination is unavailable, explain why and leave discard available. Define the event used for this current-state resend and cover receiver compatibility. CRM retries keep rebuilding from saved data. Implement after R5 so resends cannot be lost through coalescing.
-
-Tests using the production sender's body requirements: terminal 4xx and retry exhaustion, resend succeeds with a nonempty current payload, edited/trimmed meeting, deleted meeting, removed endpoint, encoding/save failure, reload, and unchanged CRM retry. Never retain transcripts indefinitely to make the test pass.
+Moved, not completed: [3.6.0 resend contract](sync-and-delivery-reliability.md#r6-resend-the-current-saved-meeting) owns the production-body rebuild, new delivery identity, error states and tests. Do not revive bodyless terminal items here.
 
 ### R7: History responses belong to the request's revision
 
-`generateInsightsForMeeting` captures the transcript but checks only deletion before applying an answer; trim remains available during generation. A late answer can restore insights based on removed text and mark them current. Final-insight generation already captures `transcriptRevision`.
-
-Capture meeting ID, transcript revision, requested mode, relevant template identity and request generation. Validate before any model write, freshness stamp, markdown export or webhook. A superseded/deleted/trimmed request is discarded without clearing a newer request's loading state. Apply the same discipline to saved-meeting topic/template paths that can race an edit. Preserve the existing user-wins rule for manual speaker edits.
-
-Tests: delayed summary/questions/Sales/template response followed by trim, correction, undo, template change, deletion or a newer request. No stale data/freshness/export; unchanged revision applies normally. Use a real in-memory meeting and delayed service response.
+Moved, not completed: [3.6.0 response-authority contract](sync-and-delivery-reliability.md#r7-history-responses-belong-to-their-input-revision) owns revision/generation checks and the saved-model/export regressions. This anchor preserves old links.
 
 ### R8: atomic single-use link consumption
 
@@ -54,10 +42,10 @@ Do not blindly replace device-enrollment's inspect/bind/consume sequence: its Re
 
 ## Acceptance and delivery
 
-Adopt the real-worker, held-sender and held-response regressions above. Assert actual delivered payloads and persisted models. Incorporate T03/T08/T10 and the delivery portion of T16; run airplane-mode/relaunch Watch QA and export retry against a controlled endpoint. Existing audio/receipts and user-configured private-mode exports stay intact.
+Adopt the real-worker and atomic link-consumption regressions above. Assert persisted models and single-use outcomes. Delivery/History audit cases T03/T08/T10 and relevant T16 cases follow their moved 3.6.0 owner; this plan retains Watch airplane-mode/relaunch and isolated Postgres concurrency QA. Existing audio/receipts and user-configured private-mode exports stay intact.
 
 Run affected backend checks and both Apple bundles when shared client code changes. Record actual device, old-client and storage evidence in the release record; a skipped check is unverified. Deploy additive backend support before its client readers. Preserve existing account IDs, data, credentials and unrelated work. Record Linux compatibility/tracking for every shared change. No push, deploy or release is authorized by this plan.
 
 Close this plan only when its complete stated scope has delivery evidence. Independent discoveries get a new roadmap item; release blockers are recorded as explicit scope amendments before implementation.
 
-Rollback: decode old ledgers and preserve pending work; a rollback cannot discard a persisted successor or resurrect deleted payloads. Keep R8 session/confirmation response shapes and device-enrollment recovery contract. [Original evidence](../archive/reliability-follow-up-plan.md).
+Rollback: decode old Watch ledgers and preserve pending audio/jobs. Outbox rollback belongs to the 3.6.0 plan. Keep R8 session/confirmation response shapes and device-enrollment recovery contract. [Original evidence](../archive/reliability-follow-up-plan.md).

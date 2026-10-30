@@ -1,6 +1,6 @@
 # Operations, diagnostics and support
 
-Current deployed behavior as reconciled 2026-10-27. Future changes are in [logging and monitoring](../plans/logging-and-monitoring.md), not promises made by this runbook. Backend [runbook](../../../miniti-api/docs/agents/05-runbook.md) and [environment contract](../../../miniti-api/docs/agents/02-environment.md) own command/config details.
+Current deployed behavior reconciled 2026-10-30 after 3.5.0. [Logging and monitoring](../plans/logging-and-monitoring.md) is the delivered implementation record; [incident alert clarity](../plans/incident-alert-clarity.md) owns the next correction. Backend [runbook](../../../miniti-api/docs/agents/05-runbook.md) and [environment contract](../../../miniti-api/docs/agents/02-environment.md) own command/config details.
 
 ## Read health without triggering checks or mail
 
@@ -14,15 +14,16 @@ Auth: ADMIN_READ_TOKEN is read-only for GET admin routes. The script can instead
 |---|---|
 | Deepgram | Hourly at :15. Read balance and make a real listen handshake with a granted token; close on 101 without audio. Low below configured balance threshold (default $25); provider refusal critical. Grant 200 alone does not prove listening works. |
 | Ops | Hourly at :45. Client/server error counts, OpenAI, Resend, Neon, KV, Polar config, cron ages and spend. |
-| Client errors | At least 5 error-level events from at least 2 devices in an hour. Warnings and one blocked user can be missed. |
+| Fleet client errors | At least 5 error-level events from at least 2 devices in an hour; supplemented by the single-device evaluator below. |
+| Single-device incidents | Hourly: three qualifying events in distinct ten-second windows within ten minutes, or a terminal event. Legacy recovery can remain unconfirmed; retained historical incidents can alert on rollout. Counts are events, not failed meetings. |
 | Server errors | At least 5 recorded 5xx/uncaught route errors in an hour. Content-free fixed details. |
-| Providers | Explicit provider refusal is critical; rate limiting warns. Network/5xx unknown is currently recorded without email. Sustained unknown alerting is built locally but not deployed. |
+| Providers | Explicit provider refusal is critical; rate limiting warns. Network/5xx is unknown; three consecutive hourly unknown checks warn. Repeated manual checks in one hour do not advance that streak. |
 | Spend | Warn at 80%, critical at 100% of configured budgets; values are operational settings, not permanent product costs. |
 | Digest | Monday 07:00 UTC. Money, usage, provider/cron health, alerts and restore outcomes. A missing digest requires investigation; it is not an independent dead-man monitor. |
 
-New warn/critical emails immediately on a check run; repeat critical every 6 hours, warning daily, one recovery. Spend repeats slower. There can be almost an hour before an incident is evaluated. Resend failure can prevent its own alert; there is not yet an independent mail/cron sentinel.
+New warn/critical emails immediately on a check run; repeat critical every 6 hours, warning daily, one recovery. Spend repeats slower. There can be almost an hour before an incident is evaluated. Resend failure can prevent its own alert. The deployed public `/api/health/monitoring` exposes stale job/probe/mail evidence for external monitoring. UptimeRobot setup is user-reported in the release record; independently verify the monitor/contact before relying on coverage. HTTP 200 is not inbox proof.
 
-Polar config trims/validates known malformed UUID-shaped env input, reads subscriptions with an organization filter and uses a narrow unknown-key validation probe; never activates a license. Product ID shape is checked, not ownership or successful activation. The success wording currently overstates this and is assigned to O4. Restore outcomes supply actual restore evidence: any provider_config in 7 days makes the check critical after successful probe reads; three provider_unavailable outcomes warn. A green check is not an end-to-end purchase/restore test.
+Polar config trims/validates known malformed UUID-shaped env input, reads subscriptions with an organization filter and uses a narrow unknown-key validation probe; never activates a license. Product ID shape is checked, not ownership or successful activation. The success wording now distinguishes organization-filter acceptance from product-ID format validation. Restore outcomes supply actual restore evidence: any provider_config in 7 days makes the check critical after successful probe reads; three provider_unavailable outcomes warn. A green check is not an end-to-end purchase/restore test.
 
 ## Investigating a user who says “listening, nothing happens”
 
@@ -43,3 +44,11 @@ Historical deployment/config evidence: [ops](../archive/ops-alerting-plan.md), [
 ## Prepared changes, not active yet (2026-10-29)
 
 [O1–O4 code](../reference/monitoring-cloud-purchase.md) and the [QA/activation handoff](../releases/monitoring-cloud-purchase-qa.md) are ready locally. The deployed table above remains the baseline until deployment is recorded. UptimeRobot was inspected while signed in, with an HTTP monitor selected as the free-account approach, but no monitor exists yet. The session had expired at the final browser check; sign in again at activation. Its target will be `https://api.miniti.app/api/health/monitoring`, a minimal stored-health bit. Configure only after deployment and fresh job evidence; verify the alert contact and controlled inbox test separately. Do not mark provider acceptance as inbox delivery.
+
+## Alert drill-down and age
+
+Incident emails now link to `/admin?device_id=<UUID>#client-diagnostics` through dashboard login (backend `2458ddb`). Old API links redirect for HTML browser navigation; API reads retain authentication and JSON responses. Filtering matches both uppercase legacy and lowercase canonical IDs.
+
+The 2026-10-30 11:45 run sent four recording alerts based on 2026-10-29 events on 3.4.0, not four new failures at send time. Shipped 3.4.0 does not emit the strong `recording_recovered` event; later legacy healthy/reconnect events do not prove transcript recovery. Distinguish evidence age, receipt delay and current failure. [Next-release alert plan](../plans/incident-alert-clarity.md) records the limitation.
+
+For stale cloud counts or early webhooks, use [sync/delivery investigation](../plans/sync-and-delivery-reliability.md): check actual remote presence and event type/revision before interpreting a recent "Last synced" timestamp or a receiver's cloud lookup as proof of successful completion.

@@ -47,12 +47,20 @@ Configured webhook/CRM exports remain allowed in private mode. In 3.4.0, `setPri
 
 ## Local follow-ups, not released (2026-10-29)
 
-Monitoring O1–O4, selective cloud privacy C1 and purchase return B6d are implemented in the working tree. See the [code/compatibility contract](monitoring-cloud-purchase.md) for file ownership, additive wire fields, limits and remaining QA. Do not infer deployment from local implementation.
+Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend/site. iOS is submitted. See the [contract](monitoring-cloud-purchase.md) and [release evidence](../releases/3.5.0.md).
 
-### Per-meeting Cloud/Local, unreleased 2026-10-29
+### Per-meeting Cloud/Local, 3.5.0
 
 Home and pre-meeting calendar/countdown screens have no cloud checkbox. The live and saved meeting toolbars share the labelled blue Cloud/Local control at top right. Four-second confirmation uses conditional wording when sync is paused and pending wording for removal of an existing copy. It changes cloud storage only. Private-mode recordings cannot be opted in while running. Settings, Cloud → Add rule opens a focused editor rather than requiring typing into an unrelated-looking field first.
 
 Unreleased Settings revision (2026-10-29): the former Sending overview is embedded in Privacy. Setup, Models contains all local model families with platform-appropriate availability and Configure links. See [Settings](settings.md) for retained legacy destinations and search anchors.
 
 Unreleased Help revision (2026-10-29): support identifiers are expanded in Help rather than folded in Account. Help owns explicit Copy/Preview/Send reports with optional default-on code-only diagnostics. About ends with the shared styled Acknowledgements disclosure. See [Settings](settings.md).
+
+## Local 3.6.0 saved-meeting delivery, not released
+
+A stopped meeting can upload its durable transcript without leaving the meeting screen. Final AI may continue in the background; later saved results upload normally. Incoming cloud replacements still wait while that meeting is selected or final AI owns it. A failed final transcript save keeps the protected/finalizing state and offers persistence retry.
+
+Going Home no longer triggers an early webhook. The initial event carries the saved transcript and available results after final processing settles, even if the user stays on the meeting. History edits and a newer Update request invalidate older responses; a stale task cannot overwrite results or clear a newer task's progress. Failed saves restore the matching selected-live display as well as the model. Webhooks do not wait for cloud sync.
+
+Settings, Cloud distinguishes a completed check from a fresh cloud count and names pending/protected work. Webhook failures offer Resend current meeting; pending retries retain their original delivery identity. See [Settings](settings.md#local-360-delivery-and-sync-status-not-released) and [delivery mechanics](patterns.md#saved-ai-and-webhook-delivery-local-360-not-released). The [3.6.0 record](../releases/3.6.0.md) tracks validation; these descriptions do not imply completed device QA.

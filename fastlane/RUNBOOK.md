@@ -6,7 +6,7 @@ This is the stable human guide for this repo's Fastlane setup.
 
 For the end-to-end release checklist (version bump → blobs upload → backend → Sparkle smoke test → iOS submit), see [../RELEASE.md](../RELEASE.md). This doc covers per-lane detail only.
 
-Current follow-up release prerequisite: deploy and verify the purchase-return site, then additive backend contracts, before distributing either client. This is a hard gate even when running a lane directly; see [RELEASE.md](../RELEASE.md#required-deployment-order-for-the-current-follow-up-release).
+Current follow-up release prerequisite: deploy and verify the purchase-return site, then additive backend contracts, before distributing either client. This is a hard gate even when running a lane directly; see [RELEASE.md](../RELEASE.md#required-deployment-order-for-the-350-contracts).
 
 ## Credentials
 

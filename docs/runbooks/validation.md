@@ -4,6 +4,8 @@ This is an evidence register, not another priority backlog. [Roadmap](../roadmap
 
 | Area | Reconciled evidence / remaining check | Owner |
 |---|---|---|
+| 3.5.0 | Mac build 142 live with Sparkle check; backend/site deployed. iOS submitted 2026-10-30 12:28 UTC, availability unconfirmed. Ian reported grouped device/provider QA good; no itemised independent evidence is invented. UptimeRobot setup is included in that report; health 200 alone proves neither external configuration nor inbox delivery. | [Release record](../releases/3.5.0.md) |
+| 3.6.0 planning | Charlie on 3.4.0: stale count and early webhook mechanisms verified in shipped code; exact customer session and on-device reproduction remain open. No fixes implemented; alert clarity and S1–S3/R5–R7 tests/device QA are pending. | [Release checklist](../releases/3.6.0.md), [sync/delivery plan](../plans/sync-and-delivery-reliability.md) |
 | 3.4.0 | Release build and QA observations, unchecked device scenarios and macOS 26 waiver are retained verbatim with their dates. Mac live and iOS upload are different evidence. | [Release record](../releases/3.4.0.md) |
 | Migrated/locked keys | macOS 27 observations exist; macOS 26 was not measured. The -128 cancel result is known, not a new absent credential. Verify macOS 26 recovery before A3. | [Account access](../plans/account-access.md) |
 | Store recovery | September plan records Ian’s Mac corrupt-store drill passing and an iOS simulator drill. The older roadmap’s Mac “still owed” claim is superseded. Physical iPhone verification is not established by the simulator. | [September record](../archive/p0-hardening-batch-2026-09-plan.md#status), [testing](../reference/testing.md) |
@@ -19,3 +21,8 @@ This is an evidence register, not another priority backlog. [Roadmap](../roadmap
 | Docs Insights | Source implements docs_topics/docs counters/lookup/catchup. Reconcile each historical acceptance clause with handlers/tests, particularly topics not calling MCP and actual quota/degraded behavior. Unchecked boxes are not proof of missing routes or verified live behavior. | [Backend patterns](../../../miniti-api/docs/agents/03-patterns.md), [historical spec](../archive/docs-insights-api-spec.md) |
 
 Retain reusable hardware scenarios in reference/testing and focused contracts. A new release records its own evidence without overwriting old measurements. Linux parity and actual App Store availability need their own evidence sources.
+
+
+## 3.6.0 preparation, 2026-10-30
+
+[3.6.0 evidence](../releases/3.6.0.md) owns S1–S3/R5–R7 and incident-clarity validation. Implementation and independent review are complete locally; simulator/full-suite, SQLite-upgrade and native-control renders are separate from physical audio, receiver and two-device QA. Candidate build 143 follows a read-only App Store Connect check of latest build 142. No availability or deployment can be inferred from these local results.

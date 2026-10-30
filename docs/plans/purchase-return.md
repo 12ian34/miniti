@@ -1,6 +1,6 @@
 # Return to miniti after buying Pro
 
-Status: implemented locally, automated checks passing; device/provider QA and deployment remain open. Version: unassigned. Updated 2026-10-29. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: delivered on macOS in 3.5.0 build 142 on 2026-10-30, with backend and website deployed. iOS StoreKit is unchanged. This is the implementation record, not future build scope. [Release evidence](../releases/3.5.0.md) records Ian-reported QA and its limits; [roadmap](../roadmap.md) owns subsequent work.
 
 ## Deliverable and boundary
 
@@ -12,15 +12,15 @@ Works independently of B1 using the existing entitlement contract; it must not p
 
 ## Implementation evidence and remaining gates
 
-See the [QA handoff](../releases/monitoring-cloud-purchase-qa.md) for tested behavior, exact remaining checks and deployment order, and the [local code contract](../reference/monitoring-cloud-purchase.md) for file ownership and compatibility. This plan is not closed: local tests do not substitute for the listed device, sandbox and delivery checks.
+See the [QA handoff](../releases/monitoring-cloud-purchase-qa.md) for tested behavior, exact remaining checks and deployment order, and the [local code contract](../reference/monitoring-cloud-purchase.md) for file ownership and compatibility. Implementation is delivered; the release record supersedes earlier local-only status. Ian reported device QA good as a group, not an itemised independently observed run. Preserve those evidence limits and iOS availability separately.
 
 ## Implementation contract
 
 #### B6d: return to miniti after buying Pro
 
-**Approved 2026-10-27; built locally on 2026-10-29, not deployed or released.** Charlie reported that buying Pro ends with a license key instead of a return to the app. Keep this a separate future purchase-flow slice, outside the current 3.4.0 QA scope. It can be implemented before B1; it must not claim to solve device-held subscription ownership or change account membership.
+**Approved 2026-10-27; built on 2026-10-29 and shipped on Mac with backend/site on 2026-10-30.** Charlie reported that buying Pro ends with a license key instead of a return to the app. This was delivered separately from the ownership migration. It can be implemented before B1; it must not claim to solve device-held subscription ownership or change account membership.
 
-**Verified baseline:** `miniti-api/lib/polar.ts:createCheckoutSession` passes the product and `external_customer_id` but no `success_url`. The webhook already links active purchases to the buying device. `AppState.openSubscribePage` opens checkout in the browser; `MinitiApp` has no billing return handler. A purchase begun in the app should not require manual license-key entry. Polar supports `success_url` with a checkout-id placeholder ([checkout API](https://polar.sh/docs/api-reference/checkouts/create-session)).
+**Pre-implementation baseline (historical):** `miniti-api/lib/polar.ts:createCheckoutSession` passes the product and `external_customer_id` but no `success_url`. The webhook already links active purchases to the buying device. `AppState.openSubscribePage` opens checkout in the browser; `MinitiApp` has no billing return handler. A purchase begun in the app should not require manual license-key entry. Polar supports `success_url` with a checkout-id placeholder ([checkout API](https://polar.sh/docs/api-reference/checkouts/create-session)).
 
 **Flow and contract:**
 

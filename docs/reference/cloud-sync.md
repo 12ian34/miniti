@@ -6,13 +6,13 @@ Shipped baseline: 3.0.0 sync/API/MCP, 3.3.0 account switch, 3.4.0 account-email 
 
 Cloud is optional, default off and managed Pro only. Its switch belongs to the account; another device observes changes on its next usage check. Private mode pauses only this device and excludes newly private recordings; deliberately configured exports remain allowed. Email recovery/management is available without Pro/cloud and is distinct from data/API/MCP rollout guards.
 
-`MeetingSyncDocument` carries an additive versioned document; the engine fingerprints finished meetings, preserves unknown fields, and excludes current/deleted meetings. Pulls commit locally and may auto-export Markdown, but do not enqueue CRM/webhooks. Local deletes persist tombstones; server tombstones win. A 413 marks an oversized meeting skipped until changed. Sync uses millisecond-normalized stamps to avoid repeated revision churn. Old rows/store migrations must retain data.
+`MeetingSyncDocument` carries an additive versioned document; the engine fingerprints finished meetings and preserves unknown fields. The released 3.5.0 client excludes current/deleted meetings; the local 3.6.0 eligibility split is described below. Pulls commit locally and may auto-export Markdown, but do not enqueue CRM/webhooks. Local deletes persist tombstones; server tombstones win. A 413 marks an oversized meeting skipped until changed. Sync uses millisecond-normalized stamps to avoid repeated revision churn. Old rows/store migrations must retain data.
 
 `CloudSyncEngine.PassContext` captures account and generation. Check after every await before applying responses, statuses, errors or cursors. Cursor writes use the captured account. Reset, account change and credential replacement invalidate outstanding passes; stale work hands over without pausing the new account. Cancellation alone is not the fence.
 
 Account changes clear revisions/fingerprints/tombstones and the old cursor before status refresh. Local meetings stay, and a later pass can upload them to the next account under today’s behavior. This is a remaining provenance problem, not an R3 regression: [meeting ownership](../plans/meeting-ownership.md) adds explicit copy authority. Never infer old ownership from revision counters.
 
-The existing per-meeting Keep off the cloud action is post-creation. [Selective cloud privacy](../plans/selective-cloud-privacy.md) adds the pre-recording choice and title rules; do not claim this already exists.
+3.5.0 adds Cloud/Local controls in live and saved meeting views plus calendar-title rules. There is no Home checkbox. [Selective cloud privacy](../plans/selective-cloud-privacy.md) retains the delivered contract.
 
 ## Operational gotchas
 
@@ -29,8 +29,18 @@ Foreground polling is the current delivery mechanism; APNs, web History, API wri
 
 Original schema/design, cost snapshot, nuanced delivery notes and regression matrix are retained in [the archived cloud record](../archive/cloud-sync-plan.md). Costs and open questions there are dated; revalidate before making capacity decisions.
 
-## Local follow-ups, not released (2026-10-29)
+## Delivered follow-ups (3.5.0)
 
-Monitoring O1–O4, selective cloud privacy C1 and purchase return B6d are implemented in the working tree. See the [code/compatibility contract](monitoring-cloud-purchase.md) for file ownership, additive wire fields, limits and remaining QA. Do not infer deployment from local implementation.
+Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend/site. iOS is submitted. See the [contract](monitoring-cloud-purchase.md) and [release evidence](../releases/3.5.0.md).
 
-Local selective-privacy availability correction (2026-10-30, unreleased): finished alone is not evidence of a cloud copy while cloud is unavailable. The toggle queues removal only for known prior sync/pending deletion, an in-flight upload of that meeting, or a finished meeting currently eligible to sync. Known cloud copies still queue removal offline. Explicit restore intent stays durable, but the status names the gate preventing sync instead of showing an endless generic pending upload. A zero-revision legacy tombstone is not shown as a known cloud copy while cloud is unavailable.
+Selective-privacy availability correction (3.5.0): finished alone is not evidence of a cloud copy while cloud is unavailable. The toggle queues removal only for known prior sync/pending deletion, an in-flight upload of that meeting, or a finished meeting currently eligible to sync. Known cloud copies still queue removal offline. Explicit restore intent stays durable, but the status names the gate preventing sync instead of showing an endless generic pending upload. A zero-revision legacy tombstone is not shown as a known cloud copy while cloud is unavailable.
+
+## Local 3.6.0 implementation, not released
+
+In 3.4.0 and 3.5.0, automatic passes can refresh the successful-pass timestamp while leaving cached server count/bytes stale, and a stopped `currentMeeting` remains excluded until the session clears. The local S1/S2 implementation separates three things:
+
+- **Outbound eligibility:** `cloudUploadProtectedMeetingID` protects starting, recording, resuming and final transcript commit. Once the stopped transcript is durable, that meeting may upload while still selected and while final AI runs. Later durable AI updates dirty it again. A failed stop save retains protection and exposes persistence retry.
+- **Inbound authority:** `cloudProtectsIncoming` still protects the selected meeting and every meeting with final AI running from pulled documents/deletes and conflict replacements. Protection release schedules reconciliation so skipped server changes are revisited. This is intentionally stricter than outbound eligibility.
+- **Status freshness:** successful pass time and successful count-fetch time are separate. Content changes mark status dirty; explicit refresh, missing/dirty status or a five-minute age trigger a read. A failed count read preserves accepted uploads and the previous count with a stale indication. Pending uploads/removals, protected meetings, local-scan failure and oversized rows prevent a misleading all-clear label.
+
+Settings says Last checked for the pass and Cloud count checked for the count; neither is proof that a particular meeting uploaded. Webhook delivery remains independent of cloud acknowledgment and contains the transcript and available summary itself. [The 3.6.0 plan](../plans/sync-and-delivery-reliability.md) owns acceptance; [release evidence](../releases/3.6.0.md) owns test/device gates. These changes do not alter account ownership, privacy choices, tombstone authority or the backend sync schema.

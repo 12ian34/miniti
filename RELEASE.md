@@ -13,7 +13,11 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## Required deployment order for the current follow-up release
+## 3.6.0 release preparation
+
+Use [3.6.0 evidence](docs/releases/3.6.0.md) for the selected scope and remaining checks. Alert clarity can deploy independently; the client sync/webhook fixes introduce no new backend route dependency. The 3.5.0 contracts below are already deployed and remain required baseline compatibility. A 3.5.0 downgrade does not understand held webhook rows; resolve them first or use a forward patch.
+
+## Required deployment order for the 3.5.0 contracts
 
 This is a release blocker, not a preference. Complete and record these prerequisites before publishing a DMG/appcast or uploading the new client to TestFlight/App Review:
 

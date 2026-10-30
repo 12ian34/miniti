@@ -1,6 +1,6 @@
-# Monitoring, cloud privacy and purchase return: local implementation
+# Monitoring, cloud privacy and purchase return: implementation contract
 
-Built 2026-10-29, uncommitted and unreleased. This describes the working tree, not production. [QA and delivery gates](../releases/monitoring-cloud-purchase-qa.md). Existing 3.4.0 contracts and account ownership remain unchanged.
+Built 2026-10-29 and delivered 2026-10-30: macOS 3.5.0 live, backend/site deployed, iOS submitted. [Release evidence](../releases/3.5.0.md) owns platform availability and QA limits. [QA and delivery gates](../releases/monitoring-cloud-purchase-qa.md). Existing 3.4.0 contracts and account ownership remain unchanged.
 
 ## Diagnostics and incidents
 
@@ -42,8 +42,12 @@ The per-meeting explicit choice wins over late calendar association. Without an 
 
 The additive backend route `/api/support/report` uses `lib/supportReports.ts` and existing Resend mail. Server-only `SUPPORT_EMAIL` falls back to `ALERT_EMAIL`; reported IDs are unverified. Strict body/schema limits, network/global limits and provider idempotency bound abuse/retries. No report content in server logs/KV; failures use static 5xx reporting. See the logging plan O5 and backend `docs/agents/09-followups.md` for deployment and delivery gates.
 
-## Local support timeline (O6, unreleased 2026-10-29)
+## Local support timeline (O6, delivered in 3.5.0)
 
 `DiagnosticTimeline` lives beside the raw in-memory logger in `DebugLogger.swift`. Its fixed `Code` enum and `sanitize` vocabulary are mirrored by `miniti-api/lib/supportReports.ts`; change both together. Only fixed fields are persisted/exported. Raw logger redaction is not a privacy boundary for Help. Structured events are observed locally even when automatic telemetry is off; explicit Help sending is still a separate user action. Auth hooks run after observed results; storage and formatting run on a utility queue with bounded admission, never on audio callbacks. Keychain hooks enqueue metadata only and never call back into auth or acquire credential locks.
 
 Retention is 300 events / 96 KiB / 48 hours, 64 pending records, two-second batched atomic writes, mode 0600 and excluded from backup. Repeated equal code/fields fold into a count while occurrences remain less than 60 seconds apart. Milestones are emitted once through the existing recording sampler; background cloud passes only report real work/failures. Diagnostic write failure leaves functionality intact and is visible in Help. Help retains up to 100 entries within its encoded budget, including first/last/count and safe operation fields; Debug Copy/Save appends the timeline and Clear removes it. XCTest uses an in-memory singleton, never the user's persisted timeline. No new network requests or changes to automatic-diagnostics consent.
+
+Local 3.6.0 sync/delivery changes are described in [patterns](patterns.md#saved-ai-and-webhook-delivery-local-360-not-released) and [cloud sync](cloud-sync.md#local-360-implementation-not-released). The webhook outbox is distinct from the diagnostic outbox above: its held completion marker, immutable delivery identities and current-data resend do not change diagnostics consent, retention or the support schema. These client changes are not yet released.
+
+Post-release work is owned by separate plans: [sync/delivery](../plans/sync-and-delivery-reliability.md) and [incident alert clarity](../plans/incident-alert-clarity.md). Backend `2458ddb` already routes alert links through dashboard login with the device filter retained.

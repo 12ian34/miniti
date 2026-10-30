@@ -1,5 +1,13 @@
 # Changelog
 
+### Unreleased - v3.6.0
+
+- new: (macOS and iOS) resend a failed webhook with the meeting's latest saved transcript and summary
+- improvement: (macOS and iOS) Cloud shows pending work and when its meeting count was last checked
+- fix: (macOS and iOS) finished meetings sync while you stay on the meeting screen
+- fix: (macOS and iOS) webhooks wait for final AI processing and keep newer updates when an older delivery is still sending
+- fix: (macOS and iOS) late AI responses no longer overwrite edits or renamed meetings
+
 ### 2026-10-30 - v3.5.0
 
 - new: (macOS and iOS) choose Cloud or Local in a live or saved meeting. Add title rules in Settings, Cloud to keep matching meetings off the cloud
