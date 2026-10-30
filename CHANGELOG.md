@@ -1,6 +1,6 @@
 # Changelog
 
-### Unreleased - v3.5.0
+### 2026-10-30 - v3.5.0
 
 - new: (macOS and iOS) choose Cloud or Local in a live or saved meeting. Add title rules in Settings, Cloud to keep matching meetings off the cloud
 - new: (macOS) return to miniti after buying Pro to confirm your purchase
