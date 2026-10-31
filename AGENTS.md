@@ -14,7 +14,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 - OpenAI insights: By default, managed full and incremental `standard`, `meddpicc`, `questions`, `template`, `docs` and `investigation` requests use pinned `gpt-5.4-mini-2026-03-17`; `speaker_names`, `catchup`, `docs_topics` and `template_draft` move to `gpt-6-luna` with reasoning `none` in the deployed 3.6.0 backend, pending explicit activation. For those four tasks, only `INSIGHTS_LIGHTWEIGHT_LUNA=on` enables Luna; unset, blank, `off` or unrecognized values keep GPT-5 mini with low reasoning. Managed `standard` full/incremental summaries independently opt into Luna none with `INSIGHTS_STANDARD_LUNA=on`; unset/off/invalid retains GPT-5.4 mini low. See [bounded migration](docs/plans/lightweight-luna.md); both Luna groups remain disabled in production. `INSIGHTS_INCREMENTAL_QUALITY_MODEL=off` takes precedence over standard Luna and restores GPT-5 mini with low reasoning for quality-mode incremental requests. BYOK uses pinned `gpt-5-mini-2025-08-07` except investigations, which use pinned `gpt-5.4-mini-2026-03-17`.
 - Vercel + Upstash Redis backend (`miniti-api`)
 - Sparkle 2.9.5 for macOS auto-update; StoreKit 2 + Polar.sh for purchase rails
-- Netlify Blobs for DMG hosting
+- GitHub release assets for current DMGs, with Netlify download redirects; legacy downloads may remain in Netlify Blobs
 
 ## Targets
 
@@ -28,7 +28,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 
 | I need to… | Read |
 |---|---|
-| Decide what is next, dependencies or release scope | [docs/roadmap.md](docs/roadmap.md), the sole ordered priority index; bounded plans in `docs/plans/` |
+| Decide what is next, dependencies or release scope | [docs/roadmap.md](docs/roadmap.md), the sole ordered priority index, including the later product sequence and public projection; bounded plans in `docs/plans/` |
 | Understand the doc cleanup or find an old plan | [Archive disposition](docs/archive/README.md); archived instructions/statuses are historical, not current policy |
 | Ship a version | [RELEASE.md](RELEASE.md), [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md), [distribution](docs/reference/distribution.md) |
 | Check 3.4.0 QA / unresolved device evidence | [Release record](docs/releases/3.4.0.md), [validation register](docs/runbooks/validation.md) |
@@ -41,8 +41,8 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Add purchase return / account integration connections | [Purchase return](docs/plans/purchase-return.md), [integration ownership](docs/plans/integration-ownership.md) |
 | Fix sync, webhook, Watch/History/export/link races | [3.6.0 sync/delivery](docs/plans/sync-and-delivery-reliability.md), S1–S3/R5–R7; [remaining reliability](docs/plans/reliability.md), R4/R8; R1/narrowed R2/R3 shipped |
 | Operate alerts / inspect admin diagnostics | [Operations runbook](docs/runbooks/operations.md); [logging and monitoring plan](docs/plans/logging-and-monitoring.md) owns O1–O6 |
-| Understand tests / improve test quality | [Testing](docs/reference/testing.md), [test foundation](docs/plans/test-foundation.md), [T01–T17 audit disposition](docs/archive/README.md#test-audit-disposition); feature regressions stay with their owning plan |
-| Work on Apple Watch / phone import | [Watch](docs/reference/watch.md), [original delivery record](docs/archive/apple-watch-plan.md) |
+| Understand tests / improve test quality | [Testing](docs/reference/testing.md), [test foundation](docs/plans/test-foundation.md), [ordered T01–T17 follow-through](docs/roadmap.md#test-audit-follow-through), [audit disposition](docs/archive/README.md#test-audit-disposition); foundation is next after 3.6.0, feature regressions stay with their owning plan |
+| Work on Apple Watch / phone import | [Watch](docs/reference/watch.md) (shipped 3.1.0; current capture, audio-joining, receipt and permission contracts), [original delivery record](docs/archive/apple-watch-plan.md) |
 | Change search / Granola / saved-result handling | [Meeting history and import](docs/reference/meeting-history-and-import.md) |
 | Change local models, voice prints or Jev | [Local-model contracts](docs/reference/local-models.md); linked original implementation/evaluation records retain thresholds and measured limitations |
 | Evaluate local insights/transcription | [Local AI research](docs/research/local-ai-research.md), [transcription research](docs/research/local-transcription-research.md), [POC results](scripts/transcription-poc/RESULTS.md) |
@@ -54,6 +54,8 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Evaluate Android | [Historical proposal](docs/research/android-original-plan.md), requires re-planning; shared app secret/lockstep versions below are obsolete |
 
 [README.md](README.md) is the public repository introduction; end-user documentation lives at `https://miniti.app/docs` and the public-facing changelog at `https://miniti.app/changelog`. This file (`AGENTS.md`) is the dev-facing entry point.
+
+Public roadmap alignment (2026-10-31): [the roadmap](docs/roadmap.md#public-roadmap-projection) owns the customer-facing order and all ten retained product ideas. Mirror priority/status changes into `../minitidotapp/roadmap/index.html` and its `llms-full.txt` roadmap; keep internal prerequisites in this repo. Video is planned later; the other nine ideas remain exploratory. Ordering is not implementation or release approval. Preserve the website's full recently shipped feature showcase, emojis and changelog-backed ship dates beside each feature, as Ian requested.
 
 ## Non-negotiable conventions
 
@@ -124,7 +126,7 @@ scripts/                           # build-dmg.sh, release-info.sh, dmg-backgrou
 ## Learned workspace facts
 
 - Follow-up implementation (2026-10-28): logging/monitoring, selective cloud privacy and Polar purchase return are the selected scope; their `docs/plans/` files own delivery evidence. Monitoring keeps hourly checks. The 3.5.0 release record now owns deployment and user-reported UptimeRobot/QA evidence; this earlier selection note is not independent verification.
-- Bot-free Mac video (2026-10-29) is a selected later product direction, outside the current release. Background window capture is required; minimising the meeting window may pause video while audio/transcription continue. Scope and feasibility gates live in [the roadmap](docs/roadmap.md#planned-later-bot-free-video-recording); the website roadmap mirrors the plan without claiming implementation or a date.
+- Bot-free Mac video (2026-10-29) is a selected later product direction, outside the current release. Background window capture is required; minimising the meeting window may pause video while audio/transcription continue. The [bounded plan](docs/plans/bot-free-video.md), added 2026-10-31, owns local scope, effort estimates and optional hosting gates; [the roadmap](docs/roadmap.md#planned-later-bot-free-video-recording) owns priority. Hosting is not required for local recording. Cost scenarios stay in an ignored local financial note; no prototype, measured video performance or provider commitment exists.
 
 - Backend changes for managed mode may live in the sibling repo `miniti-api` (`../miniti-api` from this app repo); its `AGENTS.md` is the implementation handoff, while this repo's `docs/roadmap.md` is the sole priority index and each linked bounded plan owns its completion evidence.
 - The same `MinitiTests/*.swift` sources are compiled by two bundles: `MinitiTests` (hosted by the macOS `Miniti` app, `fastlane mac test`) and `MinitiMobileTests` (hosted by `MinitiMobile`, `fastlane ios test`). Both must pass before a release. Platform-only navigation/hosting tests exist; both bundles compile the shared layer but do not have identical platform coverage. See [docs/reference/testing.md](docs/reference/testing.md).

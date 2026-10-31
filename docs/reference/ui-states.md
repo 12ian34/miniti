@@ -45,19 +45,25 @@ Configured webhook/CRM exports remain allowed in private mode. In 3.4.0, `setPri
 - **Navigation**: iPhone uses the Record / Coaching / History bottom tab bar. Regular-width iPad uses an adaptive sidebar (native adaptable tabs on iOS 18+, explicit split navigation on iOS 17). Coaching rows push the saved meeting onto a navigation stack with a labelled Coaching back action.
 - **Live Activity**: Shows timer, state, meeting title, and—when enabled—the latest transcript line. Tapping the Lock Screen or Dynamic Island activity returns to the active Record tab.
 
-## Local follow-ups, not released (2026-10-29)
+<a id="local-follow-ups-not-released-2026-10-29"></a>
 
-Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend/site. iOS is submitted. See the [contract](monitoring-cloud-purchase.md) and [release evidence](../releases/3.5.0.md).
+## Shipped 3.5.0 follow-ups
+
+Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend/site. iOS 3.5.0 is confirmed available. See the [contract](monitoring-cloud-purchase.md) and [release evidence](../releases/3.5.0.md).
 
 ### Per-meeting Cloud/Local, 3.5.0
 
 Home and pre-meeting calendar/countdown screens have no cloud checkbox. The live and saved meeting toolbars share the labelled blue Cloud/Local control at top right. Four-second confirmation uses conditional wording when sync is paused and pending wording for removal of an existing copy. It changes cloud storage only. Private-mode recordings cannot be opted in while running. Settings, Cloud → Add rule opens a focused editor rather than requiring typing into an unrelated-looking field first.
 
-Unreleased Settings revision (2026-10-29): the former Sending overview is embedded in Privacy. Setup, Models contains all local model families with platform-appropriate availability and Configure links. See [Settings](settings.md) for retained legacy destinations and search anchors.
+Settings revision (shipped in v3.5.0): the former Sending overview is embedded in Privacy. Setup, Models contains all local model families with platform-appropriate availability and Configure links. See [Settings](settings.md) for retained legacy destinations and search anchors.
 
-Unreleased Help revision (2026-10-29): support identifiers are expanded in Help rather than folded in Account. Help owns explicit Copy/Preview/Send reports with optional default-on code-only diagnostics. About ends with the shared styled Acknowledgements disclosure. See [Settings](settings.md).
+Help revision (shipped in v3.5.0): support identifiers are expanded in Help rather than folded in Account. Help owns explicit Copy/Preview/Send reports with optional default-on code-only diagnostics. About ends with the shared styled Acknowledgements disclosure. See [Settings](settings.md).
 
-## Local 3.6.0 saved-meeting delivery, not released
+<a id="local-360-saved-meeting-delivery-not-released"></a>
+
+## 3.6.0 saved-meeting delivery
+
+Released on macOS; iOS build 146 is waiting for App Review. Device waivers and limits remain in the release record.
 
 A stopped meeting can upload its durable transcript without leaving the meeting screen. Final AI may continue in the background; later saved results upload normally. Incoming cloud replacements still wait while that meeting is selected or final AI owns it. A failed final transcript save keeps the protected/finalizing state and offers persistence retry.
 

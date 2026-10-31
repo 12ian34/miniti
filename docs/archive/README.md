@@ -69,18 +69,20 @@ Reconciled 2026-10-27. This register preserves where old material went; it does 
 
 ## Test audit disposition
 
+Priority updated 2026-10-31 at Ian's request: [roadmap test follow-through](../roadmap.md#test-audit-follow-through) assigns the full audit to delivery positions. Foundation is next after 3.6.0; UI/recovery, model quality and CRM partial failures are planned follow-ups rather than unselected candidates. Versions remain unassigned outside the existing 3.6.0 scope.
+
 | Original slices | Current owner / remaining scope |
 |---|---|
 | T01/T06/T07/T14 | test-foundation: honest runner/isolation, insights handler coverage, real storage, cross-client fixtures. |
 | T02/T04/T05 | account-ownership: exact/concurrent usage and Apple/Polar purchase/entitlement lifecycle. Implement before its cutovers. |
-| T03/T10 | reliability R4–R6: real sender payloads, outbox races and complete Watch retry/import lifecycle. |
-| T08 | Shipped R1/narrow R2/R3 and credential regressions retained; R7/R8 tests in reliability; ownership races in their plans. Wider R2 remains deferred. |
+| T03/T10 | T03 → 3.6.0 sync/delivery R5/R6, released on Mac, submitted on iOS, with device waivers recorded separately; T10 → reliability R4 at order 3, complete Watch retry/import lifecycle. |
+| T08 | Shipped R1/narrow R2/R3 and credential regressions retained; R7 → 3.6.0 sync/delivery; R8 → reliability at order 3; ownership races in their plans. Wider R2 remains deferred. |
 | T09 | Shipped audio/auth boundaries retained; monitor handshake tests in logging; lifecycle/handoff/resource tests in checkpoints/performance. |
-| T11 | Disk reload/abrupt exit in durable-checkpoints; broader migration/recovery journey improvements are candidates pending scope. |
-| T12 | Each UI change owns required render/interaction/accessibility checks. Broader UI harness is candidate work; no test-count proxy for rendered QA. |
-| T13 | Local-model/voice-print quality/privacy candidate; preserve existing tests and corpus limits. |
+| T11 | Truthful recovery/journey assertions at order 2; disk reload/abrupt exit and released-store migrations with durable-checkpoints at order 8. Bound implementation scope before starting. |
+| T12 | Planned bounded UI/accessibility harness at order 2 alongside account access. Each UI change retains its required rendered QA; no test-count proxy for interaction/layout evidence. |
+| T13 | Planned model/voice-print quality/privacy coverage at order 9a; write bounded scope first, preserve existing tests and corpus limits. Earlier model changes still own their necessary evaluations. |
 | T15 | history-and-session-performance. |
-| T16 | Diagnostics ingestion → logging; delivery integration → reliability; remaining CRM partial-failure tests are candidates. |
+| T16 | Diagnostics ingestion → logging; delivery integration → reliability; remaining CRM OAuth/partial-failure tests at order 6 before integration-ownership changes. |
 | T17 | test-foundation removes brittle checks only after replacements; current coverage remains dated evidence until remeasured. |
 
 All old source text remains in this archive or research, with relative links repaired. Archiving means “not current instructions”, not “every checkbox passed”.

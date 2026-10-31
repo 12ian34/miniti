@@ -2,6 +2,8 @@
 
 Status: planned, not implemented. Version: unassigned. Scope reconciled 2026-10-27. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
+**Priority confirmed 2026-10-31:** complete this bounded plan next after 3.6.0, at roadmap order 1a, before account-access and ownership work. Individual prerequisites needed by the current release may land earlier. The [test audit follow-through](../roadmap.md#test-audit-follow-through) assigns the other T01–T17 findings to their feature work; this plan does not absorb those implementations or assign a release version.
+
 ## Deliverable and boundary
 
 Bounded T01/T06/T07/T14 infrastructure and insights-route coverage, plus T17 evidence cleanup only where replacement tests exist. Add documentation-link and release-metadata consistency checks to CI. Feature-specific regressions stay with their feature plans.
