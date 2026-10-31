@@ -10786,9 +10786,10 @@ final class AppState: ObservableObject {
         if let meeting = savedMeeting(id: meetingID), let marker = meeting.webhookCompletion {
             if marker.phase == .processing { return }
             if marker.phase == .ready {
-                // Coalesce edits into the initial snapshot until its handoff is durable.
-                handOffWebhookCompletion(meeting)
-                return
+                // Coalesce only a successful handoff. A destination decision must not
+                // swallow updates or let another initial saved payload bypass its fence.
+                if handOffWebhookCompletion(meeting) { return }
+                guard payload.event == "meeting.updated" else { return }
             }
         }
         do {

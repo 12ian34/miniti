@@ -1659,7 +1659,7 @@ struct DeliveryStatusRow_iOS: View {
             Text(error).font(.caption).foregroundStyle(ColorPalette.Status.error)
             Button("Try again") { appState.retryWebhookDeliveries() }
         }
-        if let line = outbox.statusLine(for: .webhook) {
+        if let line = appState.webhookDeliveryStatusLine {
             VStack(alignment: .leading, spacing: 6) {
                 Label(line, systemImage: outbox.failed(.webhook).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
                     .font(.caption)

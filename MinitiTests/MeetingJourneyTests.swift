@@ -14,8 +14,11 @@ import XCTest
 final class MeetingJourneyTests: XCTestCase {
     private var container: ModelContainer!
     private var session: URLSession!
+    private var savedDefaults: [String: Any] = [:]
+    private let keys = ["appMode", "acceptedTermsVersion", "privateMode", "webhookURL", "autoExportMarkdown", "autoInferSpeakerNames"]
 
     override func setUp() async throws {
+        for key in keys { if let value = UserDefaults.standard.object(forKey: key) { savedDefaults[key] = value } }
         StubURLProtocol.reset()
         container = try TestSupport.makeInMemoryContainer()
         session = TestSupport.stubbedSession()
@@ -27,12 +30,26 @@ final class MeetingJourneyTests: XCTestCase {
     override func tearDown() async throws {
         StubURLProtocol.reset()
         container = nil
+        for key in keys {
+            if let value = savedDefaults[key] { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
     }
 
     private func makeState() -> AppState {
         let state = AppState()
         state.modelContext = container.mainContext
-        state.minitiAPIService = MinitiAPIService(session: session, auth: TestSupport.enrolledAuthManager(session: session))
+        state.appModeRaw = AppMode.managed.rawValue
+        state.hasAcceptedTerms = true
+        state.privateModeEnabled = false
+        state.webhookURL = ""
+        state.autoInferSpeakerNames = false
+        #if os(macOS)
+        state.autoExportMarkdown = false
+        #endif
+        let auth = TestSupport.enrolledAuthManager(session: session)
+        state.clientAuthManager = auth
+        state.minitiAPIService = MinitiAPIService(session: session, auth: auth)
         state.insightsService = InsightsService(session: session)
         return state
     }
@@ -540,12 +557,23 @@ extension SavedMeetingDeliveryTests {
 extension SavedMeetingDeliveryTests {
     func testAccountSwitchDuringFinalAIStillDeliversInterruptedSavedTranscript() async throws {
         let meeting = try meeting()
-        StubURLProtocol.delay = 0.15
+        let entered = expectation(description: "final summary request is held")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let reply = try XCTUnwrap(StubURLProtocol.script)
+        StubURLProtocol.script = { request in
+            if request.url?.path.hasSuffix("/insights") == true {
+                entered.fulfill()
+                XCTAssertEqual(release.wait(timeout: .now() + 10), .success)
+            }
+            return try reply(request)
+        }
         let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: false) }
-        try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+        await fulfillment(of: [entered], timeout: 5)
         var credentials = TestSupport.enrolledCredentials()
         credentials.accountID = "acct_b"
         state.clientAuthManager = TestSupport.enrolledAuthManager(session: TestSupport.stubbedSession(), credentials: credentials)
+        release.signal()
         await task.value
         XCTAssertNil(meeting.summaryText, "old-account AI must not apply")
         let item = try XCTUnwrap(state.deliveryOutbox.items.first)
@@ -553,6 +581,141 @@ extension SavedMeetingDeliveryTests {
         XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .interrupted)
         let payload = try XCTUnwrap(try body(item)["meeting"] as? [String: Any])
         XCTAssertEqual((payload["transcript"] as? [[String: Any]])?.first?["text"] as? String, "we agreed to ship on Friday")
+    }
+
+    func testMarkerRetainsOnlyFingerprintUntilSuccessfulRelease() throws {
+        let meeting = try meeting()
+        let destination = state.webhookURL
+        let fingerprint = WebhookCompletion.fingerprint(destination)
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        XCTAssertEqual(meeting.webhookCompletion?.destinationFingerprint, fingerprint)
+        XCTAssertFalse(try XCTUnwrap(meeting.webhookCompletionJSON).contains(destination))
+        state.settleMeetingCompletion(meeting, id: id, outcomes: [:], interrupted: false)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+        XCTAssertNil(meeting.webhookCompletion?.destinationFingerprint)
+        let data = try XCTUnwrap(meeting.webhookCompletionJSON?.data(using: .utf8))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertNil(json["destination"])
+        XCTAssertNil(json["destinationFingerprint"])
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains(fingerprint))
+    }
+
+    func testLegacyPlaintextMarkerNeedsExplicitRetryAndIsScrubbed() throws {
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(meeting.webhookCompletionJSON).utf8)) as? [String: Any])
+        json.removeValue(forKey: "destinationFingerprint")
+        json["destination"] = state.webhookURL
+        json["phase"] = "ready"
+        meeting.webhookCompletionJSON = String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+        try container.mainContext.save()
+        XCTAssertEqual(meeting.webhookCompletion?.id, id)
+        XCTAssertNil(meeting.webhookCompletion?.destinationFingerprint)
+        state.reconcileWebhookCompletions()
+        XCTAssertTrue(state.deliveryOutbox.items.isEmpty, "even an identical legacy URL is unknown authority")
+        XCTAssertNotNil(state.webhookResendError)
+        state.retryWebhookDeliveries()
+        XCTAssertNotEqual(meeting.webhookCompletion?.id, id)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+        XCTAssertEqual(state.deliveryOutbox.items.first?.held, false)
+        XCTAssertFalse(try XCTUnwrap(meeting.webhookCompletionJSON).contains("destination"))
+        // A legacy already-handed-off marker is scrubbed without replaying its row.
+        json["phase"] = "handedOff"
+        meeting.webhookCompletionJSON = String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+        try container.mainContext.save()
+        state.reconcileWebhookCompletions()
+        XCTAssertFalse(try XCTUnwrap(meeting.webhookCompletionJSON).contains("destination"))
+        XCTAssertEqual(state.deliveryOutbox.items.count, 1)
+    }
+
+    func testHistoryUpdateReachesNewURLWhileInitialCompletionStaysBlocked() async throws {
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        state.webhookURL = "https://new.example/hook"
+        state.settleMeetingCompletion(meeting, id: id, outcomes: [:], interrupted: false)
+        state.enqueueWebhook(WebhookService.payloadFromMeeting(meeting, event: "meeting.saved"))
+        XCTAssertTrue(state.deliveryOutbox.items.isEmpty, "a second saved payload cannot bypass the destination fence")
+        await state.generateInsightsForMeeting(meeting)
+        let update = try XCTUnwrap(state.deliveryOutbox.items.first)
+        XCTAssertEqual(update.event, "meeting.updated")
+        XCTAssertEqual(update.destination, state.webhookURL)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .ready)
+        XCTAssertEqual(meeting.webhookCompletion?.id, id)
+        XCTAssertTrue(state.webhookResendError?.contains("URL changed") == true)
+        XCTAssertEqual(state.webhookDeliveryStatusLine, "1 waiting")
+        XCTAssertEqual((try body(update)["meeting"] as? [String: Any])?["summary"] as? String, "fresh summary")
+    }
+
+    func testExpiredHeldCompletionResolvesBeforeResendAndNeverReplays() async throws {
+        var clock = Date()
+        state.deliveryOutbox = DeliveryOutbox(storeURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString), now: { clock })
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        var saves = 0
+        state.persistenceSaveHandler = { context in
+            saves += 1
+            if saves == 2 { throw CocoaError(.fileWriteUnknown) }
+            try context.save()
+        }
+        state.settleMeetingCompletion(meeting, id: id, outcomes: [:], interrupted: false)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .ready)
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.held, true)
+        clock = clock.addingTimeInterval(DeliveryOutbox.maxAge + 1)
+        await state.deliveryOutbox.processDue()
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.state, .failed)
+        state.persistenceSaveHandler = { try $0.save() }
+        state.webhookURL = "https://new.example/hook"
+        // Resend can be invoked before lifecycle reconciliation sees the expired row.
+        state.resendFailedWebhooks()
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+        XCTAssertNil(meeting.webhookCompletion?.destinationFingerprint)
+        XCTAssertEqual(state.deliveryOutbox.items.map(\.event), ["meeting.updated"])
+        let replacement = try XCTUnwrap(state.deliveryOutbox.items.first)
+        XCTAssertNotEqual(replacement.id, id)
+        XCTAssertEqual(replacement.destination, state.webhookURL)
+        state.reconcileWebhookCompletions()
+        XCTAssertEqual(state.deliveryOutbox.items.map(\.id), [replacement.id])
+    }
+
+    func testReleaseWriteFailureKeepsFingerprintUntilReconciliation() throws {
+        var failRelease = true
+        let store = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        state.deliveryOutbox = DeliveryOutbox(storeURL: store, writeStore: { data, url in
+            let rows = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            if failRelease && rows?.first?["held"] as? Bool == false { throw CocoaError(.fileWriteUnknown) }
+            try data.write(to: url, options: .atomic)
+        })
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        state.settleMeetingCompletion(meeting, id: id, outcomes: [:], interrupted: false)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+        XCTAssertNotNil(meeting.webhookCompletion?.destinationFingerprint)
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.held, true)
+        failRelease = false
+        state.reconcileWebhookCompletions()
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.held, false)
+        XCTAssertNil(meeting.webhookCompletion?.destinationFingerprint)
+    }
+
+    func testFingerprintCleanupSaveFailureCannotReplayDeliveredRow() throws {
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        var saves = 0
+        state.persistenceSaveHandler = { context in
+            saves += 1
+            if saves == 3 { throw CocoaError(.fileWriteUnknown) }
+            try context.save()
+        }
+        state.settleMeetingCompletion(meeting, id: id, outcomes: [:], interrupted: false)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+        XCTAssertNotNil(meeting.webhookCompletion?.destinationFingerprint)
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.held, false)
+        XCTAssertTrue(state.deliveryOutbox.discard(id: id)) // Simulate completed delivery before restart.
+        state.persistenceSaveHandler = { try $0.save() }
+        state.webhookURL = ""
+        state.reconcileWebhookCompletions()
+        XCTAssertTrue(state.deliveryOutbox.items.isEmpty)
+        XCTAssertNil(meeting.webhookCompletion?.destinationFingerprint)
     }
 
     func testChangedWebhookDestinationWaitsForExplicitRetryAndSurvivesReconciliation() async throws {

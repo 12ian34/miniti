@@ -6,6 +6,7 @@
 - improvement: (macOS and iOS) Cloud shows pending changes, when the count was checked and whether it will retry
 - fix: (macOS and iOS) finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads
 - fix: (macOS and iOS) webhooks wait for final AI processing and keep newer updates
+- fix: (macOS and iOS) stalled webhook deliveries expire after 24 hours and no longer block later updates
 - fix: (macOS and iOS) late AI responses no longer overwrite edits or renamed meetings
 - fix: (macOS and iOS) changing a finished meeting's template clears the previous template's results
 - fix: (iOS) Settings goes back one page at a time without jumping to Home

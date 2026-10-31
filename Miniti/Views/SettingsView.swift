@@ -2164,7 +2164,7 @@ struct DeliveryStatusRow: View {
                 Button("Try again") { appState.retryWebhookDeliveries() }.controlSize(.small)
             }
         }
-        if let line = outbox.statusLine(for: kind) {
+        if let line = kind == .webhook ? appState.webhookDeliveryStatusLine : outbox.statusLine(for: kind) {
             HStack(spacing: 10) {
                 Label(line, systemImage: outbox.failed(kind).isEmpty ? "clock.arrow.circlepath" : "exclamationmark.triangle.fill")
                     .font(.caption)

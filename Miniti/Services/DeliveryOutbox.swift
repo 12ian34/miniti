@@ -105,10 +105,12 @@ final class DeliveryOutbox: ObservableObject {
         self.now = now
         self.writeStore = writeStore
         load()
+        scheduleTimer()
     }
 
     func register(_ kind: Kind, sender: @escaping Sender) {
         senders[kind] = sender
+        scheduleTimer()
     }
 
     // MARK: - Enqueue
@@ -126,12 +128,20 @@ final class DeliveryOutbox: ObservableObject {
     /// idempotent; a supplied ID can never acquire a different body.
     @discardableResult
     func stageWebhook(id: UUID, meetingID: UUID, event: String, body: Data, destination: String, createdAt: Date? = nil) -> Bool {
-        insertWebhook(id: id, meetingID: meetingID, event: event, body: body, destination: destination, held: true, createdAt: createdAt)
+        let accepted = insertWebhook(id: id, meetingID: meetingID, event: event, body: body, destination: destination, held: true, createdAt: createdAt)
+        scheduleTimer()
+        return accepted
     }
 
     @discardableResult
     func releaseWebhook(id: UUID) -> Bool {
         guard let index = items.firstIndex(where: { $0.id == id && $0.kind == .webhook }), !invalidatedIDs.contains(id) else { return false }
+        guard items[index].state == .pending, items[index].body != nil else { return false }
+        if now().timeIntervalSince(items[index].createdAt) >= Self.maxAge {
+            _ = apply(.reject(reason: "Delivery expired"), to: id)
+            scheduleTimer()
+            return false
+        }
         if items[index].held != true { return !hasStorageFailure }
         var next = items
         next[index].held = false
@@ -173,9 +183,10 @@ final class DeliveryOutbox: ObservableObject {
             if replacingFailure != nil && item.kind == .webhook && item.meetingID == meetingID && item.state == .failed { return false }
             return !(item.kind == .webhook && item.meetingID == meetingID && item.event == event && item.state == .pending && item.id != inFlightID)
         }
+        let expired = now().timeIntervalSince(date) >= Self.maxAge
         next.append(Item(id: id, kind: .webhook, meetingID: meetingID, event: event, createdAt: date,
-                         attempts: 0, nextAttemptAt: now(), state: .pending, lastError: nil,
-                         body: body, destination: destination, held: held, hasBeenAttempted: false))
+                         attempts: 0, nextAttemptAt: now(), state: expired ? .failed : .pending, lastError: expired ? "Delivery expired" : nil,
+                         body: expired ? nil : body, destination: destination, held: held, hasBeenAttempted: false))
         return commit(next)
     }
 
@@ -201,7 +212,7 @@ final class DeliveryOutbox: ObservableObject {
     func failed(_ kind: Kind) -> [Item] { failed.filter { $0.kind == kind } }
 
     /// Human line for a Settings section: nil when there is nothing to say.
-    func statusLine(for kind: Kind) -> String? {
+    func statusLine(for kind: Kind, hasBlockingReason: Bool = false) -> String? {
         let waiting = pending(kind)
         let dead = failed(kind)
         if let persistenceError { return persistenceError }
@@ -209,8 +220,8 @@ final class DeliveryOutbox: ObservableObject {
         var parts: [String] = []
         if !waiting.isEmpty {
             let ready = waiting.filter { $0.held != true }
-            if ready.isEmpty {
-                parts.append("\(waiting.count) waiting for saved meeting")
+            if hasBlockingReason || ready.isEmpty {
+                parts.append("\(waiting.count) waiting")
             } else {
                 let next = ready.map(\.nextAttemptAt).min() ?? now()
                 let secs = max(0, Int(next.timeIntervalSince(now())))
@@ -276,6 +287,11 @@ final class DeliveryOutbox: ObservableObject {
         if retained != items || hasStorageFailure {
             guard commit(retained) else { return }
         }
+        // Retention applies even without a sender, while held, and while waiting behind
+        // another event. Do this before dispatch eligibility can exclude any row.
+        for item in items where item.kind == .webhook && item.state == .pending && now().timeIntervalSince(item.createdAt) >= Self.maxAge {
+            guard apply(.reject(reason: "Delivery expired"), to: item.id) else { return }
+        }
         let dueIDs = items.filter { $0.state == .pending && $0.held != true && $0.nextAttemptAt <= now() }.map(\.id)
         for id in dueIDs {
             // An await above can replace/delete another row captured by this pass.
@@ -284,7 +300,7 @@ final class DeliveryOutbox: ObservableObject {
                   let sender = senders[items[index].kind] else { continue }
             let item = items[index]
             if item.kind == .webhook && item.event == "meeting.updated" && items.contains(where: {
-                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved" && $0.state == .pending
+                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved" && $0.state == .pending && $0.held != true
             }) { continue }
             if item.kind == .webhook && now().timeIntervalSince(item.createdAt) >= Self.maxAge {
                 guard apply(.reject(reason: "Delivery expired"), to: id) else { return }
@@ -344,15 +360,23 @@ final class DeliveryOutbox: ObservableObject {
         return true
     }
 
+    /// Held and ordering-blocked rows still have a retention deadline. Missing senders
+    /// do not cause a one-second retry loop while the app is wiring up its services.
+    var nextProcessingAt: Date? {
+        pending.compactMap { item -> Date? in
+            guard !invalidatedIDs.contains(item.id) else { return nil }
+            let expiry = item.kind == .webhook ? item.createdAt.addingTimeInterval(Self.maxAge) : nil
+            let blocked = item.held == true || (item.kind == .webhook && item.event == "meeting.updated" && pending.contains {
+                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved" && $0.held != true
+            })
+            guard !blocked, senders[item.kind] != nil else { return expiry }
+            return expiry.map { min($0, item.nextAttemptAt) } ?? item.nextAttemptAt
+        }.min()
+    }
+
     private func scheduleTimer() {
         timer?.invalidate(); timer = nil
-        let candidates = pending.filter { item in
-            guard item.held != true, !invalidatedIDs.contains(item.id) else { return false }
-            return !(item.kind == .webhook && item.event == "meeting.updated" && pending.contains {
-                $0.kind == .webhook && $0.meetingID == item.meetingID && $0.event == "meeting.saved"
-            })
-        }
-        guard !unreadableStore, let next = candidates.map(\.nextAttemptAt).min() else { return }
+        guard !unreadableStore, let next = nextProcessingAt else { return }
         let delay = hasStorageFailure ? 30 : max(1, next.timeIntervalSince(now()))
         timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
             Task { @MainActor in self?.kick() }

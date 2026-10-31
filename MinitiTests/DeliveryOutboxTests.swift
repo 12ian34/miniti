@@ -236,17 +236,85 @@ final class DeliveryOutboxTests: XCTestCase {
         XCTAssertTrue(restored.items.isEmpty)
     }
 
-    func testUpdatesWaitForHeldOrRetryingInitialDelivery() async {
+    func testHeldSavedDoesNotBlockUpdatedDelivery() async {
         let outbox = makeOutbox(), meeting = UUID(), initialID = UUID()
         var events: [String] = []
         outbox.stageWebhook(id: initialID, meetingID: meeting, event: "meeting.saved", body: Data("initial".utf8), destination: "https://example.com/hook")
         outbox.enqueueWebhook(meetingID: meeting, event: "meeting.updated", body: Data("update".utf8), destination: "https://example.com/hook")
         outbox.register(.webhook) { item in events.append(item.event); return .delivered }
         await outbox.processDue()
-        XCTAssertTrue(events.isEmpty)
+        XCTAssertEqual(events, ["meeting.updated"])
         XCTAssertTrue(outbox.releaseWebhook(id: initialID))
         await outbox.processDue()
-        XCTAssertEqual(events, ["meeting.saved", "meeting.updated"])
+        XCTAssertEqual(events, ["meeting.updated", "meeting.saved"])
+    }
+
+    func testReleasedSavedStillBlocksUpdatedUntilDelivered() async {
+        let outbox = makeOutbox(), meeting = UUID()
+        var events: [String] = []
+        var failSaved = true
+        outbox.register(.webhook) { item in
+            events.append(item.event)
+            return item.event == "meeting.saved" && failSaved ? .retry(reason: "offline") : .delivered
+        }
+        outbox.enqueueWebhook(meetingID: meeting, event: "meeting.saved", body: Data("saved".utf8), destination: "https://example.com/hook")
+        outbox.enqueueWebhook(meetingID: meeting, event: "meeting.updated", body: Data("update".utf8), destination: "https://example.com/hook")
+        await outbox.processDue()
+        XCTAssertEqual(events, ["meeting.saved"])
+        XCTAssertEqual(outbox.nextProcessingAt, clock.addingTimeInterval(30))
+        advance(30); failSaved = false
+        await outbox.processDue()
+        XCTAssertEqual(events, ["meeting.saved", "meeting.saved", "meeting.updated"])
+    }
+
+    func testHeldRowExpiresWithoutSenderAndCannotBeReleasedOrRestaged() async {
+        let outbox = makeOutbox(), id = UUID(), meeting = UUID()
+        let body = Data("sensitive transcript".utf8)
+        XCTAssertTrue(outbox.stageWebhook(id: id, meetingID: meeting, event: "meeting.saved", body: body, destination: "https://example.com/hook"))
+        XCTAssertEqual(outbox.nextProcessingAt, clock.addingTimeInterval(DeliveryOutbox.maxAge), "held-only queue wakes for expiry, not every second")
+        advance(DeliveryOutbox.maxAge)
+        await outbox.processDue()
+        let expired = outbox.item(id: id)
+        XCTAssertEqual(expired?.state, .failed)
+        XCTAssertEqual(expired?.lastError, "Delivery expired")
+        XCTAssertNil(expired?.body)
+        XCTAssertNil(makeOutbox().item(id: id)?.body, "expiry is durable")
+        XCTAssertFalse(outbox.releaseWebhook(id: id))
+        XCTAssertFalse(outbox.stageWebhook(id: id, meetingID: meeting, event: "meeting.saved", body: body, destination: "https://example.com/hook"))
+        XCTAssertNil(outbox.nextProcessingAt, "terminal queue has no retry loop")
+        XCTAssertEqual(outbox.statusLine(for: .webhook), "1 failed: Delivery expired")
+    }
+
+    func testHeldOnlyQueueExpiresFromItsTimerWithoutAKickOrSender() async throws {
+        let outbox = DeliveryOutbox(storeURL: storeURL)
+        let id = UUID()
+        XCTAssertTrue(outbox.stageWebhook(id: id, meetingID: UUID(), event: "meeting.saved", body: Data("body".utf8), destination: "https://example.com/hook", createdAt: Date().addingTimeInterval(-DeliveryOutbox.maxAge + 0.1)))
+        try await TestSupport.waitUntil(timeout: 5) { outbox.item(id: id)?.state == .failed }
+        XCTAssertNil(outbox.item(id: id)?.body)
+        XCTAssertNil(outbox.nextProcessingAt)
+    }
+
+    func testReleaseChecksExpiryBeforeAnyProcessingPass() {
+        let outbox = makeOutbox(), id = UUID()
+        outbox.stageWebhook(id: id, meetingID: UUID(), event: "meeting.saved", body: Data("body".utf8), destination: "https://example.com/hook")
+        advance(DeliveryOutbox.maxAge)
+        XCTAssertFalse(outbox.releaseWebhook(id: id))
+        XCTAssertEqual(outbox.item(id: id)?.state, .failed)
+        XCTAssertNil(outbox.item(id: id)?.body)
+    }
+
+    func testStagingAnAlreadyExpiredMarkerNeverPersistsItsBody() {
+        let outbox = makeOutbox(), id = UUID()
+        XCTAssertTrue(outbox.stageWebhook(id: id, meetingID: UUID(), event: "meeting.saved", body: Data("body".utf8), destination: "https://example.com/hook", createdAt: clock.addingTimeInterval(-DeliveryOutbox.maxAge)))
+        XCTAssertEqual(outbox.item(id: id)?.state, .failed)
+        XCTAssertNil(makeOutbox().item(id: id)?.body)
+    }
+
+    func testHeldStatusDoesNotInventABlockingReason() {
+        let outbox = makeOutbox()
+        outbox.stageWebhook(id: UUID(), meetingID: UUID(), event: "meeting.saved", body: Data(), destination: "https://example.com/hook")
+        XCTAssertEqual(outbox.statusLine(for: .webhook, hasBlockingReason: true), "1 waiting")
+        XCTAssertEqual(outbox.statusLine(for: .webhook), "1 waiting")
     }
 
     func testOldPassDoesNotSendARowRemovedDuringAnAwait() async {

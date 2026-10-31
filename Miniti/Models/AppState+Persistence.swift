@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import SwiftData
 
 /// One user-visible action that writes to or reads from the meeting store.
@@ -294,7 +295,12 @@ struct WebhookCompletion: Codable {
     var accountID: String?
     var processing: WebhookService.Processing?
     var requestedModes: [String]? = nil
-    var destination: String? = nil
+    // Legacy `destination` fields are ignored by Codable, never retained or trusted.
+    var destinationFingerprint: String? = nil
+
+    static func fingerprint(_ destination: String) -> String {
+        SHA256.hash(data: Data(destination.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 extension Meeting {
@@ -324,7 +330,7 @@ extension AppState {
             guard deliveryOutbox.discard(id: old.id) else { return nil }
         }
         let marker = WebhookCompletion(id: UUID(), phase: .processing, revision: meeting.transcriptRevision,
-                                       createdAt: Date(), accountID: appMode == .managed ? clientAuthManager.status.accountID : nil, destination: webhookURL)
+                                       createdAt: Date(), accountID: appMode == .managed ? clientAuthManager.status.accountID : nil, destinationFingerprint: WebhookCompletion.fingerprint(webhookURL))
         if persist { _ = persistWebhookCompletion(marker, on: meeting) }
         else { meeting.webhookCompletion = marker }
         return marker.id
@@ -356,39 +362,49 @@ extension AppState {
     }
 
     /// Reconcile only the marker just committed. Dispatch stays held until both stores agree.
-    func handOffWebhookCompletion(_ meeting: Meeting) {
+    @discardableResult
+    func handOffWebhookCompletion(_ meeting: Meeting) -> Bool {
         guard deliveryOutbox.isStoreReadable, !isMeetingDeleted(meeting.id),
-              var marker = meeting.webhookCompletion else { return }
-        let held = deliveryOutbox.item(id: marker.id)?.held == true
-        guard marker.phase == .ready || (marker.phase == .handedOff && held) else { return }
+              var marker = meeting.webhookCompletion else { return false }
+        let row = deliveryOutbox.item(id: marker.id)
+        guard marker.phase == .ready || marker.phase == .handedOff else { return false }
+        // Expiry is terminal even if the acknowledgement save failed or the URL changed.
+        // A released/missing handed-off row must never be staged again after a crash.
+        if row?.state == .failed || (marker.phase == .handedOff && row?.held != true) {
+            _ = finishWebhookHandoff(&marker, on: meeting)
+            return false
+        }
         guard !webhookURL.isEmpty else {
             webhookResendError = "Add a webhook URL, then try again to send the saved meeting."
-            return
+            return false
         }
-        guard (marker.destination ?? deliveryOutbox.item(id: marker.id)?.destination ?? webhookURL) == webhookURL else {
+        guard marker.destinationFingerprint == WebhookCompletion.fingerprint(webhookURL) else {
             webhookResendError = "The webhook URL changed while this meeting was processing. Try again to send it to the current URL."
-            return
+            return false
         }
         if marker.phase == .handedOff {
-            if deliveryOutbox.item(id: marker.id)?.held == true { _ = deliveryOutbox.releaseWebhook(id: marker.id) }
-            return
+            let released = deliveryOutbox.releaseWebhook(id: marker.id)
+            if released || deliveryOutbox.item(id: marker.id)?.state == .failed {
+                _ = finishWebhookHandoff(&marker, on: meeting)
+            }
+            return released
         }
-        guard marker.phase == .ready else { return }
+        guard marker.phase == .ready else { return false }
         // Also retries a ready marker left unsaved by an earlier failure.
         guard modelContext?.hasChanges != true || commit(.finalInsights) else {
             persistenceRetryAction = { [weak self, weak meeting] in
                 guard let self, let meeting else { return }
                 self.handOffWebhookCompletion(meeting)
             }
-            return
+            return false
         }
         // A held, unattempted snapshot invalidated by editing is replaced under a fresh ID.
         if marker.revision != meeting.transcriptRevision {
-            guard deliveryOutbox.discard(id: marker.id) else { return }
+            guard deliveryOutbox.discard(id: marker.id) else { return false }
             marker.id = UUID()
             marker.revision = meeting.transcriptRevision
             marker.processing = .init(inputTranscriptRevision: marker.revision, state: .interrupted, outcomes: [:])
-            guard persistWebhookCompletion(marker, on: meeting) else { return }
+            guard persistWebhookCompletion(marker, on: meeting) else { return false }
         }
         do {
             let payload = WebhookService.payloadFromMeeting(meeting, event: "meeting.saved", processing: marker.processing,
@@ -397,13 +413,17 @@ extension AppState {
             if let held = deliveryOutbox.item(id: marker.id), held.held == true,
                let oldBody = held.body,
                (try JSONSerialization.jsonObject(with: oldBody) as? NSDictionary) != (try JSONSerialization.jsonObject(with: body) as? NSDictionary) {
-                guard deliveryOutbox.discard(id: marker.id) else { return }
+                guard deliveryOutbox.discard(id: marker.id) else { return false }
                 marker.id = UUID()
-                guard persistWebhookCompletion(marker, on: meeting) else { return }
+                guard persistWebhookCompletion(marker, on: meeting) else { return false }
             }
             if deliveryOutbox.item(id: marker.id) == nil {
                 guard deliveryOutbox.stageWebhook(id: marker.id, meetingID: meeting.id, event: payload.event, body: body,
-                                                  destination: webhookURL, createdAt: marker.createdAt) else { return }
+                                                  destination: webhookURL, createdAt: marker.createdAt) else { return false }
+            }
+            if deliveryOutbox.item(id: marker.id)?.state == .failed {
+                _ = finishWebhookHandoff(&marker, on: meeting)
+                return false
             }
             marker.phase = .handedOff
             guard persistWebhookCompletion(marker, on: meeting, revertOnFailure: true) else {
@@ -411,12 +431,33 @@ extension AppState {
                     guard let self, let meeting else { return }
                     self.handOffWebhookCompletion(meeting)
                 }
-                return
+                return false
             }
-            _ = deliveryOutbox.releaseWebhook(id: marker.id)
+            let released = deliveryOutbox.releaseWebhook(id: marker.id)
+            if released || deliveryOutbox.item(id: marker.id)?.state == .failed {
+                _ = finishWebhookHandoff(&marker, on: meeting)
+            }
+            return released
         } catch {
             webhookResendError = "The webhook could not be prepared. Try again."
+            return false
         }
+    }
+
+    /// Keep the destination fence through release. Cleanup failure is safe to retry:
+    /// the durable handedOff phase prevents a missing/already-delivered row being replayed.
+    @discardableResult
+    private func finishWebhookHandoff(_ marker: inout WebhookCompletion, on meeting: Meeting) -> Bool {
+        let legacyJSON = meeting.webhookCompletionJSON.flatMap { $0.data(using: .utf8) }
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        guard marker.phase != .handedOff || marker.destinationFingerprint != nil || legacyJSON?["destination"] != nil else { return true }
+        marker.phase = .handedOff
+        marker.destinationFingerprint = nil
+        return persistWebhookCompletion(marker, on: meeting, revertOnFailure: true)
+    }
+
+    var webhookDeliveryStatusLine: String? {
+        deliveryOutbox.statusLine(for: .webhook, hasBlockingReason: webhookResendError != nil)
     }
 
     /// Called once the local store is available; old meetings have no marker and are untouched.
@@ -455,6 +496,11 @@ extension AppState {
                   meeting.webhookCompletion?.phase != .processing else {
                 webhookResendError = "This meeting is still processing. Try again when it finishes."
                 continue
+            }
+            // Resolve an expired initial marker before replacing its terminal row, so
+            // reconciliation cannot reconstruct the old initial delivery after resend.
+            if var marker = meeting.webhookCompletion, marker.id == item.id {
+                guard finishWebhookHandoff(&marker, on: meeting) else { return }
             }
             guard commit(.insightsRegeneration) else { return }
             do {
@@ -549,11 +595,15 @@ extension AppState {
             for meeting in meetings {
                 guard var marker = meeting.webhookCompletion,
                       marker.phase == .ready || (marker.phase == .handedOff && deliveryOutbox.item(id: marker.id)?.held == true),
-                      marker.destination != webhookURL else { continue }
+                      marker.destinationFingerprint != WebhookCompletion.fingerprint(webhookURL) else { continue }
+                if deliveryOutbox.item(id: marker.id)?.state == .failed {
+                    _ = finishWebhookHandoff(&marker, on: meeting)
+                    continue
+                }
                 guard deliveryOutbox.discard(id: marker.id) else { continue }
                 marker.id = UUID()
                 marker.phase = .ready
-                marker.destination = webhookURL
+                marker.destinationFingerprint = WebhookCompletion.fingerprint(webhookURL)
                 _ = persistWebhookCompletion(marker, on: meeting)
             }
         }

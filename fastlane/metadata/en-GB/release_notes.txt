@@ -7,6 +7,7 @@ IMPROVED
 FIXED
 - Finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads.
 - Webhooks wait for final AI processing and keep newer updates.
+- Stalled webhook deliveries expire after 24 hours and no longer block later updates.
 - Late AI responses no longer overwrite edits or renamed meetings.
 - Changing a finished meeting's template clears the previous template's results.
 - Settings goes back one page at a time without jumping to Home.
