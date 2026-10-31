@@ -25,6 +25,8 @@ Use the dated audit as evidence, not current test counts. Do not drop useful tes
 
 **Observed 2026-10-31:** stopping the hosted hardware test during a HAL/audio-service block loses `TestRunSetup.savedDomain` and the fixture's memory-only snapshots. The installed app subsequently showed BYOK. Exact prior values cannot be reconstructed from an older preferences file. Until defaults are isolated, capture a protected durable pre-run backup before hardware tests and verify restoration after interruption; do not run another personal-Mac test session after restoring Ian's settings without that protection. This is concrete T01 evidence, not a claim that the infrastructure plan is implemented. Ian explicitly waived the durable preference backup for the current release follow-up on 2026-10-31 ("nah forget the preference backup btw"). Proceed with the requested validation under that waiver; retain normal test-bundle restoration. This does not complete T01 isolation or prove historical preferences restored.
 
+**Bounded T01 follow-up, 2026-10-31:** the 3.5.0 CI account-email reconciliation test used a 400 ms delay and could assert after the operation completed. It now holds the real response until after the account switch and separately covers add/remove/failed-add. This fixes that fixture only; global mutable URLProtocol scripting, crash-safe preferences and the rest of T01 remain open. [Evidence](../reference/testing.md#account-email-ci-race-correction-2026-10-31).
+
 ## T07: shared contracts against real storage
 
 **Files:** backend `lib/cloudStore.integration.test.ts`, `lib/cloudStore.ts`, `test/setup.ts`, CI and database test setup.

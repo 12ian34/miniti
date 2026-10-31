@@ -180,3 +180,12 @@ Monitoring O1–O4, selective cloud privacy C1 and purchase return B6d are imple
 ### Interrupted hosted tests and preferences
 
 The test host shares the installed app's defaults domain. `TestRunSetup` restores a memory-only snapshot at normal bundle completion; forced termination cannot do that. During 3.6.0 preparation (2026-10-31), a HAL block required stopping the host and left the app showing BYOK. Before a personal-Mac hardware run, keep a protected durable snapshot of the current preferences; after an interruption verify restoration rather than guessing prior settings or using an old plist. Do not include preference values or API keys in logs. T01 in the [test-foundation plan](../plans/test-foundation.md) owns full defaults isolation and crash-safe recovery. App tests use isolated meeting stores; preference isolation is a separate unfinished requirement.
+
+
+### Account-email CI race correction, 2026-10-31
+
+The [3.5.0 iOS run](https://github.com/12ian34/miniti/actions/runs/41055715196/job/124062610240) executed 1,010 tests, three skipped, with one failure: the removal half of `testASwitchDuringTheReconcilingReadMakesTheWriteStale` returned `removed` instead of `staleAccount`. macOS passed. This was an assertion failure, not the compiler crash eligible for workflow retry. The test's 400 ms response delay and polling of `accountEmailInFlight` did not guarantee the switch preceded completion, especially during the second scenario's pending account-change read.
+
+The test now starts from an idle read state and holds the actual A-account reconciliation response with an explicit gate. It switches to B before releasing that response, then asserts both the stale outcome and B's unchanged email state. Add, remove and failed-add scenarios are separate tests. No production code or workflow assertion was relaxed; the generalized shared URLProtocol isolation work remains in T01. A passing local run is not a passing GitHub run until the change is pushed and CI executes it.
+
+Validation: 19 account-email tests passed on iOS and 19 on macOS, zero failures; all three held-reconciliation cases repeated 20 times each on iOS (60 executions, zero failures). Xcode 27.1, iPhone Duo/iOS 27.1 simulator. Logs: `/tmp/miniti-ci-email-focused-ios.log`, `/tmp/miniti-ci-email-repeat-ios.log`, `/tmp/miniti-ci-email-focused-mac.log`. Test-only change, no build-145 repackaging required. GitHub verification remains pending the next push; the failed historical run has not been rerun or hidden.

@@ -2905,39 +2905,69 @@ final class AccountEmailStateTests: XCTestCase {
         XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(pending: "x@example.com")))
     }
 
-    func testASwitchDuringTheReconcilingReadMakesTheWriteStale() async throws {
-        // Review 2026-10-27: the write finished on A; the read-back is still waiting when B
-        // becomes current. A's success must not reach B's screen.
-        let app = await makeApp(account: "acct_a")
-        let originalHandler = StubURLProtocol.handler!
+    /// Hold the actual reconciliation response until the account switch has happened.
+    /// Polling accountEmailInFlight plus a 400 ms delay was not an ordering guarantee:
+    /// a busy CI runner could finish the read before the test task resumed.
+    private func switchDuringReconciliation<T>(
+        _ app: AppState, operation: @escaping @MainActor () async -> T
+    ) async throws -> T {
+        try await TestSupport.waitUntil {
+            !app.accountEmailInFlight && app.accountEmailPending == nil && app.accountEmailState != .loading
+        }
+        server.set("acct_b", verified: "b@example.com", pending: nil)
+        let readStarted = expectation(description: "account A reconciliation response is held")
+        let releaseRead = DispatchSemaphore(value: 0)
+        defer { releaseRead.signal() }
+        let originalHandler = try XCTUnwrap(StubURLProtocol.handler)
         StubURLProtocol.handler = { request in
-            // Delay what follows a write: the reconciling read is the window under test.
-            if request.httpMethod == "POST" || request.httpMethod == "DELETE" { StubURLProtocol.delay = 0.4 }
-            return originalHandler(request)
+            let reply = originalHandler(request)
+            if request.httpMethod == "GET",
+               request.value(forHTTPHeaderField: "Authorization") == "Bearer acct_a" {
+                readStarted.fulfill()
+                // A timeout is a failure, never an automatic successful race scenario.
+                XCTAssertEqual(releaseRead.wait(timeout: .now() + 10), .success, "test did not release the reconciliation response")
+            }
+            return reply
         }
-        let operation = Task { await app.addAccountEmail("review@example.com") }
-        for _ in 0..<200 {
-            if app.accountEmailInFlight { break }
-            try await Task.sleep(nanoseconds: 5_000_000)
-        }
-        XCTAssertTrue(app.accountEmailInFlight, "the POST completed and its reconciliation GET is waiting")
-        StubURLProtocol.delay = 0
+        let task = Task { await operation() }
+        await fulfillment(of: [readStarted], timeout: 5)
+        XCTAssertTrue(app.accountEmailInFlight)
         switchAccount(app, to: "acct_b")
-        let outcome = await operation.value
-        XCTAssertEqual(outcome, .staleAccount, "no success message from account A may be returned on B")
-        XCTAssertEqual(server.account("acct_a").pending, "review@example.com", "the server kept A's write")
-        // The same for a remove and for a failed write.
-        switchAccount(app, to: "acct_a")
-        await app.refreshAccountEmail(reason: "settle", force: true)
-        let removal = Task { await app.removeAccountEmail() }
-        for _ in 0..<200 {
-            if app.accountEmailInFlight { break }
-            try await Task.sleep(nanoseconds: 5_000_000)
+        releaseRead.signal()
+        let outcome = await task.value
+        XCTAssertEqual(app.clientAuthStatus.accountID, "acct_b")
+        XCTAssertEqual(app.accountEmailState, .loaded(AccountEmail(verified: "b@example.com")), "A's held response must not overwrite B")
+        XCTAssertEqual(server.account("acct_b").verified, "b@example.com")
+        return outcome
+    }
+
+    func testASwitchDuringTheReconcilingReadMakesTheWriteStale() async throws {
+        let app = await makeApp(account: "acct_a")
+        let outcome = try await switchDuringReconciliation(app) {
+            await app.addAccountEmail("review@example.com")
         }
-        StubURLProtocol.delay = 0
-        switchAccount(app, to: "acct_b")
-        let removeOutcome = await removal.value
-        XCTAssertEqual(removeOutcome, .staleAccount)
+        XCTAssertEqual(outcome, .staleAccount, "A's completed write must not show success on B")
+        XCTAssertEqual(server.account("acct_a").pending, "review@example.com", "A's server write still happened")
+    }
+
+    func testASwitchDuringRemoveReconciliationMakesTheResultStale() async throws {
+        let app = await makeApp(account: "acct_a")
+        server.set("acct_a", verified: "a@example.com", pending: nil)
+        let outcome = try await switchDuringReconciliation(app) {
+            await app.removeAccountEmail()
+        }
+        XCTAssertEqual(outcome, .staleAccount)
+        XCTAssertNil(server.account("acct_a").verified, "A's server removal still happened")
+    }
+
+    func testASwitchDuringFailedWriteReconciliationMakesTheErrorStale() async throws {
+        let app = await makeApp(account: "acct_a")
+        server.failPOST = (502, "email_send_failed")
+        let outcome = try await switchDuringReconciliation(app) {
+            await app.addAccountEmail("review@example.com")
+        }
+        XCTAssertEqual(outcome, .staleAccount, "A's error must not be returned to B's screen")
+        XCTAssertNil(server.account("acct_a").pending)
     }
 
     // MARK: Refresh queue (F2)
