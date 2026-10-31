@@ -19,7 +19,7 @@ Use [3.6.0 evidence](docs/releases/3.6.0.md) for the selected scope and remainin
 
 ### 3.6.0 rollout gates
 
-Release checkouts are isolated under `/Users/ian/dev/release-3.6.0/`, each on `codex/release-3.6.0`. Use those reviewed branches for release preparation. The original checkouts retain concurrent planning/documentation changes and their earlier branch tips; do not bulk-commit or blindly push them. See the release record for base revisions and artifact locations.
+Use the normal repositories under `/Users/ian/dev/` for release preparation: `miniti`, `miniti-api`, `miniti-docs`, `minitidotapp` and `miniti-linux`. Release fixes are committed on their existing `main` branches. Concurrent planning/documentation edits remain uncommitted; stage only reviewed release files, not all working changes. The temporary release worktrees have been removed. See the release record for revisions and artifact locations.
 
 - Repackage the verified build 146 app with the final Retina artwork using `fastlane mac dmg`; a full app rebuild is unnecessary for artwork alone. This lane signs, submits to Apple notarization, staples and Sparkle-signs the installer. Record the final byte count, hash and signature. The IPA is unaffected. Never publish the earlier installer while promising the new artwork.
 - Luna defaults off in code. Only `INSIGHTS_LIGHTWEIGHT_LUNA=on` enables it for all managed clients, including older Apple versions and Linux; unset, blank, `off` or unrecognized values retain GPT-5 mini low. Before the first backend deployment, verify there is no explicit production `on`. An unset variable no longer needs changing before deployment. This first rollout deploys alert clarity/recovery changes while retaining the previous lightweight model.
