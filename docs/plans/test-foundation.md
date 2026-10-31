@@ -23,6 +23,8 @@ Use the dated audit as evidence, not current test counts. Do not drop useful tes
 
 **Complete when:** a deliberately failing test makes coverage execution fail; cancelled responses cannot call a later test's handler; tests run repeatedly in changed order without shared-state leakage; isolated test failures cannot alter the installed app's settings or credentials; tests and helper types compile. Record remaining hardware prerequisites and skip reasons.
 
+**Observed 2026-10-31:** stopping the hosted hardware test during a HAL/audio-service block loses `TestRunSetup.savedDomain` and the fixture's memory-only snapshots. The installed app subsequently showed BYOK. Exact prior values cannot be reconstructed from an older preferences file. Until defaults are isolated, capture a protected durable pre-run backup before hardware tests and verify restoration after interruption; do not run another personal-Mac test session after restoring Ian's settings without that protection. This is concrete T01 evidence, not a claim that the infrastructure plan is implemented.
+
 ## T07: shared contracts against real storage
 
 **Files:** backend `lib/cloudStore.integration.test.ts`, `lib/cloudStore.ts`, `test/setup.ts`, CI and database test setup.

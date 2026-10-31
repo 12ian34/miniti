@@ -175,3 +175,8 @@ Pure static functions on `@MainActor AppState` are marked `nonisolated static` s
 ## Local follow-ups, not released (2026-10-29)
 
 Monitoring O1–O4, selective cloud privacy C1 and purchase return B6d are implemented in the working tree. See the [code/compatibility contract](monitoring-cloud-purchase.md) for file ownership, additive wire fields, limits and remaining QA. Do not infer deployment from local implementation.
+
+
+### Interrupted hosted tests and preferences
+
+The test host shares the installed app's defaults domain. `TestRunSetup` restores a memory-only snapshot at normal bundle completion; forced termination cannot do that. During 3.6.0 preparation (2026-10-31), a HAL block required stopping the host and left the app showing BYOK. Before a personal-Mac hardware run, keep a protected durable snapshot of the current preferences; after an interruption verify restoration rather than guessing prior settings or using an old plist. Do not include preference values or API keys in logs. T01 in the [test-foundation plan](../plans/test-foundation.md) owns full defaults isolation and crash-safe recovery. App tests use isolated meeting stores; preference isolation is a separate unfinished requirement.
