@@ -3,7 +3,7 @@
 # build-dmg.sh — Package a notarized miniti.app into a DMG ready for notarization.
 #
 # Usage:
-#   ./scripts/build-dmg.sh /path/to/notarized/miniti.app
+#   ./scripts/build-dmg.sh /path/to/notarized/miniti.app [output.dmg]
 #
 # Prerequisites:
 #   - Homebrew installed
@@ -11,7 +11,7 @@
 #   - The .app must already be signed and notarized
 #
 # Output:
-#   miniti.dmg in the repo root
+#   miniti.dmg in the repo root, or the optional output path for a local preview
 
 set -euo pipefail
 
@@ -21,7 +21,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 APP_PATH="${1:-}"
 if [[ -z "$APP_PATH" ]]; then
-    echo "Usage: $0 /path/to/notarized/miniti.app"
+    echo "Usage: $0 /path/to/notarized/miniti.app [output.dmg]"
     exit 1
 fi
 
@@ -92,8 +92,8 @@ if [[ ! -f "$BACKGROUND_PATH" ]]; then
 fi
 
 # ─── Build the DMG ──────────────────────────────────────────────────────────
-DMG_NAME="miniti.dmg"
-DMG_PATH="$REPO_ROOT/$DMG_NAME"
+DMG_PATH="${2:-$REPO_ROOT/miniti.dmg}"
+DMG_NAME="$(basename "$DMG_PATH")"
 
 # Remove existing DMG if present (create-dmg won't overwrite)
 rm -f "$DMG_PATH"
@@ -101,13 +101,15 @@ rm -f "$DMG_PATH"
 echo ""
 echo "Creating $DMG_NAME..."
 
+# The background has light label plates centered at (205, 286) and (395, 286).
+# Finder draws black labels below the 128pt icons even on dark image backgrounds.
 CREATE_DMG_ARGS=(
     --volname "miniti"
     --window-pos 200 120
-    --window-size 600 400
+    --window-size 600 480
     --icon-size 128
-    --icon "miniti.app" 180 190
-    --app-drop-link 420 190
+    --icon "miniti.app" 205 201
+    --app-drop-link 395 201
     --hide-extension "miniti.app"
     --no-internet-enable
 )

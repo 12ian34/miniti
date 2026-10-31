@@ -19,12 +19,13 @@ macOS is live, including Sparkle verification from 3.4.0. The backend and purcha
 
 Delivery evidence and Ian's reported device QA live in [3.5.0](releases/3.5.0.md); the [QA handoff](releases/monitoring-cloud-purchase-qa.md) retains detailed checks without converting unitemised user confirmation into independently observed passes. Outstanding release administration: confirm iOS availability, then bump only `IOS_LATEST_VERSION` and close the iOS record. UptimeRobot setup/mail QA is user-reported in the release record; health HTTP 200 alone is not independent confirmation. Alert links were fixed and deployed separately in backend `2458ddb`.
 
-## Selected release: 3.6.0, sync, delivery and alert clarity
+## Selected release: 3.6.0, sync, delivery, alert clarity and lightweight AI
 
 Ian assigned this scope to **3.6.0** on 2026-10-30. Both plans are implemented and independently reviewed locally. Follow-up cloud cancellation/copy and iOS Settings fixes are packaged as signed build **145**, replacing 143/144. The subsequent held-delivery/fingerprint review fixes supersede 145; replacement build **146** passes both full Apple suites and is signed/verified locally. The account-email CI timing test is corrected locally without changing the packaged app. Fresh full-suite, backend and documentation checks are recorded in the [3.6.0 checklist](releases/3.6.0.md), including skipped hardware checks and Ian's explicit webhook/resend waivers. Physical-phone gesture/animation QA and authorized rollout remain. T01 retains hosted-test isolation work; Ian waived the durable preference backup for this validation. Nothing from 3.6.0 has been published or deployed.
 
 - [Automatic sync and completed webhook delivery](plans/sync-and-delivery-reliability.md): Charlie on 3.4.0 reports needing Sync now, a recent sync timestamp with an unchanged count, and webhooks arriving before AI/cloud work. Code confirms stale count refresh and early `meeting.saved` delivery; the stopped-meeting eligibility exclusion is also established in code; Charlie’s exact sequence still needs reproduction. Owns S1–S3 and R5–R7: immutable in-flight delivery, resend from current saved data, and rejection of stale History AI results. These share one persistence/revision contract and must not be duplicated in another plan.
 - [Incident alert clarity](plans/incident-alert-clarity.md): distinguish historical evidence, current failures and unconfirmed recovery; correct event-count language and legacy capability assumptions. The already-deployed login-link fix is baseline, not unfinished work.
+- [Managed lightweight Luna](plans/lightweight-luna.md): selected 2026-10-31, implemented and tested locally. Four managed tasks only, independent rollback, unchanged BYOK and incremental fallback. Dark green DMG artwork is prepared separately; installer publication remains pending.
 - Reproduce the repeated iPhone transcript-starvation/reconnect traces before selecting a recording-engine change. No evidence yet establishes silence versus lost speech or a 3.5.0 regression.
 
 These bounded fixes precede account access work because they affect trust in saved meetings, exports and operational alerts. Do not wait for the ownership migration or force webhooks to depend on optional cloud sync.
@@ -33,11 +34,11 @@ Scope confirmed after review: keep all S1–S3/R5–R7 in 3.6.0. The webhook car
 
 ## Recommended delivery order
 
-3.6.0 is assigned to the two complete plans at order 1. Later versions remain unassigned; multiple complete plans may share a version. Ordering is not permission to deploy. A production incident can change priority explicitly.
+3.6.0 includes the sync/delivery, alert clarity and bounded lightweight-model plans at order 1. Later versions remain unassigned; multiple complete plans may share a version. Ordering is not permission to deploy. A production incident can change priority explicitly.
 
 | Order | Plan | Why here / dependency | State |
 |---|---|---|---|
-| 1 | [Sync and delivery](plans/sync-and-delivery-reliability.md), [alert clarity](plans/incident-alert-clarity.md) | Resolve the reported automatic-sync/count and webhook-readiness paths; make deployed alerts actionable. Includes R5–R7 so stale AI cannot contaminate the corrected delivery path. | Build 146 signed/verified locally with handoff corrections, superseding 145; explicit waivers, remaining device checks and rollout in release record |
+| 1 | [Sync and delivery](plans/sync-and-delivery-reliability.md), [alert clarity](plans/incident-alert-clarity.md), [lightweight Luna](plans/lightweight-luna.md) | Resolve the reported automatic-sync/count and webhook-readiness paths; make deployed alerts actionable. Includes R5–R7 so stale AI cannot contaminate the corrected delivery path. | Build 146 signed/verified locally with handoff corrections, superseding 145; explicit waivers, remaining device checks and rollout in release record |
 | 1, enabling work | [Test foundation](plans/test-foundation.md) | Reliable runners, real storage and shared contracts before money/ownership migrations. Use the existing runner/storage evidence; implement only prerequisites needed by the selected fixes before broader migration work. | Scoped, not built |
 | 2 | [Account access and recovery](plans/account-access.md) | Finish A2f → A3/A3a → A4/B6b and B6c labels, preserving existing users before changing what accounts own. Backend first; explicit sign-out choice decision and macOS 26 evidence required. | Planned, decisions/QA gates open |
 | 3 | [Watch retry and single-use link reliability](plans/reliability.md) | Close R4 and R8 with bounded tests. R5–R7 belong to 3.6.0; R8 requires real Postgres concurrency. Do this before broader migrations complicate reproduction. | Planned |
