@@ -1,6 +1,6 @@
 # Automatic sync and completed webhook delivery
 
-Status: **implemented locally for 3.6.0**, 2026-10-30; build 145 is superseded by the local handoff corrections below; build 146 validation and packaging are in progress; physical-device release QA remains; managed Pro mode restored after Ian confirmed it. Not published. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Candidate build is recorded in the release evidence. Ian authorized implementation, tests and candidate preparation; deployment and publication remain separate.
+Status: **implemented locally for 3.6.0**, 2026-10-30; build 145 is superseded by the local handoff corrections below; both full Apple suites and signed build 146 packaging/verification pass; physical-device release QA remains; managed Pro mode restored after Ian confirmed it. Not published. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Candidate build is recorded in the release evidence. Ian authorized implementation, tests and candidate preparation; deployment and publication remain separate.
 
 ## Customer report and evidence limits
 
