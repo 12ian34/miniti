@@ -2,7 +2,6 @@ NEW
 - Resend a failed webhook with the latest saved transcript and summary.
 
 IMPROVED
-- Quicker catch-up, speaker names, Playbook topic suggestions and template drafts in managed mode.
 - Cloud shows pending changes, when the count was checked and whether it will retry.
 
 FIXED

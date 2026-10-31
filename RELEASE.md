@@ -17,6 +17,14 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
 
 Use [3.6.0 evidence](docs/releases/3.6.0.md) for the selected scope and remaining checks. Alert clarity can deploy independently; the client sync/webhook fixes introduce no new backend route dependency. The 3.5.0 contracts below are already deployed and remain required baseline compatibility. A 3.5.0 downgrade does not understand held webhook rows; resolve them first or use a forward patch.
 
+### 3.6.0 rollout gates
+
+- Repackage the verified build 146 app with the final Retina artwork using `fastlane mac dmg`; a full app rebuild is unnecessary for artwork alone. This lane signs, submits to Apple notarization, staples and Sparkle-signs the installer. Record the final byte count, hash and signature. The IPA is unaffected. Never publish the earlier installer while promising the new artwork.
+- Before the first backend deployment, explicitly set and verify production `INSIGHTS_LIGHTWEIGHT_LUNA=off`. Unset enables Luna immediately for all existing managed clients, including older Apple versions and Linux. Code defaults are unchanged. This first rollout deploys alert clarity/recovery changes while retaining the previous lightweight model.
+- Review at least a day of hourly alert runs after that deployment. This checks the alert/backend rollout only; Luna is off, so it provides no Luna quality evidence. Confirm selected-mode synthetic results and speaker naming (explicit, ambiguous, long-context cases) before a separate authorized enable/redeploy. Then check selected-model telemetry, errors, latency and naming reports during an initial observation period. Rollback is `INSIGHTS_LIGHTWEIGHT_LUNA=off` plus redeploy, not an immediate runtime toggle. Do not copy customer transcripts into an evaluation.
+- Do not push the website or public-docs release commits with the earlier backend deployment. The already-live purchase-return page satisfies the prerequisite below. Publish 3.6.0 release copy with the corresponding app rollout and confirmed platform availability. Keep Luna out of shipped release notes until its activation is verified; the local upcoming docs are not a claim of availability.
+- Run GitHub CI after an authorized app push and check the fixed account-email race test on that revision before submission/publication. Existing physical-device checks remain open unless explicitly waived. These gates do not authorize a push, production configuration change, deployment or App Store submission.
+
 ## Required deployment order for the 3.5.0 contracts
 
 This is a release blocker, not a preference. Complete and record these prerequisites before publishing a DMG/appcast or uploading the new client to TestFlight/App Review:

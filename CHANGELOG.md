@@ -3,7 +3,6 @@
 ### Unreleased - v3.6.0
 
 - new: (macOS and iOS) resend a failed webhook with the latest saved transcript and summary
-- improvement: (macOS and iOS) quicker catch-up, speaker names, Playbook topic suggestions and template drafts in managed mode
 - improvement: (macOS) a dark installer with green hexagons
 - improvement: (macOS and iOS) Cloud shows pending changes, when the count was checked and whether it will retry
 - fix: (macOS and iOS) finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads
