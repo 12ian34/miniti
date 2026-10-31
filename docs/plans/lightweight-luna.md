@@ -1,18 +1,28 @@
-# Managed lightweight model migration, 3.6.0
+# Managed Luna model migration, 3.6.0
 
 Status: implemented and validated locally on 2026-10-31. Not deployed or released. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
 
 ## Bounded decision
 
-Only managed `speaker_names`, `catchup`, `docs_topics` and `template_draft` move to `gpt-6-luna`, reasoning `none`, only with explicit `INSIGHTS_LIGHTWEIGHT_LUNA=on`. The default remains GPT-5 mini with low reasoning. Backend `lib/insights.ts` centrally selects the model and reasoning. The client-supplied model remains ignored.
+The lightweight group comprises managed `speaker_names`, `catchup`, `docs_topics` and `template_draft`. These move to `gpt-6-luna`, reasoning `none`, only with explicit `INSIGHTS_LIGHTWEIGHT_LUNA=on`. The default remains GPT-5 mini with low reasoning. Backend `lib/insights.ts` centrally selects the model and reasoning. The client-supplied model remains ignored.
 
-Standard summaries, Questions, MEDDPICC, meeting-template filling, grounded Docs answers and investigations retain GPT-5.4 mini with low reasoning. `INSIGHTS_INCREMENTAL_QUALITY_MODEL=off` still restores GPT-5 mini with low reasoning for incremental quality requests. Template drafting creates a definition from a description; it does not fill a meeting template.
+Ian added managed standard summaries on 2026-10-31 after the expanded comparison. `INSIGHTS_STANDARD_LUNA=on` independently selects Luna with reasoning none for full and incremental `standard` requests. Unset, blank, `off` or unrecognized values retain GPT-5.4 mini low. Questions, MEDDPICC, meeting-template filling, grounded Docs answers and investigations retain their existing routing. `INSIGHTS_INCREMENTAL_QUALITY_MODEL=off` takes precedence over the standard opt-in and still restores GPT-5 mini low for incremental quality requests; full standard summaries are unaffected by that legacy switch. Template drafting creates a definition from a description; it does not fill a meeting template.
 
 Apple and Linux BYOK choices are unchanged. Prompts, refresh cadence, normalization, language and speaker-name evidence rules, timeouts, bounded retries, allowances, local defaults and account/private-mode boundaries are unchanged. No automatic cross-model retry.
 
 ## Rollback
 
 Set `INSIGHTS_LIGHTWEIGHT_LUNA=off` in the backend environment and redeploy. This restores only the four lightweight modes to `gpt-5-mini-2025-08-07` with low reasoning. The switch is case/whitespace insensitive and read per request. Only `on` enables Luna. Unset, blank, `off` or unrecognized values retain GPT-5 mini low. It is independent of the incremental-quality switch. No client update or data migration is involved.
+
+Standard-summary rollback is `INSIGHTS_STANDARD_LUNA=off` plus redeploy, restoring GPT-5.4 mini low unless the existing incremental rollback is explicitly off, in which case incremental summaries use GPT-5 mini low. It never changes the lightweight group. Both Luna switches default off, require explicit `on`, and are read per request. No automatic cross-model retry.
+
+## Standard-summary evaluation and scope extension
+
+The expanded synthetic comparison made 204 additional calls: 24 stress fixtures and three four-step rolling-summary chains, plus three longer existing synthetic meetings evaluated as summaries and filled templates. Each case ran three times per model. Production generators/prompts/budgets/normalizers were used; prompts and token budgets matched across independent request pairs. Both models returned valid JSON without provider errors or retries. No customer meetings were used.
+
+The evidence supports a controlled standard-summary rollout: Luna retained revised dates/budgets and action owners through the tested updates. It was slower on longer summaries. Both models sometimes inferred follow-ups; Luna also made a completed-task/owner error in a dense template and a Paper Process classification error. Those findings keep template filling, MEDDPICC, Questions, Docs and investigations outside this extension. Narrow automated rubric results are not a universal accuracy score; the private evaluation includes manual findings and rubric corrections.
+
+The implementation changes only server-owned standard model selection. It preserves prompts, full/incremental token budgets, timeouts, bounded retries, normalization, response shape, saved/final-AI authority and webhook settlement. The existing Luna accounting applies without further billing changes. Full includes first, final and saved-meeting standard requests. No client update is needed; existing managed Apple/Linux clients inherit routing only after activation.
 
 ## Accounting
 
@@ -29,12 +39,19 @@ The estimate assumes Standard short-context requests and default 30-minute cachi
 - Four new live calls used small synthetic fixtures through current backend functions and parsing, with explicit `store:false` and Standard service tier in the smoke harness. All succeeded without retries and returned compatible results. Private smoke evidence records every usage object, source hash and cost. No customer transcripts, production endpoint writes or persistent account changes.
 - No Apple source change, hosted tests, hardware run or new app build for this migration. Existing build 146 Apple results remain evidence for that binary, not a new device pass. The prior preference-backup waiver does not authorize a later hardware run.
 
+### Standard-summary implementation validation, 2026-10-31
+
+- Six additional routing/provider tests cover default-off and normalized explicit opt-in, independence from lightweight modes, legacy incremental rollback precedence, invalid incremental fallback, unchanged prompts/budgets/language handling, usage parsing, state-preserving malformed output and same-model token-limit retries.
+- Full backend suite: 727 passed, five existing opt-in tests skipped; Next route type generation, TypeScript, ESLint and production build passed.
+- Two additional synthetic live calls through current request parsing and generators verified full and incremental Luna none selection, corrected date and retained action, without retries or fallback. They are distinct from the expanded 204-call comparison and did not change production state.
+- No app source/binary, hosted/hardware tests, customer-transcript evaluation or production setting changed. Public docs remain upcoming and financial analysis remains private.
+
 ## Rollout, not yet authorized
 
-1. Luna now defaults off in code. Before any authorized backend push/deployment, verify production has no explicit `INSIGHTS_LIGHTWEIGHT_LUNA=on`. An unset variable requires no change. Later explicit activation affects all managed app versions and Linux immediately. Deploy alert clarity/recovery work first with the previous lightweight routing retained. No production setting has been changed locally.
-2. Review at least a day of hourly alert runs. This validates the backend/alert baseline, not Luna quality while disabled. Before separate authorized activation, review synthetic explicit/ambiguous/long-transcript speaker cases and the other selected tasks; then set `INSIGHTS_LIGHTWEIGHT_LUNA=on`, redeploy and inspect selected-model telemetry, errors, latency and naming reports. Do not treat no errors as proof of correct names. Rollback uses the setting above plus redeploy; already-saved names are not repaired by rollback.
+1. Luna now defaults off in code. Before any authorized backend push/deployment, verify neither `INSIGHTS_LIGHTWEIGHT_LUNA` nor `INSIGHTS_STANDARD_LUNA` is explicitly `on`. An unset variable requires no change. Later explicit activation affects all managed app versions and Linux immediately. Deploy alert clarity/recovery work first with the previous lightweight routing retained. No production setting has been changed locally.
+2. Review at least a day of hourly alert runs. This validates the backend/alert baseline, not Luna quality while disabled. Before separate authorized activation, review the selected group's evidence. Activate lightweight tasks with `INSIGHTS_LIGHTWEIGHT_LUNA=on`, or standard summaries with `INSIGHTS_STANDARD_LUNA=on`, and redeploy. The switches are independent; choose each group explicitly. Inspect selected-mode/model telemetry, errors, latency, factual corrections and naming reports. Standard incremental requests retain the legacy rollback precedence described above. Do not treat no errors as proof of correct names. Rollback uses the setting above plus redeploy; already-saved names are not repaired by rollback.
 3. Website/public-docs 3.6.0 release commits stay local until the corresponding app rollout. The purchase-return page is already live; no early push of unrelated release copy is needed. Luna is omitted from shipped release-note promises while off. Remove upcoming labels and announce it only after activation is verified.
 
-4. Linux [parity tracking](../../../miniti-linux/PLAN.md#tracking-managed-lightweight-luna-2026-10-31-local-only) records shared managed routing and unchanged BYOK. Linux client gaps remain separate.
+4. Linux [parity tracking](../../../miniti-linux/PLAN.md#tracking-managed-lightweight-luna-2026-10-31-local-only) records shared managed lightweight and standard routing and unchanged BYOK. Linux client gaps remain separate.
 
 The separate Retina DMG artwork was finalized through `fastlane mac dmg` after Ian explicitly authorized DMG notarization only. The release record has final bytes/hash/Sparkle signature and verification. The app was not recompiled; the IPA is unchanged. Publication and deployments remain unauthorized.
