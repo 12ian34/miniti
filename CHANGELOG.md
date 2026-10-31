@@ -2,13 +2,12 @@
 
 ### Unreleased - v3.6.0
 
-- new: (macOS and iOS) resend a failed webhook with the meeting's latest saved transcript and summary
-- improvement: (macOS and iOS) Cloud shows pending work and when its meeting count was last checked
-- fix: (macOS and iOS) finished meetings sync while you stay on the meeting screen
-- fix: (macOS and iOS) webhooks wait for final AI processing and keep newer updates when an older delivery is still sending
+- new: (macOS and iOS) resend a failed webhook with the latest saved transcript and summary
+- improvement: (macOS and iOS) Cloud shows pending changes, when the count was checked and whether it will retry
+- fix: (macOS and iOS) finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads
+- fix: (macOS and iOS) webhooks wait for final AI processing and keep newer updates
 - fix: (macOS and iOS) late AI responses no longer overwrite edits or renamed meetings
-- fix: (macOS and iOS) saving another edit no longer interrupts a cloud upload. Pending removals explain when they retry automatically
-- fix: (macOS and iOS) changing the template on a finished meeting clears results from the previous template
+- fix: (macOS and iOS) changing a finished meeting's template clears the previous template's results
 - fix: (iOS) Settings goes back one page at a time without jumping to Home
 
 ### 2026-10-30 - v3.5.0

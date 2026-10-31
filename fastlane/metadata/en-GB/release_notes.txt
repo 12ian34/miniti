@@ -1,13 +1,12 @@
 NEW
-- Resend a failed webhook with the meeting's latest saved transcript and summary.
+- Resend a failed webhook with the latest saved transcript and summary.
 
 IMPROVED
-- Cloud shows pending work and when its meeting count was last checked.
+- Cloud shows pending changes, when the count was checked and whether it will retry.
 
 FIXED
-- Finished meetings sync while you stay on the meeting screen.
-- Webhooks wait for final AI processing and keep newer updates when an older delivery is still sending.
+- Finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads.
+- Webhooks wait for final AI processing and keep newer updates.
 - Late AI responses no longer overwrite edits or renamed meetings.
-- Saving another edit no longer interrupts a cloud upload. Pending removals explain when they retry automatically.
-- Changing the template on a finished meeting clears results from the previous template.
+- Changing a finished meeting's template clears the previous template's results.
 - Settings goes back one page at a time without jumping to Home.
