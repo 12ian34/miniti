@@ -27,8 +27,8 @@ From 2.10.0 the app bundle carries the Nemotron-3 diarization model (about 190 M
 - Requires `create-dmg` (auto-installed via Homebrew if missing)
 - Validates the app's code signature and notarization before packaging
 - Creates a drag-to-Applications DMG (miniti.app on the left, Applications symlink on the right)
-- Version extracted from the app's `Info.plist` (for display only — output filename is always `miniti.dmg`)
-- Background image: `scripts/dmg-background.png`; volume icon pulled from app's `AppIcon.icns`
+- Version extracted from the app's `Info.plist` for display. Output defaults to root `miniti.dmg`; an optional second argument selects a separate preview path.
+- Background source: `scripts/dmg-background.png`, 1200×800 pixels at 144 dpi for a 600×400-point layout. The builder creates a multi-resolution TIFF with 600×400 / 72 dpi and 1200×800 / 144 dpi representations, checked by `tiffutil -cathidpicheck`, so Finder can render at native 1× or 2× resolution. Keep the two label plates aligned with the icon positions in the script. Volume icon comes from the app's `AppIcon.icns`.
 - Leaves DMG notarization and Sparkle signing to Fastlane so the byte-mutating operations stay in the required order.
 
 ### Fastlane DMG finalization

@@ -72,7 +72,8 @@ fi
 # ─── Prepare staging directory ──────────────────────────────────────────────
 # create-dmg works best with a source folder (not a bare .app).
 STAGING_DIR=$(mktemp -d)
-trap "rm -rf '$STAGING_DIR'" EXIT
+ARTWORK_DIR=$(mktemp -d)
+trap "rm -rf '$STAGING_DIR' '$ARTWORK_DIR'" EXIT
 
 echo ""
 echo "Preparing staging directory..."
@@ -85,10 +86,19 @@ if [[ ! -f "$ICON_PATH" ]]; then
     ICON_PATH=""
 fi
 
-BACKGROUND_PATH="$SCRIPT_DIR/dmg-background.png"
-if [[ ! -f "$BACKGROUND_PATH" ]]; then
-    echo "Warning: dmg-background.png not found at $BACKGROUND_PATH"
-    BACKGROUND_PATH=""
+# The source is 1200x800 at 144 dpi: a 600x400-point Retina background.
+# A multi-resolution TIFF lets Finder pick 1x or 2x without changing its layout.
+BACKGROUND_SOURCE="$SCRIPT_DIR/dmg-background.png"
+BACKGROUND_PATH=""
+if [[ -f "$BACKGROUND_SOURCE" ]]; then
+    sips --resampleHeightWidth 400 600 --setProperty dpiWidth 72 --setProperty dpiHeight 72 \
+        --setProperty format tiff "$BACKGROUND_SOURCE" --out "$ARTWORK_DIR/background.tiff" >/dev/null
+    sips --setProperty format tiff "$BACKGROUND_SOURCE" --out "$ARTWORK_DIR/background@2x.tiff" >/dev/null
+    BACKGROUND_PATH="$ARTWORK_DIR/dmg-background.tiff"
+    tiffutil -cathidpicheck "$ARTWORK_DIR/background.tiff" "$ARTWORK_DIR/background@2x.tiff" \
+        -out "$BACKGROUND_PATH"
+else
+    echo "Warning: dmg-background.png not found at $BACKGROUND_SOURCE"
 fi
 
 # ─── Build the DMG ──────────────────────────────────────────────────────────
