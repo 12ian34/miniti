@@ -993,6 +993,22 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(manager.isEnrolled)
     }
 
+    func testCloudTransportPreservesCancellationInsteadOfReportingAServerFailure() async throws {
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
+        let api = MinitiAPIService(session: stubbedSession(), auth: manager)
+        StubURLProtocol.script = { _ in throw URLError(.cancelled) }
+        do {
+            _ = try await api.manifest()
+            XCTFail("cancelled request should throw")
+        } catch is CancellationError {
+            // An interrupted request is not an outage or a server rejection.
+        } catch { XCTFail("expected cancellation, got \(error)") }
+    }
+
     func testACloudRequestsRetryNeverRunsUnderANewerCredential() async throws {
         // Review 2026-10-27: a delete on A answered token_expired after a switch to B must not be
         // replayed with B's credential.

@@ -164,6 +164,7 @@ extension MinitiAPIService: CloudSyncTransport {
         } catch ServiceError.authRevoked {
             throw CloudSyncError.revoked
         } catch let error as URLError {
+            if error.code == .cancelled { throw CancellationError() }
             if [.notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed].contains(error.code) {
                 throw CloudSyncError.offline
             }

@@ -21,6 +21,22 @@ struct MeetingCloudFeedback: Identifiable {
 }
 
 enum MeetingCloudPrivacyPresentation {
+    static func removalStatus(pause: CloudSyncPause?, retrying: Bool) -> String {
+        switch pause {
+        case nil:
+            return retrying
+                ? "Cloud copy removal is waiting to retry. miniti will try again automatically."
+                : "Removing the cloud copy automatically. This meeting stays on this device."
+        case .off: return "Cloud copy removal is pending. Turn on cloud sync in Settings, Cloud to finish. This meeting will stay Local."
+        case .notManaged: return "Cloud copy removal is pending. Switch to your managed Pro account to finish."
+        case .notPro: return "Cloud copy removal is pending. Cloud sync needs Pro to finish."
+        case .notEnrolled, .deviceRemoved: return "Cloud copy removal is pending. Sign in to your account to finish."
+        case .privateMode: return "Cloud copy removal is pending. It will resume automatically when private mode is off."
+        case .offline: return "Cloud copy removal is pending. miniti will retry automatically when your connection returns."
+        case .unavailable, .notAvailableYet: return "Cloud copy removal is pending. miniti will retry automatically when cloud sync is available."
+        }
+    }
+
     static func uploadStatus(pause: CloudSyncPause?) -> String {
         switch pause {
         case nil: return "Waiting to put on the cloud"

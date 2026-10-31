@@ -995,7 +995,7 @@ struct ReadyStateView_iOS: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                NavigationLink(destination: SettingsView_iOS()) {
+                Button { appState.showSettings = true } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(ColorPalette.Text.muted)

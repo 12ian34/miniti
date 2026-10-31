@@ -25,7 +25,7 @@ struct MeetingCloudPrivacyStatus: View {
             if meeting.syncExcluded {
                 if showsChoice { Label("Kept off the cloud", systemImage: "icloud.slash") }
                 if !pending.isEmpty, pause == nil || pending.contains(where: { $0.cloudRevision > 0 }) {
-                    Text(engine.lastError == nil ? "Cloud copy removal pending. Sync must be connected to finish." : "Cloud copy removal has not finished. Check Settings, Cloud and try syncing again.")
+                    Text(MeetingCloudPrivacyPresentation.removalStatus(pause: pause, retrying: engine.lastError != nil))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             } else if meeting.cloudRestoreRequested {

@@ -46,6 +46,8 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var seq = 0
     var oldestRetainedSeq = 1
     var calls: [String] = []
+    var respectsTaskCancellation = false
+    var cancelNext = false
     var failNext: CloudSyncError?
     var failStatus: CloudSyncError?
     var failManifest: CloudSyncError?
@@ -64,6 +66,8 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     }
 
     private func throwIfArmed() throws {
+        if respectsTaskCancellation { try Task.checkCancellation() }
+        if cancelNext { cancelNext = false; throw CancellationError() }
         if let error = failNext { failNext = nil; throw error }
     }
 
@@ -1057,6 +1061,56 @@ final class CloudSyncEngineTests: XCTestCase {
         XCTAssertNotNil(a.syncFingerprint)
     }
 
+    func testNewSaveDoesNotCancelAnUploadStartedByTheDebounce() async throws {
+        let meeting = finished("Before edit")
+        transport.respectsTaskCancellation = true
+        transport.gate.holdNames = ["put"]
+        defer { transport.gate.release() }
+        engine.noteLocalChange()
+        try await TestSupport.waitUntil { self.transport.gate.held > 0 }
+        meeting.title = "After edit"
+        try host.context.save()
+        engine.noteLocalChange()
+        // Let the replacement debounce request its pass while the first upload is held.
+        try await Task.sleep(nanoseconds: 30_000_000)
+        transport.gate.release()
+        await settle()
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "After edit")
+        XCTAssertNil(engine.lastError)
+        XCTAssertFalse(engine.log.contains { $0.kind == .error }, "a local edit must not cancel the preceding upload")
+    }
+
+    func testCancelledRequestRemainsPendingWithoutReportingFailureOrSuccess() async throws {
+        let meeting = finished("Retry automatically")
+        transport.cancelNext = true
+        await engine.sync(reason: "test")
+        XCTAssertNil(engine.lastSyncedAt)
+        XCTAssertNil(engine.lastError)
+        XCTAssertEqual(engine.phase, .idle)
+        XCTAssertFalse(engine.log.contains { $0.kind == .error })
+        await engine.sync(reason: "poll")
+        XCTAssertNotNil(transport.rows[meeting.id])
+        XCTAssertNotNil(engine.lastSyncedAt)
+    }
+
+    func testCancelledStatusReadDoesNotPublishACompletedCheck() async throws {
+        finished("Uploaded")
+        transport.respectsTaskCancellation = true
+        transport.gate.holdNames = ["status"]
+        defer { transport.gate.release() }
+        let checking = Task { await self.engine.sync(reason: "test", refreshStatus: true) }
+        try await TestSupport.waitUntil { self.transport.gate.held > 0 }
+        checking.cancel()
+        transport.gate.release()
+        await checking.value
+        XCTAssertNil(engine.lastSyncedAt)
+        XCTAssertNil(engine.statusFetchedAt)
+        XCTAssertNil(engine.lastError)
+        XCTAssertEqual(engine.phase, .idle)
+        await engine.sync(reason: "poll", refreshStatus: true)
+        XCTAssertNotNil(engine.statusFetchedAt)
+    }
+
     func testNoteLocalChangeDebouncesIntoOneSync() async throws {
         finished("Alpha")
         engine.noteLocalChange()
@@ -1453,6 +1507,15 @@ final class CloudPrivacyAvailabilityTests: XCTestCase {
             XCTAssertFalse(meeting.syncExcluded)
             XCTAssertEqual(state.meetingCloudFeedback?.message, MeetingCloudPrivacyPresentation.uploadStatus(pause: .off))
         }
+    }
+
+    func testRemovalCopyExplainsAutomaticRetryAndSettingsThatNeedAction() {
+        XCTAssertEqual(MeetingCloudPrivacyPresentation.removalStatus(pause: nil, retrying: false), "Removing the cloud copy automatically. This meeting stays on this device.")
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.removalStatus(pause: nil, retrying: true).contains("automatically"))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.removalStatus(pause: .offline, retrying: false).contains("automatically"))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.removalStatus(pause: .off, retrying: false).contains("Turn on cloud sync"))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.removalStatus(pause: .notEnrolled, retrying: false).contains("Sign in"))
+        XCTAssertTrue(MeetingCloudPrivacyPresentation.removalStatus(pause: .privateMode, retrying: false).contains("when private mode is off"))
     }
 
     func testRemovalProtectionSurvivesCloudBeingDisabledDuringAnUpload() {

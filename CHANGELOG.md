@@ -7,6 +7,9 @@
 - fix: (macOS and iOS) finished meetings sync while you stay on the meeting screen
 - fix: (macOS and iOS) webhooks wait for final AI processing and keep newer updates when an older delivery is still sending
 - fix: (macOS and iOS) late AI responses no longer overwrite edits or renamed meetings
+- fix: (macOS and iOS) saving another edit no longer interrupts a cloud upload. Pending removals explain when they retry automatically
+- fix: (macOS and iOS) changing the template on a finished meeting clears results from the previous template
+- fix: (iOS) Settings goes back one page at a time without jumping to Home
 
 ### 2026-10-30 - v3.5.0
 

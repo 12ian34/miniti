@@ -329,6 +329,10 @@ final class CloudSyncEngine: ObservableObject {
             guard let self else { return }
             try? await self.sleep(Self.pushDebounce)
             guard !Task.isCancelled else { return }
+            // Debounce only the wait, never an upload already in progress. A later save
+            // queues another pass through sync's single-flight guard instead of cancelling
+            // this task's URLSession request (-999).
+            self.debounceTask = nil
             await self.sync(reason: "change")
         }
     }
@@ -424,7 +428,7 @@ final class CloudSyncEngine: ObservableObject {
             let refresh = requestedStatusRefresh
             requestedStatusRefresh = false
             await pass(reason: passes == 1 ? reason : "rerun", refreshStatus: refresh)
-        } while rerunRequested && passes < 5
+        } while rerunRequested && passes < 5 && !Task.isCancelled
         running = false
         // Yield after a bounded run without losing a commit or a batch beyond the cap.
         if rerunRequested { noteLocalChange() }
@@ -483,6 +487,8 @@ final class CloudSyncEngine: ObservableObject {
                     statusFetchedAt = now()
                     statusRefreshFailed = false
                     statusDirty = false
+                } catch is CancellationError {
+                    throw CancellationError()
                 } catch {
                     try check(context)
                     // A count refresh cannot undo accepted uploads or masquerade as a fresh count.
@@ -497,6 +503,13 @@ final class CloudSyncEngine: ObservableObject {
             phase = .idle
             if explicitPass { DiagnosticTimeline.shared.record(.cloudSucceeded, fields: ["attempt_id": diagnosticID]) }
             DebugLogger.shared.log(.app, "Cloud sync done reason=\(reason)")
+        } catch is CancellationError {
+            guard isCurrent(context) else { rerunRequested = true; return }
+            // No completed-check timestamp or failure for an interrupted request. Keep
+            // local work eligible for the next automatic poll or explicit kick.
+            pendingScan = true
+            refreshPause()
+            if effectivePause() == nil { phase = .idle }
         } catch let deferral as PassDeferral {
             guard isCurrent(context) else { rerunRequested = true; return }
             switch deferral {

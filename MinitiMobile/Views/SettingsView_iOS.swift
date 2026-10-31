@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct SettingsView_iOS: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var searchText = ""
     @State private var selectedDestination: SettingsDestination? = .general
@@ -114,6 +115,11 @@ struct SettingsView_iOS: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .searchable(text: $searchText, prompt: "Search settings")
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
@@ -150,6 +156,11 @@ struct SettingsView_iOS: View {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .searchable(text: $searchText, placement: .sidebar, prompt: "Search settings")
             .onChange(of: selectedDestination) { _, destination in
                 guard let destination else { return }

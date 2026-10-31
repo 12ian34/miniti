@@ -4,6 +4,8 @@
 
 ## Navigation and layout
 
+Local 3.6.0 correction: the iOS Home gear uses the same Settings sheet as account/search requests. Settings owns its navigation stack; never push it inside the Home stack. Native Back and edge-back gestures pop a Settings page; Done at the root dismisses the sheet. Regular-width Settings keeps its sidebar/detail layout. Simulator Back/Done navigation was checked; physical-device gesture/animation QA remains pending.
+
 Single-word destinations grouped Setup / Meetings / Connections / Privacy / Support. Account precedes Plan and billing; Sign out and Delete sit below billing. Cloud and Models are in Setup. Sending is no longer a separate destination; its overview is part of Privacy. API is in Connections and visible even when its setup prerequisites are missing. Support contains Help and About. Help shows support details expanded with a whole-report Copy action; Account no longer contains the support disclosure.
 
 macOS Configure opens the owning settings destination and anchor. Compact iPhone uses a value-based navigation path; regular iPad uses sidebar selection plus a bound detail path. An Account request clears stale detail navigation and focuses email. Resizing carries the visible top route/target to the new layout and clears the inactive stack. General is a real route; only nil selection returns to the list. Repeated requests are idempotent.
