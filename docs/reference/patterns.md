@@ -174,7 +174,11 @@ Cross-cutting conventions, hot-path rules, and non-obvious gotchas that span mul
 
 R3 shipped in 3.4.0: each cloud pass captures account/generation, checks it after every await and scopes cursor writes to that account. Reset, account change and credential replacement invalidate old passes. Local 3.6.0 implements outbox identity/current-data resend and saved-AI response fences (R5–R7), described below; these are not fixes in released 3.5.0. [The 3.6.0 plan](../plans/sync-and-delivery-reliability.md) owns acceptance; [remaining reliability](../plans/reliability.md) owns R4/R8. Cancellation alone is not an authority check. Credential authorization/commit/repair fences are in [accounts](accounts.md).
 
-## Saved AI and webhook delivery (local 3.6.0, not released)
+<a id="saved-ai-and-webhook-delivery-local-360-not-released"></a>
+
+## Saved AI and webhook delivery (3.6.0)
+
+Released on macOS on 2026-10-31; iOS release pending. The release record owns submission and device-waiver evidence.
 
 `AppState+Persistence.swift` owns `SavedAIRequest`: a per-meeting/scope request identity, prompt-input hash, mode and managed account/credential generation. Check authority after awaits and before applying or exporting results; cancellation is only cleanup. Transcript edits/undo, language, manual speaker overrides and account changes invalidate older answers. Template definition/selection is hashed only for template work; the final template child request can become stale while Summary, Sales and Questions continue. The stopped meeting’s live picker persists its template selection, so it invalidates that child just as a saved-meeting selection does. A task clears only its own spinner/request slot. Final AI uses raw speaker IDs so parallel automatic naming does not invalidate its unchanged input; History hashes the resolved names actually sent. A failed save restores both saved and selected-live insight state and freshness. Docs topics and lookups use the same authority principle. Stopped and History AI Update actions show finishing and stay disabled while that meeting’s final run owns the work; the method guard also covers shortcuts. Coaching still recomputes locally.
 

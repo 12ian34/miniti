@@ -1,6 +1,6 @@
 # Managed Luna model migration, 3.6.0
 
-Status: implemented and validated locally on 2026-10-31. Not deployed or released. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
+Status: **deployed on 2026-10-31 with both Luna groups disabled**. Production `INSIGHTS_LIGHTWEIGHT_LUNA` and `INSIGHTS_STANDARD_LUNA` were verified unset before deployment, retaining previous managed models. Activation remains a separate authorized redeploy after the observation/review gate. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
 
 ## Bounded decision
 
@@ -46,12 +46,12 @@ The estimate assumes Standard short-context requests and default 30-minute cachi
 - Two additional synthetic live calls through current request parsing and generators verified full and incremental Luna none selection, corrected date and retained action, without retries or fallback. They are distinct from the expanded 204-call comparison and did not change production state.
 - No app source/binary, hosted/hardware tests, customer-transcript evaluation or production setting changed. Public docs remain upcoming and financial analysis remains private.
 
-## Rollout, not yet authorized
+## Rollout and separate activation
 
-1. Luna now defaults off in code. Before any authorized backend push/deployment, verify neither `INSIGHTS_LIGHTWEIGHT_LUNA` nor `INSIGHTS_STANDARD_LUNA` is explicitly `on`. An unset variable requires no change. Later explicit activation affects all managed app versions and Linux immediately. Deploy alert clarity/recovery work first with the previous lightweight routing retained. No production setting has been changed locally.
+1. Initial rollout completed on 2026-10-31: backend `031c692` deployed after verifying both Luna opt-ins unset. Previous managed models remain selected; alert clarity/recovery changes are deployed. No production environment setting was changed. Later explicit activation affects all managed app versions and Linux immediately.
 2. Review at least a day of hourly alert runs. This validates the backend/alert baseline, not Luna quality while disabled. Before separate authorized activation, review the selected group's evidence. Activate lightweight tasks with `INSIGHTS_LIGHTWEIGHT_LUNA=on`, or standard summaries with `INSIGHTS_STANDARD_LUNA=on`, and redeploy. The switches are independent; choose each group explicitly. Inspect selected-mode/model telemetry, errors, latency, factual corrections and naming reports. Standard incremental requests retain the legacy rollback precedence described above. Do not treat no errors as proof of correct names. Rollback uses the setting above plus redeploy; already-saved names are not repaired by rollback.
-3. Website/public-docs 3.6.0 release commits stay local until the corresponding app rollout. The purchase-return page is already live; no early push of unrelated release copy is needed. Luna is omitted from shipped release-note promises while off. Remove upcoming labels and announce it only after activation is verified.
+3. Website/public docs were published alongside the Mac 3.6.0 release, with iOS availability explicitly pending. Luna remains omitted from shipped release-note promises while off. Remove its upcoming labels and announce it only after activation is verified.
 
 4. Linux [parity tracking](../../../miniti-linux/PLAN.md#tracking-managed-lightweight-luna-2026-10-31-local-only) records shared managed lightweight and standard routing and unchanged BYOK. Linux client gaps remain separate.
 
-The separate Retina DMG artwork was finalized through `fastlane mac dmg` after Ian explicitly authorized DMG notarization only. The release record has final bytes/hash/Sparkle signature and verification. The app was not recompiled; the IPA is unchanged. Publication and deployments remain unauthorized.
+The separate Retina DMG artwork was finalized through `fastlane mac dmg` after Ian explicitly authorized DMG notarization only. The release record has final bytes/hash/Sparkle signature and verification. The app was not recompiled; the IPA is unchanged. Ian subsequently authorized the release after review; the Mac installer and backend are published. iOS release status is recorded separately in the release record. Luna activation remains separate.

@@ -1,6 +1,6 @@
 # Incident alert clarity after 3.5.0
 
-Status: **implemented and validated locally**, 2026-10-30, alongside 3.6.0. Not deployed. Backend deploys independently before the matching release verification. [Roadmap](../roadmap.md) owns priority. O1–O6 are delivered; this is a separate bounded correction, not a reopened monitoring programme.
+Status: **deployed on 2026-10-31** in backend `031c692`, independently before the 3.6.0 app rollout. Backend CI passed. [Release evidence](../releases/3.6.0.md) owns deployment verification; [roadmap](../roadmap.md) owns priority. O1–O6 were already delivered; this is a separate bounded correction, not a reopened monitoring programme.
 
 ## Evidence
 

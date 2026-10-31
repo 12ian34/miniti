@@ -35,7 +35,11 @@ Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend
 
 Selective-privacy availability correction (3.5.0): finished alone is not evidence of a cloud copy while cloud is unavailable. The toggle queues removal only for known prior sync/pending deletion, an in-flight upload of that meeting, or a finished meeting currently eligible to sync. Known cloud copies still queue removal offline. Explicit restore intent stays durable, but the status names the gate preventing sync instead of showing an endless generic pending upload. A zero-revision legacy tombstone is not shown as a known cloud copy while cloud is unavailable.
 
-## Local 3.6.0 implementation, not released
+<a id="local-360-implementation-not-released"></a>
+
+## 3.6.0 implementation
+
+Released on macOS on 2026-10-31; iOS release pending. The release record owns submission and device-waiver evidence.
 
 In 3.4.0 and 3.5.0, automatic passes can refresh the successful-pass timestamp while leaving cached server count/bytes stale, and a stopped `currentMeeting` remains excluded until the session clears. The local S1/S2 implementation separates three things:
 
