@@ -1,6 +1,6 @@
 # Automatic sync and completed webhook delivery
 
-Status: **implemented locally for 3.6.0**, 2026-10-30; combined validation and signed candidate packaging passed; physical-device release QA remains. Not published. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Candidate build is recorded in the release evidence. Ian authorized implementation, tests and candidate preparation; deployment and publication remain separate.
+Status: **implemented locally for 3.6.0**, 2026-10-30; post-review fixes are undergoing fresh combined validation and build 144 packaging; physical-device release QA remains. Not published. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Candidate build is recorded in the release evidence. Ian authorized implementation, tests and candidate preparation; deployment and publication remain separate.
 
 ## Customer report and evidence limits
 
@@ -144,7 +144,7 @@ Acceptance uses the production sender/body requirements: terminal 4xx and exhaus
 | Offline completion then restart | Local transcript retained; eligible sync resumes; completion marker/outbox recovery cannot invent success or silently lose work. |
 | Receiver accepts, response lost | Retry uses same ID/body; UI does not claim exactly-once receipt. |
 | Failed webhook, edit/trim, manual resend | New identity sends current permitted saved state, never the purged old transcript. |
-| Account switch/delete/resume at any held await | Existing authority/protection rules win; stale completion has no new model/export effect. Already-sent requests cannot be recalled. |
+| Account switch/delete/resume at any held await | Account changes reject old AI responses but retain the configured webhook with valid saved data and honest interrupted processing. Delete/resume cancels the obsolete completion. Already-sent requests cannot be recalled. |
 
 ## Acceptance levels
 
@@ -175,10 +175,24 @@ All six selected slices are implemented locally. The release record owns final c
 | S3 | Optional device-local `Meeting.webhookCompletionJSON` is staged before the first stopped save, then saved with that transcript. A ready snapshot is staged held in the existing outbox; acknowledgement is saved on the meeting before release. Restart reconciles only marked work, with interrupted processing after a crash. Changed unattempted snapshots receive a new ID. No overall AI deadline; failed or skipped AI still delivers a transcript with honest processing metadata. Home no longer sends live state. |
 | R6 | Mac and iOS delivery controls call the same current-data resend action. A fresh delivery atomically replaces failed rows for that meeting, using its current saved permitted data and current destination. Repeated action does not duplicate it. Missing meeting/destination and processing work surface useful errors. |
 
-Independent review covered cloud reconciliation, outbox handoff, AI ownership and the backend. Corrections adopted before final validation: preserve reconciliation intent on failed reads; defer incoming data across unsaved edits; coalesce newer edits before initial handoff; keep interrupted outcomes honest after History supersedes final AI; preserve manual rename on both accepted and failed AI commits; persist intent with the first stopped save; expose current-data resend on iOS too.
+Independent review covered cloud reconciliation, outbox handoff, AI ownership and the backend. Corrections adopted before final validation: preserve reconciliation intent on failed reads; defer incoming data across unsaved edits; coalesce newer edits before initial handoff; keep interrupted outcomes honest; the 2026-10-31 correction below prevents Update from superseding the automatic final run; preserve manual rename on both accepted and failed AI commits; persist intent with the first stopped save; expose current-data resend on iOS too.
 
 Storage validation uses a frozen synthetic 3.5.0 SQLite schema without the new marker field, then opens it under the current schema, verifies existing contents and cloud metadata, writes a marker and reopens again. Legacy outbox decoding/expiration and held-write failures have separate tests. No customer database is used.
 
 **Downgrade constraint:** 3.5.0 does not understand held outbox rows and may send them before handoff acknowledgement. Resolve held work before a downgrade, or use a forward patch. Never delete the queue to make an older binary appear healthy.
 
-Final combined source `c99d889`: Mac 1,121 executed/7 skipped/zero failures; iOS 1,059 executed/3 skipped/zero failures. Both include the synthetic SQLite upgrade; native delivery-control renders were inspected at Mac, compact, accessibility and regular widths. Release/device evidence remains in [3.6.0](../releases/3.6.0.md).
+Previous build 143 source `c99d889` (superseded by the review fixes below): Mac 1,121 executed/7 skipped/zero failures; iOS 1,059 executed/3 skipped/zero failures. Both include the synthetic SQLite upgrade; native delivery-control renders were inspected at Mac, compact, accessibility and regular widths. Release/device evidence remains in [3.6.0](../releases/3.6.0.md).
+
+
+## Implementation review corrections, 2026-10-31
+
+Ian authorized all findings and improvements from the independent review. Build 143 is superseded; the release record owns fresh build 144 validation and packaging.
+
+- **Account-independent webhook:** account or credential changes still fence managed AI responses, but do not cancel a configured export. The saved transcript and any valid summary are delivered with interrupted processing when appropriate. A changed or removed endpoint leaves the ready/held handoff visible and recoverable. Explicit Try again accepts the new destination with a new ID. This confirmation covers ready/held completion work, not the existing policy for already-released outbox rows.
+- **Finished-screen Update:** the automatic final run owns processing until it settles. Update shows `finishing` and is disabled in current and History views; the production action also refuses a competing request. Coaching recalculation remains available through its existing action. Users may still leave and start another meeting.
+- **Template isolation:** only template requests capture template identity and definition. Changing the picker, including the actual stopped-screen picker with a saved template, invalidates that template result alone. Standard summary and questions continue under their own content authority. A partial completion reports the stale template honestly.
+- **Truthful cloud deferral:** incoming changes deferred by unsaved edits do not advance Last checked or report success. Committed edits that invalidate an in-flight response request a fresh pass without publishing stale success. Credential replacement preserves reconciliation intent for skipped rows; a protected row missing from a manifest is revisited when protection ends.
+- **Bounded work:** marker-only saves do not notify cloud or refresh the Home card; any actual dirty meeting content still uses the normal commit. Lifecycle hooks act on changed upload protection or previously skipped incoming work. Tests count manifest/status/upload requests for a coalesced stop and for released inbound protection. Reconciliation fetches marked meetings only, and failed-delivery resend fetches meetings once per action.
+- **Small corrections:** pending captions omit zero operations and use singular/plural. Both iOS release-note locales keep their bullet prefixes. Linux recovery capability requires a verified producer before it can close an incident; the backend plan owns that correction.
+
+Regressions exercise account switch during held AI, changed endpoints both before staging and after acknowledgement, stopped Update and Coaching, template changes during held standard and template responses, marker-only versus dirty saves, deferred changes across credential replacement, remote deletion under protection, and failed replacement passes. Full-suite results and remaining physical QA belong in the release record.

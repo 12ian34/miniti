@@ -13,6 +13,7 @@ enum PersistenceOperation: String, CaseIterable {
     case correction
     case insights
     case finalInsights = "final_insights"
+    case webhookCompletion = "webhook_completion"
     case insightsRegeneration = "insights_regeneration"
     case templateChange = "template_change"
     case docsTopics = "docs_topics"
@@ -39,6 +40,7 @@ enum PersistenceOperation: String, CaseIterable {
         case .correction: return "correction"
         case .insights: return "insights"
         case .finalInsights: return "final insights"
+        case .webhookCompletion: return "webhook preparation"
         case .insightsRegeneration: return "insights update"
         case .templateChange: return "template change"
         case .docsTopics: return "docs topics"
@@ -133,10 +135,10 @@ extension AppState {
         do {
             try persistenceSaveHandler(context)
             clearPersistenceIssue(for: operation)
-            if operation != .cloudSync { cloudSync.noteLocalChange() }
+            if operation != .cloudSync && operation != .webhookCompletion { cloudSync.noteLocalChange() }
             // F6: a finalisation or import that produced a finished meeting can make the Home
             // card eligible; the recompute checks the cheap conditions before fetching.
-            if operation != .cloudSync, operation != .liveTranscript, !showAccessCard { refreshAccessCard() }
+            if operation != .cloudSync, operation != .liveTranscript, operation != .webhookCompletion, !showAccessCard { refreshAccessCard() }
             return true
         } catch {
             revert?()
@@ -232,10 +234,11 @@ struct SavedAIRequest {
     let credentialGeneration: Int?
     let accountID: String?
     let resolvedNames: Bool
+    let template: InsightTemplate?
 }
 
 extension AppState {
-    func savedAIInput(_ meeting: Meeting, resolvedNames: Bool = true) -> Int {
+    func savedAIInput(_ meeting: Meeting, resolvedNames: Bool = true, template: InsightTemplate? = nil) -> Int {
         var hash = Hasher()
         hash.combine(meeting.transcriptRevision)
         if resolvedNames { hash.combine(meeting.fullTranscript) }
@@ -248,22 +251,23 @@ extension AppState {
         hash.combine(meeting.language)
         hash.combine(meeting.endTime)
         hash.combine(meeting.speakerOverridesJSON)
-        hash.combine(meeting.insightTemplateID)
-        hash.combine(meeting.templateDefinitionJSON)
-        // Deleting/editing a selected custom definition invalidates an older fill too.
-        hash.combine(insightTemplate(id: meeting.insightTemplateID))
-        if meeting.insightTemplateID == nil { hash.combine(selectedInsightTemplate) }
+        if let template {
+            hash.combine(meeting.insightTemplateID)
+            hash.combine(meeting.templateDefinitionJSON)
+            hash.combine(insightTemplate(id: template.id))
+            if meeting.insightTemplateID == nil { hash.combine(selectedInsightTemplate) }
+        }
         return hash.finalize()
     }
 
-    func beginSavedAIRequest(_ meeting: Meeting, scope: String, resolvedNames: Bool = true) -> SavedAIRequest {
+    func beginSavedAIRequest(_ meeting: Meeting, scope: String, resolvedNames: Bool = true, template: InsightTemplate? = nil) -> SavedAIRequest {
         let id = UUID()
         let key = meeting.id.uuidString + ":" + scope
         savedAIRequests[key] = id
         return SavedAIRequest(id: id, key: key, meetingID: meeting.id,
-                              input: savedAIInput(meeting, resolvedNames: resolvedNames), appMode: appMode.rawValue,
+                              input: savedAIInput(meeting, resolvedNames: resolvedNames, template: template), appMode: appMode.rawValue,
                               credentialGeneration: appMode == .managed ? clientAuthManager.credentialGeneration : nil,
-                              accountID: appMode == .managed ? clientAuthManager.status.accountID : nil, resolvedNames: resolvedNames)
+                              accountID: appMode == .managed ? clientAuthManager.status.accountID : nil, resolvedNames: resolvedNames, template: template)
     }
 
     func savedAIRequestIsCurrent(_ request: SavedAIRequest, meeting: Meeting) -> Bool {
@@ -273,7 +277,7 @@ extension AppState {
               request.accountID == (appMode == .managed ? clientAuthManager.status.accountID : nil),
               request.credentialGeneration == (appMode == .managed ? clientAuthManager.credentialGeneration : nil)
         else { return false }
-        return meeting.id == request.meetingID && request.input == savedAIInput(meeting, resolvedNames: request.resolvedNames)
+        return meeting.id == request.meetingID && request.input == savedAIInput(meeting, resolvedNames: request.resolvedNames, template: request.template)
     }
 
     func finishSavedAIRequest(_ request: SavedAIRequest) {
@@ -290,6 +294,7 @@ struct WebhookCompletion: Codable {
     var accountID: String?
     var processing: WebhookService.Processing?
     var requestedModes: [String]? = nil
+    var destination: String? = nil
 }
 
 extension Meeting {
@@ -300,6 +305,16 @@ extension Meeting {
 }
 
 extension AppState {
+    /// Marker-only writes do not change cloud content. A pre-existing unsaved edit still
+    /// uses the normal commit notification because this save will make it durable too.
+    @discardableResult
+    func persistWebhookCompletion(_ marker: WebhookCompletion, on meeting: Meeting, revertOnFailure: Bool = false) -> Bool {
+        let previous = meeting.webhookCompletionJSON
+        let operation: PersistenceOperation = modelContext?.hasChanges == true ? .finalInsights : .webhookCompletion
+        return commit(operation, mutate: { meeting.webhookCompletion = marker },
+                      revert: revertOnFailure ? { meeting.webhookCompletionJSON = previous } : nil)
+    }
+
     @discardableResult
     func beginMeetingCompletion(_ meeting: Meeting, persist: Bool = true) -> UUID? {
         guard !webhookURL.isEmpty, !isMeetingDeleted(meeting.id) else { return nil }
@@ -309,31 +324,28 @@ extension AppState {
             guard deliveryOutbox.discard(id: old.id) else { return nil }
         }
         let marker = WebhookCompletion(id: UUID(), phase: .processing, revision: meeting.transcriptRevision,
-                                       createdAt: Date(), accountID: appMode == .managed ? clientAuthManager.status.accountID : nil)
-        meeting.webhookCompletion = marker
-        if persist { _ = commit(.finalInsights) }
+                                       createdAt: Date(), accountID: appMode == .managed ? clientAuthManager.status.accountID : nil, destination: webhookURL)
+        if persist { _ = persistWebhookCompletion(marker, on: meeting) }
+        else { meeting.webhookCompletion = marker }
         return marker.id
     }
 
     func settleMeetingCompletion(_ meeting: Meeting, id: UUID?, outcomes: [String: WebhookService.Processing.Outcome], interrupted: Bool) {
         guard let id, !isMeetingDeleted(meeting.id), var marker = meeting.webhookCompletion,
               marker.id == id, marker.phase == .processing else { return }
-        guard marker.accountID == (appMode == .managed ? clientAuthManager.status.accountID : nil),
-              !(currentMeeting?.id == meeting.id && (isRecording || isStartingMeeting || isResumingRecording)) else {
+        guard !(currentMeeting?.id == meeting.id && (isRecording || isStartingMeeting || isResumingRecording)) else {
             marker.phase = .cancelled
-            meeting.webhookCompletion = marker
-            _ = commit(.finalInsights)
+            _ = persistWebhookCompletion(marker, on: meeting)
             return
         }
         let changed = interrupted || marker.revision != meeting.transcriptRevision
         let successes = outcomes.values.filter { $0 == .complete }.count
-        let failures = outcomes.values.filter { $0 == .failed }.count
+        let failures = outcomes.values.filter { $0 == .failed || $0 == .stale || $0 == .interrupted }.count
         let result: WebhookService.Processing.State = changed ? .interrupted :
             (failures > 0 ? (successes > 0 ? .partial : .failed) : (successes > 0 ? .complete : .skipped))
         marker.processing = .init(inputTranscriptRevision: marker.revision, state: result, outcomes: outcomes)
         marker.phase = .ready
-        meeting.webhookCompletion = marker
-        guard commit(.finalInsights) else {
+        guard persistWebhookCompletion(marker, on: meeting) else {
             persistenceRetryAction = { [weak self, weak meeting] in
                 guard let self, let meeting else { return }
                 self.handOffWebhookCompletion(meeting)
@@ -347,9 +359,14 @@ extension AppState {
     func handOffWebhookCompletion(_ meeting: Meeting) {
         guard deliveryOutbox.isStoreReadable, !isMeetingDeleted(meeting.id),
               var marker = meeting.webhookCompletion else { return }
-        guard marker.accountID == (appMode == .managed ? clientAuthManager.status.accountID : nil), !webhookURL.isEmpty else {
-            if marker.phase != .handedOff { marker.phase = .cancelled; meeting.webhookCompletion = marker; _ = commit(.finalInsights) }
-            _ = deliveryOutbox.discard(id: marker.id)
+        let held = deliveryOutbox.item(id: marker.id)?.held == true
+        guard marker.phase == .ready || (marker.phase == .handedOff && held) else { return }
+        guard !webhookURL.isEmpty else {
+            webhookResendError = "Add a webhook URL, then try again to send the saved meeting."
+            return
+        }
+        guard (marker.destination ?? deliveryOutbox.item(id: marker.id)?.destination ?? webhookURL) == webhookURL else {
+            webhookResendError = "The webhook URL changed while this meeting was processing. Try again to send it to the current URL."
             return
         }
         if marker.phase == .handedOff {
@@ -358,7 +375,7 @@ extension AppState {
         }
         guard marker.phase == .ready else { return }
         // Also retries a ready marker left unsaved by an earlier failure.
-        guard commit(.finalInsights) else {
+        guard modelContext?.hasChanges != true || commit(.finalInsights) else {
             persistenceRetryAction = { [weak self, weak meeting] in
                 guard let self, let meeting else { return }
                 self.handOffWebhookCompletion(meeting)
@@ -371,8 +388,7 @@ extension AppState {
             marker.id = UUID()
             marker.revision = meeting.transcriptRevision
             marker.processing = .init(inputTranscriptRevision: marker.revision, state: .interrupted, outcomes: [:])
-            meeting.webhookCompletion = marker
-            guard commit(.finalInsights) else { return }
+            guard persistWebhookCompletion(marker, on: meeting) else { return }
         }
         do {
             let payload = WebhookService.payloadFromMeeting(meeting, event: "meeting.saved", processing: marker.processing,
@@ -383,17 +399,14 @@ extension AppState {
                (try JSONSerialization.jsonObject(with: oldBody) as? NSDictionary) != (try JSONSerialization.jsonObject(with: body) as? NSDictionary) {
                 guard deliveryOutbox.discard(id: marker.id) else { return }
                 marker.id = UUID()
-                meeting.webhookCompletion = marker
-                guard commit(.finalInsights) else { return }
+                guard persistWebhookCompletion(marker, on: meeting) else { return }
             }
             if deliveryOutbox.item(id: marker.id) == nil {
                 guard deliveryOutbox.stageWebhook(id: marker.id, meetingID: meeting.id, event: payload.event, body: body,
                                                   destination: webhookURL, createdAt: marker.createdAt) else { return }
             }
             marker.phase = .handedOff
-            let previous = meeting.webhookCompletionJSON
-            meeting.webhookCompletion = marker
-            guard commit(.finalInsights, revert: { meeting.webhookCompletionJSON = previous }) else {
+            guard persistWebhookCompletion(marker, on: meeting, revertOnFailure: true) else {
                 persistenceRetryAction = { [weak self, weak meeting] in
                     guard let self, let meeting else { return }
                     self.handOffWebhookCompletion(meeting)
@@ -408,7 +421,8 @@ extension AppState {
 
     /// Called once the local store is available; old meetings have no marker and are untouched.
     func reconcileWebhookCompletions() {
-        guard deliveryOutbox.isStoreReadable, let meetings = fetchMeetings(.exportAll) else { return }
+        guard deliveryOutbox.isStoreReadable, let context = modelContext,
+              let meetings = load(.exportAll, { try context.fetch(FetchDescriptor<Meeting>(predicate: #Predicate { $0.webhookCompletionJSON != nil })) }) else { return }
         for meeting in meetings {
             guard let marker = meeting.webhookCompletion else { continue }
             if marker.phase == .processing, !finalizingInsightMeetingIDs.contains(meeting.id) {
@@ -421,10 +435,13 @@ extension AppState {
 
     func resendFailedWebhooks() {
         webhookResendError = nil
+        let failed = deliveryOutbox.failed(.webhook)
+        guard !failed.isEmpty, let meetings = fetchMeetings(.exportAll) else { return }
+        let byID = Dictionary(meetings.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         var resent: Set<UUID> = []
-        for item in deliveryOutbox.failed(.webhook) {
+        for item in failed {
             guard resent.insert(item.meetingID).inserted else { continue }
-            guard let meeting = fetchMeetings(.exportAll)?.first(where: { $0.id == item.meetingID }),
+            guard let meeting = byID[item.meetingID],
                   !isMeetingDeleted(item.meetingID) else {
                 webhookResendError = "This meeting is no longer available. Discard its failed delivery."
                 continue
@@ -518,14 +535,29 @@ extension AppState {
         let otherFailures = outcomes.values.contains { $0 == .failed || $0 == .interrupted || $0 == .stale }
         marker.processing = .init(inputTranscriptRevision: meeting.transcriptRevision, state: otherFailures ? .partial : .complete, outcomes: outcomes)
         marker.revision = meeting.transcriptRevision
-        meeting.webhookCompletion = marker
-        _ = commit(.insightsRegeneration)
+        _ = persistWebhookCompletion(marker, on: meeting)
     }
 }
 
 extension AppState {
     func retryWebhookDeliveries() {
         guard deliveryOutbox.retryStorage() else { return }
+        // This explicit action accepts the currently configured destination. Never reroute
+        // held work automatically when Settings changes during AI or after an account switch.
+        if !webhookURL.isEmpty, let context = modelContext,
+           let meetings = load(.exportAll, { try context.fetch(FetchDescriptor<Meeting>(predicate: #Predicate { $0.webhookCompletionJSON != nil })) }) {
+            for meeting in meetings {
+                guard var marker = meeting.webhookCompletion,
+                      marker.phase == .ready || (marker.phase == .handedOff && deliveryOutbox.item(id: marker.id)?.held == true),
+                      marker.destination != webhookURL else { continue }
+                guard deliveryOutbox.discard(id: marker.id) else { continue }
+                marker.id = UUID()
+                marker.phase = .ready
+                marker.destination = webhookURL
+                _ = persistWebhookCompletion(marker, on: meeting)
+            }
+        }
+        webhookResendError = nil
         reconcileWebhookCompletions()
         deliveryOutbox.retryNow(.webhook)
     }

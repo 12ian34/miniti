@@ -48,6 +48,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var calls: [String] = []
     var failNext: CloudSyncError?
     var failStatus: CloudSyncError?
+    var failManifest: CloudSyncError?
     var tooLargeTitles: Set<String> = []
     var tier = "pro"
     var accountCloud: (enabled: Bool?, version: Int) = (nil, 0)
@@ -81,6 +82,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
 
     func manifest() async throws -> CloudManifest {
         calls.append("manifest"); await gate.wait("manifest"); try throwIfArmed()
+        if let failManifest { throw failManifest }
         return CloudManifest(entries: rows.map { CloudManifestEntry(id: $0.key, revision: $0.value.revision, updatedAt: $0.value.updatedAt, deleted: $0.value.deleted) }, latestSeq: seq)
     }
 
@@ -418,6 +420,32 @@ final class CloudSyncEngineTests: XCTestCase {
         XCTAssertEqual(engine.pendingUploadCount, 0)
     }
 
+    func testCommittedEditDeferralDoesNotStampSuccessBeforeItsFailedRerun() async throws {
+        let meeting = finished("Before held pull")
+        await engine.sync(reason: "change")
+        let previousCheck = engine.lastSyncedAt
+        let statusCalls = transport.calls.filter { $0 == "status" }.count
+        transport.gate.holdNames = ["changes"]
+        let task = Task { await self.engine.sync(reason: "poll") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        clock = clock.addingTimeInterval(20)
+        meeting.title = "Saved during pull"
+        try host.context.save()
+        engine.noteLocalChange()
+        transport.failManifest = .offline
+        transport.gate.release()
+        await task.value
+        await settle()
+        XCTAssertEqual(engine.phase, .paused(.offline))
+        XCTAssertEqual(engine.lastSyncedAt, previousCheck)
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, statusCalls)
+        XCTAssertEqual(meeting.title, "Saved during pull")
+        transport.failManifest = nil
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, meeting.title)
+        XCTAssertGreaterThan(try XCTUnwrap(engine.lastSyncedAt), try XCTUnwrap(previousCheck))
+    }
+
     func testFailedPulledCommitDoesNotAdvanceCursorAndRetriesDurability() async throws {
         await engine.sync(reason: "poll")
         let cursorKey = CloudSyncEngine.cursorKey("acct_test")
@@ -487,6 +515,8 @@ final class CloudSyncEngineTests: XCTestCase {
         transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(10)) { $0["title"] = "Remote edit" }
         let cursorKey = CloudSyncEngine.cursorKey("acct_test")
         let previousCursor = engine.defaults.integer(forKey: cursorKey)
+        let previousCheck = engine.lastSyncedAt
+        let statusCalls = transport.calls.filter { $0 == "status" }.count
         transport.gate.holdNames = ["changes"]
         let task = Task { await self.engine.sync(reason: "poll") }
         try await TestSupport.waitUntil { self.transport.gate.held == 1 }
@@ -498,10 +528,126 @@ final class CloudSyncEngineTests: XCTestCase {
         await task.value
         XCTAssertEqual(meeting.title, "Unsaved local edit")
         XCTAssertEqual(engine.defaults.integer(forKey: cursorKey), previousCursor)
+        XCTAssertTrue(engine.waitingForLocalEdits)
+        XCTAssertEqual(engine.idleLabel, "Waiting for local edits to save")
+        XCTAssertEqual(engine.lastSyncedAt, previousCheck)
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, statusCalls)
         await engine.sync(reason: "poll")
+        XCTAssertFalse(engine.waitingForLocalEdits)
         XCTAssertEqual(meeting.title, "Unsaved local edit")
         XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "Unsaved local edit")
         XCTAssertEqual(engine.pendingUploadCount, 0)
+    }
+
+    func testUnsavedEditsDuringManifestAndBatchDoNotClaimCompletedChecks() async throws {
+        let meeting = finished("Saved before check")
+        await engine.sync(reason: "change")
+        for heldCall in ["manifest", "batch"] {
+            clock = clock.addingTimeInterval(20)
+            transport.remoteEdit(meeting.id, updatedAt: clock) { $0["notes"] = "remote notes" }
+            engine.resetBookkeepingCursorOnly()
+            let completedAt = engine.lastSyncedAt
+            let statusCalls = transport.calls.filter { $0 == "status" }.count
+            transport.gate.holdNames = [heldCall]
+            let checking = Task { await self.engine.sync(reason: "poll") }
+            try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+            clock = clock.addingTimeInterval(20)
+            meeting.notes = "unsaved during " + heldCall
+            transport.gate.release()
+            await checking.value
+            XCTAssertTrue(engine.waitingForLocalEdits, heldCall)
+            XCTAssertEqual(engine.lastSyncedAt, completedAt, heldCall)
+            XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, statusCalls, heldCall)
+            XCTAssertEqual(meeting.notes, "unsaved during " + heldCall)
+            await engine.sync(reason: "poll")
+            XCTAssertFalse(engine.waitingForLocalEdits, heldCall)
+            XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, "unsaved during " + heldCall)
+        }
+    }
+
+    func testStopLifecycleCoalescesChecksAndOnlyReconcilesSkippedIncomingRows() async throws {
+        let meeting = finished("Recording")
+        host.liveMeetingID = meeting.id
+        _ = transport.seed(remoteDocument(title: "Other device", updatedAt: clock), updatedAt: clock)
+        await engine.sync(reason: "poll")
+        transport.calls = []
+        host.allowSelectedUpload = true
+        engine.noteLifecycleChange()
+        engine.noteLifecycleChange()
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 1)
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, 0, "stop eligibility does not require a manifest")
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, 1, "accepted upload refreshes count once")
+        XCTAssertNil(engine.pendingChangesCaption)
+        transport.calls = []
+        engine.noteLifecycleChange() // final AI completion with no incoming change skipped
+        await settle()
+        XCTAssertTrue(transport.calls.isEmpty)
+
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(30)) { $0["title"] = "Remote while selected" }
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(meeting.title, "Recording")
+        transport.calls = []
+        host.liveMeetingID = nil
+        engine.noteLifecycleChange()
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(meeting.title, "Remote while selected")
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, 1, "release retries the skipped row once")
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, 0, "unchanged manifest does not re-fetch a fresh count")
+    }
+
+    func testCredentialInvalidationPreservesReconcileForProtectedIncomingChanges() async throws {
+        let meeting = finished("Before repair")
+        await engine.sync(reason: "change")
+        host.liveMeetingID = meeting.id
+        host.allowSelectedUpload = true
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(20)) { $0["title"] = "Remote before repair" }
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(meeting.title, "Before repair")
+        let cursor = engine.defaults.integer(forKey: CloudSyncEngine.cursorKey("acct_test"))
+        engine.invalidatePasses(reason: "same-account credential replacement")
+        XCTAssertEqual(engine.defaults.integer(forKey: CloudSyncEngine.cursorKey("acct_test")), cursor)
+        host.liveMeetingID = nil
+        engine.noteLifecycleChange()
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(meeting.title, "Remote before repair")
+    }
+
+    func testProtectedRowMissingFromManifestReuploadsAfterSelectionReleases() async throws {
+        let meeting = finished("Keep local copy")
+        await engine.sync(reason: "change")
+        host.liveMeetingID = meeting.id
+        host.allowSelectedUpload = true
+        transport.rows = [:] // server purged the cloud copy, retaining its sequence watermark
+        engine.resetBookkeepingCursorOnly()
+        await engine.sync(reason: "poll")
+        XCTAssertGreaterThan(meeting.cloudRevision, 0, "protected row is not repointed during reconciliation")
+        XCTAssertNil(transport.rows[meeting.id])
+        host.liveMeetingID = nil
+        engine.noteLifecycleChange()
+        await settle()
+        XCTAssertEqual(transport.rows[meeting.id]?.document["title"] as? String, "Keep local copy")
+        XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
+    }
+
+    func testPendingCaptionOmitsZeroOperations() async throws {
+        let meeting = finished("Waiting to upload")
+        transport.gate.holdNames = ["put"]
+        let uploading = Task { await self.engine.sync(reason: "change") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        XCTAssertEqual(engine.pendingChangesCaption, "This device: 1 upload waiting.")
+        transport.gate.release()
+        await uploading.value
+        host.userDelete(meeting)
+        transport.gate.holdNames = ["delete"]
+        let deleting = Task { await self.engine.sync(reason: "change") }
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        XCTAssertEqual(engine.pendingChangesCaption, "This device: 1 removal waiting.")
+        transport.gate.release()
+        await deleting.value
+        XCTAssertNil(engine.pendingChangesCaption)
     }
 
     // MARK: Push
@@ -784,11 +930,38 @@ final class CloudSyncEngineTests: XCTestCase {
         let a = finished("Alpha")
         await tick()
         let remoteID = transport.seed(remoteDocument(title: "Added while away", updatedAt: clock), updatedAt: clock)
-        transport.oldestRetainedSeq = transport.seq + 10
+        transport.oldestRetainedSeq = transport.seq + 1
         await tick()
         XCTAssertNotNil(host.meeting(remoteID))
         XCTAssertEqual(a.cloudRevision, 1)
         XCTAssertTrue(transport.calls.filter { $0 == "manifest" }.count >= 2)
+    }
+
+    func testRepeatedCursorExpiryStopsImmediateRetriesAndRecoversOnLaterPoll() async throws {
+        _ = finished("Saved")
+        await engine.sync(reason: "change")
+        let checkedAt = engine.lastSyncedAt
+        transport.calls = []
+        // Simulate a temporarily inconsistent server watermark: even the newly fetched
+        // manifest cursor is too old for the retained feed.
+        transport.oldestRetainedSeq = transport.seq + 10
+        await engine.sync(reason: "poll")
+        await settle()
+        XCTAssertFalse(engine.isRunning)
+        XCTAssertEqual(transport.calls.filter { $0.hasPrefix("changes:") }.count, 2)
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, 1)
+        XCTAssertEqual(transport.calls.filter { $0 == "status" }.count, 0)
+        XCTAssertEqual(engine.lastSyncedAt, checkedAt)
+        if case .failed = engine.phase {} else { XCTFail("repeated expiry must remain visibly unfinished") }
+        let callsAfterFailure = transport.calls.count
+        await settle()
+        XCTAssertEqual(transport.calls.count, callsAfterFailure, "no self-scheduled debounce loop after repeated expiry")
+        transport.oldestRetainedSeq = 1
+        clock = clock.addingTimeInterval(60)
+        await engine.sync(reason: "poll")
+        XCTAssertEqual(engine.phase, .idle)
+        XCTAssertGreaterThan(try XCTUnwrap(engine.lastSyncedAt), try XCTUnwrap(checkedAt))
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, 2, "required reconciliation survives until the next trigger")
     }
 
     func testReconcileReuploadsMeetingsTheCloudForgotInsteadOfDeleting() async throws {
@@ -1011,13 +1184,27 @@ extension CloudSyncEngineTests {
         // Same account, new credential (a key repair or a reauthentication): the pass loses its authority.
         engine.invalidatePasses(reason: "credential changed")
         transport.gate.release()
+        transport.gate.holdNames = ["manifest"]
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        XCTAssertEqual(meeting.cloudRevision, 0, "old upload receipt must not commit before the replacement authority checks the server")
+        XCTAssertNil(meeting.syncFingerprint)
+        XCTAssertNil(engine.lastSyncedAt)
+        XCTAssertFalse(engine.log.contains { $0.kind == .uploaded }, "the stale .ok was not applied as an upload")
+
+        transport.gate.release()
+        transport.gate.holdNames = ["batch"]
+        try await TestSupport.waitUntil { self.transport.gate.held == 1 }
+        XCTAssertEqual(meeting.cloudRevision, 0, "even the new manifest must fetch the actual server document before confirming it")
+        XCTAssertNil(meeting.syncFingerprint)
+        transport.gate.release()
         await syncing.value
         await settle()
 
-        XCTAssertFalse(engine.log.contains { $0.kind == .uploaded }, "the stale .ok was not applied as an upload")
-        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 2, "the rerun pushed again under the new authority")
-        XCTAssertEqual(meeting.cloudRevision, 1, "and settled on the cloud copy it found there")
-        XCTAssertNotNil(meeting.syncFingerprint)
+        XCTAssertEqual(transport.calls.filter { $0 == "put" }.count, 1, "a new-authority read can confirm the previously accepted server write without writing it twice")
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" }.count, 2, "initial manifest plus replacement-authority reconciliation")
+        XCTAssertEqual(transport.calls.filter { $0.hasPrefix("batch:") }.count, 1)
+        XCTAssertEqual(meeting.cloudRevision, 1, "settled only after fetching the cloud document under replacement authority")
+        XCTAssertEqual(meeting.syncFingerprint, MeetingSyncDocument.fingerprint(of: meeting))
     }
 
     func testAStaleStatusAnswerIsNotKept() async throws {

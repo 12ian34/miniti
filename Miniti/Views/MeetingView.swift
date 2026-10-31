@@ -1879,7 +1879,7 @@ struct LiveInsightsPanel: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 9, weight: .semibold))
-                                Text("update")
+                                Text(appState.currentMeetingFinalAIInProgress ? "finishing" : "update")
                                     .font(.system(size: 10, weight: .semibold, design: .default))
                                 Text("⌘⇧I")
                                     .font(.system(size: 10, weight: .medium, design: .default))
@@ -1900,8 +1900,8 @@ struct LiveInsightsPanel: View {
                         }
                         .buttonStyle(.plain)
                         .focusable(false)
-                        .disabled(!canUpdateInsights || appState.isGeneratingInsights)
-                        .opacity((!canUpdateInsights || appState.isGeneratingInsights) ? 0.5 : 1.0)
+                        .disabled(!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress)
+                        .opacity((!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress) ? 0.5 : 1.0)
                     }
                     
                     Spacer()

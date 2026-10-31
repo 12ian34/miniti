@@ -2147,7 +2147,7 @@ struct MeetingDetailView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "arrow.clockwise")
                                 .font(.system(size: 9, weight: .semibold))
-                            Text(meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")
+                            Text(appState.finalizingInsightMeetingIDs.contains(meeting.id) ? "finishing" : (meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update"))
                                 .font(.system(size: 10, weight: .semibold, design: .default))
                             if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                                 Text("sales")
@@ -2177,8 +2177,8 @@ struct MeetingDetailView: View {
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
-                    .disabled(appState.isGeneratingInsights)
-                    .opacity(appState.isGeneratingInsights ? 0.5 : 1.0)
+                    .disabled(appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id))
+                    .opacity((appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id)) ? 0.5 : 1.0)
                     
                     if appState.isGeneratingInsights {
                         HStack(spacing: 6) {

@@ -260,8 +260,8 @@ struct CloudSettingsSections: View {
                 Text("Could not refresh the cloud count. Uploaded meetings are still saved.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            if engine.pendingUploadCount > 0 || engine.pendingRemovalCount > 0 {
-                Text("This device: \(engine.pendingUploadCount) uploads and \(engine.pendingRemovalCount) removals waiting.")
+            if let caption = engine.pendingChangesCaption {
+                Text(caption)
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !engine.skippedMeetingIDs.isEmpty {

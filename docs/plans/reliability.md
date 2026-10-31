@@ -26,11 +26,11 @@ Moved, not completed: [sync/delivery R5](sync-and-delivery-reliability.md#r5-imm
 
 ### R6: useful manual webhook retry
 
-Moved, not completed: [3.6.0 resend contract](sync-and-delivery-reliability.md#r6-resend-the-current-saved-meeting) owns the production-body rebuild, new delivery identity, error states and tests. Do not revive bodyless terminal items here.
+Moved and implemented locally, release QA pending: [3.6.0 resend contract](sync-and-delivery-reliability.md#r6-resend-the-current-saved-meeting) owns the production-body rebuild, new delivery identity, error states and tests. Do not revive bodyless terminal items here.
 
 ### R7: History responses belong to the request's revision
 
-Moved, not completed: [3.6.0 response-authority contract](sync-and-delivery-reliability.md#r7-history-responses-belong-to-their-input-revision) owns revision/generation checks and the saved-model/export regressions. This anchor preserves old links.
+Moved and implemented locally, release QA pending: [3.6.0 response-authority contract](sync-and-delivery-reliability.md#r7-history-responses-belong-to-their-input-revision) owns revision/generation checks and the saved-model/export regressions. This anchor preserves old links.
 
 ### R8: atomic single-use link consumption
 

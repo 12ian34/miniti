@@ -143,7 +143,7 @@ final class SavedMeetingDeliveryTests: XCTestCase {
     var container: ModelContainer!
     var state: AppState!
     var savedDefaults: [String: Any] = [:]
-    let keys = ["appMode", "acceptedTermsVersion", "privateMode", "webhookURL", "autoExportMarkdown", "docsMCPURL", "autoInferSpeakerNames", "salesInsightsEnabled", "templateInsightsEnabled", "playbookInsightsEnabled"]
+    let keys = ["appMode", "acceptedTermsVersion", "privateMode", "webhookURL", "autoExportMarkdown", "docsMCPURL", "autoInferSpeakerNames", "salesInsightsEnabled", "templateInsightsEnabled", "playbookInsightsEnabled", "insightTemplateID"]
 
     override func setUp() async throws {
         for key in keys { if let value = UserDefaults.standard.object(forKey: key) { savedDefaults[key] = value } }
@@ -277,7 +277,7 @@ final class SavedMeetingDeliveryTests: XCTestCase {
         var saves = 0
         state.persistenceSaveHandler = { context in
             saves += 1
-            if saves == 3 { throw CocoaError(.fileWriteUnknown) }
+            if saves == 2 { throw CocoaError(.fileWriteUnknown) }
             try context.save()
         }
         state.settleMeetingCompletion(meeting, id: id, outcomes: ["standard": .complete], interrupted: false)
@@ -329,7 +329,7 @@ final class SavedMeetingDeliveryTests: XCTestCase {
         meeting.segments[0].text = "trimmed"; meeting.markTranscriptEdited()
         meeting.segments[0].text = original; meeting.markTranscriptEdited()
         XCTAssertFalse(state.savedAIRequestIsCurrent(first, meeting: meeting))
-        let second = state.beginSavedAIRequest(meeting, scope: "insights")
+        let second = state.beginSavedAIRequest(meeting, scope: "insights", template: state.selectedInsightTemplate)
         meeting.templateDefinitionJSON = "changed"
         XCTAssertFalse(state.savedAIRequestIsCurrent(second, meeting: meeting))
         let third = state.beginSavedAIRequest(meeting, scope: "insights")
@@ -370,18 +370,19 @@ extension SavedMeetingDeliveryTests {
         XCTAssertTrue(state.deliveryOutbox.items.isEmpty)
     }
 
-    func testHistoryCanFinishInitialWebhookAfterSupersedingFinalAI() async throws {
+    func testHistoryUpdateCannotInterruptTheFinalAIRun() async throws {
         let meeting = try meeting()
         StubURLProtocol.delay = 0.4
         let final = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: false) }
         try await TestSupport.waitUntil { StubURLProtocol.requests.count == 1 }
         StubURLProtocol.delay = 0
         await state.generateInsightsForMeeting(meeting)
+        XCTAssertEqual(StubURLProtocol.requests.count, 1)
         await final.value
         XCTAssertEqual(state.deliveryOutbox.items.map(\.event), ["meeting.saved"])
         let payload = try XCTUnwrap(try body(XCTUnwrap(state.deliveryOutbox.items.first))["meeting"] as? [String: Any])
         XCTAssertEqual(payload["summary"] as? String, "fresh summary")
-        XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .partial)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .complete)
     }
 
     func testReadyInitialCannotBeOvertakenWhenItsFirstStageFails() async throws {
@@ -532,5 +533,149 @@ extension SavedMeetingDeliveryTests {
         try await TestSupport.waitUntil { !self.state.isFinalizingMeeting && self.state.finalizingInsightMeetingIDs.isEmpty }
         XCTAssertEqual(firstStoppedSaveHadIntent, true)
         XCTAssertEqual(state.deliveryOutbox.items.map(\.event), ["meeting.saved"])
+    }
+}
+
+
+extension SavedMeetingDeliveryTests {
+    func testAccountSwitchDuringFinalAIStillDeliversInterruptedSavedTranscript() async throws {
+        let meeting = try meeting()
+        StubURLProtocol.delay = 0.15
+        let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: false) }
+        try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+        var credentials = TestSupport.enrolledCredentials()
+        credentials.accountID = "acct_b"
+        state.clientAuthManager = TestSupport.enrolledAuthManager(session: TestSupport.stubbedSession(), credentials: credentials)
+        await task.value
+        XCTAssertNil(meeting.summaryText, "old-account AI must not apply")
+        let item = try XCTUnwrap(state.deliveryOutbox.items.first)
+        XCTAssertEqual(item.destination, "https://receiver.example/hook")
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .interrupted)
+        let payload = try XCTUnwrap(try body(item)["meeting"] as? [String: Any])
+        XCTAssertEqual((payload["transcript"] as? [[String: Any]])?.first?["text"] as? String, "we agreed to ship on Friday")
+    }
+
+    func testChangedWebhookDestinationWaitsForExplicitRetryAndSurvivesReconciliation() async throws {
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        state.webhookURL = "https://new.example/hook"
+        state.settleMeetingCompletion(meeting, id: id, outcomes: ["standard": .skipped], interrupted: false)
+        XCTAssertTrue(state.deliveryOutbox.items.isEmpty)
+        XCTAssertNotNil(state.webhookResendError)
+        state.webhookResendError = nil
+        state.reconcileWebhookCompletions()
+        XCTAssertNotNil(state.webhookResendError)
+        XCTAssertTrue(state.deliveryOutbox.items.isEmpty)
+        state.retryWebhookDeliveries()
+        let item = try XCTUnwrap(state.deliveryOutbox.items.first)
+        XCTAssertNotEqual(item.id, id)
+        XCTAssertEqual(item.destination, "https://new.example/hook")
+        XCTAssertNil(state.webhookResendError)
+    }
+
+    func testStoppedUpdateWaitsForFinalAIAndCoachingStillRecomputes() async throws {
+        let meeting = try meeting()
+        state.currentMeeting = meeting
+        state.liveSegments = [.init(id: UUID(), text: "one two three four five six", speaker: 0, timestamp: 1, isFinal: true)]
+        state.recordingDuration = 60
+        StubURLProtocol.delay = 0.15
+        let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: true) }
+        try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+        XCTAssertTrue(state.currentMeetingFinalAIInProgress)
+        await state.generateInsights()
+        XCTAssertEqual(StubURLProtocol.requests.count, 1)
+        state.insightsMode = .training
+        await state.generateInsights()
+        XCTAssertNotNil(state.trainingMetrics)
+        await task.value
+        XCTAssertFalse(state.currentMeetingFinalAIInProgress)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["standard"], .complete)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["questions"], .complete)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["meddpicc"], .complete)
+    }
+
+    func testTemplatePickerChangeDoesNotDiscardSummaryOrQuestions() async throws {
+        let meeting = try meeting()
+        let template = state.selectedInsightTemplate
+        StubURLProtocol.delay = 0.15
+        let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: false, template: template) }
+        try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+        state.insightTemplateID = try XCTUnwrap(InsightTemplate.builtIn.first { $0.id != template.id }).id
+        await task.value
+        XCTAssertEqual(meeting.summaryText, "fresh summary")
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .partial)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["template"], .stale)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["questions"], .complete)
+        let payload = try XCTUnwrap(try body(XCTUnwrap(state.deliveryOutbox.items.first))["meeting"] as? [String: Any])
+        XCTAssertEqual(payload["summary"] as? String, "fresh summary")
+    }
+
+    func testMarkerOnlyWritesDoNotNotifyCloudButPendingContentStillDoes() throws {
+        let meeting = try meeting()
+        var operations: [PersistenceOperation] = []
+        // User-visible persistence failures expose which kind of commit was selected.
+        state.persistenceSaveHandler = { _ in throw CocoaError(.fileWriteUnknown) }
+        _ = state.beginMeetingCompletion(meeting)
+        operations.append(try XCTUnwrap(state.persistenceIssue?.operation))
+        state.persistenceSaveHandler = { try $0.save() }
+        try container.mainContext.save()
+        meeting.notes = "new local edit"
+        state.persistenceSaveHandler = { _ in throw CocoaError(.fileWriteUnknown) }
+        var marker = try XCTUnwrap(meeting.webhookCompletion)
+        marker.phase = .ready
+        _ = state.persistWebhookCompletion(marker, on: meeting)
+        operations.append(try XCTUnwrap(state.persistenceIssue?.operation))
+        XCTAssertEqual(operations, [.webhookCompletion, .finalInsights])
+    }
+}
+
+
+extension SavedMeetingDeliveryTests {
+    func testStoppedTemplatePickerInvalidatesOnlyItsOldTemplateJob() async throws {
+        let meeting = try meeting()
+        let template = state.selectedInsightTemplate
+        let replacement = try XCTUnwrap(InsightTemplate.builtIn.first { $0.id != template.id })
+        meeting.applyInsightTemplate(template)
+        try container.mainContext.save()
+        state.currentMeeting = meeting
+        state.liveTemplateID = template.id
+        StubURLProtocol.delay = 0.15
+        let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript, language: "en", existingTitle: "saved", includeSales: false, template: template) }
+        try await TestSupport.waitUntil {
+            StubURLProtocol.requests.contains {
+                let body = try? JSONSerialization.jsonObject(with: TestSupport.bodyData(of: $0)) as? [String: Any]
+                return body?["mode"] as? String == "template"
+            }
+        }
+        state.selectInsightTemplate(replacement.id)
+        await task.value
+        XCTAssertEqual(meeting.insightTemplateID, replacement.id)
+        XCTAssertEqual(meeting.summaryText, "fresh summary")
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["template"], .stale)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.outcomes["questions"], .complete)
+        XCTAssertEqual(meeting.webhookCompletion?.processing?.state, .partial)
+    }
+}
+
+
+extension SavedMeetingDeliveryTests {
+    func testChangedDestinationAfterAcknowledgmentCannotReleaseUntilExplicitRetry() throws {
+        let meeting = try meeting()
+        let id = try XCTUnwrap(state.beginMeetingCompletion(meeting))
+        var marker = try XCTUnwrap(meeting.webhookCompletion)
+        marker.phase = .handedOff
+        XCTAssertTrue(state.persistWebhookCompletion(marker, on: meeting))
+        let payload = WebhookService.payloadFromMeeting(meeting, event: "meeting.saved")
+        XCTAssertTrue(state.deliveryOutbox.stageWebhook(id: id, meetingID: meeting.id, event: "meeting.saved", body: try WebhookService.encode(payload), destination: state.webhookURL))
+        state.webhookURL = "https://new.example/hook"
+        state.handOffWebhookCompletion(meeting)
+        XCTAssertEqual(state.deliveryOutbox.item(id: id)?.held, true)
+        XCTAssertNotNil(state.webhookResendError)
+        state.retryWebhookDeliveries()
+        XCTAssertNil(state.deliveryOutbox.item(id: id))
+        let replacement = try XCTUnwrap(state.deliveryOutbox.items.first)
+        XCTAssertEqual(replacement.destination, state.webhookURL)
+        XCTAssertEqual(replacement.held, false)
+        XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
     }
 }

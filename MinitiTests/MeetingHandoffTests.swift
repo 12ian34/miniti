@@ -1,5 +1,6 @@
 import XCTest
 import CoreAudio
+import SwiftData
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -14,8 +15,9 @@ import CoreAudio
 @MainActor
 final class MeetingHandoffTests: XCTestCase {
     private var state: AppState!
+    private var container: ModelContainer!
     private static let touchedDefaults = [
-        "appMode", "deepgramApiKey", "acceptedTermsVersion", "declinedTermsVersion", "hasAcceptedTerms",
+        "appMode", "deepgramApiKey", "openaiApiKey", "autoInferSpeakerNames", "autoAttioSync", "autoTwentySync", "acceptedTermsVersion", "declinedTermsVersion", "hasAcceptedTerms",
         "captureMicrophone", "captureSystemAudio", "smartMeetingsEnabled",
         "autoExportMarkdown", "webhookURL",
         // The host install may run the on-device engines; these tests exercise the Deepgram path.
@@ -32,9 +34,23 @@ final class MeetingHandoffTests: XCTestCase {
         for key in ["onDeviceTranscription", "onDeviceTranscriptionCloudFallback", "onDeviceSpeakerSeparation"] {
             UserDefaults.standard.set(false, forKey: key)
         }
+        container = try TestSupport.makeInMemoryContainer()
         state = AppState()
+        // The real stop path must save durably before it can hand off. Keep that contract
+        // in this hardware fixture without touching the host install's meeting store.
+        state.modelContext = container.mainContext
         state.appMode = .byok
         state.deepgramApiKey = "test-key-not-real"
+        // These tests verify real HAL capture and callback ownership, not provider service.
+        // Cancel the native task immediately, without reaching a provider. Leaving it
+        // suspended would make gracefulDisconnect's CloseStream send wait indefinitely.
+        state.deepgramService?.socketStarter = { $0.cancel() }
+        state.openaiApiKey = ""
+        state.autoInferSpeakerNames = false
+        state.insightsService = nil
+        state.minitiAPIService = nil
+        state.autoAttioSync = false
+        state.autoTwentySync = false
         state.hasAcceptedTerms = true
         state.captureMicrophone = true
         state.captureSystemAudio = true
@@ -48,8 +64,11 @@ final class MeetingHandoffTests: XCTestCase {
     override func tearDown() async throws {
         if state.isRecording { state.stopRecording() }
         try? await Task.sleep(for: .seconds(1.5))
+        await waitUntil { !self.state.isFinalizingMeeting && self.state.finalizingInsightMeetingIDs.isEmpty }
         state.audioCaptureService?.stopCapture()
+        state.deepgramService?.disconnect()
         state = nil
+        container = nil
         for key in Self.touchedDefaults {
             if let value = savedDefaults[key] {
                 UserDefaults.standard.set(value, forKey: key)
@@ -134,6 +153,11 @@ final class MeetingHandoffTests: XCTestCase {
 
         let cap = try XCTUnwrap(state.audioCaptureService)
         XCTAssertNotEqual(state.currentMeeting?.id, firstID, describePipeline("after handoff"))
+        let verificationContext = ModelContext(container)
+        let savedFirst = try XCTUnwrap(verificationContext.fetch(FetchDescriptor<Meeting>()).first { $0.id == firstID })
+        XCTAssertNotNil(savedFirst.endTime)
+        XCTAssertEqual(savedFirst.segments.filter(\.isFinal).map(\.text), ["hello from the first call"])
+        XCTAssertNil(state.persistenceIssue)
         XCTAssertEqual(state.currentMeeting?.calendarEventId, "next")
         XCTAssertTrue(state.isRecording, describePipeline("after handoff"))
         XCTAssertTrue(cap.isCapturing, describePipeline("after handoff"))
@@ -162,6 +186,11 @@ final class MeetingHandoffTests: XCTestCase {
 
         let cap = try XCTUnwrap(state.audioCaptureService)
         XCTAssertNotEqual(state.currentMeeting?.id, firstID, describePipeline("after handoff"))
+        let verificationContext = ModelContext(container)
+        let savedFirst = try XCTUnwrap(verificationContext.fetch(FetchDescriptor<Meeting>()).first { $0.id == firstID })
+        XCTAssertNotNil(savedFirst.endTime)
+        XCTAssertEqual(savedFirst.segments.filter(\.isFinal).map(\.text), ["hello from the first call"])
+        XCTAssertNil(state.persistenceIssue)
         XCTAssertTrue(state.isRecording, describePipeline("after handoff"))
         XCTAssertTrue(cap.isCapturing, describePipeline("after handoff"))
         XCTAssertTrue(cap.isMicActive, describePipeline("after handoff"))

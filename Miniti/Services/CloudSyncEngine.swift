@@ -106,6 +106,7 @@ final class CloudSyncEngine: ObservableObject {
     @Published private(set) var pendingRemovalCount = 0
     @Published private(set) var protectedMeetingCount = 0
     @Published private(set) var scanFailed = false
+    @Published private(set) var waitingForLocalEdits = false
 
     var statusIsStale: Bool {
         statusRefreshFailed || statusFetchedAt.map { now().timeIntervalSince($0) >= Self.statusFreshness } != false
@@ -113,10 +114,17 @@ final class CloudSyncEngine: ObservableObject {
 
     var idleLabel: String {
         if scanFailed { return "Could not check local meetings" }
+        if waitingForLocalEdits { return "Waiting for local edits to save" }
         if pendingUploadCount > 0 || pendingRemovalCount > 0 { return "Changes waiting to sync" }
         if protectedMeetingCount > 0 { return "Recording or edits are still in progress" }
         if !skippedMeetingIDs.isEmpty { return "Some meetings could not upload" }
         return lastSyncedAt == nil ? "Waiting to check" : "Checked for changes"
+    }
+    var pendingChangesCaption: String? {
+        var parts: [String] = []
+        if pendingUploadCount > 0 { parts.append("\(pendingUploadCount) upload\(pendingUploadCount == 1 ? "" : "s")") }
+        if pendingRemovalCount > 0 { parts.append("\(pendingRemovalCount) removal\(pendingRemovalCount == 1 ? "" : "s")") }
+        return parts.isEmpty ? nil : "This device: " + parts.joined(separator: " and ") + " waiting."
     }
     @Published private(set) var skippedMeetingIDs: Set<UUID> = []
     @Published private(set) var lastError: String?
@@ -186,7 +194,24 @@ final class CloudSyncEngine: ObservableObject {
 
     private var running = false
     private var rerunRequested = false
+    private var attemptedCursorRecovery = false
     private var needsReconcile = false
+    private var deferredIncomingIDs: Set<UUID> = []
+    private var lastScannedUploadProtectedID: UUID?
+    private enum PassDeferral: Error { case localEdits, committedEdits }
+
+    private func rememberProtectedIncoming(id: UUID, revision: Int, deleted: Bool, host: CloudSyncHost) {
+        guard host.cloudProtectsIncoming(id) else { return }
+        // Our own upload echoed through the feed needs no later manifest revisit.
+        if !deleted, let local = localMeeting(id: id, host: host), local.cloudRevision >= revision { return }
+        deferredIncomingIDs.insert(id)
+    }
+
+    private func deferForLocalEdits() throws {
+        pendingScan = true
+        needsReconcile = true
+        throw PassDeferral.localEdits
+    }
     private var statusDirty = false
     private var requestedStatusRefresh = false
 
@@ -212,6 +237,13 @@ final class CloudSyncEngine: ObservableObject {
         pendingUploadCount = 0
         pendingRemovalCount = 0
         protectedMeetingCount = 0
+        waitingForLocalEdits = false
+        // A same-account credential replacement keeps its cursor. Reconcile once under
+        // the new authority before forgetting protected rows skipped by the old pass.
+        // On an account change the same flag safely checks only the new account.
+        needsReconcile = true
+        deferredIncomingIDs = []
+        lastScannedUploadProtectedID = nil
         pendingScan = true
         DebugLogger.shared.log(.app, "Cloud sync: passes invalidated (\(reason))")
     }
@@ -304,8 +336,18 @@ final class CloudSyncEngine: ObservableObject {
     /// Capture or final processing released a protected meeting. Reconcile skipped inbound
     /// rows as well as scanning its newly eligible durable transcript.
     func noteLifecycleChange() {
-        needsReconcile = true
-        noteLocalChange()
+        guard let host else { return }
+        let released = deferredIncomingIDs.filter { !host.cloudProtectsIncoming($0) }
+        if !released.isEmpty {
+            needsReconcile = true
+            deferredIncomingIDs.subtract(released)
+        }
+        // Finishing AI, leaving the screen, and releasing capture can fire separately.
+        // Only revisit the manifest for incoming rows we actually skipped. Durable AI
+        // commits already schedule their own scans through noteLocalChange.
+        if !released.isEmpty || lastScannedUploadProtectedID != host.cloudUploadProtectedMeetingID {
+            noteLocalChange()
+        }
     }
 
     /// App became active, the switch was turned on, or the user pressed Sync now.
@@ -374,6 +416,7 @@ final class CloudSyncEngine: ObservableObject {
             return
         }
         running = true
+        attemptedCursorRecovery = false
         var passes = 0
         repeat {
             rerunRequested = false
@@ -450,9 +493,19 @@ final class CloudSyncEngine: ObservableObject {
             }
             try check(context)
             lastSyncedAt = now()
+            waitingForLocalEdits = false
             phase = .idle
             if explicitPass { DiagnosticTimeline.shared.record(.cloudSucceeded, fields: ["attempt_id": diagnosticID]) }
             DebugLogger.shared.log(.app, "Cloud sync done reason=\(reason)")
+        } catch let deferral as PassDeferral {
+            guard isCurrent(context) else { rerunRequested = true; return }
+            switch deferral {
+            case .localEdits: waitingForLocalEdits = true
+            case .committedEdits: waitingForLocalEdits = false
+            }
+            phase = .idle
+            // Keep the previous completed-check timestamp and do not emit cloudSucceeded.
+            // A durable local save or the next poll will retry the preserved cursor.
         } catch CloudSyncError.superseded {
             // Another account or credential owns the engine now: nothing from this pass is
             // applied, and the new owner gets its own pass.
@@ -484,7 +537,16 @@ final class CloudSyncEngine: ObservableObject {
         case .cursorExpired:
             needsReconcile = true
             cursor = 0
-            rerunRequested = true
+            if attemptedCursorRecovery {
+                // A manifest watermark can itself be outside the retained feed during
+                // server churn. One immediate recovery is enough; keep reconciliation
+                // pending for the next poll/action rather than chaining five-pass runs.
+                rerunRequested = false
+                phase = .failed("Could not finish checking cloud changes. Will try again.")
+            } else {
+                attemptedCursorRecovery = true
+                rerunRequested = true
+            }
         case .proRequired:
             phase = .paused(.notPro)
             host?.cloudTierChanged(isPro: false)
@@ -536,6 +598,7 @@ final class CloudSyncEngine: ObservableObject {
             throw CloudSyncError.server(code: "local_scan_failed", status: 0)
         }
         let protected = host.cloudUploadProtectedMeetingID
+        lastScannedUploadProtectedID = protected
         var changed: [(Meeting, String)] = []
         var dirty: [Meeting] = []
         var skipped: Set<UUID> = []
@@ -664,7 +727,7 @@ final class CloudSyncEngine: ObservableObject {
             skippedMeetingIDs.insert(id)
             note(.skipped, meeting.title, "too large for the cloud, kept on this device")
         case .externalDuplicate(let existing):
-            guard !host.cloudProtectsIncoming(id) else { needsReconcile = true; return }
+            guard !host.cloudProtectsIncoming(id) else { deferredIncomingIDs.insert(id); return }
             // Same import on two devices: the cloud copy wins, this local duplicate goes.
             note(.deletedLocally, meeting.title, "same import already in the cloud, local copy replaced")
             try deleteLocal(meeting, host: host)
@@ -682,7 +745,7 @@ final class CloudSyncEngine: ObservableObject {
             }
         case .conflict(let state):
             if host.cloudProtectsIncoming(id) {
-                needsReconcile = true
+                deferredIncomingIDs.insert(id)
                 return
             }
             if state.deleted {
@@ -780,15 +843,13 @@ final class CloudSyncEngine: ObservableObject {
             if host.cloudModelContext?.hasChanges == true {
                 // UI edits can exist before their queued save calls noteLocalChange. Keep
                 // the cursor and retry after a durable save, without spinning on live audio.
-                pendingScan = true
-                needsReconcile = true
-                return
+                try deferForLocalEdits()
             }
             if localGeneration != localChangeGeneration {
                 pendingScan = true
                 needsReconcile = true
                 rerunRequested = true
-                return
+                throw PassDeferral.committedEdits
             }
             if !page.changes.isEmpty { statusDirty = true }
             try apply(page.changes, host: host)
@@ -803,6 +864,7 @@ final class CloudSyncEngine: ObservableObject {
         var inserted: [Meeting] = []
         var updated: [Meeting] = []
         var changed = false
+        for change in changes { rememberProtectedIncoming(id: change.id, revision: change.revision, deleted: change.deleted, host: host) }
         try save(host: host) {
             for change in changes where !host.cloudProtectsIncoming(change.id) && !host.isMeetingDeleted(change.id) {
                 let local = self.localMeeting(id: change.id, host: host)
@@ -858,14 +920,13 @@ final class CloudSyncEngine: ObservableObject {
         let manifest = try await transport.manifest()
         try check(pass)
         if host.cloudModelContext?.hasChanges == true {
-            pendingScan = true
-            needsReconcile = true
-            return
+            try deferForLocalEdits()
         }
         if localGeneration != localChangeGeneration {
+            pendingScan = true
             needsReconcile = true
             rerunRequested = true
-            return
+            throw PassDeferral.committedEdits
         }
         statusDirty = statusDirty || manifest.latestSeq > cursor
         note(.info, "Checked the cloud", "\(manifest.entries.filter { !$0.deleted }.count) meetings there")
@@ -874,6 +935,13 @@ final class CloudSyncEngine: ObservableObject {
         for meeting in host.cloudFetchMeetings(FetchDescriptor<Meeting>()) ?? [] { byID[meeting.id] = meeting }
         var toFetch: [UUID] = []
         var seen: Set<UUID> = []
+        for entry in manifest.entries { rememberProtectedIncoming(id: entry.id, revision: entry.revision, deleted: entry.deleted, host: host) }
+        let manifestIDs = Set(manifest.entries.map(\.id))
+        // Absence also carries meaning: a purged cloud row must become eligible to
+        // upload again once selection/final AI releases its inbound protection.
+        for (id, local) in byID where !manifestIDs.contains(id) && host.cloudProtectsIncoming(id) && local.cloudRevision > 0 {
+            deferredIncomingIDs.insert(id)
+        }
         try save(host: host) {
             for entry in manifest.entries where !host.cloudProtectsIncoming(entry.id) && !host.isMeetingDeleted(entry.id) {
                 seen.insert(entry.id)
@@ -928,20 +996,23 @@ final class CloudSyncEngine: ObservableObject {
             let states = try await transport.fetchMeetings(ids: batch)
             try check(pass)
             if context.hasChanges {
+                try deferForLocalEdits()
+            }
+            if states.contains(where: { state in
+                guard !state.deleted, !host.isMeetingDeleted(state.id), !host.cloudProtectsIncoming(state.id),
+                      let local = self.localMeeting(id: state.id, host: host) else { return false }
+                return fingerprints[state.id] != MeetingSyncDocument.fingerprint(of: local)
+            }) {
                 pendingScan = true
                 needsReconcile = true
-                return
+                rerunRequested = true
+                throw PassDeferral.committedEdits
             }
+            for state in states { rememberProtectedIncoming(id: state.id, revision: state.revision, deleted: state.deleted, host: host) }
             try save(host: host) {
                 for state in states where !state.deleted && !host.isMeetingDeleted(state.id) && !host.cloudProtectsIncoming(state.id) {
                     guard let document = state.document, let decoded = MeetingSyncDocument.decode(document) else { continue }
                     if let local = self.localMeeting(id: state.id, host: host) {
-                        if fingerprints[state.id] != MeetingSyncDocument.fingerprint(of: local) {
-                            self.pendingScan = true
-                            self.needsReconcile = true
-                            self.rerunRequested = true
-                            continue
-                        }
                         if local.syncExcluded {
                             self.retainExcludedMeeting(local, remoteRevision: state.revision, host: host)
                             continue

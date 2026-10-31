@@ -7007,6 +7007,7 @@ final class AppState: ObservableObject {
     /// action: with permission unanswered, declined or withdrawn it sends nothing and shows the
     /// permission sheet instead.
     func generateInsightsForMeeting(_ meeting: Meeting) async {
+        guard !finalizingInsightMeetingIDs.contains(meeting.id) else { return }
         if insightsMode == .training || privateModeEnabled {
             return
         }
@@ -7038,8 +7039,8 @@ final class AppState: ObservableObject {
         let summaryForContext = meeting.summaryText
         guard !transcript.isEmpty else { return }
         
-        var request = beginSavedAIRequest(meeting, scope: "insights")
         let selectedTemplate = meeting.insightTemplate ?? selectedInsightTemplate
+        var request = beginSavedAIRequest(meeting, scope: "insights", template: requestedMode == .template ? selectedTemplate : nil)
         historyInsightActivity = request.id
         isGeneratingInsights = true
         defer {
@@ -7200,7 +7201,7 @@ final class AppState: ObservableObject {
                 meeting.templateSections = templateInsights.templateSections
                 applied = true
                 markInsightsUpdated(.template, meeting: meeting)
-                request.input = savedAIInput(meeting)
+                request.input = savedAIInput(meeting, template: request.template)
             } catch {
                 guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (template): \(error.localizedDescription)")
@@ -7721,6 +7722,11 @@ final class AppState: ObservableObject {
             templateSuccessCount = 0
             templateCadenceAnchor = nil
             templateLastFiredSegmentCount = 0
+        }
+        if changed, !isRecording, !isFinalizingMeeting, let meeting = currentMeeting {
+            meeting.applyInsightTemplate(template)
+            meeting.templateSections = [:]
+            commit(.templateChange)
         }
         switchInsightsMode(to: .template)
     }
@@ -9042,8 +9048,17 @@ final class AppState: ObservableObject {
         includeSales: Bool,
         template: InsightTemplate? = nil
     ) async {
+        let ownsFinalizingFlag = finalizingInsightMeetingIDs.insert(meeting.id).inserted
+        defer {
+            if ownsFinalizingFlag {
+                finalizingInsightMeetingIDs.remove(meeting.id)
+                cloudSync.noteLifecycleChange()
+            }
+        }
         let completionID = beginMeetingCompletion(meeting)
         var request = beginSavedAIRequest(meeting, scope: "insights", resolvedNames: false)
+        let templateRequest = template.map { beginSavedAIRequest(meeting, scope: "final-template", resolvedNames: false, template: $0) }
+        defer { if let templateRequest { finishSavedAIRequest(templateRequest) } }
         let meetingIDAtRequest = meeting.id
         let requestAppMode = appMode
         let requestAPIKey = openaiApiKey
@@ -9052,8 +9067,7 @@ final class AppState: ObservableObject {
         let requestedModes = ["standard", "questions"] + (includeSales ? ["meddpicc"] : []) + (template == nil ? [] : ["template"])
         if var marker = meeting.webhookCompletion, marker.id == completionID {
             marker.requestedModes = requestedModes
-            meeting.webhookCompletion = marker
-            _ = commit(.finalInsights)
+            _ = persistWebhookCompletion(marker, on: meeting)
         }
         defer {
             let valid = savedAIRequestIsCurrent(request, meeting: meeting)
@@ -9234,7 +9248,10 @@ final class AppState: ObservableObject {
         
         // Template sections are specialist functionality too: only when the person enabled
         // the Templates view for this meeting.
-        if let template {
+        if let template, let templateRequest {
+            if !savedAIRequestIsCurrent(templateRequest, meeting: meeting) {
+                outcomes["template"] = .stale
+            } else {
             do {
                 guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(.app, "Skipping final template insights request (meeting changed/resumed/segments advanced)")
@@ -9255,7 +9272,7 @@ final class AppState: ObservableObject {
                         template: template,
                         previousTemplateSections: baseline.isEmpty ? nil : baseline,
                         requiresPermission: true,
-                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
+                        mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) && self.savedAIRequestIsCurrent(templateRequest, meeting: meeting) }
                     )
                     templateInsights = response.toLiveInsights(template: template)
                 } else {
@@ -9273,6 +9290,7 @@ final class AppState: ObservableObject {
                     return
                 }
 
+                guard savedAIRequestIsCurrent(templateRequest, meeting: meeting) else { throw CancellationError() }
                 let revertInsights = savedInsightRevert(meeting)
                 meeting.applyInsightTemplate(template)
                 if !templateInsights.templateSections.isEmpty {
@@ -9289,8 +9307,13 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Final insights complete (template): sections=\(templateInsights.templateSections.count)")
             } catch {
                 guard isFinalInsightsRequestStillCurrent() else { return }
+                if !savedAIRequestIsCurrent(templateRequest, meeting: meeting) {
+                    outcomes["template"] = .stale
+                } else {
                 DebugLogger.shared.log(.app, "Final insights FAILED (template): \(error.localizedDescription)")
                 enqueueDiagnosticEvent("insights_final_template_failed", category: .insights, level: .warning)
+                }
+            }
             }
         }
 
@@ -9350,16 +9373,20 @@ final class AppState: ObservableObject {
 
     }
     
+    var currentMeetingFinalAIInProgress: Bool {
+        currentMeeting.map { finalizingInsightMeetingIDs.contains($0.id) } ?? false
+    }
+
     func generateInsights() async {
-        guard let meeting = currentMeeting, !privateModeEnabled else { return }
+        guard let meeting = currentMeeting else { return }
+        if insightsMode == .training {
+            recomputeTrainingMetrics()
+            return
+        }
+        guard !privateModeEnabled, !currentMeetingFinalAIInProgress else { return }
         if !isRecording {
             guard !isFinalizingMeeting, await saveCurrentMeetingAndWait() else { return }
             await generateInsightsForMeeting(meeting)
-            return
-        }
-
-        if insightsMode == .training {
-            recomputeTrainingMetrics()
             return
         }
 

@@ -560,7 +560,7 @@ struct MeetingView_iOS: View {
                             HStack(spacing: 6) {
                                 Image(systemName: "arrow.clockwise")
                                     .font(.system(size: 10, weight: .semibold))
-                                Text("update")
+                                Text(appState.currentMeetingFinalAIInProgress ? "finishing" : "update")
                                     .font(.system(size: 11, weight: .semibold, design: .default))
                             }
                             .foregroundStyle(ColorPalette.Text.primary)
@@ -576,8 +576,8 @@ struct MeetingView_iOS: View {
                             )
                         }
                         .buttonStyle(.plain)
-                        .disabled(!canUpdateInsights || appState.isGeneratingInsights)
-                        .opacity((!canUpdateInsights || appState.isGeneratingInsights) ? 0.5 : 1)
+                        .disabled(!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress)
+                        .opacity((!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress) ? 0.5 : 1)
 
                         if appState.isGeneratingInsights {
                             HStack(spacing: 6) {
