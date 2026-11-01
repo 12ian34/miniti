@@ -55,3 +55,5 @@ The estimate assumes Standard short-context requests and default 30-minute cachi
 4. Linux [parity tracking](../../../miniti-linux/PLAN.md#tracking-managed-lightweight-luna-2026-10-31-local-only) records shared managed lightweight and standard routing and unchanged BYOK. Linux client gaps remain separate.
 
 The separate Retina DMG artwork was finalized through `fastlane mac dmg` after Ian explicitly authorized DMG notarization only. The release record has final bytes/hash/Sparkle signature and verification. The app was not recompiled; the IPA is unchanged. Ian subsequently authorized the release after review; the Mac installer and backend are published. iOS release status is recorded separately in the release record. Luna activation remains separate.
+
+App Store availability follow-up (2026-11-01): iOS 3.6.0 is now available. Both production Luna opt-ins were rechecked unset before the iOS metadata update. App availability does not activate either group; the separate observation and activation gate above still applies.

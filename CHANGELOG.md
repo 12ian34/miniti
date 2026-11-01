@@ -2,7 +2,7 @@
 
 ### 2026-10-31 - v3.6.0
 
-macOS is available. iPhone and iPad are awaiting App Review; 3.5.0 is the current App Store release.
+Available on Mac since 31 October 2026, and on iPhone and iPad since 1 November 2026.
 
 - new: (macOS and iOS) resend a failed webhook with the latest saved transcript and summary
 - improvement: (macOS) a dark installer with green hexagons

@@ -63,7 +63,7 @@ Help revision (shipped in v3.5.0): support identifiers are expanded in Help rath
 
 ## 3.6.0 saved-meeting delivery
 
-Released on macOS; iOS build 146 is waiting for App Review. Device waivers and limits remain in the release record.
+Released on macOS on 2026-10-31 and iOS build 146 on 2026-11-01. Device waivers and limits remain in the release record.
 
 A stopped meeting can upload its durable transcript without leaving the meeting screen. Final AI may continue in the background; later saved results upload normally. Incoming cloud replacements still wait while that meeting is selected or final AI owns it. A failed final transcript save keeps the protected/finalizing state and offers persistence retry.
 

@@ -1,6 +1,6 @@
 # Roadmap
 
-The single priority index for miniti Apple apps and shared `miniti-api` work. Reconciled after the macOS 3.5.0 release on 2026-10-30; public roadmap ordering reconciled on 2026-10-31. iOS 3.5.0 is confirmed live; macOS 3.6.0 is released and iOS 3.6.0 is waiting for App Review. Each linked plan owns its bounded scope, decisions and completion evidence; this file owns ordering. Linux keeps its own release line and implementation tracker, with explicit shared-contract handoffs.
+The single priority index for miniti Apple apps and shared `miniti-api` work. Reconciled after the macOS 3.5.0 release on 2026-10-30; public roadmap ordering reconciled on 2026-10-31. macOS 3.6.0 released on 2026-10-31; iOS 3.6.0 became available on 2026-11-01. Each linked plan owns its bounded scope, decisions and completion evidence; this file owns ordering. Linux keeps its own release line and implementation tracker, with explicit shared-contract handoffs.
 
 ## Baseline
 
@@ -21,7 +21,7 @@ Delivery evidence and Ian's reported device QA live in [3.5.0](releases/3.5.0.md
 
 ## Selected release: 3.6.0, sync, delivery, alert clarity and managed AI
 
-macOS **3.6.0 build 146** is released on 2026-10-31. The verified Retina DMG, Sparkle appcast, website and public docs are live. iOS build 146 was submitted at 17:39 UTC and is waiting for App Review, with automatic release after approval. Backend alert clarity and the two Luna opt-ins are deployed, with both Luna groups still disabled. Both remote Apple suites and backend CI passed. Ian explicitly waived the physical iPhone Settings gesture and clean cloud retest; previous webhook/resend waivers remain waivers, not passes. The [3.6.0 release record](releases/3.6.0.md) owns exact deployment, submission, checks and limitations. Test-foundation work and unrelated concurrent planning remain separate.
+macOS **3.6.0 build 146** is released on 2026-10-31. The verified Retina DMG, Sparkle appcast, website and public docs are live. iOS build 146 became available on 2026-11-01 at 00:27:33 UTC, confirmed through Apple’s public UK App Store lookup. Backend alert clarity and the two Luna opt-ins are deployed, with both Luna groups still disabled. Both remote Apple suites and backend CI passed. Ian explicitly waived the physical iPhone Settings gesture and clean cloud retest; previous webhook/resend waivers remain waivers, not passes. The [3.6.0 release record](releases/3.6.0.md) owns exact deployment, submission, checks and limitations. Test-foundation work and unrelated concurrent planning remain separate.
 
 - [Automatic sync and completed webhook delivery](plans/sync-and-delivery-reliability.md): Charlie on 3.4.0 reports needing Sync now, a recent sync timestamp with an unchanged count, and webhooks arriving before AI/cloud work. Code confirms stale count refresh and early `meeting.saved` delivery; the stopped-meeting eligibility exclusion is also established in code; Charlie’s exact sequence still needs reproduction. Owns S1–S3 and R5–R7: immutable in-flight delivery, resend from current saved data, and rejection of stale History AI results. These share one persistence/revision contract and must not be duplicated in another plan.
 - [Incident alert clarity](plans/incident-alert-clarity.md): distinguish historical evidence, current failures and unconfirmed recovery; correct event-count language and legacy capability assumptions. The already-deployed login-link fix is baseline, not unfinished work.
@@ -38,7 +38,7 @@ Scope confirmed after review: keep all S1–S3/R5–R7 in 3.6.0. The webhook car
 
 | Order | Plan | Why here / dependency | State |
 |---|---|---|---|
-| 1 | [Sync and delivery](plans/sync-and-delivery-reliability.md), [alert clarity](plans/incident-alert-clarity.md), [managed Luna](plans/lightweight-luna.md) | Resolve the reported automatic-sync/count and webhook-readiness paths; make deployed alerts actionable. Includes R5–R7 so stale AI cannot contaminate the corrected delivery path. | Mac build 146 released; iOS build 146 waiting for review; backend deployed with Luna disabled. Explicit waivers and remaining evidence are in the release record |
+| 1 | [Sync and delivery](plans/sync-and-delivery-reliability.md), [alert clarity](plans/incident-alert-clarity.md), [managed Luna](plans/lightweight-luna.md) | Resolve the reported automatic-sync/count and webhook-readiness paths; make deployed alerts actionable. Includes R5–R7 so stale AI cannot contaminate the corrected delivery path. | Mac and iOS build 146 released; backend deployed with Luna disabled. Explicit waivers and remaining evidence are in the release record |
 | 1a, next after 3.6.0 | [Test foundation](plans/test-foundation.md) | Complete T01/T06/T07/T14 and applicable T17 cleanup: isolated runners, insights-route coverage, real storage and shared contracts. Prerequisites needed by 3.6.0 may land earlier; the full bounded foundation precedes account-access and ownership work. | Selected follow-up 2026-10-31; version unassigned, foundation still open |
 | 2 | [Account access and recovery](plans/account-access.md) | Finish A2f → A3/A3a → A4/B6b and B6c labels, preserving existing users before changing what accounts own. Backend first; explicit sign-out choice decision and macOS 26 evidence required. | Planned, decisions/QA gates open |
 | 2, regression work | [Recovery and UI coverage](#test-audit-follow-through) | T11/T12 truthful journey assertions and a bounded UI/accessibility harness alongside access/recovery, after test isolation. Protect consent, Settings, restore and record/stop/history before ownership changes. | Planned 2026-10-31; write bounded implementation scope before starting; version unassigned |
@@ -112,13 +112,13 @@ The website is a customer-facing projection of this index. Keep `../minitidotapp
 
 | Public section | Source and order | Customer-facing scope |
 |---|---|---|
-| Latest release | Core order 1, macOS 3.6.0 released and iOS waiting for review | Automatic sync, clearer status, completed webhook processing/current-data resend and saved-edit protection. Preserve platform availability and release gates. |
+| Latest release | Core order 1, macOS and iOS 3.6.0 released | Automatic sync, clearer status, completed webhook processing/current-data resend and saved-edit protection. Preserve platform availability and release gates. |
 | Next | Core orders 2 then 3 | Easier account recovery/device management, then Watch import and sign-in link reliability. Order 1a test foundation still happens first internally. |
 | Later | Core orders 4, 5, 6, 8 and 9, then later product item 1 | Stable Pro/usage ownership, deliberate meeting copies, connection management, interrupted-recording protection, History/long-session performance, then bot-free Mac video. |
 | Exploring | Later product items 2–10, in order | Retain every public idea with its exploratory status and no release dates. |
 | Recently shipped | Release evidence and changelog | The full shipped-feature showcase, with per-platform availability and a link to the full changelog. Preserve the feature list and per-feature emojis. Show changelog-backed first-ship dates, noting later additions/platform launches separately. |
 
-Test infrastructure, registration internals, operational alerts, runtime/database migrations and cost accounting retain their full positions above but are omitted from public feature copy. Use outcomes rather than plan IDs, storage mechanics, customer reports or model rollout flags. Keep macOS 3.6.0 availability separate from pending iOS review. Both deployed Luna opt-ins remain disabled until separately activated.
+Test infrastructure, registration internals, operational alerts, runtime/database migrations and cost accounting retain their full positions above but are omitted from public feature copy. Use outcomes rather than plan IDs, storage mechanics, customer reports or model rollout flags. Record the separate 3.6.0 availability dates: macOS 2026-10-31 and iOS 2026-11-01. Both deployed Luna opt-ins remain disabled until separately activated.
 
 ## Release-sized plan rules
 

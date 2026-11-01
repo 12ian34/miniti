@@ -1,6 +1,6 @@
 # Automatic sync and completed webhook delivery
 
-Status: **released on macOS in 3.6.0 build 146**, 2026-10-31; iOS release pending App Review. Local full suites, remote Mac/iOS CI and signed installer verification passed. Ian explicitly waived the physical iPhone Settings gesture and clean cloud retest; webhook/resend waivers remain recorded as waivers. [Release evidence](../releases/3.6.0.md) owns exact publication/submission state. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Historical implementation and candidate evidence below are retained.
+Status: **released on macOS in 3.6.0 build 146**, 2026-10-31; iOS build 146 became available on 2026-11-01. Local full suites, remote Mac/iOS CI and signed installer verification passed. Ian explicitly waived the physical iPhone Settings gesture and clean cloud retest; webhook/resend waivers remain recorded as waivers. [Release evidence](../releases/3.6.0.md) owns exact publication/submission state. [Roadmap](../roadmap.md) owns priority. This plan owns S1–S3 and R5–R7 in full; R4 and R8 remain in [reliability](reliability.md). Historical implementation and candidate evidence below are retained.
 
 ## Customer report and evidence limits
 

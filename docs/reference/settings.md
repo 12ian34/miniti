@@ -4,7 +4,7 @@
 
 ## Navigation and layout
 
-Local 3.6.0 correction: the iOS Home gear uses the same Settings sheet as account/search requests. Settings owns its navigation stack; never push it inside the Home stack. Native Back and edge-back gestures pop a Settings page; Done at the root dismisses the sheet. Regular-width Settings keeps its sidebar/detail layout. Simulator Back/Done navigation was checked; physical-device gesture/animation QA remains pending.
+Released 3.6.0 correction: the iOS Home gear uses the same Settings sheet as account/search requests. Settings owns its navigation stack; never push it inside the Home stack. Native Back and edge-back gestures pop a Settings page; Done at the root dismisses the sheet. Regular-width Settings keeps its sidebar/detail layout. Simulator Back/Done navigation was checked; physical-device gesture/animation QA was explicitly waived for this release, not passed.
 
 Single-word destinations grouped Setup / Meetings / Connections / Privacy / Support. Account precedes Plan and billing; Sign out and Delete sit below billing. Cloud and Models are in Setup. Sending is no longer a separate destination; its overview is part of Privacy. API is in Connections and visible even when its setup prerequisites are missing. Support contains Help and About. Help shows support details expanded with a whole-report Copy action; Account no longer contains the support disclosure.
 
