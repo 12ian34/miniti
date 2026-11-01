@@ -1,6 +1,6 @@
 # Managed Luna model migration, 3.6.0
 
-Status: **deployed on 2026-10-31 with both Luna groups disabled**. Production `INSIGHTS_LIGHTWEIGHT_LUNA` and `INSIGHTS_STANDARD_LUNA` were verified unset before deployment, retaining previous managed models. Activation remains a separate authorized redeploy after the observation/review gate. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
+Status: **deployed on 2026-10-31 with both Luna groups disabled**. Production `INSIGHTS_LIGHTWEIGHT_LUNA` and `INSIGHTS_STANDARD_LUNA` were verified unset before deployment, retaining previous managed models. The baseline observation gate was completed on 2026-11-01 at 20:08 UTC; activation remains a separate authorized redeploy with production Luna verification. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
 
 ## Bounded decision
 
@@ -59,3 +59,6 @@ The separate Retina DMG artwork was finalized through `fastlane mac dmg` after I
 App Store availability follow-up (2026-11-01): iOS 3.6.0 is now available. Both production Luna opt-ins were rechecked unset before the iOS metadata update. App availability does not activate either group; the separate observation and activation gate above still applies.
 
 Observation review (2026-11-01 10:35 UTC): 17 post-rollout ops runs and 17 Deepgram runs returned HTTP 200; current provider state and public monitoring are healthy, with zero recorded server errors in 24 hours. Incident coverage remains incomplete. Both Luna opt-ins are still unset. The full day from the first incident baseline reaches the 17:45 UTC run today; activation remains pending that review. Current hourly OpenAI probes test the previous models, not Luna. The [release record](../releases/3.6.0.md#partial-luna-observation-review-2026-11-01-1035-utc) retains evidence and limits.
+
+
+Completed baseline review (2026-11-01 20:08 UTC): 27 consecutive ops runs spanning 26 hours and 26 Deepgram runs spanning 25 hours returned HTTP 200 with healthy logged check levels. Latest stored provider/spend state and public monitoring are healthy. Server errors in the last 24 hours are zero; diagnostic coverage remains incomplete. A single observed Deepgram balance HTTP 503 at 15:15 recovered at 16:15 while listen handshakes continued succeeding. Both Luna flags remain unset/off. The time-based observation prerequisite is complete; it does not establish Luna quality or authorize activation. See the [release record](../releases/3.6.0.md#completed-baseline-observation-2026-11-01).
