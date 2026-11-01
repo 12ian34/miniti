@@ -1,6 +1,6 @@
 # Managed Luna model migration, 3.6.0
 
-Status: **deployed on 2026-10-31 with both Luna groups disabled**. Production `INSIGHTS_LIGHTWEIGHT_LUNA` and `INSIGHTS_STANDARD_LUNA` were verified unset before deployment, retaining previous managed models. The baseline observation gate was completed on 2026-11-01 at 20:08 UTC; activation remains a separate authorized redeploy with production Luna verification. The [release record](../releases/3.6.0.md) owns rollout evidence. No commercial pricing change.
+Status: **both Luna groups enabled in production on 2026-11-01**, after Ian explicitly authorized activation and the baseline observation gate completed. `INSIGHTS_LIGHTWEIGHT_LUNA=on` and `INSIGHTS_STANDARD_LUNA=on` select Luna none; the incremental-quality kill switch remains unset. Synthetic production API checks passed. The [release record](../releases/3.6.0.md) owns deployment and validation evidence. No commercial pricing or client binary change. Earlier disabled-rollout entries below are historical.
 
 ## Bounded decision
 
@@ -62,3 +62,5 @@ Observation review (2026-11-01 10:35 UTC): 17 post-rollout ops runs and 17 Deepg
 
 
 Completed baseline review (2026-11-01 20:08 UTC): 27 consecutive ops runs spanning 26 hours and 26 Deepgram runs spanning 25 hours returned HTTP 200 with healthy logged check levels. Latest stored provider/spend state and public monitoring are healthy. Server errors in the last 24 hours are zero; diagnostic coverage remains incomplete. A single observed Deepgram balance HTTP 503 at 15:15 recovered at 16:15 while listen handshakes continued succeeding. Both Luna flags remain unset/off. The time-based observation prerequisite is complete; it does not establish Luna quality or authorize activation. See the [release record](../releases/3.6.0.md#completed-baseline-observation-2026-11-01).
+
+Authorized activation (2026-11-01): both production flags are now `on`, with the legacy incremental-quality flag unset. Eight signed production API requests verified the six selected paths, ambiguous speaker naming and unchanged Questions routing. All succeeded without retry/fallback; 728 tests and remote CI passed. The hourly provider probe now includes Luna none once for either/both opt-ins, while preserving the previous models. Public model docs and Linux tracking are updated. See [activation evidence](../releases/3.6.0.md#both-luna-groups-activated-and-verified-2026-11-01) for revisions, limits, rollback and the pending first scheduled Luna probe.

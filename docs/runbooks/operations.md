@@ -52,3 +52,7 @@ Incident emails now link to `/admin?device_id=<UUID>#client-diagnostics` through
 The 2026-10-30 11:45 run sent four recording alerts based on 2026-10-29 events on 3.4.0, not four new failures at send time. Shipped 3.4.0 does not emit the strong `recording_recovered` event; later legacy healthy/reconnect events do not prove transcript recovery. Distinguish evidence age, receipt delay and current failure. [Next-release alert plan](../plans/incident-alert-clarity.md) records the limitation.
 
 For stale cloud counts or early webhooks, use [sync/delivery investigation](../plans/sync-and-delivery-reliability.md): check actual remote presence and event type/revision before interpreting a recent "Last synced" timestamp or a receiver's cloud lookup as proof of successful completion.
+
+## Active model probes, 2026-11-01
+
+Both managed Luna groups are now enabled. The hourly OpenAI check probes GPT-5 mini, GPT-5.4 mini and Luna once each; central insights routing adds Luna only while either opt-in is enabled. Luna uses reasoning none, previous models keep low reasoning, and all probes use tiny synthetic inputs with `store: false`. Read `checks.openai.data.models` and its `checked_at` before claiming fresh per-model evidence. HTTP success proves access, not transcript accuracy. No customer text is used. The [3.6.0 activation record](../releases/3.6.0.md#both-luna-groups-activated-and-verified-2026-11-01) separates live API smoke results from later hourly observations.
