@@ -17,14 +17,14 @@ Website: [miniti.app](https://miniti.app) · Docs: [miniti.app/docs](https://min
 ## What it does
 
 - **Records without a bot.** On the Mac it captures your microphone and the system audio of Zoom, Meet, Teams or any call on separate channels, so nobody sees a "miniti has joined" notice. On iPhone and iPad it records the room.
-- **Transcribes live, with names.** Deepgram Nova-3 transcription in 11 languages with speaker separation on both channels, including several people sharing one microphone. miniti works out real names from the conversation and your calendar, so "Speaker 2" becomes "Sam". Optional on-device speaker separation runs NVIDIA's Nemotron model on Apple silicon and never sends the speaker decisions anywhere. From 2.12.0 the Mac app can transcribe on the Mac too, with NVIDIA's Nemotron 3.5 speech model, in 8 of the 11 languages, so audio never leaves the machine for the words.
-- **Keeps a meeting private when you ask.** Private mode (macOS, Settings → Privacy) runs both models on the Mac and turns off every feature that needs a model in the cloud. You keep the transcript, who said what, coaching, history, search, export and calendar. Nothing about the meeting leaves the Mac.
+- **Transcribes live, with names.** Deepgram Nova-3 transcription in 11 languages with speaker separation on both channels, including several people sharing one microphone. miniti works out real names from the conversation and your calendar, so "Speaker 2" becomes "Sam". Optional on-device speaker separation runs NVIDIA's Nemotron model on Apple silicon and processes speaker audio locally. From 2.12.0 the Mac app can transcribe on the Mac too, with NVIDIA's Nemotron 3.5 speech model, in 8 of the 11 languages, so audio never leaves the machine for the words.
+- **Keeps a meeting private when you ask.** Private mode (macOS, Settings → Privacy) runs both models on the Mac and turns off every feature that needs a model in the cloud. You keep the transcript, who said what, coaching, history, search, export and calendar. Configured calendar, webhook and CRM connections remain available. Private mode does not block exports.
 - **Writes the summary as you go.** Summary, discussion flow, action items, key decisions and topics update during the meeting, then a final pass runs when you stop. Questions mode suggests incisive things to ask next.
 - **Coaches how you speak.** Filler words, talk ratio, pace, longest monologue, questions asked and clarity, per meeting and as trends over time, with grounded examples from your own transcripts.
 - **Specialist views when you want them.** Sales analysis with the eight MEDDPICC fields, live templates such as BANT, SPIN, an interview scorecard or a 1:1 (or your own, drafted from one line of description), and a Playbook that answers from your own docs with citations.
 - **Knows your calendar.** Google Calendar shows what's next, starts the right meeting at the right time, keeps the event's title and attendees, and hands off cleanly between back-to-back calls. Zoom, Teams, Meet and Slack calls are detected on the Mac so miniti can offer to take notes when a call starts and ask when it ends.
 - **Sends things where you work.** Attio and Twenty CRM, webhooks, markdown export to a folder, and a Granola import for your old notes.
-- **Keeps your data yours.** Transcripts, notes and insights are saved on your device. Audio goes to Deepgram for the words, text goes to OpenAI for the insights, and nothing else leaves the device. Bring your own API keys and miniti's servers are never in the path at all.
+- **Keeps your data yours.** Transcripts, notes and insights are saved on your device. Cloud transcription sends audio to Deepgram and AI sends context to OpenAI; optional Jev, cloud sync and exports have their own destinations, shown in Settings → Privacy. BYOK sends provider requests directly to your accounts; version checks and configured integrations can still use miniti's servers.
 
 <p align="center">
   <img src="https://miniti.app/images/screens/mac-06-coaching.webp" alt="Coaching view: focus for the next meeting, strengths, and trends across recent meetings" width="900">
@@ -44,8 +44,10 @@ More screenshots at [miniti.app/screens](https://miniti.app/screens).
 | | Minutes | Price |
 |---|---|---|
 | Free | 500 per month | free |
-| Pro | 5,000 per month | $5 per month, covers every device on your account |
+| Pro | 5,000 per month | $5 per month via Polar; $4.99 per month via the App Store |
 | Bring your own keys | unlimited | free, you pay Deepgram and OpenAI directly |
+
+Polar Pro covers all platforms on the same account; App Store Pro covers iPhone and iPad. Minutes are counted across the account.
 
 Start with an anonymous account and a recovery key, with up to five devices. Email is optional and can be added for web sign-in and device recovery; no password is required.
 
@@ -53,11 +55,11 @@ Start with an anonymous account and a recovery key, with up to five devices. Ema
 
 - **macOS 14.2 or later**, Intel or Apple silicon. Mic plus system audio, a red REC timer in the menu bar, a floating recording surface, keyboard shortcuts, CRM export, markdown auto-export, Sparkle updates.
 - **iOS and iPadOS 17 or later.** Background recording, Dynamic Island and Lock Screen Live Activity, adaptive iPad sidebar.
-- **Linux** lives in its own repo, [miniti-linux](https://github.com/12ian34/miniti-linux) (Tauri and Rust), and shares the same backend and features.
+- **Linux** lives in its own repo, [miniti-linux](https://github.com/12ian34/miniti-linux) (Tauri and Rust), and shares the backend and core features. It ships independently; cloud sync and the Apple on-device models are not in the released Linux app.
 
 ## Building from source
 
-You need Xcode 26 on macOS 15 or later.
+The current release toolchain is Xcode 27.1.
 
 ```sh
 git clone https://github.com/12ian34/miniti.git
@@ -67,9 +69,9 @@ open Miniti.xcodeproj
 
 Pick the `Miniti` scheme for the Mac app or `MinitiMobile` for iPhone and iPad, then build and run. The first build fetches the 190 MB Nemotron speaker model from Hugging Face into `Miniti/Resources/NemotronDiarizer/` (pinned and checksummed by `scripts/fetch-nemotron-model.sh`); it needs the network once.
 
-A local build runs in bring-your-own-keys mode: open Settings and enter your [Deepgram](https://deepgram.com) and [OpenAI](https://platform.openai.com) API keys. Managed mode talks to miniti's hosted backend and needs a device enrolment that only shipped builds can complete.
+You can use your own [Deepgram](https://deepgram.com) and [OpenAI](https://platform.openai.com) API keys in Settings. Managed mode uses per-install device enrolment with miniti's hosted backend; no shared backend secret is compiled into the app.
 
-Tests (the same sources run against both apps):
+Tests use the isolated `Testing` configuration by default. Hardware tests remain opt-in. The same sources run against both apps:
 
 ```sh
 fastlane mac test

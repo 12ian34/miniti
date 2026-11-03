@@ -53,6 +53,8 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Work on Linux | [../miniti-linux/AGENTS.md](../miniti-linux/AGENTS.md) / [PLAN.md](../miniti-linux/PLAN.md), a shipped client on its own release line |
 | Evaluate Android | [Historical proposal](docs/research/android-original-plan.md), requires re-planning; shared app secret/lockstep versions below are obsolete |
 
+Public documentation audit (2026-11-03, local only): [page register and validation](docs/research/public-docs-audit-2026-11-03.md) covers all 48 public docs pages, Apple/Linux READMEs and duplicated website copy. The external Attio listing still needs a publication-time correction; 3.7.0 remains upcoming.
+
 [README.md](README.md) is the public repository introduction; end-user documentation lives at `https://miniti.app/docs` and the public-facing changelog at `https://miniti.app/changelog`. This file (`AGENTS.md`) is the dev-facing entry point.
 
 Public roadmap alignment (2026-10-31): [the roadmap](docs/roadmap.md#public-roadmap-projection) owns the customer-facing order and all ten retained product ideas. Mirror priority/status changes into `../minitidotapp/roadmap/index.html` and its `llms-full.txt` roadmap; keep internal prerequisites in this repo. Video is planned later; the other nine ideas remain exploratory. Ordering is not implementation or release approval. Preserve the website's full recently shipped feature showcase, emojis and changelog-backed ship dates beside each feature, as Ian requested.
