@@ -29,19 +29,23 @@ enum WatchVoiceDiarization {
         guard !samples.isEmpty else { return nil }
         let collector = appState.makeVoicePrintCollector()
         guard let timeline = diarization.beginSession(sources: [.microphone], collector: collector) else { return nil }
+        guard let sessionID = diarization.activeSessionID else { return nil }
         let chunk = 16_000
         var offset = 0
         var first = true
         while offset < samples.count {
             let end = min(samples.count, offset + chunk)
-            diarization.ingest(samples: Array(samples[offset..<end]), source: .microphone)
+            guard await diarization.ingestPrerecorded(samples: Array(samples[offset..<end]), source: .microphone, expectedID: sessionID) else {
+                await diarization.endSessionAndWait(expectedID: sessionID)
+                return nil // Preserve Deepgram labels; never learn from incomplete local work.
+            }
             if first { timeline.markSocketStart(); first = false }
             offset = end
-            // Keep the main actor responsive for a long file.
-            if offset % (chunk * 30) == 0 { await Task.yield() }
         }
-        await diarization.endSessionAndWait()
+        await diarization.endSessionAndWait(expectedID: sessionID)
+        guard timeline.isReliable else { return nil }
         if let collector { await collector.finish() }
+        guard timeline.isReliable, !Task.isCancelled else { return nil }
 
         // Words to local speakers, splitting an utterance where the local label changes.
         var segments: [WatchTranscriptionClient.TranscriptSegmentDraft] = []

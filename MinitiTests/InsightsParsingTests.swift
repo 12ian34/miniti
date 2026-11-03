@@ -556,13 +556,171 @@ final class InsightsParsingTests: XCTestCase {
     // MARK: - OpenAIModel enum
 
     func testOpenAIModelRawValue() {
-        XCTAssertEqual(OpenAIModel.gpt5Mini.rawValue, "gpt-5-mini-2025-08-07")
+        XCTAssertEqual(OpenAIModel.gpt6Luna.rawValue, "gpt-6-luna")
         XCTAssertEqual(OpenAIModel.gpt54Mini.rawValue, "gpt-5.4-mini-2026-03-17")
     }
 
     func testOpenAIModelRoundtrip() throws {
-        let encoded = try JSONEncoder().encode(OpenAIModel.gpt5Mini)
+        let encoded = try JSONEncoder().encode(OpenAIModel.gpt6Luna)
         let decoded = try JSONDecoder().decode(OpenAIModel.self, from: encoded)
-        XCTAssertEqual(decoded, .gpt5Mini)
+        XCTAssertEqual(decoded, .gpt6Luna)
+    }
+}
+
+// Verify actual direct-client request bytes, not just the model enum.
+extension InsightsParsingTests {
+    @MainActor
+    private func checkBYOKRequest(
+        model: String, reasoning: String, response: String = "{}", responsesAPI: Bool = false,
+        run: (InsightsService) async throws -> Void
+    ) async throws {
+        let context = StubURLProtocol.Context()
+        context.script = { request in
+            XCTAssertEqual(request.url?.path, responsesAPI ? "/v1/responses" : "/v1/chat/completions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer synthetic-key")
+            let body = try! JSONSerialization.jsonObject(with: TestSupport.bodyData(of: request)) as! [String: Any]
+            XCTAssertEqual(body["model"] as? String, model)
+            if responsesAPI {
+                XCTAssertEqual((body["reasoning"] as? [String: String])?["effort"], reasoning)
+                return StubURLProtocol.json(200, #"{"output":[{"type":"message","content":[{"type":"output_text","text":"Grounded answer","annotations":[]}]}]}"#)
+            }
+            XCTAssertEqual(body["reasoning_effort"] as? String, reasoning)
+            XCTAssertEqual((body["response_format"] as? [String: String])?["type"], "json_object")
+            let data = try! JSONSerialization.data(withJSONObject: ["choices": [["message": ["content": response]]]])
+            return StubURLProtocol.json(200, String(decoding: data, as: UTF8.self))
+        }
+        let session = TestSupport.stubbedSession(context: context)
+        defer { session.invalidateAndCancel() }
+        try await run(InsightsService(session: session))
+        XCTAssertEqual(context.requests.count, 1, "one selected model, no cross-model retry")
+    }
+
+    @MainActor
+    func testBYOKFullAndIncrementalWorkloadsUseSupportedModelAndExplicitReasoning() async throws {
+        let text = "[Sasha] We agreed the budget and will send the proposal on Friday."
+        let payload = MinitiAPIService.IncrementalInsightsPayload(
+            strategy: "delta_recent_window_v1", fullSegmentCount: 2, ackedSegmentCount: 1,
+            deltaSegmentCount: 1, recentSegmentCount: 2, transcriptDelta: text, recentTranscript: text,
+            rollingState: .init(summary: "Earlier budget", discussionFlow: [], actionItems: [], topics: [], suggestedTitle: nil, meddpicc: nil, questions: nil))
+        for mode in [InsightsMode.standard, .meddpicc, .questions, .template] {
+            for incremental in [false, true] {
+                let luna = mode == .standard
+                try await checkBYOKRequest(model: luna ? "gpt-6-luna" : "gpt-5.4-mini-2026-03-17", reasoning: luna ? "none" : "low") { service in
+                    _ = try await service.generateLiveInsights(
+                        transcript: text, existingSummary: nil, existingTitle: nil, mode: mode,
+                        apiKey: "synthetic-key", incrementalPayload: incremental ? payload : nil,
+                        template: mode == .template ? InsightTemplate.builtIn[0] : nil)
+                }
+            }
+        }
+    }
+
+    @MainActor
+    func testBYOKHelpersFinalSummaryAndGroundedTasksUseTheirSelectedModels() async throws {
+        let text = "[SpeakerID:0] I am Sasha. We agreed the budget and will send the proposal on Friday."
+        try await checkBYOKRequest(model: "gpt-6-luna", reasoning: "none", response: #"{"summary":"Agreed budget","action_items":[],"decisions":[],"topics":[]}"#) {
+            let result = try await $0.generateInsights(transcript: text, apiKey: "synthetic-key")
+            XCTAssertEqual(result.summary, "Agreed budget")
+        }
+        try await checkBYOKRequest(model: "gpt-6-luna", reasoning: "none", response: #"{"speakers":{"0":"Sasha"}}"#) {
+            let names = try await $0.inferSpeakerNames(transcript: text, candidates: [], apiKey: "synthetic-key")
+            XCTAssertEqual(names, ["0": "Sasha"])
+        }
+        try await checkBYOKRequest(model: "gpt-6-luna", reasoning: "none", response: #"{"topics":["Budget"]}"#) {
+            let topics = try await $0.extractDocsTopics(transcript: text, apiKey: "synthetic-key")
+            XCTAssertEqual(topics, ["Budget"])
+        }
+        try await checkBYOKRequest(model: "gpt-6-luna", reasoning: "none", response: #"{"current_topic":"Budget","questions_for_you":[],"recent_discussion":[],"key_decisions":[]}"#) {
+            _ = try await $0.generateCatchUp(recentTranscript: text, fullTranscript: nil, apiKey: "synthetic-key")
+        }
+        try await checkBYOKRequest(model: "gpt-6-luna", reasoning: "none", response: #"{"name":"Budget","summary":"Spending","sections":[{"title":"budget","guidance":"Agreed spending"}]}"#) {
+            _ = try await $0.draftInsightTemplate(description: "Budget review", apiKey: "synthetic-key")
+        }
+        try await checkBYOKRequest(model: "gpt-5.4-mini-2026-03-17", reasoning: "low") {
+            _ = try await $0.generateDocsCard(topic: "Budget", chunks: [.init(title: "Budget", url: "https://docs.example.test/budget", text: "Monthly limits")], transcript: text, apiKey: "synthetic-key")
+        }
+        try await checkBYOKRequest(model: "gpt-5.4-mini-2026-03-17", reasoning: "low", responsesAPI: true) {
+            _ = try await $0.generateInvestigation(focus: "Budget", meetingContext: text, scope: .web, codebaseContext: nil, referencedFiles: [], apiKey: "synthetic-key")
+        }
+    }
+
+    @MainActor
+    func testBYOKModelAccessFailureKeepsProviderExplanationAndDoesNotSwitchModels() async throws {
+        let context = StubURLProtocol.Context()
+        context.script = { _ in StubURLProtocol.json(404, #"{"error":{"code":"model_not_found","message":"Your project does not have access to gpt-6-luna."}}"#) }
+        let session = TestSupport.stubbedSession(context: context)
+        defer { session.invalidateAndCancel() }
+        do {
+            _ = try await InsightsService(session: session).generateInsights(transcript: "Synthetic budget discussion", apiKey: "synthetic-key")
+            XCTFail("access refusal must not be treated as a summary")
+        } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Your OpenAI key needs access to gpt-6-luna"))
+        }
+        XCTAssertEqual(context.requests.count, 1)
+    }
+}
+
+extension InsightsParsingTests {
+    @MainActor
+    func testLunaAccessMappingIsSpecificAndNeverRetries() async throws {
+        for (status, code, message, model, mapped) in [
+            (404, "model_not_found", "Missing model", OpenAIModel.gpt6Luna, true),
+            (400, "invalid_request_error", "No access to gpt-6-luna", .gpt6Luna, true),
+            (403, "permission_denied", "Project cannot use gpt-6-luna", .gpt6Luna, true),
+            (403, "permission_denied", "Project suspended", .gpt6Luna, false),
+            (429, "rate_limit", "Slow down for gpt-6-luna", .gpt6Luna, false),
+            (404, "other", "Unknown endpoint", .gpt6Luna, false),
+            (404, "model_not_found", "Missing model", .gpt54Mini, false)
+        ] {
+            let context = StubURLProtocol.Context()
+            context.script = { _ in StubURLProtocol.json(status, "{\"error\":{\"code\":\"\(code)\",\"message\":\"\(message)\"}}") }
+            let session = TestSupport.stubbedSession(context: context)
+            defer { session.invalidateAndCancel() }
+            do {
+                _ = try await InsightsService(session: session).generateInsights(transcript: "budget discussion", model: model, apiKey: "synthetic")
+                XCTFail("Expected refusal")
+            } catch {
+                XCTAssertEqual(AIRequestDiagnostics.category(error, status: status) == "model_access", mapped)
+                if mapped { XCTAssertTrue(error.localizedDescription.contains("Your OpenAI key needs access to gpt-6-luna")) }
+            }
+            XCTAssertEqual(context.requests.count, 1)
+        }
+    }
+
+    @MainActor
+    func testBYOKAccessErrorIsVisibleWithoutAutomaticDiagnostics() {
+        let state = AppState()
+        state.appModeRaw = AppMode.byok.rawValue
+        state.shareDiagnostics = true
+        state.diagnosticEventObserver = { _, _ in XCTFail("BYOK must not report automatically") }
+        state.reportAIRequestFailure(InsightsError.lunaAccessRequired, mode: "standard", stage: "final")
+        XCTAssertTrue(state.showBYOKModelAccessError)
+        XCTAssertEqual(DiagnosticTimeline.sanitize(["failure_category": "model_access"]), ["failure_category": "model_access"])
+    }
+}
+
+extension InsightsParsingTests {
+    @MainActor
+    func testFullQuestionsPromptMatchesManagedFixtureVerbatim() async throws {
+        struct Fixture: Decodable {
+            struct Question: Decodable { let transcript: String; let existing_summary: String?; let system: String; let user: String }
+            let questions: [Question]
+        }
+        let fixture = try JSONDecoder().decode(Fixture.self, from: Data(ContractFixtures.review370.utf8))
+        for row in fixture.questions {
+            let context = StubURLProtocol.Context()
+            context.script = { request in
+                let body = try XCTUnwrap(JSONSerialization.jsonObject(with: TestSupport.bodyData(of: request)) as? [String: Any])
+                let messages = try XCTUnwrap(body["messages"] as? [[String: String]])
+                XCTAssertEqual(messages.first?["content"], row.system)
+                XCTAssertEqual(messages.last?["content"], row.user)
+                return StubURLProtocol.json(200, #"{"choices":[{"message":{"content":"{\"questions\":[]}"}}]}"#)
+            }
+            let session = TestSupport.stubbedSession(context: context)
+            defer { session.invalidateAndCancel() }
+            _ = try await InsightsService(session: session).generateLiveInsights(transcript: row.transcript, existingSummary: row.existing_summary,
+                existingTitle: nil, mode: .questions, apiKey: "synthetic")
+            XCTAssertEqual(context.requests.count, 1)
+        }
     }
 }

@@ -87,7 +87,7 @@ final class DataFlowSummaryTests: XCTestCase {
 
         XCTAssertEqual(row(s, "account").status, .automatic)
         XCTAssertEqual(row(s, "account").group, .accountAndConnections)
-        XCTAssertEqual(row(s, "account").summary, "Your device id, app version and minutes used.")
+        XCTAssertEqual(row(s, "account").summary, "Your device id, app version and recording duration, including local and private recordings.")
         XCTAssertEqual(row(s, "diagnostics").status, .automatic)
         XCTAssertEqual(row(s, "diagnostics").summary, "Errors and reconnects, never transcript or audio.")
 
@@ -384,5 +384,19 @@ final class DataFlowSummaryTests: XCTestCase {
                 }
             }
         }
+    }
+}
+
+
+extension DataFlowSummaryTests {
+    func testHardwareDisclosureIsMacOnlyAndRespectsDiagnosticConsent() {
+        var input = DataFlowSummary.Inputs()
+        input.hardwareDiagnosticsAvailable = true
+        XCTAssertTrue(DataFlowSummary.build(input).rows.first { $0.id == "diagnostics" }?.details?.contains("RAM band") == true)
+        input.hardwareDiagnosticsAvailable = false
+        XCTAssertFalse(DataFlowSummary.build(input).rows.first { $0.id == "diagnostics" }?.details?.contains("RAM band") == true)
+        input.hardwareDiagnosticsAvailable = true
+        input.shareDiagnostics = false
+        XCTAssertNil(DataFlowSummary.build(input).rows.first { $0.id == "diagnostics" }?.details)
     }
 }

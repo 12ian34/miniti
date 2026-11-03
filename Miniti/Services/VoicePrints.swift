@@ -262,6 +262,15 @@ final class VoicePrintCollector: @unchecked Sendable {
     private var counts: [String: Int] = [:]
     private var seconds: [String: Double] = [:]
     private var pending = 0
+    private var invalidated = false
+
+    /// A failed separator cannot supply enrollment or matching evidence. Late
+    /// embedding completions must not repopulate its discarded snapshot.
+    func invalidate() {
+        lock.lock(); defer { lock.unlock() }
+        invalidated = true
+        ring = [:]; ringStart = [:]; pools = [:]; sums = [:]; counts = [:]; seconds = [:]
+    }
     /// Diagnostics: frames seen, with a dominant speaker, and exclusive.
     private var framesSeen = 0
     private var framesDominant = 0
@@ -276,6 +285,7 @@ final class VoicePrintCollector: @unchecked Sendable {
     /// Samples fed to the diarizer for `source`, in order. Call from the diarization queue.
     func noteAudio(source: TranscriptSource, samples: [Float]) {
         lock.lock(); defer { lock.unlock() }
+        guard !invalidated else { return }
         ring[source, default: []].append(contentsOf: samples)
         let cap = Int(Self.ringSeconds * OnDeviceSpeakerTimeline.sampleRate)
         if let buffer = ring[source], buffer.count > cap {
@@ -290,6 +300,7 @@ final class VoicePrintCollector: @unchecked Sendable {
         let frameSamples = Int(OnDeviceSpeakerTimeline.frameSeconds * OnDeviceSpeakerTimeline.sampleRate)
         var ready: [(String, [Float])] = []
         lock.lock()
+        guard !invalidated else { lock.unlock(); return }
         guard let buffer = ring[source] else { lock.unlock(); return }
         let start = ringStart[source] ?? 0
         framesSeen += dominant.count
@@ -325,7 +336,7 @@ final class VoicePrintCollector: @unchecked Sendable {
     private func record(key: String, vector: [Float]?, seconds windowSeconds: Double) {
         lock.lock(); defer { lock.unlock() }
         pending -= 1
-        guard let vector else { return }
+        guard !invalidated, let vector else { return }
         if var sum = sums[key] { for i in 0..<sum.count { sum[i] += vector[i] }; sums[key] = sum } else { sums[key] = vector }
         counts[key, default: 0] += 1
         seconds[key, default: 0] += windowSeconds
@@ -333,6 +344,7 @@ final class VoicePrintCollector: @unchecked Sendable {
 
     private func takeTails() -> [(String, [Float])] {
         lock.lock(); defer { lock.unlock() }
+        guard !invalidated else { return [] }
         var tails: [(String, [Float])] = []
         for (k, pool) in pools where Double(pool.count) / OnDeviceSpeakerTimeline.sampleRate >= Self.minimumTailSeconds {
             tails.append((k, pool))

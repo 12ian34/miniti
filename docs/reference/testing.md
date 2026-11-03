@@ -9,6 +9,14 @@ Covers JSON decoding, data models, pure computation, payload construction, the p
 
 The [dated test audit](../archive/test-quality-and-coverage-plan.md) records T01–T17. Its [disposition table](../archive/README.md#test-audit-disposition) assigns current owners; [test foundation](../plans/test-foundation.md) owns bounded infrastructure work, and feature regressions ship with each feature. Historical audit counts are not current coverage measurements.
 
+## Isolated hosted tests (3.7.0 work, 2026-11-03)
+
+Use the schemes' `Testing` configuration (`fastlane mac test`, `fastlane ios test`, or `xcodebuild test -configuration Testing`). Debug and Release are normal app configurations. Hosted test sources intentionally fail compilation without `MINITI_TEST_HOST`. Testing uses `com.miniti.app.testhost` / `com.miniti.mobile.testhost`, separate extension IDs/defaults, process-local credential storage and an in-memory launch store. AppState uses temporary delivery paths and isolated diagnostic preferences. It does not seed real API keys or start Sparkle/Watch launch services. A crash no longer requires restoring the installed app's defaults or credentials.
+
+Ordinary suites skip hardware capture/device switching. An explicit hardware run uses `MINITI_HARDWARE_TESTS=1` as an xcodebuild setting and still needs microphone permission and suitable devices. Most capture-policy tests inject startup callbacks and remain ordinary tests. The native silent-tap rebuild test is hardware-only. These skips do not validate live capture.
+
+`StubURLProtocol.Context` binds scripts/request capture to a session; `ResponseGate` suspends replies for controlled cancellation/order tests. Prefer those gates to time-based race guesses. `scripts/check-coverage-runner.py` proves xcodebuild failures propagate. Canonical synthetic wire fixtures live in `test-contracts/v1`; regenerate Swift only with `scripts/check-test-contracts.py --import-fixtures`. The backend's `scripts/test-wire-exchange.py --apple /path/to/miniti` runs the separate Swift/backend/Swift exchange. Its two I/O cases intentionally skip in ordinary suites and must execute in that lane. See [foundation evidence](../releases/3.7.0.md#local-foundation-evidence) for current counts and limits.
+
 ## Test files
 
 - **MinitiTests/MinitiAPIServiceTests.swift** – UsageInfo (snake/camelCase, string/numeric), SessionResponse (`access_token` / `temp_api_key` fallback, expiry rules), EndSessionResponse, AttioSendResponse, shared Attio/Twenty search-record decoding (including opportunity detail), ManagedInsightsResponse, AppleVerifyResponse, flexible date decoding, AttioMeetingPayload normalization, and explicit CRM task payload/deadline construction
@@ -179,7 +187,7 @@ Monitoring O1–O4, selective cloud privacy C1 and purchase return B6d are imple
 
 ### Interrupted hosted tests and preferences
 
-The test host shares the installed app's defaults domain. `TestRunSetup` restores a memory-only snapshot at normal bundle completion; forced termination cannot do that. During 3.6.0 preparation (2026-10-31), a HAL block required stopping the host and left the app showing BYOK. Before a personal-Mac hardware run, keep a protected durable snapshot of the current preferences; after an interruption verify restoration rather than guessing prior settings or using an old plist. Do not include preference values or API keys in logs. T01 in the [test-foundation plan](../plans/test-foundation.md) owns full defaults isolation and crash-safe recovery. App tests use isolated meeting stores; preference isolation is a separate unfinished requirement.
+Historical incident, superseded by the isolated Testing configuration above: on 2026-10-31 the hosted suite shared the installed defaults domain and relied on memory-only restoration. A forced termination during a HAL block left the app showing BYOK. Historical preferences could not be reconstructed from the old plist. Never reintroduce live-domain hosted tests or log preference values/API keys.
 
 
 ### Account-email CI race correction, 2026-10-31
@@ -189,3 +197,10 @@ The [3.5.0 iOS run](https://github.com/12ian34/miniti/actions/runs/41055715196/j
 The test now starts from an idle read state and holds the actual A-account reconciliation response with an explicit gate. It switches to B before releasing that response, then asserts both the stale outcome and B's unchanged email state. Add, remove and failed-add scenarios are separate tests. No production code or workflow assertion was relaxed; the generalized shared URLProtocol isolation work remains in T01. A passing local run is not a passing GitHub run until the change is pushed and CI executes it.
 
 Validation: 19 account-email tests passed on iOS and 19 on macOS, zero failures; all three held-reconciliation cases repeated 20 times each on iOS (60 executions, zero failures). Xcode 27.1, iPhone Duo/iOS 27.1 simulator. Logs: `/tmp/miniti-ci-email-focused-ios.log`, `/tmp/miniti-ci-email-repeat-ios.log`, `/tmp/miniti-ci-email-focused-mac.log`. Test-only change, no build-145 repackaging required. GitHub verification remains pending the next push; the failed historical run has not been rerun or hidden.
+
+
+### 3.7.0 combined validation
+
+The [release record](../releases/3.7.0.md#combined-local-validation-2026-11-03) owns final counts, result bundles and remaining physical/provider gates. Both full suites ran in `Testing`, including iPhone 16/iOS 27.0 through the project runner. Device-panel discovery blocked interactive inspection, not that runner. No Duo result is used for the final candidate.
+
+The three optional real-model checks also ran on M5 Pro. Use `TEST_RUNNER_MINITI_NEMOTRON_E2E` and `TEST_RUNNER_MINITI_NEMOTRON_ASR_E2E` with a canonical mono PCM16/16 kHz WAV, and `TEST_RUNNER_MINITI_AMI_WAV` with the existing full AMI headset mix for voice recognition. The diarization harness feeds at capture pace; the prerecorded voice harness waits for bounded chunks instead of overwhelming the live queue. Do not enable real microphone/device-switch tests in the ordinary suite. Wire I/O cases run in their dedicated Swift/backend/Swift lane, where a completion artifact is required.

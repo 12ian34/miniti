@@ -1,6 +1,6 @@
 # Local transcription, speakers, voice prints and Jev
 
-Current optional capabilities, reconciled 2026-10-27. Model evaluations are dated evidence in [research](../research/local-transcription-research.md), not blanket quality promises. No default-on change or new model is authorized here.
+Current optional capabilities, reconciled 2026-10-27. Model evaluations are dated evidence in [research](../research/local-transcription-research.md), not blanket quality promises. The selected 3.7.0 [Mac speaker reliability/diagnostics plan](../plans/local-speakers-default.md) retains failure-handling fixes and device diagnostics. Ian revised the scope on 2026-11-03 to keep local separation off by default in 3.7.0, preserving existing choices; default-on is deferred until M1 testing. iOS defaults and voice-recognition settings remain unchanged.
 
 ## Local transcription
 
@@ -12,7 +12,7 @@ A mid-session local engine failure can stop transcription while recording contin
 
 ## Local diarization
 
-Nemotron-3 diarization shipped optional/default off in 2.10.0. The 190 MB bundled model is pinned/checksummed by the build phase and requires its notices. Preserve source-clock alignment, socket offset, decoded-horizon coverage and the maturity gate. Current code requires at least 50% word-span coverage, then uses agreement without multiplying by coverage; slots mature after 3 seconds. Borrowed labels use confidence 0.3 and a maximum 3-second lookback; do not restore the rejected confidence calculation from the early plan. Local speaker mapping must not be forced through cloud clone-promotion rules that suppress real local turns. On failure retain the documented fallback rather than claiming continuous local separation. [Measured fixes and model contract](../archive/on-device-diarization-plan.md).
+Nemotron-3 diarization shipped optional/default off in 2.10.0. The 190 MB bundled model is pinned/checksummed by the build phase and requires its notices. Preserve source-clock alignment, socket offset, decoded-horizon coverage and the maturity gate. Current code requires at least 50% word-span coverage, then uses agreement without multiplying by coverage; slots mature after 3 seconds. Borrowed labels use confidence 0.3 and a maximum 3-second lookback; do not restore the rejected confidence calculation from the early plan. Local speaker mapping must not be forced through cloud clone-promotion rules that suppress real local turns. Local 3.7.0 failure handling keeps provider separation for a cloud session whose local models are not ready at start. Mid-session local failure instead invalidates labels and displays unavailable separation; it does not restore provider diarization. Later words use a fresh Unknown speaker bucket, and failed voice evidence is discarded. The [failure-handling contract](../plans/local-speakers-default.md#local-failure-handling-implementation-2026-11-03) owns queue/load/drain bounds and remaining physical validation. [Measured fixes and model contract](../archive/on-device-diarization-plan.md).
 
 ## Voice prints
 

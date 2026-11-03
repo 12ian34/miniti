@@ -39,6 +39,7 @@ struct DataFlowSummary: Equatable {
         var autoAttioSync = false
         var autoTwentySync = false
         var shareDiagnostics = true
+        var hardwareDiagnosticsAvailable = false
         var voicePrints = false
         var isRecording = false
         /// Latched when the session started; a preference change does not move a running engine.
@@ -291,8 +292,8 @@ struct DataFlowSummary: Equatable {
 
         // miniti itself.
         if managed {
-            rows.append(Row(id: "account", group: .accountAndConnections, title: "miniti (api.miniti.app)", status: .automatic, summary: "Your device id, app version and minutes used.", details: "Sign-in, the usage check before and after a recording, and the version check at launch. Nothing about what was said.", configure: Jump(label: "Account", target: "account.apiMode")))
-            rows.append(Row(id: "diagnostics", group: .accountAndConnections, title: "miniti diagnostics", status: i.shareDiagnostics ? .automatic : .off, summary: i.shareDiagnostics ? "Errors and reconnects, never transcript or audio." : "Share Diagnostics is off.", details: i.shareDiagnostics ? "Reliability events with the device id and app version, so failures can be fixed without asking you." : nil, configure: Jump(label: "Diagnostics", target: "privacy.diagnostics")))
+            rows.append(Row(id: "account", group: .accountAndConnections, title: "miniti (api.miniti.app)", status: .automatic, summary: "Your device id, app version and recording duration, including local and private recordings.", details: "Managed recording usage is counted separately from Share Diagnostics. Local minutes do not use your Deepgram allowance. Reports contain duration and engine, never audio, transcript or a private-mode flag. Offline or interrupted recordings can leave gaps.", configure: Jump(label: "Account", target: "account.apiMode")))
+            rows.append(Row(id: "diagnostics", group: .accountAndConnections, title: "miniti diagnostics", status: i.shareDiagnostics ? .automatic : .off, summary: i.shareDiagnostics ? "Errors and reconnects, never transcript or audio." : "Share Diagnostics is off.", details: i.shareDiagnostics ? ("Reliability events with the device id and app version, so failures can be fixed without asking you." + (i.hardwareDiagnosticsAvailable ? " On Mac, this includes coarse chip/model families, a RAM band and local-model readiness. No serial number or device name. The latest hardware snapshot expires within 30 days." : "")) : nil, configure: Jump(label: "Diagnostics", target: "privacy.diagnostics")))
         } else {
             rows.append(Row(id: "account", group: .accountAndConnections, title: "miniti (api.miniti.app)", status: .automatic, summary: "A version check at launch.", details: "The app version and platform, so the minimum-version gate can answer. No meeting content is involved.", configure: Jump(label: "Mode", target: "account.apiMode")))
         }
@@ -361,6 +362,7 @@ extension AppState {
         inputs.crmAvailable = false
         #else
         inputs.deviceName = "this Mac"
+        inputs.hardwareDiagnosticsAvailable = true
         inputs.crmAvailable = true
         #endif
         inputs.appMode = appMode

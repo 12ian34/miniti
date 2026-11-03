@@ -489,12 +489,14 @@ final class AppState: ObservableObject {
     enum AudioRecoveryState: String {
         case healthy
         case recovering
+        case awaitingTranscript
         case degraded
         
         var label: String {
             switch self {
             case .healthy: return "audio healthy"
             case .recovering: return "recovering audio..."
+            case .awaitingTranscript: return "waiting for transcript"
             case .degraded: return "audio degraded"
             }
         }
@@ -1279,7 +1281,7 @@ final class AppState: ObservableObject {
         let transcript = meeting.fullTranscript
         let language = meeting.language
         guard !transcript.isEmpty else { return [:] }
-        let model = OpenAIModel.gpt5Mini
+        let model = OpenAIModel.gpt54Mini
         if appMode == .managed, minitiAPIService != nil {
             let response = try await generateManagedInsightsWithRetry(
                 deviceId: DeviceIdentifier.getOrCreateDeviceId(), transcript: transcript,
@@ -1301,7 +1303,7 @@ final class AppState: ObservableObject {
     /// Draft a template from a description: managed through `/api/insights`, BYOK straight to
     /// OpenAI. The editor shows the result for editing; nothing is saved here.
     func draftInsightTemplate(from description: String) async throws -> InsightTemplateDraft {
-        let model = OpenAIModel.gpt5Mini
+        let model = OpenAIModel.gpt6Luna
         if appMode == .managed, let minitiAPIService {
             return try await minitiAPIService.draftInsightTemplate(
                 deviceId: DeviceIdentifier.getOrCreateDeviceId(),
@@ -1488,6 +1490,7 @@ final class AppState: ObservableObject {
         didSet {
             if !shareDiagnostics {
                 diagnosticsQueue.clear()
+                hardwareSnapshotAdmission = HardwareSnapshotAdmission()
             } else {
                 Task { await flushClientEvents(trigger: "setting enabled") }
             }
@@ -1553,12 +1556,23 @@ final class AppState: ObservableObject {
     @AppStorage("notifyOnUpcomingMeeting") var notifyOnUpcomingMeeting: Bool = false
     @AppStorage("autoInferSpeakerNames") var autoInferSpeakerNames: Bool = true
     /// Separate speakers with the on-device Nemotron model instead of Deepgram's diarizer.
-    /// Default off (beta). When the model is loaded, new sessions open the Deepgram socket
+    /// Default off. When the model is loaded, new sessions open the Deepgram socket
     /// without the diarization add-on and take speaker numbers from the on-device timeline.
     @AppStorage("onDeviceSpeakerSeparation") var onDeviceSpeakerSeparationEnabled: Bool = false
     /// On-device diarization (Nemotron-3 via FluidAudio). Always constructed; does nothing
     /// until `onDeviceSpeakerSeparationEnabled` prepares its models.
-    let onDeviceDiarization = OnDeviceDiarizationService()
+    let onDeviceDiarization: OnDeviceDiarizationService
+    enum SessionSpeakerState: String { case inactive, deepgram, onDevice = "on_device", unavailable }
+    @Published private(set) var sessionSpeakerState: SessionSpeakerState = .inactive
+    private var recordingSpeakerTimeline: OnDeviceSpeakerTimeline?
+    private var recordingSpeakerSessionID: UUID?
+    private var recordingSpeakerTranscribesOnDevice = false
+    private var recordingSpeakerSeparationRequested = false
+    static let unavailableSpeakerName = "Unknown speaker"
+    var speakerSeparationIssue: String? {
+        guard recordingSpeakerSeparationRequested, sessionSpeakerState == .unavailable, isRecording || isFinalizingMeeting else { return nil }
+        return "Speaker separation is unavailable for this recording. Recording continues."
+    }
 
     // Voice prints (3.2.0): see AppState+VoicePrints.swift and docs/archive/voice-prints-plan.md.
     @AppStorage("voicePrintSelfEnabled") var voicePrintSelfEnabled: Bool = false
@@ -1975,9 +1989,35 @@ final class AppState: ObservableObject {
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
     private var pendingSessionEndReports: [PendingSessionEndReport] = []
     private let pendingClientEventsDefaultsKey = "pendingClientEvents"
+    private let recordingUsageQueue = RecordingUsageQueue(fileURL: AppState.isRunningUnderXCTest ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Miniti/Usage/recording-v1.json"))
+    private var recordingUsageRetryTask: Task<Void, Never>?
+    private var recordingUsageOwner: RecordingUsageQueue.Owner? {
+        guard appMode == .managed, clientAuthManager.status.isEnrolled,
+              let account = clientAuthManager.status.accountID else { return nil }
+        return .init(deviceID: DeviceIdentifier.getOrCreateDeviceId().lowercased(), accountID: account)
+    }
+    private func flushRecordingUsage() async {
+        guard !Self.isRunningUnderXCTest, let minitiAPIService else { return }
+        let generation = clientAuthManager.credentialGeneration
+        await recordingUsageQueue.flush(currentOwner: { [weak self] in
+            guard let self, self.clientAuthManager.credentialGeneration == generation else { return nil }
+            return self.recordingUsageOwner
+        }, send: { report in try await minitiAPIService.sendRecordingUsage(report, credentialGeneration: generation) })
+        if recordingUsageRetryTask == nil, let owner = recordingUsageOwner,
+           recordingUsageQueue.pending.contains(where: { $0.owner == owner }) {
+            recordingUsageRetryTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(60)) } catch { return }
+                self?.recordingUsageRetryTask = nil
+                await self?.flushRecordingUsage()
+            }
+        }
+    }
+
     private let diagnosticsQueue = DiagnosticsQueue(defaults: AppState.isRunningUnderXCTest ? UserDefaults(suiteName: "miniti.test.diagnostics.\(UUID().uuidString)")! : .standard)
     var pendingClientEvents: [MinitiAPIService.ClientEventPayload] { diagnosticsQueue.events }
     private var clientEventsFlushTask: Task<Void, Never>?
+    private var hardwareSnapshotAdmission = HardwareSnapshotAdmission()
+    private var recordingRecoveryEvidence = RecordingRecoveryEvidence()
     private var recordingDiagnosticAttempt: RecordingDiagnosticAttempt?
     private let diagnosticsSessionId = UUID().uuidString
     private var isFlushingPendingSessionReports = false
@@ -2276,7 +2316,8 @@ final class AppState: ObservableObject {
         return longest
     }
     
-    init() {
+    init(diarizationService: OnDeviceDiarizationService? = nil) {
+        self.onDeviceDiarization = diarizationService ?? OnDeviceDiarizationService()
         // One-time migration from legacy boolean acceptance storage.
         if acceptedTermsVersion == 0, legacyHasAcceptedTerms {
             acceptedTermsVersion = 1
@@ -2297,7 +2338,7 @@ final class AppState: ObservableObject {
         // Seed default keys from Secrets.swift only in BYOK mode.
         // In managed mode, API calls go through the backend — user should
         // never see or need the app's own API keys.
-        if appMode == .byok {
+        if appMode == .byok, !Self.isRunningUnderXCTest {
             if deepgramApiKey.isEmpty {
                 deepgramApiKey = Secrets.deepgramApiKey
             }
@@ -2314,6 +2355,9 @@ final class AppState: ObservableObject {
             if openaiApiKey == Secrets.openaiApiKey {
                 openaiApiKey = ""
             }
+        }
+        onDeviceDiarization.onSessionFailure = { [weak self] id, reason in
+            self?.handleLocalSpeakerFailure(id: id, reason: reason)
         }
         setupServices()
         updateLogRedaction()
@@ -2356,6 +2400,7 @@ final class AppState: ObservableObject {
                 startAutoStartMonitoring()
                 await flushPendingSessionEndReports(trigger: "launch")
                 await flushClientEvents(trigger: "launch")
+                await flushRecordingUsage()
             }
         } else {
             // Check Google Calendar connection and fetch events
@@ -2394,6 +2439,20 @@ final class AppState: ObservableObject {
         audioCaptureService?.$isUsingFallbackInputDevice.receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.isUsingFallbackInputDevice = $0 }.store(in: &cancellables)
         #endif
+        onDeviceDiarization.$status
+            .map { status -> String in
+                switch status {
+                case .idle: return "off"
+                case .unsupported: return "unknown"
+                case .preparing: return "preparing"
+                case .ready: return "ready"
+                case .failed: return "failed"
+                }
+            }
+            .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.reportHardwareCapabilities() }
+            .store(in: &cancellables)
         refreshOnDeviceDiarizationAvailability()
         refreshOnDeviceTranscriptionAvailability()
         $meetingLanguage
@@ -2519,8 +2578,15 @@ final class AppState: ObservableObject {
     }
 
     private func handleTranscriptUpdate(_ update: DeepgramService.TranscriptUpdate) {
+        if update.speakerSeparationUnavailable, update.speakerTimelineID == recordingSpeakerTimeline?.id {
+            for id in Set(update.words.map(\.speaker)) where !liveSpeakerOverrides.contains(String(id)) {
+                liveSpeakerNames[String(id)] = Self.unavailableSpeakerName
+            }
+            currentMeeting?.speakerNames = liveSpeakerNames
+        }
         // Skip empty updates
         guard !update.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        recordingDiagnosticAttempt?.transcript = true
         lastTranscriptReceivedAt = CFAbsoluteTimeGetCurrent()
         noteSmartMeetingActivity(source: .transcript)
         
@@ -2577,7 +2643,10 @@ final class AppState: ObservableObject {
         }
     }
     
-    private func handleDeepgramConnectionState(_ state: DeepgramService.ConnectionState) {
+    func handleDeepgramConnectionState(_ state: DeepgramService.ConnectionState) {
+        // Combine delivery is asynchronous. A queued old state must not replace
+        // the current connection owner's work or manufacture a second failure.
+        guard state == deepgramService?.connectionState else { return }
         guard isRecording else {
             updateAudioRecoveryState()
             return
@@ -2585,6 +2654,12 @@ final class AppState: ObservableObject {
         
         switch state {
         case .connected:
+            // A connected notification queued before a starvation/manual retry
+            // still describes the socket being replaced, not its replacement.
+            if deepgramReconnectTask != nil,
+               !recordingRecoveryEvidence.accepts(connection: deepgramService?.diagnosticConnectionGeneration ?? 0) {
+                return
+            }
             deepgramReconnectTask?.cancel()
             deepgramReconnectTask = nil
             deepgramReconnectGeneration += 1
@@ -2602,13 +2677,14 @@ final class AppState: ObservableObject {
             enqueueDiagnosticEvent("deepgram_connection_error", category: .deepgram, level: .error)
             scheduleDeepgramReconnect(reason: "connection error")
         case .disconnected:
-            // If disconnected while recording, treat as transient and attempt reconnect.
+            guard deepgramReconnectTask == nil else { return } // The retry owner intentionally closed it.
+            // An unplanned close still has the existing bounded retry owner.
             enqueueDiagnosticEvent("deepgram_unexpected_disconnect", category: .deepgram, level: .warning)
             scheduleDeepgramReconnect(reason: "unexpected disconnect")
         }
     }
     
-    private func scheduleDeepgramReconnect(reason: String) {
+    func scheduleDeepgramReconnect(reason: String) {
         guard isRecording else { return }
         guard deepgramReconnectTask == nil else { return }
         guard let deepgramService else { return }
@@ -2618,6 +2694,18 @@ final class AppState: ObservableObject {
             return
         }
         lastDeepgramReconnectScheduledAt = now
+        recordingRecoveryEvidence.begin(at: ProcessInfo.processInfo.systemUptime,
+            connection: deepgramService.diagnosticConnectionGeneration, replacement: true)
+        recordingDiagnosticAttempt?.degraded = true
+        let reasonCode: String
+        switch reason {
+        case "connection error": reasonCode = "connection_error"
+        case "unexpected disconnect": reasonCode = "unexpected_close"
+        case "transcript starvation": reasonCode = "transcript_stall"
+        case "transcript still dead after reconnect gave up": reasonCode = "retry_exhausted"
+        case "manual retry": reasonCode = "manual"
+        default: reasonCode = "unknown"
+        }
         
         deepgramReconnectGeneration += 1
         let generation = deepgramReconnectGeneration
@@ -2627,12 +2715,12 @@ final class AppState: ObservableObject {
             "deepgram_reconnect_scheduled",
             category: .deepgram,
             level: .warning,
-            details: ["reason": reason]
+            details: ["recovery_reason": reasonCode]
         )
         
         deepgramReconnectTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.deepgramReconnectTask = nil }
+            defer { if generation == self.deepgramReconnectGeneration { self.deepgramReconnectTask = nil } }
             let backoffSeconds: [UInt64] = [1, 2, 5]
             
             for (idx, delay) in backoffSeconds.enumerated() {
@@ -2650,6 +2738,7 @@ final class AppState: ObservableObject {
                         "max_attempts": "\(backoffSeconds.count)"
                     ]
                 )
+                self.reportRecordingRecovery("recording_restart_planned", extra: ["recovery_reason": reasonCode, "attempt": String(idx + 1), "max_attempts": String(backoffSeconds.count)])
                 deepgramService.disconnect()
                 #if os(macOS)
                 if self.captureMicrophone && self.captureSystemAudio {
@@ -2668,6 +2757,7 @@ final class AppState: ObservableObject {
                 #endif
                 if !self.sessionTranscribesOnDevice {
                     let configured = await self.configureDeepgramCredentialForConnect()
+                    guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
                     guard configured else {
                         DebugLogger.shared.log(.app, "Deepgram reconnect skipped attempt \(idx + 1): credential unavailable")
                         continue
@@ -2682,21 +2772,17 @@ final class AppState: ObservableObject {
                     multichannel: useMultichannel,
                     monoSource: monoSource,
                     preserveSpeakerIdentities: true,
-                    onDeviceSpeakerTimeline: self.onDeviceDiarization.activeTimeline
+                    onDeviceSpeakerTimeline: self.recordingSpeakerTimeline
                 )
                 
-                // Give the socket a short window to establish before next retry.
-                for _ in 0..<12 {
-                    try? await Task.sleep(nanoseconds: 250_000_000)
-                    guard !Task.isCancelled else { return }
-                    guard generation == self.deepgramReconnectGeneration else { return }
-                    if deepgramService.connectionState == .connected {
-                        DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
-                        self.enqueueDiagnosticEvent("deepgram_reconnect_succeeded", category: .deepgram)
-                        self.lastDeepgramReconnectScheduledAt = 0
-                        self.updateAudioRecoveryState()
-                        return
-                    }
+                let connected = await deepgramService.waitForConnectionAttempt()
+                guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
+                if connected {
+                    DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
+                    self.enqueueDiagnosticEvent("deepgram_reconnect_succeeded", category: .deepgram)
+                    self.lastDeepgramReconnectScheduledAt = 0
+                    self.updateAudioRecoveryState()
+                    return
                 }
             }
             
@@ -3643,10 +3729,8 @@ final class AppState: ObservableObject {
                 category: .deepgram,
                 level: .warning,
                 details: [
-                    "gap_seconds": String(format: "%.1f", transcriptGap),
-                    "audio_gap_seconds": String(format: "%.1f", audioGap),
-                    "mic_level": String(format: "%.4f", microphoneLevel),
-                    "system_level": String(format: "%.4f", systemAudioLevel)
+                    "gap_seconds": String(Self.boundedDiagnosticGap(transcriptGap)),
+                    "audio_gap_seconds": String(Self.boundedDiagnosticGap(audioGap))
                 ]
             )
             scheduleDeepgramReconnect(reason: reason)
@@ -3680,29 +3764,59 @@ final class AppState: ObservableObject {
         }
         
         #if os(macOS)
-        // A connected socket and an active tap do not prove that either source is
-        // delivering PCM. In particular, an initial mic failure used to look healthy.
+        let requestedSystem = recordingDiagnosticAttempt?.system ?? captureSystemAudio
         if endingGrace != nil { return }
-        if microphoneCaptureIssue != nil, captureMicrophone {
+        #else
+        let requestedSystem = false
+        #endif
+        let requestedMic = recordingDiagnosticAttempt?.microphone ?? captureMicrophone
+        let recentCapture = audioCaptureService?.hasRecentCaptureBuffers(microphone: requestedMic, systemAudio: requestedSystem) == true
+        if let service = deepgramService {
+            let observed = recordingRecoveryEvidence.observe(connection: service.diagnosticConnectionGeneration,
+                connected: service.connectionState == .connected, transcriptAt: service.transcriptEvidenceUptime,
+                recentCapture: recentCapture)
+            if observed.connectionRestored { reportRecordingRecovery("recording_connection_restored") }
+            if observed.transcriptionResumed { reportRecordingRecovery("recording_transcription_resumed") }
+        }
+        // Connected transport does not establish capture, on either platform.
+        if microphoneCaptureIssue != nil, requestedMic {
             applyAudioRecoveryState(.degraded)
             return
         }
-        if audioCaptureService?.hasRecentCaptureBuffers(microphone: captureMicrophone, systemAudio: captureSystemAudio) != true {
+        if !recentCapture {
             let now = CFAbsoluteTimeGetCurrent()
             if systemAudioInactiveSince == 0 { systemAudioInactiveSince = now }
             applyAudioRecoveryState(now - systemAudioInactiveSince > 12 ? .degraded : .recovering)
             return
         }
         systemAudioInactiveSince = 0
-        #endif
         
-        applyAudioRecoveryState(.healthy)
+        applyAudioRecoveryState(recordingRecoveryEvidence.awaitingTranscript ? .awaitingTranscript : .healthy)
+    }
+
+    nonisolated static func boundedDiagnosticGap(_ value: TimeInterval) -> Int {
+        value.isFinite ? Int(max(0, min(86400, value))) : 86400
+    }
+
+    private func reportRecordingRecovery(_ name: String, extra: [String: String] = [:]) {
+        guard appMode == .managed, shareDiagnostics, !privateModeEnabled,
+              let attempt = recordingDiagnosticAttempt, let service = deepgramService else { return }
+        let progress = service.transportEvidence.snapshot
+        var fields = extra
+        fields.merge(["schema_version": "1", "attempt_id": attempt.id.uuidString,
+            "transcription_engine": attempt.route == "local" ? "on_device" : "deepgram",
+            "connection_generation": String(min(99_999_999, service.diagnosticConnectionGeneration)),
+            "recovery_generation": String(recordingRecoveryEvidence.generation),
+            "send_attempts": String(progress.attempts), "send_completions": String(progress.completions),
+            "local_ingest_attempts": String(progress.localIngests), "dropped_packets": String(progress.dropped)
+        ]) { _, new in new }
+        enqueueDiagnosticEvent(name, category: .audio, details: fields)
     }
     
     nonisolated static func recoverySeverity(_ state: AudioRecoveryState) -> Int {
         switch state {
         case .healthy: return 0
-        case .recovering: return 1
+        case .recovering, .awaitingTranscript: return 1
         case .degraded: return 2
         }
     }
@@ -3712,6 +3826,10 @@ final class AppState: ObservableObject {
         guard nextState != audioRecoveryState else { return }
 
         if nextState == .degraded {
+            if !recordingRecoveryEvidence.awaitingTranscript {
+                recordingRecoveryEvidence.begin(at: ProcessInfo.processInfo.systemUptime,
+                    connection: deepgramService?.diagnosticConnectionGeneration ?? 0, replacement: false)
+            }
             enqueueDiagnosticEvent("audio_recovery_degraded", category: .audio, level: .warning)
             if var attempt = recordingDiagnosticAttempt, !attempt.degraded {
                 attempt.degraded = true; recordingDiagnosticAttempt = attempt
@@ -3743,7 +3861,7 @@ final class AppState: ObservableObject {
                 self.sampleRecordingDiagnostics()
                 if var attempt = self.recordingDiagnosticAttempt, attempt.degraded,
                    self.audioCaptureService?.hasRecentCaptureBuffers(microphone: attempt.microphone, systemAudio: attempt.system) == true,
-                   attempt.sentPCM {
+                   attempt.sentPCM, !self.recordingRecoveryEvidence.awaitingTranscript {
                     attempt.degraded = false; self.recordingDiagnosticAttempt = attempt
                     self.enqueueDiagnosticEvent("recording_recovered", category: .audio, details: attempt.details)
                 }
@@ -4048,6 +4166,7 @@ final class AppState: ObservableObject {
             guard !rawText.isEmpty else { continue }
             let text = transcriptCorrector?.apply(to: rawText) ?? rawText
             receivedTranscriptContent = true
+            recordingDiagnosticAttempt?.transcript = true
 
             // Track this speaker
             detectedSpeakers.insert(segment.speaker)
@@ -4733,7 +4852,7 @@ final class AppState: ObservableObject {
                     deviceId: deviceId,
                     transcript: transcript,
                     docsMcpURL: mcpURL,
-                    model: OpenAIModel.gpt5Mini.rawValue,
+                    model: OpenAIModel.gpt6Luna.rawValue,
                     language: language
                 )
                 guard mayApply() else { return nil }
@@ -4755,7 +4874,8 @@ final class AppState: ObservableObject {
         } catch {
             guard mayApply() else { return nil }
             DebugLogger.shared.log(.app, "Docs topic extraction FAILED: \(error.localizedDescription)")
-            docsLookupError = (error as? DocsMCPService.MCPError)?.errorDescription
+            reportAIRequestFailure(error, mode: "docs_topics", stage: "helper")
+            docsLookupError = (error as? InsightsError)?.errorDescription ?? (error as? DocsMCPService.MCPError)?.errorDescription
                 ?? "Couldn't refresh docs topics. Check the MCP URL and your connection."
             return nil
         }
@@ -4764,6 +4884,12 @@ final class AppState: ObservableObject {
     /// Ground a single topic against the docs (managed or BYOK). Shared by the
     /// live and history lookup paths.
     private func resolveDocCard(topic: String, transcript: String, language: String) async -> DocCardOutcome {
+        await withAIObservation(stage: "helper") {
+            await observedResolveDocCard(topic: topic, transcript: transcript, language: language)
+        }
+    }
+
+    private func observedResolveDocCard(topic: String, transcript: String, language: String) async -> DocCardOutcome {
         guard let mcpURL = validatedDocsMCPURL else {
             return .failure("Add a docs server in Settings → Playbook.")
         }
@@ -4777,7 +4903,7 @@ final class AppState: ObservableObject {
                     deviceId: deviceId,
                     transcript: transcript,
                     docsMcpURL: mcpURL,
-                    model: OpenAIModel.gpt5Mini.rawValue,
+                    model: OpenAIModel.gpt54Mini.rawValue,
                     topic: topic,
                     requestSeq: seq,
                     language: language
@@ -4822,12 +4948,7 @@ final class AppState: ObservableObject {
                 return .transient("Docs service is busy. Tap to try again.")
             }
             DebugLogger.shared.log(.app, "Docs topic lookup FAILED: \(error.localizedDescription)")
-            enqueueDiagnosticEvent(
-                "insights_live_failed",
-                category: .insights,
-                level: .warning,
-                details: ["mode": "docs", "error": error.localizedDescription]
-            )
+            reportAIRequestFailure(error, mode: "docs", stage: "helper")
             let message = (error as? DocsMCPService.MCPError)?.errorDescription
                 ?? "Docs lookup failed. Check the MCP URL and your connection."
             return .failure(message)
@@ -5126,7 +5247,7 @@ final class AppState: ObservableObject {
                 // Legacy rows without source are not treated as system.
                 isSystem = false
             }
-            guard isSystem, !DeepgramService.isMicAppSpeakerID(segment.speaker) else { continue }
+            guard isSystem, liveSpeakerNames[String(segment.speaker)] != Self.unavailableSpeakerName, !DeepgramService.isMicAppSpeakerID(segment.speaker) else { continue }
             systemSpeakerCounts[segment.speaker, default: 0] += 1
         }
         guard systemSpeakerCounts.count == 1,
@@ -5198,7 +5319,7 @@ final class AppState: ObservableObject {
         }
 
         let candidates = speakerNameCandidates()
-        let model = OpenAIModel.gpt5Mini
+        let model = OpenAIModel.gpt6Luna
         DebugLogger.shared.log(
             .app,
             "Speaker-names request: mode=\(appMode.rawValue), segments=\(segmentCount), speakers=\(Set(finalSegments.map(\.speaker)).sorted()), candidates=\(candidates.count), transcriptChars=\(trimmed.count)"
@@ -5263,7 +5384,7 @@ final class AppState: ObservableObject {
             var merged = liveSpeakerNames
             var applied = 0
             var skippedOverrides: [String] = []
-            for (key, value) in supported where !liveSpeakerOverrides.contains(key) && !livePrintMatchedIDs.contains(key) {
+            for (key, value) in supported where !liveSpeakerOverrides.contains(key) && !livePrintMatchedIDs.contains(key) && liveSpeakerNames[key] != Self.unavailableSpeakerName {
                 merged[key] = value
                 applied += 1
             }
@@ -5277,6 +5398,7 @@ final class AppState: ObservableObject {
             )
         } catch {
             DebugLogger.shared.log(.app, "Speaker-names inference failed: \(error.localizedDescription)")
+            reportAIRequestFailure(error, mode: "speaker_names", stage: "helper")
         }
     }
 
@@ -5652,18 +5774,55 @@ final class AppState: ObservableObject {
 
     /// Start an on-device diarization session for the sources this recording captures, or
     /// nil (Deepgram diarizes) when the setting is off or the models are not ready.
-    private func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource) -> OnDeviceSpeakerTimeline? {
-        guard onDeviceSpeakerSeparationEnabled else { return nil }
+    func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource, transcribesOnDevice: Bool) -> OnDeviceSpeakerTimeline? {
         let sources: Set<TranscriptSource> = multichannel ? [.microphone, .system] : [monoSource]
-        return onDeviceDiarization.beginSession(sources: sources, collector: makeVoicePrintCollector())
+        recordingSpeakerTranscribesOnDevice = transcribesOnDevice
+        recordingSpeakerSeparationRequested = onDeviceSpeakerSeparationEnabled
+        var timeline: OnDeviceSpeakerTimeline?
+        recordingSpeakerSessionID = nil
+        if onDeviceSpeakerSeparationEnabled {
+            timeline = onDeviceDiarization.beginSession(sources: sources, collector: makeVoicePrintCollector())
+            if timeline != nil { recordingSpeakerSessionID = onDeviceDiarization.activeSessionID }
+        }
+        if timeline != nil { sessionSpeakerState = .onDevice }
+        else if transcribesOnDevice {
+            // Local-only capture has no provider diarizer to fall back to.
+            if recordingSpeakerSeparationRequested {
+                timeline = OnDeviceSpeakerTimeline(sources: sources)
+                timeline?.invalidate()
+            }
+            sessionSpeakerState = .unavailable
+        } else { sessionSpeakerState = .deepgram }
+        recordingSpeakerTimeline = timeline
+        reportSpeakerState(failure: timeline?.isReliable == false || (onDeviceSpeakerSeparationEnabled && timeline == nil) ? "not_ready" : nil)
+        return timeline
+    }
+
+    func handleLocalSpeakerFailure(id: UUID, reason: OnDeviceDiarizationService.Failure) {
+        guard recordingSpeakerSessionID == id, onDeviceDiarization.activeSessionID == id, isRecording || isFinalizingMeeting else { return }
+        sessionSpeakerState = .unavailable
+        livePrintSuggestions = [:]
+        reportSpeakerState(failure: reason.rawValue)
+    }
+
+    private func reportSpeakerState(failure: String?) {
+        guard shareDiagnostics, appMode == .managed, !privateModeEnabled else { return }
+        var fields = ["schema_version": "1", "speaker_engine": sessionSpeakerState.rawValue,
+                      "transcription_engine": recordingSpeakerTranscribesOnDevice ? "on_device" : "deepgram"]
+        if let failure { fields["speaker_failure"] = failure }
+        enqueueDiagnosticEvent(failure == nil ? "speaker_separation_state" : "speaker_separation_failed",
+                               category: .audio, level: failure == nil ? .info : .warning, details: fields)
     }
 
     /// Audio callback that feeds the on-device diarizer (when a session is active) and then
     /// Deepgram. Order matters: the diarizer clock advances before the socket sees the packet.
     private func makeAudioBufferHandler(multichannel: Bool, monoSource: TranscriptSource) -> @Sendable (Data) -> Void {
         let diarization = onDeviceDiarization
+        let speakerSessionID = recordingSpeakerSessionID
         return { [weak deepgramService] data in
-            diarization.ingest(data, multichannel: multichannel, monoSource: monoSource)
+            if let speakerSessionID {
+                diarization.ingest(data, multichannel: multichannel, monoSource: monoSource, expectedID: speakerSessionID)
+            }
             deepgramService?.sendAudio(data)
         }
     }
@@ -5729,6 +5888,12 @@ final class AppState: ObservableObject {
 
     @MainActor
     private func fetchZonedOutCatchUp(userInitiated: Bool) async {
+        await withAIObservation(stage: "helper") {
+            await observedFetchZonedOutCatchUp(userInitiated: userInitiated)
+        }
+    }
+
+    private func observedFetchZonedOutCatchUp(userInitiated: Bool) async {
         if isGeneratingCatchUp {
             DebugLogger.shared.log(.app, "Zoned out catch-up skipped: already in flight")
             return
@@ -5769,7 +5934,7 @@ final class AppState: ObservableObject {
                     deviceId: deviceId,
                     recentTranscript: recentTranscript,
                     fullTranscript: fullTranscript,
-                    model: OpenAIModel.gpt5Mini.rawValue,
+                    model: OpenAIModel.gpt6Luna.rawValue,
                     language: meetingLanguage
                 )
             } else {
@@ -5781,7 +5946,7 @@ final class AppState: ObservableObject {
                 result = try await insightsService.generateCatchUp(
                     recentTranscript: recentTranscript,
                     fullTranscript: fullTranscript,
-                    model: .gpt5Mini,
+                    model: .gpt6Luna,
                     apiKey: openaiApiKey,
                     language: meetingLanguage
                 )
@@ -5811,18 +5976,14 @@ final class AppState: ObservableObject {
             _ = userInitiated
         } catch {
             // Cancellation is not a failure — the user (or a new request) cancelled us.
-            if Task.isCancelled || (error is CancellationError) {
+            if Task.isCancelled || AIRequestDiagnostics.category(error) == "cancelled" {
                 DebugLogger.shared.log(.app, "Zoned out catch-up cancelled")
+                reportAIRequestFailure(error, mode: "catchup", stage: "helper")
                 isGeneratingCatchUp = false
                 return
             }
             DebugLogger.shared.log(.app, "Zoned out catch-up FAILED: \(error.localizedDescription)")
-            enqueueDiagnosticEvent(
-                "insights_catchup_failed",
-                category: .insights,
-                level: .warning,
-                details: ["error": error.localizedDescription]
-            )
+            reportAIRequestFailure(error, mode: "catchup", stage: "helper")
             if zonedOutCatchUp == nil {
                 zonedOutCatchUpError = "couldn't generate catch-up: \(error.localizedDescription.lowercased())"
             } else {
@@ -5851,7 +6012,19 @@ final class AppState: ObservableObject {
         existingSummary: String?,
         existingTitle: String?
     ) async -> LiveInsightsFetchResult? {
-        let model = OpenAIModel.gpt5Mini
+        await withAIObservation(stage: "live") {
+            await observedFetchLiveInsights(mode: mode, transcript: transcript, finalSegments: finalSegments, existingSummary: existingSummary, existingTitle: existingTitle)
+        }
+    }
+
+    private func observedFetchLiveInsights(
+        mode: InsightsMode,
+        transcript: String,
+        finalSegments: [LiveSegment],
+        existingSummary: String?,
+        existingTitle: String?
+    ) async -> LiveInsightsFetchResult? {
+        let model = OpenAIModel.forInsights(mode)
         // Template requests carry their definition and, after the first fill, the current
         // sections as a stability baseline (the backend's lightweight incremental mode).
         let requestTemplate: InsightTemplate? = mode == .template ? liveTemplate : nil
@@ -5929,6 +6102,7 @@ final class AppState: ObservableObject {
                 }
                 if let responseSeq = response.meta?.requestSeq, responseSeq < lastApplied {
                     DebugLogger.shared.log(.app, "Dropping stale insights response: mode=\(mode.rawValue), responseSeq=\(responseSeq) < lastApplied=\(lastApplied)")
+                    reportAIRequestFailure(CancellationError(), mode: mode.rawValue, stage: "live", category: "superseded")
                     return nil
                 }
                 insights = response.toLiveInsights(template: requestTemplate)
@@ -5958,14 +6132,13 @@ final class AppState: ObservableObject {
                 )
             }
         } catch {
+            if AIRequestDiagnostics.category(error) == "cancelled" {
+                reportAIRequestFailure(error, mode: mode.rawValue, stage: "live")
+                return nil
+            }
             registerLiveInsightsFailure()
             DebugLogger.shared.log(.app, "Live insights FAILED (\(mode.rawValue)): \(error.localizedDescription)")
-            enqueueDiagnosticEvent(
-                "insights_live_failed",
-                category: .insights,
-                level: .warning,
-                details: ["mode": mode.rawValue, "error": error.localizedDescription]
-            )
+            reportAIRequestFailure(error, mode: mode.rawValue, stage: "live")
             return nil
         }
     }
@@ -6990,6 +7163,9 @@ final class AppState: ObservableObject {
     /// extensions cannot declare stored properties.
     func setPersistenceIssue(_ issue: PersistenceIssue?) {
         persistenceIssue = issue
+        if issue != nil, let context = AIRequestDiagnostics.current, let mode = context.currentMode {
+            reportAIRequestFailure(CancellationError(), mode: mode, stage: context.stage, category: "persistence")
+        }
     }
 
     /// Whether a meeting was discarded or deleted during this app run. Async work that resumes
@@ -7007,6 +7183,12 @@ final class AppState: ObservableObject {
     /// action: with permission unanswered, declined or withdrawn it sends nothing and shows the
     /// permission sheet instead.
     func generateInsightsForMeeting(_ meeting: Meeting) async {
+        await withAIObservation(stage: "saved") {
+            await observedGenerateInsightsForMeeting(meeting)
+        }
+    }
+
+    func observedGenerateInsightsForMeeting(_ meeting: Meeting) async {
         guard !finalizingInsightMeetingIDs.contains(meeting.id) else { return }
         if insightsMode == .training || privateModeEnabled {
             return
@@ -7052,7 +7234,7 @@ final class AppState: ObservableObject {
         }
         var applied = false
         var revertInsights: (() -> Void)?
-        let model = OpenAIModel.gpt5Mini
+        let model = OpenAIModel.forInsights(requestedMode)
         
         if requestedMode == .standard {
             guard aiContentPermitted else { return }
@@ -7089,7 +7271,7 @@ final class AppState: ObservableObject {
             } catch {
                 guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (standard): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("insights_history_standard_failed", category: .insights, level: .warning)
+                reportAIRequestFailure(error, mode: "standard", stage: "saved")
             }
         }
         
@@ -7130,7 +7312,7 @@ final class AppState: ObservableObject {
             } catch {
                 guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (meddpicc): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("insights_history_meddpicc_failed", category: .insights, level: .warning)
+                reportAIRequestFailure(error, mode: "meddpicc", stage: "saved")
             }
         }
         
@@ -7164,6 +7346,7 @@ final class AppState: ObservableObject {
             } catch {
                 guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (questions): \(error.localizedDescription)")
+                reportAIRequestFailure(error, mode: "questions", stage: "saved")
             }
         }
 
@@ -7205,7 +7388,7 @@ final class AppState: ObservableObject {
             } catch {
                 guard savedAIRequestIsCurrent(request, meeting: meeting) else { return }
                 DebugLogger.shared.log(.app, "History insights FAILED (template): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("insights_history_template_failed", category: .insights, level: .warning)
+                reportAIRequestFailure(error, mode: "template", stage: "saved")
             }
         }
 
@@ -8300,6 +8483,7 @@ final class AppState: ObservableObject {
             return
         }
         sessionTranscribesOnDevice = willTranscribeOnDevice
+        recordingDiagnosticAttempt?.route = sessionTranscribesOnDevice ? "local" : appMode.rawValue
         
         // In managed mode, if the JWT is missing/expired (e.g. resuming after stop),
         // request a fresh /api/session before connecting to Deepgram. A local session needs
@@ -8377,7 +8561,7 @@ final class AppState: ObservableObject {
             // still hold their speaker IDs — seed so new allocations can't collide.
             deepgramService.seedRestoredSpeakerIdentities(Set(liveSegments.map(\.speaker)))
         }
-        let onDeviceTimeline = beginOnDeviceDiarizationSession(multichannel: useMultichannel, monoSource: monoSource)
+        let onDeviceTimeline = beginOnDeviceDiarizationSession(multichannel: useMultichannel, monoSource: monoSource, transcribesOnDevice: sessionTranscribesOnDevice)
 
         // The Deepgram socket opens synchronously here, exactly as before; only a local session
         // needs to await its model handles, and that happens just ahead of capture start.
@@ -8412,6 +8596,11 @@ final class AppState: ObservableObject {
                     microphone: captureMicrophone,
                     systemAudio: captureSystemAudio
                 )
+                if currentMeeting?.id == startingMeetingID, isRecording, audioCaptureService.isCapturing { recordingDiagnosticAttempt?.started = true }
+                if currentMeeting?.id == startingMeetingID, isRecording,
+                   sessionTranscribesOnDevice, let owner = recordingUsageOwner, !Self.isRunningUnderXCTest {
+                    recordingUsageQueue.begin(owner: owner)
+                }
             } catch {
                 guard currentMeeting?.id == startingMeetingID, isRecording else { return }
                 let captureError = error as NSError
@@ -8430,7 +8619,13 @@ final class AppState: ObservableObject {
         recordingTimer?.invalidate()
         recordingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.recordingDuration = Date().timeIntervalSince(startDate)
+                guard let self, self.isRecording else { return }
+                self.recordingDuration = Date().timeIntervalSince(startDate)
+                self.recordingUsageQueue.observe(owner: self.recordingUsageOwner)
+                if Int(self.recordingDuration) % 15 == 0,
+                   self.sessionTranscribesOnDevice || !self.recordingUsageQueue.pending.isEmpty {
+                    await self.flushRecordingUsage()
+                }
             }
         }
         
@@ -8636,6 +8831,9 @@ final class AppState: ObservableObject {
         }
         callLifecycleEngine.noteRecordingEnded()
         #endif
+        recordingUsageQueue.observe(owner: recordingUsageOwner)
+        recordingUsageQueue.finish(observeTail: false)
+        Task { await flushRecordingUsage() }
         DebugLogger.shared.log(.app, "stopRecording (duration=\(formattedDuration))")
         if let startDate = recordingStartDate {
             recordingDuration = Date().timeIntervalSince(startDate)
@@ -8648,7 +8846,7 @@ final class AppState: ObservableObject {
         let stoppedInterimSpeaker = interimSpeaker ?? currentSpeaker
         let stoppedInterimTimestamp = recordingDuration
         
-        finishRecordingDiagnostics(failed: recordingDiagnosticAttempt?.failed == true)
+        sampleRecordingDiagnostics()
         isRecording = false
         pendingAudioRecoveryTransitionTask?.cancel()
         pendingAudioRecoveryTransitionTask = nil
@@ -8676,8 +8874,6 @@ final class AppState: ObservableObject {
         #endif
         
         audioCaptureService?.stopCapture()
-        learnVoicePrintsAtMeetingEnd()
-        onDeviceDiarization.endSession()
         let stoppedOnDevice = sessionTranscribesOnDevice
         sessionTranscribesOnDevice = false
         if stoppedOnDevice {
@@ -8720,57 +8916,49 @@ final class AppState: ObservableObject {
                 !pendingOrderedFinalSegments.isEmpty
             #endif
 
-            if hasContent {
-                // Save the completion intent with the first stopped transcript, so a hard
-                // exit after that save can recover it without guessing about legacy rows.
+            if hasContent || meeting.modelContext != nil {
                 _ = beginMeetingCompletion(meeting, persist: false)
-                // Persist any finals already in memory immediately. A second save after graceful
-                // shutdown captures its last final result or the visible-interim fallback.
                 saveCurrentMeetingIfNeeded()
-                isGeneratingInsights = true
-                isFinalizingMeeting = true
-                finalizationStatusText = "Finishing transcript…"
-                Task {
-                    await deepgramService?.gracefulDisconnect()
-                    onDeviceTranscription.noteSessionEnded()
-                    guard currentMeeting?.id == meetingIDAtStop,
-                          !isMeetingDeleted(meetingIDAtStop) else {
-                        // The meeting was discarded/deleted mid-finalization. clearCurrentSession
-                        // usually resets these already; do it here too so no abandonment path can
-                        // leave the app stuck reporting insights generation or finalization.
-                        isGeneratingInsights = false
-                        isFinalizingMeeting = false
-                        finalizationStatusText = ""
-                        shouldOpenMeetingAfterFinalization = false
-                        DebugLogger.shared.log(.app, "Dropping stop finalization after meeting changed/discarded")
-                        return
-                    }
-                    preserveStoppedInterimTranscript(
-                        stoppedInterimText,
-                        speaker: stoppedInterimSpeaker,
-                        timestamp: stoppedInterimTimestamp
-                    )
-                    #if os(macOS)
-                    flushAllPendingMicSegments()
-                    flushAllPendingOrderedFinalSegments()
-                    #endif
-                    await finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop)
-                }
-            } else {
-                deepgramService?.disconnect()
+            }
+            isGeneratingInsights = hasContent
+            isFinalizingMeeting = true
+            finalizationStatusText = "Finishing transcript…"
+            let speakerSessionIDAtStop = recordingSpeakerSessionID
+            Task {
+                if let speakerSessionIDAtStop { await onDeviceDiarization.flushActiveSession(expectedID: speakerSessionIDAtStop) }
+                guard currentMeeting?.id == meetingIDAtStop, !isMeetingDeleted(meetingIDAtStop), !isRecording else { return }
+                await deepgramService?.gracefulDisconnect()
+                guard currentMeeting?.id == meetingIDAtStop,
+                      !isMeetingDeleted(meetingIDAtStop), !isRecording else { return }
                 onDeviceTranscription.noteSessionEnded()
-                if meeting.modelContext != nil {
+                preserveStoppedInterimTranscript(
+                    stoppedInterimText,
+                    speaker: stoppedInterimSpeaker,
+                    timestamp: stoppedInterimTimestamp
+                )
+                #if os(macOS)
+                flushAllPendingMicSegments()
+                flushAllPendingOrderedFinalSegments()
+                #endif
+                finishRecordingDiagnostics(failed: recordingDiagnosticAttempt?.failed == true)
+                Task { await flushClientEvents(trigger: "recording drained") }
+                if let speakerSessionIDAtStop, onDeviceDiarization.activeSessionID == speakerSessionIDAtStop {
+                    learnVoicePrintsAtMeetingEnd()
+                    onDeviceDiarization.endSession(expectedID: speakerSessionIDAtStop)
+                }
+                if !liveSegments.isEmpty || meeting.modelContext != nil {
                     _ = beginMeetingCompletion(meeting, persist: false)
-                    isFinalizingMeeting = true
-                    Task { await finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop) }
+                    await finishStoppedMeeting(meeting, meetingIDAtStop: meetingIDAtStop)
                 } else {
-                    finalizationStatusText = "Saved automatically"
+                    isGeneratingInsights = false
                     completeMeetingFinalization()
                 }
             }
         } else {
+            finishRecordingDiagnostics(failed: recordingDiagnosticAttempt?.failed == true)
             deepgramService?.disconnect()
             onDeviceTranscription.noteSessionEnded()
+            if let recordingSpeakerSessionID { onDeviceDiarization.endSession(expectedID: recordingSpeakerSessionID) }
             completeMeetingFinalization()
         }
     }
@@ -8866,6 +9054,14 @@ final class AppState: ObservableObject {
     
     /// Clears current session state (moves meeting to history)
     private func clearCurrentSession() {
+        if let recordingSpeakerSessionID { onDeviceDiarization.discardSession(expectedID: recordingSpeakerSessionID) }
+        recordingSpeakerSessionID = nil
+        recordingSpeakerTimeline = nil
+        sessionSpeakerState = .inactive
+        recordingUsageQueue.finish(observeTail: false)
+        // A discard/account transition can abandon an in-flight final drain. End its
+        // diagnostic attempt before a replacement recording creates another one.
+        finishRecordingDiagnostics(failed: recordingDiagnosticAttempt?.failed == true)
         periodicSaveTimer?.invalidate()
         periodicSaveTimer = nil
         insightsCadenceTask?.cancel()
@@ -9001,6 +9197,7 @@ final class AppState: ObservableObject {
 
     private func completeMeetingFinalization() {
         isFinalizingMeeting = false
+        reportHardwareCapabilities()
         cloudSync.noteLifecycleChange()
         finalizationStatusText = "Saved automatically"
         guard !isRecording else {
@@ -9041,6 +9238,19 @@ final class AppState: ObservableObject {
     }
 
     func generateFinalInsightsAndSave(
+        for meeting: Meeting,
+        transcript: String,
+        language: String,
+        existingTitle: String,
+        includeSales: Bool,
+        template: InsightTemplate? = nil
+    ) async {
+        await withAIObservation(stage: "final") {
+            await observedGenerateFinalInsightsAndSave(for: meeting, transcript: transcript, language: language, existingTitle: existingTitle, includeSales: includeSales, template: template)
+        }
+    }
+
+    func observedGenerateFinalInsightsAndSave(
         for meeting: Meeting,
         transcript: String,
         language: String,
@@ -9104,7 +9314,7 @@ final class AppState: ObservableObject {
         outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .failed) })
         DebugLogger.shared.log(.app, "Generating final insights before save")
         
-        let model = OpenAIModel.gpt5Mini
+        let model = OpenAIModel.gpt6Luna
         
         // Generate standard insights first
         do {
@@ -9132,6 +9342,7 @@ final class AppState: ObservableObject {
                     .app,
                     "Dropping stale final standard insights response (meeting changed/resumed/segments advanced)"
                 )
+                reportAIRequestFailure(CancellationError(), mode: "standard", stage: "final", category: "superseded")
                 return
             }
 
@@ -9170,7 +9381,7 @@ final class AppState: ObservableObject {
         } catch {
             guard isFinalInsightsRequestStillCurrent() else { return }
             DebugLogger.shared.log(.app, "Final insights FAILED (standard): \(error.localizedDescription)")
-            enqueueDiagnosticEvent("insights_final_standard_failed", category: .insights, level: .warning)
+            reportAIRequestFailure(error, mode: "standard", stage: "final")
         }
         
         // Sales qualification is specialist functionality: don't spend a request on it unless
@@ -9193,7 +9404,7 @@ final class AppState: ObservableObject {
                     let response = try await generateManagedInsightsWithRetry(
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: meeting.summaryText, existingTitle: existingTitle,
-                        mode: InsightsMode.meddpicc.rawValue, model: model.rawValue,
+                        mode: InsightsMode.meddpicc.rawValue, model: OpenAIModel.gpt54Mini.rawValue,
                         language: language,
                         requiresPermission: true,
                         mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
@@ -9203,7 +9414,7 @@ final class AppState: ObservableObject {
                     meddpiccInsights = try await insightsService!.generateLiveInsights(
                         transcript: transcript, existingSummary: meeting.summaryText,
                         existingTitle: existingTitle, mode: .meddpicc,
-                        model: model, apiKey: requestAPIKey, language: language
+                        model: .gpt54Mini, apiKey: requestAPIKey, language: language
                     )
                 }
 
@@ -9212,6 +9423,7 @@ final class AppState: ObservableObject {
                         .app,
                         "Dropping stale final meddpicc insights response (meeting changed/resumed/segments advanced)"
                     )
+                    reportAIRequestFailure(CancellationError(), mode: "meddpicc", stage: "final", category: "superseded")
                     return
                 }
 
@@ -9242,7 +9454,7 @@ final class AppState: ObservableObject {
             } catch {
                 guard isFinalInsightsRequestStillCurrent() else { return }
                 DebugLogger.shared.log(.app, "Final insights FAILED (meddpicc): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("insights_final_meddpicc_failed", category: .insights, level: .warning)
+                reportAIRequestFailure(error, mode: "meddpicc", stage: "final")
             }
         }
         
@@ -9267,7 +9479,7 @@ final class AppState: ObservableObject {
                     let response = try await generateManagedInsightsWithRetry(
                         deviceId: deviceId, transcript: transcript,
                         existingSummary: nil, existingTitle: existingTitle,
-                        mode: InsightsMode.template.rawValue, model: model.rawValue,
+                        mode: InsightsMode.template.rawValue, model: OpenAIModel.gpt54Mini.rawValue,
                         language: language,
                         template: template,
                         previousTemplateSections: baseline.isEmpty ? nil : baseline,
@@ -9279,7 +9491,7 @@ final class AppState: ObservableObject {
                     templateInsights = try await insightsService!.generateLiveInsights(
                         transcript: transcript, existingSummary: nil,
                         existingTitle: existingTitle, mode: .template,
-                        model: model, apiKey: requestAPIKey, language: language,
+                        model: .gpt54Mini, apiKey: requestAPIKey, language: language,
                         template: template,
                         previousTemplateSections: baseline.isEmpty ? nil : baseline
                     )
@@ -9287,6 +9499,7 @@ final class AppState: ObservableObject {
 
                 guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                     DebugLogger.shared.log(.app, "Dropping stale final template insights response")
+                    reportAIRequestFailure(CancellationError(), mode: "template", stage: "final", category: "superseded")
                     return
                 }
 
@@ -9311,7 +9524,7 @@ final class AppState: ObservableObject {
                     outcomes["template"] = .stale
                 } else {
                 DebugLogger.shared.log(.app, "Final insights FAILED (template): \(error.localizedDescription)")
-                enqueueDiagnosticEvent("insights_final_template_failed", category: .insights, level: .warning)
+                reportAIRequestFailure(error, mode: "template", stage: "final")
                 }
             }
             }
@@ -9327,7 +9540,7 @@ final class AppState: ObservableObject {
                 let response = try await generateManagedInsightsWithRetry(
                     deviceId: deviceId, transcript: transcript,
                     existingSummary: nil, existingTitle: existingTitle,
-                    mode: InsightsMode.questions.rawValue, model: model.rawValue,
+                    mode: InsightsMode.questions.rawValue, model: OpenAIModel.gpt54Mini.rawValue,
                     language: language,
                         requiresPermission: true,
                         mayContinue: { self.savedAIRequestIsCurrent(request, meeting: meeting) }
@@ -9337,12 +9550,13 @@ final class AppState: ObservableObject {
                 questionsInsights = try await insightsService!.generateLiveInsights(
                     transcript: transcript, existingSummary: nil,
                     existingTitle: existingTitle, mode: .questions,
-                    model: model, apiKey: requestAPIKey, language: language
+                    model: .gpt54Mini, apiKey: requestAPIKey, language: language
                 )
             }
             
             guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else {
                 DebugLogger.shared.log(.app, "Dropping stale final questions insights response")
+                reportAIRequestFailure(CancellationError(), mode: "questions", stage: "final", category: "superseded")
                 return
             }
             
@@ -9359,6 +9573,7 @@ final class AppState: ObservableObject {
         } catch {
             guard isFinalInsightsRequestStillCurrent() else { return }
             DebugLogger.shared.log(.app, "Final insights FAILED (questions): \(error.localizedDescription)")
+                reportAIRequestFailure(error, mode: "questions", stage: "final")
         }
 
         guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else { return }
@@ -9378,6 +9593,12 @@ final class AppState: ObservableObject {
     }
 
     func generateInsights() async {
+        await withAIObservation(stage: "live") {
+            await observedGenerateInsights()
+        }
+    }
+
+    func observedGenerateInsights() async {
         guard let meeting = currentMeeting else { return }
         if insightsMode == .training {
             recomputeTrainingMetrics()
@@ -9469,7 +9690,7 @@ final class AppState: ObservableObject {
                 isGeneratingInsights = false
                 return
             }
-            let model = OpenAIModel.gpt5Mini
+            let model = OpenAIModel.forInsights(requestedMode)
 
             if requestedMode == .questions {
                 let questionsInsights: InsightsService.LiveInsights
@@ -9624,7 +9845,7 @@ final class AppState: ObservableObject {
             commit(.insights)
         } catch {
             DebugLogger.shared.log(.app, "Generate insights FAILED: \(error.localizedDescription)")
-            enqueueDiagnosticEvent("insights_generate_failed", category: .insights, level: .warning)
+            reportAIRequestFailure(error, mode: AIRequestDiagnostics.current?.currentMode ?? "standard", stage: "live")
         }
         
         isGeneratingInsights = false
@@ -9647,6 +9868,35 @@ final class AppState: ObservableObject {
             return (timestamp, suffix)
         }
         return nil
+    }
+
+    private func withAIObservation<T>(stage: String, operation: () async -> T) async -> T {
+        let context = appMode == .managed && shareDiagnostics && !privateModeEnabled
+            ? AIRequestObservation(accountID: clientAuthManager.status.accountID,
+                credentialGeneration: clientAuthManager.credentialGeneration, stage: stage) : nil
+        return await AIRequestDiagnostics.$current.withValue(context) { await operation() }
+    }
+
+    @Published var showBYOKModelAccessError = false
+
+    func reportAIRequestFailure(_ error: Error, mode: String, stage: String, category: String? = nil) {
+        if appMode == .byok, case InsightsError.lunaAccessRequired = error {
+            showBYOKModelAccessError = true
+        }
+        guard appMode == .managed, shareDiagnostics, !privateModeEnabled,
+              RecordingReportingContract.valid("task_mode", mode),
+              RecordingReportingContract.valid("ai_stage", stage) else { return }
+        let context = AIRequestDiagnostics.current
+        if let context {
+            guard context.accountID == clientAuthManager.status.accountID,
+                  context.credentialGeneration == clientAuthManager.credentialGeneration else { return }
+        }
+        let fields = context?.fields(mode: mode, error: error, category: category)
+            ?? ["schema_version": "1", "task_mode": mode, "ai_stage": stage,
+                "failure_category": category ?? AIRequestDiagnostics.category(error)]
+        let expected = ["cancelled", "superseded"].contains(fields["failure_category"] ?? "")
+        enqueueDiagnosticEvent("insights_request_failed", category: .insights,
+            level: expected ? .info : .warning, details: fields)
     }
 
     private func generateManagedInsightsWithRetry(
@@ -9677,6 +9927,7 @@ final class AppState: ObservableObject {
         var attempt = 1
         var lastError: Error?
         while true {
+            try Task.checkCancellation()
             guard mayContinue() else { throw CancellationError() }
             // Narrowed R2: a retry is a new request and needs the permission at the moment it
             // leaves, after the delay, not when the first attempt failed.
@@ -9768,10 +10019,17 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func beginRecordingDiagnostics() {
+    func beginRecordingDiagnostics() {
         guard recordingDiagnosticAttempt == nil else { return }
-        let attempt = RecordingDiagnosticAttempt(route: willTranscribeOnDevice ? "local" : appMode.rawValue,
-            microphone: captureMicrophone, system: captureSystemAudio)
+        recordingRecoveryEvidence = RecordingRecoveryEvidence()
+        #if os(macOS)
+        let system = captureSystemAudio
+        #else
+        let system = false
+        #endif
+        var attempt = RecordingDiagnosticAttempt(route: willTranscribeOnDevice ? "local" : appMode.rawValue,
+            microphone: captureMicrophone, system: system)
+        attempt.initialDuration = accumulatedRecordedDuration
         recordingDiagnosticAttempt = attempt
         enqueueDiagnosticEvent("recording_attempt", category: .audio, details: attempt.details)
     }
@@ -9784,8 +10042,8 @@ final class AppState: ObservableObject {
         attempt.micPCM = attempt.micPCM || (attempt.microphone && audioCaptureService?.hasRecentCaptureBuffers(microphone: true, systemAudio: false) == true)
         attempt.systemPCM = attempt.systemPCM || (attempt.system && audioCaptureService?.hasRecentCaptureBuffers(microphone: false, systemAudio: true) == true)
         attempt.sentPCM = attempt.sentPCM || (deepgramService?.packetsSentCount ?? 0) > 0
-        attempt.speech = attempt.speech || (deepgramService?.lastSpeechStartedAt ?? 0) > 0
-        attempt.transcript = attempt.transcript || (attempt.route == "local" ? !liveSegments.isEmpty : (deepgramService?.lastTranscriptTimestamp ?? 0) > 0)
+        attempt.speech = attempt.speech || (deepgramService?.lastSpeechStartedAt ?? 0) >= attempt.startedAt
+        attempt.transcript = attempt.transcript || (deepgramService?.lastTranscriptTimestamp ?? 0) >= attempt.startedAt
         if !hadAudio && (attempt.micPCM || attempt.systemPCM) { DiagnosticTimeline.shared.record(.audioReceived, fields: attempt.details) }
         if !hadTranscript && attempt.transcript { DiagnosticTimeline.shared.record(.transcriptReceived, fields: attempt.details) }
         let ready = (!attempt.microphone || attempt.micPCM) && (!attempt.system || attempt.systemPCM)
@@ -9800,11 +10058,21 @@ final class AppState: ObservableObject {
     private func finishRecordingDiagnostics(failed: Bool) {
         sampleRecordingDiagnostics()
         guard let attempt = recordingDiagnosticAttempt else { return }
-        var details = attempt.details
-        details["outcome"] = failed ? "failed" : attempt.degraded ? "degraded" : attempt.ready ? "stopped" : "cancelled"
-        details["duration_seconds"] = String(max(0, Int(recordingDuration)))
+        // Receipt callbacks also mark late words during the bounded final drain. Earlier
+        // saved/resumed words cannot make this recording attempt look transcribed.
+        let details = attempt.finalDetails(failed: failed, duration: recordingDuration)
         enqueueDiagnosticEvent(failed ? "recording_failed" : "recording_final", category: .audio,
             level: failed ? .error : .info, details: details)
+        if appMode == .managed, shareDiagnostics, !privateModeEnabled {
+            // An observation for investigation, not a new automatic incident or email.
+            enqueueDiagnosticEvent("recording_transcription_outcome", category: .audio, details: [
+                "schema_version": "1", "attempt_id": attempt.id.uuidString,
+                "transcription_engine": attempt.route == "local" ? "on_device" : "deepgram",
+                "lifecycle_outcome": details["lifecycle_outcome"]!,
+                "transcription_outcome": attempt.transcriptionOutcome,
+                "duration_seconds": details["duration_seconds"]!
+            ])
+        }
         recordingDiagnosticAttempt = nil
     }
 
@@ -9818,12 +10086,13 @@ final class AppState: ObservableObject {
     ) {
         if !name.hasPrefix("client_auth_"), let code = DiagnosticTimeline.Code(rawValue: name) { DiagnosticTimeline.shared.record(code, fields: details) }
         diagnosticEventObserver?(name, details)
-        // The unit-test host shares this device's defaults and enrollment; it must never queue
-        // events that would later flush to production as if a real session produced them.
+        // Even the isolated test host must never queue synthetic events that could
+        // later flush to production as if a real recording produced them.
         guard !Self.isRunningUnderXCTest else { return }
         guard shareDiagnostics else { return }
         guard appMode == .managed else { return }
         var metadata = details
+        metadata["producer_version"] = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0"
         metadata["build"] = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0"
         let os = ProcessInfo.processInfo.operatingSystemVersion
         metadata["os_version"] = "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
@@ -9839,7 +10108,7 @@ final class AppState: ObservableObject {
             category: category,
             level: level,
             occurredAt: Date(),
-            diagnosticsSessionId: diagnosticsSessionId,
+            diagnosticsSessionId: name == "device_capabilities" ? "" : diagnosticsSessionId,
             appMode: appMode.rawValue,
             meetingId: nil,
             details: cappedDetails.isEmpty ? nil : cappedDetails
@@ -9867,12 +10136,26 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func reportHardwareCapabilities() {
+        #if os(macOS)
+        guard !Self.isRunningUnderXCTest, !ScreenshotMode.isActive,
+              HardwareCapabilities.eligible(isMac: true, managed: appMode == .managed, sharing: shareDiagnostics,
+                  enrolled: clientAuthManager.status.isEnrolled, recording: isRecording || isStartingMeeting || isResumingRecording, finalizing: isFinalizingMeeting) else { return }
+        let fields = HardwareCapabilities.current(preparation: onDeviceDiarization.preparationState,
+                                                  preparationMS: onDeviceDiarization.preparationDurationMS)
+        guard hardwareSnapshotAdmission.shouldEmit(fields) else { return }
+        diagnosticsQueue.setOwner(clientAuthManager.status.accountID)
+        enqueueDiagnosticEvent("device_capabilities", category: .app, details: fields)
+        #endif
+    }
+
     private func flushClientEvents(trigger: String) async {
         guard !Self.isRunningUnderXCTest, shareDiagnostics, appMode == .managed,
               let minitiAPIService else { return }
         let account = clientAuthManager.status.accountID
         let generation = clientAuthManager.credentialGeneration
         diagnosticsQueue.setOwner(account)
+        reportHardwareCapabilities()
         await diagnosticsQueue.flush(allowed: { [weak self] in
             guard let self else { return false }
             return self.shareDiagnostics && self.appMode == .managed && self.clientAuthManager.status.accountID == account && self.clientAuthManager.credentialGeneration == generation
@@ -11128,10 +11411,14 @@ final class AppState: ObservableObject {
     /// network anyway. Concurrent callers share one attempt.
     /// Unit tests construct `AppState` inside the app host; they must never enroll a real
     /// device or create accounts on the production backend.
+    #if MINITI_TEST_HOST
+    nonisolated static let isRunningUnderXCTest = true
+    #else
     nonisolated static let isRunningUnderXCTest: Bool =
         ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         || ProcessInfo.processInfo.environment["XCTestSessionIdentifier"] != nil
         || NSClassFromString("XCTestCase") != nil
+    #endif
 
     @discardableResult
     func ensureManagedEnrollment(trigger: String) async -> Bool {
@@ -11328,11 +11615,15 @@ final class AppState: ObservableObject {
 
     /// Delete the anonymous account. Revokes every device; subscriptions are untouched.
     func deleteManagedAccount() async -> Bool {
+        let deletedAccountID = clientAuthManager.status.accountID
         do {
             let cleared = try await clientAuthManager.deleteAccount()
             guard cleared else {
                 refreshClientAuthStatus()
                 return false
+            }
+            if let deletedAccountID, !recordingUsageQueue.remove(accountID: deletedAccountID) {
+                DebugLogger.shared.log(.app, "Account deleted; pending local usage cleanup could not be persisted")
             }
             managedDevices = []
             usageInfo = nil
@@ -12667,6 +12958,12 @@ final class AppState: ObservableObject {
     }
 
     private func fetchInvestigation(requestID: UUID) async {
+        await withAIObservation(stage: "helper") {
+            await observedFetchInvestigation(requestID: requestID)
+        }
+    }
+
+    private func observedFetchInvestigation(requestID: UUID) async {
         guard investigationRequestID == requestID else { return }
         let meetingIDAtRequest = currentMeeting?.id
         let scope = activeInvestigationScope
@@ -12776,17 +13073,13 @@ final class AppState: ObservableObject {
         } catch {
             guard investigationRequestID == requestID,
                   !Task.isCancelled,
-                  !(error is CancellationError) else {
+                  AIRequestDiagnostics.category(error) != "cancelled" else {
+                reportAIRequestFailure(error, mode: "investigation", stage: "helper", category: investigationRequestID == requestID ? "cancelled" : "superseded")
                 isGeneratingInvestigation = false
                 return
             }
             investigationError = "couldn't investigate: \(error.localizedDescription.lowercased())"
-            enqueueDiagnosticEvent(
-                "insights_investigation_failed",
-                category: .insights,
-                level: .warning,
-                details: ["scope": scope.rawValue, "error": error.localizedDescription]
-            )
+            reportAIRequestFailure(error, mode: "investigation", stage: "helper")
         }
         if investigationRequestID == requestID {
             isGeneratingInvestigation = false

@@ -127,7 +127,7 @@ Tell the backend agent (or edit `miniti-api` directly):
     enclosure url              → https://github.com/12ian34/miniti/releases/download/vX.Y.Z/miniti-X.Y.Z.dmg
   Keep prior <item>s (Sparkle renders "what's changed since your version" from them).
 
-- app/api/version/route.ts:
+- lib/releaseMetadata.ts (consumed by app/api/version/route.ts):
     MACOS_LATEST_VERSION → X.Y.Z once the Sparkle DMG is live
     MACOS_MIN_VERSION / IOS_MIN_VERSION are 2.6.0 since 2026-10-02: the backend's client-auth mode is `require`, so anything older cannot authenticate
     IOS_LATEST_VERSION   → X.Y.Z only once the App Store build is live

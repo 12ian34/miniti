@@ -125,3 +125,7 @@ App Store Connect has en-US and en-GB listings. `all.sh` mirrors the rendered en
 `scripts/screenshots/capture-watch.sh` installs the watch app from the last iOS simulator build onto the Apple Watch Series 12 (46mm) simulator (416 x 496, the size App Store Connect lists as Apple Watch Series 10) and captures two states through the `-MinitiScreenshotScene record|queue` launch argument: the Record page mid-meeting and the Queue page with three recordings. Output goes to `fastlane/screenshots/en-US/Apple Watch Series 10-0N.png`, which `fastlane ios screenshots` uploads next to the iPhone and iPad sets. No framing step; watch screenshots are submitted as captured.
 
 Live preview initialization: reapply `ScreenshotMode.apply` after the root view wires its seeded model context and runs interrupted-meeting restoration. AppState may be constructed before the seeded store, and restoration otherwise replaces the synthetic live scene with Home. This guard is screenshot-mode-only on both platforms.
+
+### Hosted test boundary
+
+The 3.7.0 test foundation uses isolated `Testing` hosts for XCTest. Screenshot capture/launch smoke remains a separate workflow and does not establish interaction, hardware or lifecycle correctness. See [testing reference](../../docs/reference/testing.md).

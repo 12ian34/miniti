@@ -26,7 +26,7 @@ final class MeetingHandoffTests: XCTestCase {
     private var savedDefaults: [String: Any] = [:]
 
     override func setUp() async throws {
-        // The test host is the real app, so AppStorage writes land in its defaults.
+        // AppStorage uses the Testing host's separate defaults domain.
         for key in Self.touchedDefaults {
             if let value = UserDefaults.standard.object(forKey: key) { savedDefaults[key] = value }
         }
@@ -284,6 +284,7 @@ final class MeetingHandoffTests: XCTestCase {
     /// playing lets the 10 s rule fire, then the tap and its private aggregate device are
     /// destroyed and recreated. The mic engine must neither restart nor stop delivering.
     func testSilentFromBirthRebuildLeavesTheMicEngineAlone() async throws {
+        try Self.requireMicrophone()
         // The logger is a 1000-entry ring; in the full suite it is already full, so
         // positions shift under us. Start empty and compare by timestamp, not index.
         DebugLogger.shared.clear()
@@ -361,6 +362,9 @@ final class MeetingHandoffTests: XCTestCase {
     /// unsigned host microphone access, so the pipeline reports `mic=false capturing=false`
     /// there (2026-10-19 and 2026-10-21 runs). Authorization is the reliable signal.
     private static func requireMicrophone() throws {
+        guard ProcessInfo.processInfo.environment["MINITI_HARDWARE_TESTS"] == "1" else {
+            throw XCTSkip("real capture requires the explicit MINITI_HARDWARE_TESTS=1 lane")
+        }
         guard let input = defaultDevice(kAudioHardwarePropertyDefaultInputDevice), input != kAudioObjectUnknown else {
             throw XCTSkip("no microphone on this Mac")
         }

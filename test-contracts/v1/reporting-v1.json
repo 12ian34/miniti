@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "enum_fields": {
+    "schema_version": [
+      "1"
+    ],
+    "transcription_engine": [
+      "deepgram",
+      "on_device",
+      "unavailable",
+      "unknown"
+    ],
+    "speaker_engine": [
+      "deepgram",
+      "on_device",
+      "unavailable",
+      "unknown"
+    ],
+    "lifecycle_outcome": [
+      "stopped",
+      "cancelled",
+      "failed"
+    ],
+    "transcription_outcome": [
+      "words_seen",
+      "speech_without_words",
+      "no_speech_evidence",
+      "unknown"
+    ],
+    "failure_category": [
+      "transport",
+      "timeout",
+      "auth",
+      "admission",
+      "decode",
+      "provider",
+      "persistence",
+      "cancelled",
+      "superseded",
+      "unknown"
+    ],
+    "task_mode": [
+      "standard",
+      "meddpicc",
+      "questions",
+      "template",
+      "docs",
+      "investigation",
+      "speaker_names",
+      "catchup",
+      "docs_topics",
+      "template_draft"
+    ],
+    "ai_stage": [
+      "live",
+      "final",
+      "saved",
+      "helper"
+    ],
+    "model_family": [
+      "macbook_air",
+      "macbook_pro",
+      "mac_mini",
+      "mac_studio",
+      "imac",
+      "mac_pro",
+      "unknown"
+    ],
+    "chip_family": [
+      "apple_m1",
+      "apple_m2",
+      "apple_m3",
+      "apple_m4",
+      "apple_m5",
+      "intel",
+      "unknown"
+    ],
+    "ram_band": [
+      "up_to_8_gb",
+      "9_to_16_gb",
+      "17_to_32_gb",
+      "33_to_64_gb",
+      "over_64_gb",
+      "unknown"
+    ],
+    "hardware_support": [
+      "supported",
+      "unsupported",
+      "unknown"
+    ],
+    "preparation_state": [
+      "off",
+      "preparing",
+      "ready",
+      "failed",
+      "unknown"
+    ],
+    "thermal_state": [
+      "nominal",
+      "fair",
+      "serious",
+      "critical",
+      "unknown"
+    ],
+    "speaker_failure": [
+      "load",
+      "inference",
+      "lag",
+      "unsupported",
+      "not_ready",
+      "cancelled",
+      "unknown"
+    ]
+  },
+  "integer_fields": {
+    "gap_seconds": 86400,
+    "max_attempts": 10,
+    "lag_ms": 3600000,
+    "preparation_ms": 3600000
+  },
+  "events": [
+    "device_capabilities",
+    "speaker_separation_failed",
+    "speaker_separation_state",
+    "recording_transcription_outcome",
+    "insights_request_failed"
+  ]
+}

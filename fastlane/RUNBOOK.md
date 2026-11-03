@@ -288,7 +288,7 @@ netlify blobs:set downloads "miniti-${VERSION}.dmg" --input ../miniti/miniti.dmg
 
 Re-run `bash scripts/release-info.sh` and confirm the public versioned URL serves the exact local byte count. The website's DMG functions must use streamed modern responses; base64-buffered Netlify functions fail once a binary grows beyond roughly 4.5 MB.
 
-Then hand the five appcast values to the backend (or edit `miniti-api/public/appcast.xml` + `app/api/version/route.ts` directly) and deploy. Users on the previous version will get the Sparkle update prompt within 24h (or immediately via Miniti menu → Check for Updates…).
+Then hand the five appcast values to the backend (or edit `miniti-api/public/appcast.xml` + `lib/releaseMetadata.ts` directly) and deploy. Users on the previous version will get the Sparkle update prompt within 24h (or immediately via Miniti menu → Check for Updates…).
 
 ### Sparkle key management
 

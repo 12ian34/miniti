@@ -12,6 +12,58 @@ protocol KeychainBackend: Sendable {
     func delete(_ query: [String: Any]) -> OSStatus
 }
 
+enum DefaultKeychainBackend {
+    static var make: KeychainBackend {
+        #if MINITI_TEST_HOST
+        return TestHostKeychainBackend.shared
+        #else
+        return SecurityKeychainBackend()
+        #endif
+    }
+}
+
+#if MINITI_TEST_HOST
+/// Process-local credentials for the isolated test host. Never calls Security.framework.
+private final class TestHostKeychainBackend: KeychainBackend, @unchecked Sendable {
+    static let shared = TestHostKeychainBackend()
+    private let lock = NSLock()
+    private var items: [String: Data] = [:]
+
+    private func key(_ query: [String: Any]) -> String {
+        "\(query[kSecAttrService as String] ?? "")/\(query[kSecAttrAccount as String] ?? "")/\(query[kSecUseDataProtectionKeychain as String] as? Bool ?? false)"
+    }
+
+    func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
+        lock.lock(); defer { lock.unlock() }
+        guard let data = items[key(query)] else { return (errSecItemNotFound, nil) }
+        return (errSecSuccess, data)
+    }
+
+    func add(_ attributes: [String: Any]) -> OSStatus {
+        lock.lock(); defer { lock.unlock() }
+        let key = key(attributes)
+        guard items[key] == nil else { return errSecDuplicateItem }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        items[key] = data
+        return errSecSuccess
+    }
+
+    func update(_ query: [String: Any], _ attributes: [String: Any]) -> OSStatus {
+        lock.lock(); defer { lock.unlock() }
+        let key = key(query)
+        guard items[key] != nil else { return errSecItemNotFound }
+        guard let data = attributes[kSecValueData as String] as? Data else { return errSecParam }
+        items[key] = data
+        return errSecSuccess
+    }
+
+    func delete(_ query: [String: Any]) -> OSStatus {
+        lock.lock(); defer { lock.unlock() }
+        return items.removeValue(forKey: key(query)) == nil ? errSecItemNotFound : errSecSuccess
+    }
+}
+#endif
+
 struct SecurityKeychainBackend: KeychainBackend {
     func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
         var result: AnyObject?
@@ -57,7 +109,7 @@ final class KeychainSlot: @unchecked Sendable {
     private let lock = NSLock()
     private var loggedUnavailable = false
 
-    init(service: String, account: String, accessible: CFString, synchronizable: Bool? = nil, backend: KeychainBackend = SecurityKeychainBackend()) {
+    init(service: String, account: String, accessible: CFString, synchronizable: Bool? = nil, backend: KeychainBackend = DefaultKeychainBackend.make) {
         self.service = service
         self.account = account
         self.accessible = accessible

@@ -56,3 +56,10 @@ For stale cloud counts or early webhooks, use [sync/delivery investigation](../p
 ## Active model probes, 2026-11-01
 
 Both managed Luna groups are now enabled. The hourly OpenAI check probes GPT-5 mini, GPT-5.4 mini and Luna once each; central insights routing adds Luna only while either opt-in is enabled. Luna uses reasoning none, previous models keep low reasoning, and all probes use tiny synthetic inputs with `store: false`. Read `checks.openai.data.models` and its `checked_at` before claiming fresh per-model evidence. HTTP success proves access, not transcript accuracy. No customer text is used. The [3.6.0 activation record](../releases/3.6.0.md#both-luna-groups-activated-and-verified-2026-11-01) separates live API smoke results from later hourly observations.
+
+
+## Local recording usage support, 3.7.0
+
+Prepared locally; backend acceptance must deploy before the reporting client. Use the existing authenticated read-only admin usage/chart/CSV views to compare UTC day, engine and collection start. Local minutes do not consume Deepgram allowance. Keep global totals separate from installation-filtered totals: older clients, expired/offline reports, crash tails, and removed installation breakdowns can prevent reconciliation. Do not reconstruct missing duration from meeting content or optional diagnostics.
+
+Removal uses existing authenticated installation revocation or account deletion, not manual counter subtraction. Revocation removes local per-installation lifetime/daily breakdowns and the latest hardware snapshot; deleting the account also removes its local account aggregate. Global duration totals remain, dedup receipts expire after 35 days, and existing billing/audit and activity policies are unchanged. The removal operation preserves membership until local cleanup succeeds, allowing server-side retry after a storage error; do not report complete cleanup from a failed API response. A revoked/moved installation cannot append or replay local usage under its old owner because ingestion rechecks ownership atomically. This runbook records behavior only; no customer account has been revoked or deleted for testing.

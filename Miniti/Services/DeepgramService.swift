@@ -510,7 +510,7 @@ struct SpeakerIdentityState: Sendable, Equatable {
         for (key, appID) in assignments {
             let parts = key.split(separator: "#")
             guard parts.count == 3, parts[2] == "0", let source = TranscriptSource(rawValue: String(parts[0])),
-                  stableProviderSources.contains(source), let provider = Int(parts[1]) else { continue }
+                  stableProviderSources.contains(source), let provider = Int(parts[1]), provider >= 0 else { continue }
             out[source, default: [:]][provider] = appID
         }
         return out
@@ -518,6 +518,12 @@ struct SpeakerIdentityState: Sendable, Equatable {
 
     mutating func appSpeakerID(source: TranscriptSource, providerID: Int) -> Int {
         guard source != .unknown else { return providerID }
+        // -1 is an internal unavailable bucket, never a provider identity. Allocate
+        // a fresh ordinary app ID so persisted documents remain compatible.
+        if providerID == -1, source == .microphone {
+            micContinuityAvailable = false
+            nextMicOffset = max(1, nextMicOffset)
+        }
         let keyGeneration: UInt64 = stableProviderSources.contains(source) ? 0 : generation
         let key = "\(source.rawValue)#\(providerID)#\(keyGeneration)"
         if let existing = assignments[key] { return existing }
@@ -539,7 +545,7 @@ struct SpeakerIdentityState: Sendable, Equatable {
             }
             allocatedMicAppIDs.insert(appID)
         case .system:
-            if keyGeneration == 0 {
+            if keyGeneration == 0 && providerID >= 0 {
                 appID = providerID
                 nextSystemAppID = max(nextSystemAppID, providerID + 1)
             } else {
@@ -556,6 +562,34 @@ struct SpeakerIdentityState: Sendable, Equatable {
     var micAppSpeakerIDs: Set<Int> { allocatedMicAppIDs }
 }
 
+/// Counts transport evidence without a main-actor hop for every audio packet.
+/// A callback from an old socket cannot update a replacement's evidence.
+final class AudioTransportEvidence: @unchecked Sendable {
+    struct Snapshot {
+        var generation: UInt64 = 0
+        var attempts = 0
+        var completions = 0
+        var localIngests = 0
+        var dropped = 0
+    }
+    private let lock = NSLock()
+    private var value = Snapshot()
+    func reset(generation: UInt64) { lock.lock(); defer { lock.unlock() }; value = Snapshot(generation: generation) }
+    func attempt(connected: Bool, local: Bool) -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        if !connected { value.dropped = min(99_999_999, value.dropped + 1) }
+        else if local { value.localIngests = min(99_999_999, value.localIngests + 1) }
+        else { value.attempts = min(99_999_999, value.attempts + 1) }
+        return value.generation
+    }
+    func completed(generation: UInt64) {
+        lock.lock(); defer { lock.unlock() }
+        guard value.generation == generation else { return }
+        value.completions = min(99_999_999, value.completions + 1)
+    }
+    var snapshot: Snapshot { lock.lock(); defer { lock.unlock() }; return value }
+}
+
 @MainActor
 final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDelegate, @unchecked Sendable {
     /// Seams for tests: a `URLProtocol`-backed configuration can refuse or drop the WebSocket
@@ -564,12 +598,24 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     var endpointURL = URL(string: "wss://api.deepgram.com/v1/listen")!
     var socketStarter: (URLSessionWebSocketTask) -> Void = { $0.resume() }
 
+    /// Controlled drain seam; production uses the active socket or local recognizer.
+    var finalDrainOperation: (@MainActor () async -> Void)?
+    var finalDrainDuration: Duration = .milliseconds(800)
+    var localFinishOperation: (@MainActor () async -> Void)?
+    // POC: 17.5 min of Nemotron audio decoded in 16 s on M5 Pro, 47 ms p95
+    // per 1.12 s live chunk. Allow 30 s for queued decode/tail, then 0.8 s for
+    // MainActor delivery. This safety cap is not a guarantee on unmeasured Macs.
+    var localFinishTimeout: Duration = .seconds(30)
+
     private var webSocketTask: URLSessionWebSocketTask?
     private var urlSession: URLSession?
     private var credential: String = ""
     private var authorizationScheme: DeepgramAuthorizationScheme = .token
     private var isConnected = false
     private var connectionGeneration: UInt64 = 0
+    var diagnosticConnectionGeneration: UInt64 { connectionGeneration }
+    nonisolated let transportEvidence = AudioTransportEvidence()
+    private(set) var transcriptEvidenceUptime: TimeInterval = 0
     private var initialConnectionTimeout: Task<Void, Never>?
     var connectionTimeoutSeconds: TimeInterval = 12
     private(set) var initialConnectionFailure: DeepgramInitialFailure?
@@ -662,6 +708,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         let channelIndex: Int?
         /// Explicit capture source for this response.
         let source: TranscriptSource
+        var speakerSeparationUnavailable: Bool = false
+        var speakerTimelineID: UUID? = nil
 
         struct Word: Equatable, Sendable {
             let text: String
@@ -790,6 +838,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         finalTranscriptCount = 0
         emptyTranscriptCount = 0
         lastTranscriptAt = 0
+        transcriptEvidenceUptime = 0
         lastSpeechStartedAt = 0
     }
     
@@ -886,6 +935,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         urlSession = URLSession(configuration: sessionConfiguration, delegate: self, delegateQueue: OperationQueue.main)
         webSocketTask = urlSession?.webSocketTask(with: request)
         connectionGeneration &+= 1
+        transportEvidence.reset(generation: connectionGeneration)
         let generation = connectionGeneration
         initialConnectionTimeout?.cancel()
         initialConnectionTimeout = Task { [weak self] in
@@ -932,6 +982,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         resetSessionCounters()
         error = nil
         connectionGeneration &+= 1
+        transportEvidence.reset(generation: connectionGeneration)
         let generation = connectionGeneration
         _localMultichannel = multichannel
         _localMonoSource = monoSource
@@ -947,42 +998,54 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         connectionState = .connected
     }
 
-    /// Gracefully disconnect: stop sending audio, send CloseStream, wait for final transcripts, then tear down.
+    /// The reconnect owner waits for this attempt's terminal state. A short polling
+    /// window must not replace a handshake still inside its connection timeout.
+    func waitForConnectionAttempt() async -> Bool {
+        let generation = connectionGeneration
+        let deadline = ContinuousClock.now.advanced(by: .seconds(connectionTimeoutSeconds + 0.25))
+        while !Task.isCancelled, generation == connectionGeneration {
+            if connectionState == .connected { return true }
+            guard connectionState == .connecting, ContinuousClock.now < deadline else { return false }
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { return false }
+        }
+        return false
+    }
+
+    /// Stop sends and accept every source's tail within one bounded window. Never await
+    /// a potentially stuck CloseStream send, or let an old drain tear down a new session.
     func gracefulDisconnect() async {
         _sendConnected = false
-        let finalCountBefore = finalTranscriptCount
-
-        if let session = _localSession {
-            // Let the recognisers decode their tails and flush the last utterance through the
-            // sink, then give the main-actor hop a moment to land before the generation moves.
-            await session.finish()
-            let deadline = Date().addingTimeInterval(0.8)
-            while Date() < deadline {
-                try? await Task.sleep(for: .milliseconds(50))
-                if finalTranscriptCount > finalCountBefore { break }
+        stopKeepAlive()
+        let generation = connectionGeneration
+        let session = _localSession
+        let socket = webSocketTask
+        let operation = finalDrainOperation
+        let localFinish = localFinishOperation
+        let isLocal = session != nil || localFinish != nil
+        guard isLocal || socket != nil || operation != nil else { return }
+        let finishDeadline = ContinuousClock.now.advanced(by: localFinishTimeout)
+        let hardDeadline = isLocal ? finishDeadline.advanced(by: finalDrainDuration) : ContinuousClock.now.advanced(by: finalDrainDuration)
+        var finishedAt: ContinuousClock.Instant?
+        let flush = Task { @MainActor in
+            if let localFinish { await localFinish() }
+            else if let session { await session.finish() }
+            else if let operation { await operation() }
+            else if let socket { try? await socket.send(.string(#"{"type":"CloseStream"}"#)) }
+            finishedAt = .now
+        }
+        defer { flush.cancel() }
+        // A first final can belong to just one channel. Keep receiving until the bound
+        // instead of dropping the second source as soon as that first final arrives.
+        while ContinuousClock.now < hardDeadline {
+            if isLocal {
+                if let finishedAt, ContinuousClock.now >= finishedAt.advanced(by: finalDrainDuration) { break }
+                if finishedAt == nil, ContinuousClock.now >= finishDeadline { break }
             }
-            DebugLogger.shared.log(.deepgram, "On-device transcription session finished: \(session.summary)")
-            disconnect()
-            return
+            guard generation == connectionGeneration else { return }
+            if Task.isCancelled { break }
+            do { try await Task.sleep(for: .milliseconds(25)) } catch { break }
         }
-
-        // Send Deepgram CloseStream message to signal end of audio stream
-        if let task = webSocketTask {
-            let closeStreamJSON = "{\"type\": \"CloseStream\"}"
-            try? await task.send(.string(closeStreamJSON))
-            DebugLogger.shared.log(.deepgram, "Sent CloseStream, waiting for final transcripts (finalCount=\(finalCountBefore))")
-        }
-
-        // Wait briefly for any remaining final transcripts to arrive
-        let deadline = Date().addingTimeInterval(0.8)
-        while Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(100))
-            if finalTranscriptCount > finalCountBefore {
-                DebugLogger.shared.log(.deepgram, "Received final transcript after CloseStream (finalCount=\(finalTranscriptCount))")
-                break
-            }
-        }
-
+        guard generation == connectionGeneration else { return }
         disconnect()
     }
 
@@ -1121,6 +1184,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     nonisolated func sendAudio(_ data: Data) {
         // Use nonisolated refs to avoid creating a Task { @MainActor } per audio
         // buffer (~4/sec). URLSessionWebSocketTask.send is thread-safe.
+        let evidenceGeneration = transportEvidence.attempt(connected: _sendConnected, local: _localSession != nil)
         guard _sendConnected else { return }
         if let session = _localSession {
             if _socketAudioStartPending {
@@ -1141,9 +1205,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         audioBytesSent += data.count
         task.send(.data(data)) { [weak self] error in
             if let error {
-                self?.audioSendErrors += 1
                 Task { @MainActor in
-                    guard let self, self.isConnected else { return }
+                    guard let self, self.isConnected, self.webSocketTask === task,
+                          self.connectionGeneration == evidenceGeneration else { return }
+                    self.audioSendErrors += 1
                     self.consecutiveSendErrors += 1
                     DebugLogger.shared.log(.deepgram, "WS send error: \(error.localizedDescription)")
                     self.error = error
@@ -1154,6 +1219,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         DebugLogger.shared.log(.deepgram, "WS marked unhealthy after consecutive send failures")
                     }
                 }
+            } else {
+                self?.transportEvidence.completed(generation: evidenceGeneration)
             }
         }
     }
@@ -1355,6 +1422,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var onDeviceSlotCounts: [Int: Int] = [:]
         var onDeviceBorrowed = 0
         let onDeviceCovers = speakerTimeline?.covers(source) ?? false
+        let separationUnavailable = onDeviceCovers && speakerTimeline?.isReliable == false
         var providers = alternative.words.map { word in
             providerSpeaker(
                 wordStart: word.start,
@@ -1371,19 +1439,28 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                 onDeviceSlotCounts[provider.speaker, default: 0] += 1
                 if provider.borrowed { onDeviceBorrowed += 1 }
             }
-            let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: provider.speaker)
+            let appSpeaker = nextIdentityState.appSpeakerID(source: source, providerID: separationUnavailable ? -1 : provider.speaker)
             return TranscriptUpdate.Word(
                 text: word.punctuatedWord ?? word.word,
                 start: word.start,
                 end: word.end,
                 confidence: word.confidence,
                 speaker: appSpeaker,
-                speakerConfidence: provider.confidence
+                speakerConfidence: separationUnavailable ? 0 : provider.confidence
             )
         }
 
         var nextState = segmentationState
-        let segments = segmentBySpeaker(
+        let segments: [SpeakerSegment]
+        if separationUnavailable, let first = words.first, let last = words.last {
+            // The usual promotion gate must not keep assigning new words to the
+            // last known person once separation is unavailable.
+            segments = [SpeakerSegment(id: UUID(), speaker: first.speaker,
+                text: words.map(\.text).joined(separator: " "), startTime: first.start, endTime: last.end,
+                isFinal: isFinal, confidence: alternative.confidence, channelIndex: streamChannel, source: source)]
+            if isFinal { nextState.lastCommittedSpeakerBySource[source] = first.speaker }
+        } else {
+            segments = segmentBySpeaker(
             words: words,
             isFinal: isFinal,
             confidence: alternative.confidence,
@@ -1391,6 +1468,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             source: source,
             state: &nextState
         )
+        }
         if isFinal {
             for segment in segments {
                 nextState.confirmedSpeakerIDs.insert(segment.speaker)
@@ -1408,7 +1486,9 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             confidence: alternative.confidence,
             words: words,
             channelIndex: streamChannel,
-            source: source
+            source: source,
+            speakerSeparationUnavailable: separationUnavailable,
+            speakerTimelineID: speakerTimeline?.id
         )
         return .transcript(ProcessedTranscript(
             update: update,
@@ -1514,6 +1594,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             } else {
                 transcriptWordCount += parsed.originalWordCount
                 lastTranscriptAt = CFAbsoluteTimeGetCurrent()
+                transcriptEvidenceUptime = ProcessInfo.processInfo.systemUptime
                 if parsed.update.isFinal { finalTranscriptCount += 1 }
             }
             if parsed.speechFinal && !parsed.deepgramIsFinal && parsed.hasTranscriptText {

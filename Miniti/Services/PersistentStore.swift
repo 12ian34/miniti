@@ -213,6 +213,12 @@ enum PersistentStore {
 
     /// The launch-time open used by both app entry points.
     static func open() -> PersistentStoreState {
+        #if MINITI_TEST_HOST
+        // Selected at compile time, before the app scene or test bundle initializes.
+        // Tests of disk recovery pass an explicit scratch URL to the overload below.
+        if let container = makeInMemoryFallback() { return .ready(container) }
+        preconditionFailure("Could not create the isolated test-host model container")
+        #else
         if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
             if ScreenshotMode.current == .storeRecovery {
                 return .failed(ScreenshotMode.syntheticStoreFailure, readOnly: seeded)
@@ -220,6 +226,7 @@ enum PersistentStore {
             return .ready(seeded)
         }
         return open(schema: schema, url: storeURLOverride)
+        #endif
     }
 
     /// Open the store at `url` (nil = SwiftData's default location). On failure, try a

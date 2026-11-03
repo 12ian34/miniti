@@ -201,56 +201,7 @@ final class MeetingSyncDocumentTests: XCTestCase {
 // MARK: - Shared wire fixture
 
 extension MeetingSyncDocumentTests {
-    /// The same JSON lives at `../miniti-api/test/fixtures/sync-documents/meeting-v1.json`
-    /// and is mirrored by the Linux client. A change here is a contract change for three clients.
-    static let sharedFixture = #"""
-{
-  "schema_version": 1,
-  "id": "0f1e2d3c-4b5a-4c6d-8e7f-9a0b1c2d3e4f",
-  "title": "Budget review",
-  "calendar_event_title": "Budget sync",
-  "start_time": "2026-10-01T09:00:00.000Z",
-  "end_time": "2026-10-01T09:30:00.000Z",
-  "created_at": "2026-10-01T08:58:00.000Z",
-  "updated_at": "2026-10-01T09:31:00.000Z",
-  "language": "fr",
-  "pinned": true,
-  "transcript_revision": 2,
-  "transcript_edited_at": "2026-10-01T09:20:00.000Z",
-  "segments": [
-    { "id": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e", "speaker": 0, "text": "Hello everyone", "start": 0.5, "final": true, "confidence": 0.98, "source": "system" },
-    { "id": "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f", "speaker": 1000, "text": "Hi", "start": 2.0, "final": true, "confidence": 1.0, "source": "microphone" }
-  ],
-  "speaker_names": { "0": "Sasha" },
-  "speaker_overrides": ["0"],
-  "self_speaker_ids": [1000],
-  "summary": "We agreed the budget.",
-  "action_items": ["Send the deck"],
-  "key_decisions": ["Ship in March"],
-  "topics": ["budget"],
-  "discussion_flow": ["intro", "numbers"],
-  "notes": "Prep notes",
-  "insights_updated_at": "2026-10-01T09:31:00.000Z",
-  "meddpicc": { "metrics": "20% faster", "economic_buyer": null, "decision_criteria": null, "decision_process": null, "paper_process": null, "identified_pain": null, "champion": null, "competition": null },
-  "questions": [{ "question": "Why March?", "type": "challenge", "context": "timing", "priority": "high" }],
-  "doc_topics": [],
-  "template": { "id": "bant", "definition": null, "sections": { "budget": "20k" } },
-  "external_source": "granola",
-  "external_id": "csv-1",
-  "external_url": null,
-  "imported_at": "2026-10-01T09:40:00.000Z",
-  "managed_session_id": "sess_1",
-  "calendar_event_id": "evt_1",
-  "attendees": [{ "email": "sasha@example.com", "name": "Sasha Petrov", "domain": "example.com", "response_status": "accepted", "is_organizer": true, "is_self": false }],
-  "inferred_environment": "online",
-  "recorded_on": "mac",
-  "speaker_emails": { "0": "sasha@example.com" },
-  "investigations": [{ "topic": "pricing" }],
-  "join_url": "https://meet.example/abc",
-  "sales_enabled": true,
-  "title_auto": false
-}
-"""#
+    static let sharedFixture = ContractFixtures.meeting
 
     func testSharedFixtureRoundTripsThroughTheModelWithEveryFieldAndTheExtras() throws {
         let data = Data(Self.sharedFixture.utf8)

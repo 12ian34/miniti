@@ -69,7 +69,28 @@ final class MinitiAPIService: @unchecked Sendable {
     /// writes, one silent retry after an expired token, and local sign-out when the server
     /// says this installation was revoked. `requiresAuth: false` lets public metadata
     /// (`/version`) go out without an account.
-    func send(_ original: URLRequest, requiresAuth: Bool = true) async throws -> (Data, URLResponse) {
+    func send(_ original: URLRequest, requiresAuth: Bool = true, expectedOwner: (account: String, generation: Int)? = nil) async throws -> (Data, URLResponse) {
+        try Task.checkCancellation()
+        var correlated = original
+        let context = AIRequestDiagnostics.current
+        var correlation: UUID?
+        if original.url?.path.hasSuffix("/insights") == true, let context,
+           let data = original.httpBody, let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let mode = body["mode"] as? String, RecordingReportingContract.valid("task_mode", mode) {
+            let id = context.start(mode: mode)
+            correlation = id
+            correlated.setValue(id.uuidString.lowercased(), forHTTPHeaderField: "X-Client-Request-ID")
+        }
+        let result = try await sendAuthorized(correlated, requiresAuth: requiresAuth, expectedOwner: expectedOwner)
+        if let correlation { context?.received(status: (result.1 as? HTTPURLResponse)?.statusCode, requestID: correlation) }
+        return result
+    }
+
+    private func sendAuthorized(_ original: URLRequest, requiresAuth: Bool, expectedOwner: (account: String, generation: Int)?) async throws -> (Data, URLResponse) {
+        if let expectedOwner {
+            guard auth.status.accountID == expectedOwner.account,
+                  auth.credentialGeneration == expectedOwner.generation else { throw ServiceError.notEnrolled }
+        }
         var request = original
         // The generation of the credential that actually signed this request, handed back by
         // `authorize` (never re-read here). A retry and a revocation answer belong to it alone:
@@ -89,6 +110,10 @@ final class MinitiAPIService: @unchecked Sendable {
             throw ServiceError.notEnrolled
         }
 
+        if let expectedOwner {
+            guard generation == expectedOwner.generation,
+                  auth.status.accountID == expectedOwner.account else { throw ServiceError.notEnrolled }
+        }
         let (data, response) = try await session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 401, auth.isEnrolled else {
             return (data, response)
@@ -548,8 +573,8 @@ final class MinitiAPIService: @unchecked Sendable {
         init(name: String, category: EventCategory, level: EventLevel, occurredAt: Date,
              diagnosticsSessionId: String, appMode: String, meetingId: String?, details: [String: String]?) {
             self.name = name; self.category = category; self.level = level; self.occurredAt = occurredAt
-            self.diagnosticsSessionId = diagnosticsSessionId; self.appMode = appMode
-            self.meetingId = meetingId; self.details = details
+            self.diagnosticsSessionId = name == "device_capabilities" ? "" : diagnosticsSessionId; self.appMode = appMode
+            self.meetingId = name == "device_capabilities" ? nil : meetingId; self.details = details
         }
 
         init(from decoder: Decoder) throws {
@@ -1698,6 +1723,30 @@ final class MinitiAPIService: @unchecked Sendable {
             "API speaker-names response: duration=\(String(format: "%.2fs", duration)), identified=\(cleaned.count)/\(decoded.speakers.count)"
         )
         return cleaned
+    }
+
+    func sendRecordingUsage(_ report: RecordingUsageQueue.Report, credentialGeneration: Int) async throws -> UUID {
+        struct Payload: Encodable {
+            let schema_version = 1
+            let engine = "on_device"
+            let report_id: UUID
+            let account_id: String
+            let day: String
+            let duration_ms: Int
+        }
+        var request = makeRequest(path: "/recording-usage", method: "POST", deviceId: report.owner.deviceID)
+        request.httpBody = try Self.encoder.encode(Payload(report_id: report.id, account_id: report.owner.accountID, day: report.day, duration_ms: report.durationMS))
+        let (data, response) = try await send(request, expectedOwner: (report.owner.accountID, credentialGeneration))
+        if let http = response as? HTTPURLResponse,
+           let code = try? Self.decoder.decode(APIError.self, from: data).error,
+           (http.statusCode == 400 && code == "invalid_report") ||
+           (http.statusCode == 409 && ["report_conflict", "report_owner_mismatch"].contains(code)) ||
+           (http.statusCode == 403 && code == "device_disabled") {
+            throw RecordingUsageQueue.DeliveryError.rejected
+        }
+        try validateResponse(response, data: data)
+        struct Receipt: Decodable { let accepted_id: UUID }
+        return try Self.decoder.decode(Receipt.self, from: data).accepted_id
     }
 
     func sendClientEvents(deviceId: String, events: [ClientEventPayload]) async throws -> Set<UUID> {

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "canonical": "https://raw.githubusercontent.com/12ian34/miniti/main/test-contracts/v1/",
+  "sha256": {
+    "client-auth-vectors.json": "3be5f78097579ad87f991f371f874d34d6507196cea9f6642271c691ac4d7854",
+    "meeting-v1.json": "38ef0b9ead17f169a82004f28b4ebaa3a7068f897853b9b2378be752a300c4f7",
+    "reporting-v1.json": "261295617ab8741a77b00900b5f6b138ab53654625cae63ec8c6ec8d2ccbe386",
+    "recovery-v1.json": "ab2e096b2d2a27733571327d2f5aa65530b577edb7eb70112919c151f09eac35",
+    "review-370-v1.json": "b25682bbd3b33eedfffdfcf61d8df7adf627fb26beb6f06d5f014889d50468eb"
+  }
+}

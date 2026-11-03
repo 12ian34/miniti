@@ -641,13 +641,8 @@ private struct SettingsDetailView_iOS: View {
                         Text("Insights")
                         Spacer()
                         VStack(alignment: .trailing, spacing: 2) {
-                            if appState.appMode == .managed {
-                                Text("gpt-5-mini-2025-08-07 · live updates")
-                                Text("gpt-5.4-mini-2026-03-17 · full insights + investigations")
-                            } else {
-                                Text("gpt-5-mini-2025-08-07 · insights")
-                                Text("gpt-5.4-mini-2026-03-17 · investigations")
-                            }
+                            Text("gpt-6-luna · summaries and helpers")
+                            Text("gpt-5.4-mini-2026-03-17 · specialist insights")
                         }
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1640,12 +1635,20 @@ struct PermissionBadge_iOS: View {
 
 /// Live status line for the on-device speaker separation toggle.
 private struct OnDeviceSpeakerSeparationStatusText: View {
+    @EnvironmentObject private var appState: AppState
     @ObservedObject var service: OnDeviceDiarizationService
 
     var body: some View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
+        if appState.onDeviceSpeakerSeparationEnabled, !service.isReady {
+            Button { appState.refreshOnDeviceDiarizationAvailability() } label: {
+                MinitiControlLabel { Label("Retry preparation", systemImage: "arrow.clockwise") }
+            }
+            .buttonStyle(.plain)
+            .disabled(!service.canRetry || appState.isRecording || appState.isStartingMeeting || appState.isFinalizingMeeting)
+        }
     }
 }
 

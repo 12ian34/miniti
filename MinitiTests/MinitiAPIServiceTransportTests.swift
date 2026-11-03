@@ -314,3 +314,60 @@ final class MinitiAPIServiceTransportTests: XCTestCase {
         XCTAssertEqual(StubURLProtocol.requests.count, 3)
     }
 }
+
+extension MinitiAPIServiceTransportTests {
+    func testAIHTTP200DecodeFailureCarriesOnlyBoundedCorrelationAndStatus() async throws {
+        let context = AIRequestObservation(accountID: auth.status.accountID, credentialGeneration: auth.credentialGeneration, stage: "final")
+        StubURLProtocol.script = { _ in StubURLProtocol.json(200, "not valid JSON, private response") }
+        await AIRequestDiagnostics.$current.withValue(context) {
+            do {
+                _ = try await api.generateInsights(deviceId: deviceID, transcript: "synthetic transcript", existingSummary: nil,
+                    existingTitle: nil, mode: "standard", model: OpenAIModel.gpt6Luna.rawValue)
+                XCTFail("malformed successful response must fail decoding")
+            } catch {
+                let fields = context.fields(mode: "standard", error: error)
+                XCTAssertEqual(fields["failure_category"], "decode")
+                XCTAssertEqual(fields["status"], "200")
+                XCTAssertEqual(fields["ai_stage"], "final")
+                XCTAssertEqual(fields["request_id"], StubURLProtocol.requests.last?.value(forHTTPHeaderField: "X-Client-Request-ID"))
+                XCTAssertNotNil(fields["request_id"].flatMap(UUID.init(uuidString:)))
+                XCTAssertFalse(fields.values.contains { $0.contains("private") || $0.contains("transcript") })
+            }
+        }
+        XCTAssertNil(AIRequestDiagnostics.current)
+    }
+
+    func testAITransportCancellationAndAdmissionKeepDistinctCategoriesWithoutChangingErrors() async throws {
+        for (code, category) in [(URLError.timedOut, "timeout"), (.networkConnectionLost, "transport"), (.cancelled, "cancelled")] {
+            let context = AIRequestObservation(accountID: nil, credentialGeneration: 0, stage: "live")
+            StubURLProtocol.script = { _ in throw URLError(code) }
+            await AIRequestDiagnostics.$current.withValue(context) {
+                do {
+                    _ = try await api.generateInsights(deviceId: deviceID, transcript: "fixture", existingSummary: nil, existingTitle: nil, mode: "standard", model: "fixture")
+                    XCTFail("expected transport error")
+                } catch {
+                    XCTAssertEqual((error as? URLError)?.code, code, "Diagnostic context must not wrap or change existing retry errors")
+                    XCTAssertEqual(context.fields(mode: "standard", error: error)["failure_category"], category)
+                    XCTAssertNil(context.fields(mode: "standard", error: error)["status"])
+                }
+            }
+        }
+        XCTAssertEqual(AIRequestDiagnostics.category(MinitiAPIService.ServiceError.rateLimited, status: 429), "admission")
+        XCTAssertEqual(AIRequestDiagnostics.category(MinitiAPIService.ServiceError.authRevoked), "auth")
+        XCTAssertEqual(AIRequestDiagnostics.category(MinitiAPIService.ServiceError.serverError("private provider message")), "unknown")
+    }
+
+    func testNoCorrelationOutsideAnObservedAIRequestAndContextsDoNotLeakAcrossModes() async throws {
+        StubURLProtocol.script = { _ in StubURLProtocol.json(200, Self.usageBody) }
+        _ = try await api.checkUsage(deviceId: deviceID)
+        XCTAssertNil(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "X-Client-Request-ID"))
+        let context = AIRequestObservation(accountID: nil, credentialGeneration: 0, stage: "saved")
+        let old = context.start(mode: "standard")
+        let current = context.start(mode: "questions")
+        context.received(status: 503, requestID: old)
+        XCTAssertNil(context.fields(mode: "questions", error: CancellationError())["status"])
+        context.received(status: 200, requestID: current)
+        XCTAssertNil(context.fields(mode: "standard", error: CancellationError())["request_id"])
+        XCTAssertEqual(context.fields(mode: "questions", error: CancellationError())["status"], "200")
+    }
+}

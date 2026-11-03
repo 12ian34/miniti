@@ -5,7 +5,7 @@
 	<key>WKApplication</key>
 	<true/>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>com.miniti.mobile</string>
+	<string>$(MINITI_PHONE_BUNDLE_IDENTIFIER)</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>

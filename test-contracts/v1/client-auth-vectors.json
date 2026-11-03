@@ -1,0 +1,74 @@
+{
+  "recovery_keys": [
+    {
+      "random_hex": "000102030405060708090a0b0c0d0e0f",
+      "canonical": "M1000G40R40M30E209185GR38E1WETS870",
+      "formatted": "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870"
+    },
+    {
+      "random_hex": "ffeeddccbbaa99887766554433221100",
+      "canonical": "M1ZZQDVK5VNACRGXV6AN2368GH02HFWS9H",
+      "formatted": "M1-ZZQD-VK5V-NACR-GXV6-AN23-68GH-02HF-WS9H"
+    }
+  ],
+  "recovery_key_normalization": [
+    {
+      "input": "m1-000g-40r4-0m30-e209-185g-r38e-1wet-s870",
+      "canonical": "M1000G40R40M30E209185GR38E1WETS870"
+    },
+    {
+      "input": "000G40R40M30E209185GR38E1WETS870",
+      "canonical": "M1000G40R40M30E209185GR38E1WETS870"
+    },
+    {
+      "input": "M1 000G 40R4 0M30 E209 185G R38E 1WET S870",
+      "canonical": "M1000G40R40M30E209185GR38E1WETS870"
+    }
+  ],
+  "jwk_thumbprint": {
+    "jwk": {
+      "kty": "EC",
+      "crv": "P-256",
+      "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+    },
+    "jkt": "oKIywvGUpTVTyxMQ3bwIIeQUudfr_CkLMjCE19ECD-U"
+  },
+  "body_hashes": [
+    {
+      "body": "",
+      "bh": "47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU"
+    },
+    {
+      "body": "{\"model\":\"nova-3\",\"language\":\"en\"}",
+      "bh": "b1cuiGe8JT4NZ96j7kSDmFkjwVNYevNNF53my6KsDZg"
+    }
+  ],
+  "access_token_hash": {
+    "token": "a.b.c",
+    "ath": "hF4wRIgJ4ryJWOsCW_x5UjXROwd6U9DDq70jhRcNybg"
+  },
+  "network_buckets": [
+    {
+      "address": "203.0.113.7",
+      "normalized": "203.0.113.7"
+    },
+    {
+      "address": "2001:db8:85a3::8a2e:370:7334",
+      "normalized": "2001:0db8:85a3:0000::/64"
+    },
+    {
+      "address": "::ffff:203.0.113.7",
+      "normalized": "203.0.113.7"
+    }
+  ],
+  "request_proof_example": {
+    "description": "ES256 compact JWS; header {\"alg\":\"ES256\",\"typ\":\"miniti-proof+jwt\"}; payload {ath,htm,htu,bh,iat,jti}; signature raw r||s (64 bytes)",
+    "htm": "POST",
+    "htu": "/api/session",
+    "body": "{\"model\":\"nova-3\",\"language\":\"en\"}"
+  },
+  "challenge_proof_example": {
+    "description": "ES256 compact JWS; payload {purpose,nonce,device_id,jkt,iat}"
+  }
+}

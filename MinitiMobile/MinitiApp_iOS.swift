@@ -11,6 +11,7 @@ private final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNo
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !AppState.isRunningUnderXCTest else { return true }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         AppState.registerSmartMeetingNotificationCategory()
@@ -117,6 +118,7 @@ struct MinitiMobileApp: App {
             .onAppear {
                 appDelegate.appState = appState
                 appState.notePersistentStore(storeState)
+                guard !AppState.isRunningUnderXCTest else { return }
                 WatchImportService.shared.appState = appState
                 WatchImportService.shared.kick()
                 #if DEBUG

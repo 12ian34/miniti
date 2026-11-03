@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var terminationTimeoutTask: Task<Void, Never>?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        guard !AppState.isRunningUnderXCTest else { return }
         let center = UNUserNotificationCenter.current()
         center.delegate = self
         AppState.registerSmartMeetingNotificationCategory()

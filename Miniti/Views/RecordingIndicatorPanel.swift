@@ -96,6 +96,7 @@ private extension AppState.AudioRecoveryState {
         switch self {
         case .healthy: return "Audio: healthy"
         case .recovering: return "Audio: recovering…"
+        case .awaitingTranscript: return "Transcription: waiting for words"
         case .degraded: return "Audio: degraded"
         }
     }

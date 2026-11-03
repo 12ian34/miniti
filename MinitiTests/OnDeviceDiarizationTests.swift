@@ -309,7 +309,9 @@ final class OnDeviceDiarizationEndToEndTests: XCTestCase {
             service.ingest(pcm.subdata(in: offset..<end), multichannel: false, monoSource: .microphone)
             if !socketMarked { timeline.markSocketStart(); socketMarked = true }  // same order as the app: ingest, then mark
             offset = end
+            try await Task.sleep(for: .milliseconds(100))
         }
+        await service.flushActiveSession()
         service.endSession()
         let audioSeconds = Double(pcm.count / 2) / 16_000
         // Let the serial queue drain: the flush runs after every queued packet.
@@ -407,3 +409,448 @@ final class MicrophoneSelectionTests: XCTestCase {
     }
 }
 #endif
+
+private final class FixtureSpeakerProcessor: OnDeviceDiarizationService.Processor, @unchecked Sendable {
+    var processBody: @Sendable ([Float]) throws -> [OnDeviceDiarizationService.Output]
+    var finishBody: @Sendable () throws -> [OnDeviceDiarizationService.Output]
+    init(process: @escaping @Sendable ([Float]) throws -> [OnDeviceDiarizationService.Output] = { _ in [] },
+         finish: @escaping @Sendable () throws -> [OnDeviceDiarizationService.Output] = { [] }) {
+        processBody = process; finishBody = finish
+    }
+    func process(_ samples: [Float]) throws -> [OnDeviceDiarizationService.Output] { try processBody(samples) }
+    func finish() throws -> [OnDeviceDiarizationService.Output] { try finishBody() }
+}
+
+@MainActor
+final class LocalSpeakerFailureTests: XCTestCase {
+    private enum Fault: Error { case fixture }
+    private func readyService(_ processor: FixtureSpeakerProcessor = FixtureSpeakerProcessor(), sources: Set<TranscriptSource> = [.microphone]) async throws -> OnDeviceDiarizationService {
+        let service = OnDeviceDiarizationService(loader: { _, _ in { processor } }, hardwareSupported: true)
+        service.prepare(sources: sources)
+        try await TestSupport.waitUntil { service.isReady }
+        return service
+    }
+
+    func testCancelledPreparationCannotRepopulateModelsOrOverwriteRetry() async throws {
+        var suspended: CheckedContinuation<OnDeviceDiarizationService.ProcessorFactory, Error>?
+        var oldProgress: (@Sendable (Double) -> Void)?
+        var calls = 0
+        let service = OnDeviceDiarizationService(loader: { _, progress in
+            calls += 1
+            if calls == 1 {
+                oldProgress = progress
+                return try await withCheckedThrowingContinuation { suspended = $0 }
+            }
+            return { FixtureSpeakerProcessor() }
+        }, hardwareSupported: true)
+        service.prepare(sources: [.microphone])
+        try await TestSupport.waitUntil { suspended != nil }
+        service.unload()
+        service.prepare(sources: [.microphone])
+        XCTAssertEqual(calls, 1, "Never pile up another load behind uncooperative cancellation")
+        suspended?.resume(returning: { FixtureSpeakerProcessor() })
+        try await TestSupport.waitUntil { service.canRetry }
+        XCTAssertFalse(service.isReady)
+        XCTAssertNil(service.beginSession(sources: [.microphone]))
+        service.prepare(sources: [.microphone])
+        try await TestSupport.waitUntil { service.isReady }
+        oldProgress?(0.5)
+        await Task.yield()
+        XCTAssertEqual(service.status, .ready)
+        XCTAssertEqual(calls, 2)
+    }
+
+    func testEveryRequestedSourceMustBeReadyAndFailedLoadDiscardsPartialModels() async throws {
+        let service = OnDeviceDiarizationService(loader: { source, _ in
+            if source == .system { throw Fault.fixture }
+            return { FixtureSpeakerProcessor() }
+        }, hardwareSupported: true)
+        service.prepare(sources: [.microphone, .system])
+        try await TestSupport.waitUntil { if case .failed = service.status { return true }; return false }
+        XCTAssertNil(service.beginSession(sources: [.microphone]))
+        let single = try await readyService()
+        XCTAssertNil(single.beginSession(sources: [.microphone, .system]))
+        XCTAssertNotNil(single.beginSession(sources: [.microphone]))
+        await single.endSessionAndWait()
+    }
+
+    func testInferenceFailureInvalidatesTimelineCollectorAndRequiresFreshPreparation() async throws {
+        for source in [TranscriptSource.microphone, .system] {
+            let processor = FixtureSpeakerProcessor(process: { _ in throw Fault.fixture })
+            let service = try await readyService(processor, sources: [.microphone, .system])
+            let collector = VoicePrintCollector(embed: { _ in [1, 0] })
+            let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone, .system], collector: collector))
+            var failures = 0
+            service.onSessionFailure = { _, reason in XCTAssertEqual(reason, .inference); failures += 1 }
+            service.ingest(samples: [0, 0], source: source)
+            try await TestSupport.waitUntil { failures == 1 }
+            XCTAssertFalse(timeline.isReliable)
+            XCTAssertFalse(service.isReady)
+            XCTAssertNil(service.activeCollector)
+            service.ingest(samples: [0, 0], source: source)
+            await service.endSessionAndWait()
+            XCTAssertEqual(failures, 1)
+            XCTAssertNil(service.beginSession(sources: [.microphone, .system]))
+            service.prepare(sources: [.microphone, .system])
+            try await TestSupport.waitUntil { service.isReady }
+            XCTAssertNotNil(service.beginSession(sources: [.microphone, .system]))
+            await service.endSessionAndWait()
+        }
+    }
+
+    func testSlowWorkerHasBoundedAdmissionAndOneFailureSignal() async {
+        let entered = expectation(description: "worker entered")
+        let failed = expectation(description: "bounded lag failure")
+        failed.assertForOverFulfill = true
+        let release = DispatchSemaphore(value: 0)
+        let processor = FixtureSpeakerProcessor(process: { _ in
+            entered.fulfill(); release.wait(); return []
+        })
+        let timeline = OnDeviceSpeakerTimeline(sources: [.microphone])
+        let session = OnDeviceDiarizationService.Session(timeline: timeline, processors: [.microphone: processor], onFailure: { _, reason in
+            XCTAssertEqual(reason, .lag); failed.fulfill()
+        })
+        session.ingest(samples: [0], source: .microphone)
+        await fulfillment(of: [entered], timeout: 2)
+        for _ in 0..<200 { session.ingest(samples: [0], source: .microphone) }
+        await fulfillment(of: [failed], timeout: 2)
+        XCTAssertLessThanOrEqual(session.queuedSampleCount, OnDeviceDiarizationService.Session.maximumQueuedPackets)
+        XCTAssertFalse(timeline.isReliable)
+        release.signal()
+        await withCheckedContinuation { continuation in session.finish { continuation.resume() } }
+        XCTAssertEqual(session.queuedSampleCount, 0)
+    }
+
+    func testHungFinishIsBoundedAndCannotStartAnotherWorkerUntilItSettles() async throws {
+        let entered = expectation(description: "finish entered")
+        let release = DispatchSemaphore(value: 0)
+        let processor = FixtureSpeakerProcessor(finish: { entered.fulfill(); release.wait(); return [] })
+        let service = try await readyService(processor)
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        let ending = Task { await service.endSessionAndWait() }
+        await fulfillment(of: [entered], timeout: 2)
+        await ending.value
+        XCTAssertFalse(timeline.isReliable)
+        XCTAssertFalse(service.canRetry)
+        XCTAssertNil(service.beginSession(sources: [.microphone]))
+        release.signal()
+        try await TestSupport.waitUntil { service.canRetry }
+        XCTAssertTrue(service.isReady)
+        XCTAssertNotNil(service.beginSession(sources: [.microphone]))
+        // Replace the fixture's held finish before closing the next recording.
+        processor.finishBody = { [] }
+        await service.endSessionAndWait()
+    }
+
+    func testFailedTimelineAllocatesNeutralBucketWithoutReusingKnownPeople() throws {
+        for source in [TranscriptSource.microphone, .system] {
+            let timeline = OnDeviceSpeakerTimeline(sources: [source])
+            timeline.invalidate()
+            var identity = SpeakerIdentityState()
+            identity.setStableProviderSources([source])
+            let known = identity.appSpeakerID(source: source, providerID: 0)
+            var segmentation = DeepgramService.SegmentationState()
+            segmentation.lastCommittedSpeakerBySource[source] = known
+            segmentation.confirmedSpeakerIDs.insert(known)
+            let json = #"{"type":"Results","is_final":true,"channel":{"alternatives":[{"transcript":"still recording","confidence":1,"words":[{"word":"still","start":1,"end":1.2,"confidence":1,"speaker":0,"speaker_confidence":1},{"word":"recording","start":1.2,"end":1.5,"confidence":1,"speaker":0,"speaker_confidence":1}]}]}}"#
+            let response = try JSONDecoder().decode(DeepgramResponse.self, from: Data(json.utf8))
+            let result = DeepgramService.processTranscriptResponse(response, isMultichannel: false, monoSource: source,
+                segmentationState: segmentation, identityState: identity, speakerTimeline: timeline)
+            guard case .transcript(let parsed) = result else { return XCTFail("expected words") }
+            XCTAssertTrue(parsed.update.speakerSeparationUnavailable)
+            XCTAssertNotEqual(parsed.update.speaker, known)
+            XCTAssertGreaterThanOrEqual(parsed.update.speaker, 0, "Keep the persisted ID contract")
+            XCTAssertEqual(parsed.segments.first?.speaker, parsed.update.speaker, "Do not let promotion retain the previous person")
+            XCTAssertTrue(parsed.update.words.allSatisfy { $0.speakerConfidence == 0 })
+            XCTAssertNil(parsed.identityState.stableProviderMap()[source]?[-1], "Never enroll the unavailable bucket")
+        }
+    }
+
+    func testLiveFailureDoesNotReconnectAndNewMetadataHonorsPrivacyAndMode() async throws {
+        let defaults = UserDefaults.standard
+        let keys = ["onDeviceSpeakerSeparation", "appMode", "shareDiagnostics", "privateMode"]
+        let saved = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
+        defer { for key in keys { if let value = saved[key] ?? nil { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) } } }
+        for (mode, shared, privateMode, expectedEvents) in [(AppMode.managed, true, false, 2), (.managed, false, false, 0), (.managed, true, true, 0), (.byok, true, false, 0)] {
+            let processor = FixtureSpeakerProcessor(process: { _ in throw Fault.fixture })
+            let service = try await readyService(processor)
+            let state = AppState(diarizationService: service)
+            state.appModeRaw = mode.rawValue; state.shareDiagnostics = shared; state.privateModeEnabled = privateMode
+            state.onDeviceSpeakerSeparationEnabled = true
+            state.refreshOnDeviceDiarizationAvailability()
+            try await TestSupport.waitUntil { service.isReady && service.canRetry }
+            // This fixture represents an already-connected recording. Settle the
+            // initial Combine delivery before observing speaker-only failures.
+            state.deepgramService?.connectionState = .connected
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+            state.currentMeeting = Meeting(title: "fixture")
+            state.isRecording = true
+            var events: [String] = []
+            state.diagnosticEventObserver = { name, _ in events.append(name) }
+            XCTAssertNotNil(state.beginOnDeviceDiarizationSession(multichannel: false, monoSource: .microphone, transcribesOnDevice: false))
+            let id = try XCTUnwrap(service.activeSessionID)
+            state.handleLocalSpeakerFailure(id: UUID(), reason: .inference)
+            XCTAssertEqual(state.sessionSpeakerState, .onDevice, "Ignore a stale recording's failure")
+            service.ingest(samples: [0], source: .microphone)
+            try await TestSupport.waitUntil { state.sessionSpeakerState == .unavailable }
+            XCTAssertEqual(service.activeSessionID, id)
+            XCTAssertTrue(state.isRecording)
+            XCTAssertNotNil(state.speakerSeparationIssue)
+            XCTAssertEqual(events.count, expectedEvents)
+            XCTAssertFalse(events.contains { $0.contains("reconnect") })
+            state.isRecording = false
+            await service.endSessionAndWait()
+        }
+    }
+
+    func testUnknownSpeakerLabelPersistsAndManualCorrectionWins() async throws {
+        let state = AppState()
+        state.currentMeeting = Meeting(title: "fixture")
+        state.isRecording = true
+        defer { state.isRecording = false }
+        let update = DeepgramService.TranscriptUpdate(text: "still recording", speaker: 1001, isFinal: true, confidence: 1,
+            words: [.init(text: "still recording", start: 1, end: 2, confidence: 1, speaker: 1001, speakerConfidence: 0)],
+            channelIndex: nil, source: .microphone, speakerSeparationUnavailable: true)
+        state.deepgramService?.transcriptUpdate = update
+        try await TestSupport.waitUntil { state.currentMeeting?.speakerNames["1001"] == AppState.unavailableSpeakerName }
+        XCTAssertEqual(state.liveSpeakerNames["1001"], AppState.unavailableSpeakerName)
+        state.setLiveSpeakerName(id: 1001, name: "Confirmed by user")
+        state.deepgramService?.transcriptUpdate = update
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(state.currentMeeting?.speakerNames["1001"], "Confirmed by user")
+        XCTAssertEqual(state.liveSpeakerNames["1001"], "Confirmed by user")
+    }
+
+    func testUnavailableBeforeStartKeepsCloudDiarizationAndDoesNotLoadDuringSession() async throws {
+        let service = OnDeviceDiarizationService(loader: { _, _ in throw Fault.fixture }, hardwareSupported: true)
+        XCTAssertNil(service.beginSession(sources: [.microphone]))
+        let query = DeepgramService.makeListenQueryItems(language: "en", channelCount: 1, multichannel: false,
+            providerDiarization: service.beginSession(sources: [.microphone]) == nil)
+        XCTAssertEqual(query.first { $0.name == "diarize_model" }?.value, "latest")
+        let ready = try await readyService()
+        let timeline = try XCTUnwrap(ready.beginSession(sources: [.microphone]))
+        ready.unload()
+        XCTAssertTrue(timeline.isReliable, "A setting change affects the next session")
+        XCTAssertEqual(ready.activeSessionID != nil, true)
+        ready.prepare(sources: [.microphone, .system])
+        XCTAssertFalse(ready.isReady, "Do not prepare another engine inside the active session")
+        await ready.endSessionAndWait()
+    }
+
+    func testDiscardRetiresWorkerWithoutReportingFailureOrBlockingReplacement() async throws {
+        let entered = expectation(description: "discarded processor entered")
+        let release = DispatchSemaphore(value: 0)
+        let processor = FixtureSpeakerProcessor(process: { _ in entered.fulfill(); release.wait(); throw Fault.fixture })
+        let service = try await readyService(processor)
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        service.ingest(samples: [0], source: .microphone)
+        await fulfillment(of: [entered], timeout: 2)
+        var failures = 0
+        service.onSessionFailure = { _, _ in failures += 1 }
+        service.discardSession()
+        release.signal()
+        XCTAssertNil(service.activeSessionID)
+        XCTAssertFalse(timeline.isReliable)
+        try await TestSupport.waitUntil { service.canRetry }
+        XCTAssertTrue(service.isReady)
+        XCTAssertNotNil(service.beginSession(sources: [.microphone]))
+        XCTAssertEqual(failures, 0)
+        await service.endSessionAndWait()
+    }
+
+    func testVoiceCollectorRejectsLateEmbeddingAfterInvalidation() async throws {
+        let started = expectation(description: "embedding started")
+        let released = expectation(description: "embedding returned")
+        let gate = AsyncSpeakerEmbeddingGate()
+        let collector = VoicePrintCollector(embed: { _ in
+            started.fulfill()
+            let result = await gate.wait()
+            released.fulfill()
+            return result
+        })
+        collector.noteAudio(source: .microphone, samples: [Float](repeating: 0.1, count: 96000))
+        collector.noteFrames(source: .microphone, startFrame: 0, dominant: [UInt8](repeating: 0, count: 600), exclusive: [Bool](repeating: true, count: 600))
+        await fulfillment(of: [started], timeout: 2)
+        collector.invalidate()
+        await gate.release()
+        await fulfillment(of: [released], timeout: 2)
+        await collector.finish()
+        XCTAssertTrue(collector.snapshot().isEmpty)
+    }
+}
+
+private actor AsyncSpeakerEmbeddingGate {
+    var continuation: CheckedContinuation<[Float], Never>?
+    var released = false
+    func wait() async -> [Float] {
+        if released { return [1, 0] }
+        return await withCheckedContinuation { continuation = $0 }
+    }
+    func release() {
+        released = true
+        continuation?.resume(returning: [1, 0]); continuation = nil
+    }
+}
+
+
+extension LocalSpeakerFailureTests {
+    func testPrerecordedBackpressureProcessesLongFileAndStaleOwnersCannotEndIt() async throws {
+        let processor = FixtureSpeakerProcessor(process: { samples in
+            let frames = samples.count / 160
+            return [.init(probabilities: Array(repeating: 1, count: frames), frameCount: frames, numSpeakers: 1)]
+        })
+        let service = try await readyService(processor)
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        let id = try XCTUnwrap(service.activeSessionID)
+        for _ in 0..<20 {
+            let accepted = await service.ingestPrerecorded(samples: Array(repeating: 0, count: 16000), source: .microphone, expectedID: id)
+            XCTAssertTrue(accepted)
+        }
+        XCTAssertTrue(timeline.isReliable)
+        XCTAssertEqual(timeline.processedSeconds(source: .microphone), 20, accuracy: 0.01)
+        let stale = UUID()
+        let rejected = await service.ingestPrerecorded(samples: [0], source: .microphone, expectedID: stale)
+        XCTAssertFalse(rejected)
+        await service.flushActiveSession(expectedID: stale)
+        await service.endSessionAndWait(expectedID: stale)
+        service.discardSession(expectedID: stale)
+        XCTAssertEqual(service.activeSessionID, id)
+        await service.endSessionAndWait(expectedID: id)
+        XCTAssertNil(service.activeSessionID)
+        XCTAssertTrue(timeline.isReliable)
+    }
+
+    func testPrerecordedHungChunkReturnsWithinItsBoundWithoutTrustedLabels() async throws {
+        let entered = expectation(description: "prerecorded worker entered")
+        let release = DispatchSemaphore(value: 0)
+        let service = try await readyService(FixtureSpeakerProcessor(process: { _ in
+            entered.fulfill(); release.wait(); return []
+        }))
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        let id = try XCTUnwrap(service.activeSessionID)
+        let run = Task { await service.ingestPrerecorded(samples: [0], source: .microphone, expectedID: id, timeout: .milliseconds(50)) }
+        await fulfillment(of: [entered], timeout: 2)
+        let accepted = await run.value
+        XCTAssertFalse(accepted)
+        XCTAssertFalse(timeline.isReliable)
+        release.signal()
+        await service.endSessionAndWait(expectedID: id)
+    }
+
+    func testLiveFallbackDoesNotReportOrStopAnotherPrerecordedSpeakerOwner() async throws {
+        let service = try await readyService()
+        _ = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        let fileID = try XCTUnwrap(service.activeSessionID)
+        let state = AppState(diarizationService: service)
+        state.deepgramService?.connectionState = .connected
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        state.isRecording = true
+        XCTAssertNil(state.beginOnDeviceDiarizationSession(multichannel: false, monoSource: .microphone, transcribesOnDevice: false))
+        XCTAssertEqual(state.sessionSpeakerState, .deepgram)
+        state.handleLocalSpeakerFailure(id: fileID, reason: .inference)
+        XCTAssertEqual(state.sessionSpeakerState, .deepgram)
+        state.stopRecording()
+        XCTAssertEqual(service.activeSessionID, fileID)
+        await service.endSessionAndWait(expectedID: fileID)
+    }
+}
+
+extension LocalSpeakerFailureTests {
+    func testStopAllowsQueuedAudioToSettleAndNextRecordingNeedsNoRetry() async throws {
+        let entered = expectation(description: "queued decode")
+        let release = DispatchSemaphore(value: 0)
+        let processor = FixtureSpeakerProcessor(process: { samples in
+            entered.fulfill(); release.wait()
+            return [.init(probabilities: Array(repeating: 1, count: samples.count / 160), frameCount: samples.count / 160, numSpeakers: 1)]
+        })
+        let service = try await readyService(processor)
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        service.ingest(samples: Array(repeating: 0, count: 4 * 16000), source: .microphone)
+        await fulfillment(of: [entered], timeout: 2)
+        let stopping = Task { await service.endSessionAndWait() }
+        // Cross the old two-second Stop deadline with four seconds of accepted audio.
+        try await Task.sleep(for: .milliseconds(2300))
+        XCTAssertTrue(timeline.isReliable)
+        release.signal()
+        await stopping.value
+        XCTAssertTrue(timeline.isReliable)
+        XCTAssertEqual(timeline.processedSeconds(source: .microphone), 4, accuracy: 0.01)
+        XCTAssertEqual(timeline.matureSlots(source: .microphone), [0])
+        XCTAssertTrue(service.isReady)
+        XCTAssertNotNil(service.beginSession(sources: [.microphone]))
+        await service.endSessionAndWait()
+    }
+
+    func testAdmissionLagInvalidatesEvidenceButKeepsPreparedModel() async throws {
+        let service = try await readyService()
+        let collector = VoicePrintCollector(embed: { _ in [1, 0] })
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone], collector: collector))
+        service.ingest(samples: Array(repeating: 0, count: 9 * 16000), source: .microphone)
+        try await TestSupport.waitUntil { service.activeCollector == nil }
+        XCTAssertFalse(timeline.isReliable)
+        XCTAssertTrue(service.isReady)
+        await service.endSessionAndWait()
+        XCTAssertNotNil(service.beginSession(sources: [.microphone]))
+        await service.endSessionAndWait()
+    }
+
+    func testLocalTranscriptionWithSeparationOffKeepsMicIdentityAndNoFailure() async throws {
+        let state = AppState()
+        state.appModeRaw = AppMode.managed.rawValue
+        state.shareDiagnostics = true; state.privateModeEnabled = false
+        state.onDeviceSpeakerSeparationEnabled = false
+        state.isRecording = true
+        defer { state.isRecording = false }
+        var events: [(String, [String: String])] = []
+        state.diagnosticEventObserver = { events.append(($0, $1)) }
+        let timeline = state.beginOnDeviceDiarizationSession(multichannel: false, monoSource: .microphone, transcribesOnDevice: true)
+        XCTAssertNil(timeline)
+        XCTAssertNil(state.speakerSeparationIssue)
+        XCTAssertEqual(events.last?.0, "speaker_separation_state")
+        XCTAssertEqual(events.last?.1["speaker_engine"], "unavailable")
+        XCTAssertNil(events.last?.1["speaker_failure"])
+        let response = try JSONDecoder().decode(DeepgramResponse.self, from: Data(#"{"type":"Results","is_final":true,"channel":{"alternatives":[{"transcript":"hello there","confidence":1,"words":[{"word":"hello","start":0,"end":0.2,"confidence":1,"speaker":0},{"word":"there","start":0.2,"end":0.5,"confidence":1,"speaker":0}]}]}}"#.utf8))
+        let result = DeepgramService.processTranscriptResponse(response, isMultichannel: false, monoSource: .microphone,
+            segmentationState: .init(), identityState: .init(), speakerTimeline: timeline)
+        guard case .transcript(let parsed) = result else { return XCTFail("expected mic words") }
+        XCTAssertEqual(parsed.update.speaker, 1000)
+        XCTAssertFalse(parsed.update.speakerSeparationUnavailable)
+        state.currentMeeting = Meeting(title: "mic only")
+        state.liveSpeakerNames = ["1000": "Sasha"]
+        state.deepgramService?.transcriptUpdate = parsed.update
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(state.liveSpeakerNames["1000"], "Sasha")
+        XCTAssertFalse(state.liveSpeakerNames.values.contains(AppState.unavailableSpeakerName))
+
+        state.onDeviceSpeakerSeparationEnabled = true
+        let unavailable = state.beginOnDeviceDiarizationSession(multichannel: false, monoSource: .microphone, transcribesOnDevice: true)
+        XCTAssertEqual(unavailable?.isReliable, false)
+        XCTAssertNotNil(state.speakerSeparationIssue)
+        XCTAssertEqual(events.last?.0, "speaker_separation_failed")
+        XCTAssertEqual(events.last?.1["speaker_failure"], "not_ready")
+    }
+}
+
+extension LocalSpeakerFailureTests {
+    func testStopBudgetIncludesAudioBufferedInsideProcessor() async throws {
+        let entered = expectation(description: "buffered tail finish")
+        let release = DispatchSemaphore(value: 0)
+        let processor = FixtureSpeakerProcessor(finish: {
+            entered.fulfill(); release.wait()
+            return [.init(probabilities: Array(repeating: 1, count: 400), frameCount: 400, numSpeakers: 1)]
+        })
+        let service = try await readyService(processor)
+        let timeline = try XCTUnwrap(service.beginSession(sources: [.microphone]))
+        service.ingest(samples: Array(repeating: 0, count: 4 * 16000), source: .microphone)
+        // The serial worker reaches finish after process returned, with no pending PCM.
+        let stopping = Task { await service.endSessionAndWait() }
+        await fulfillment(of: [entered], timeout: 2)
+        try await Task.sleep(for: .milliseconds(2300))
+        XCTAssertTrue(timeline.isReliable)
+        release.signal()
+        await stopping.value
+        XCTAssertTrue(timeline.isReliable)
+        XCTAssertEqual(timeline.matureSlots(source: .microphone), [0])
+        XCTAssertTrue(service.isReady)
+    }
+}

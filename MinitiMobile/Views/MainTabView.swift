@@ -61,7 +61,12 @@ struct MainTabView: View {
                 SettingsView_iOS()
                     .preferredColorScheme(.dark)
             }
-            .sheet(isPresented: $appState.showThirdPartyAIConsent) {
+            .alert("OpenAI model access", isPresented: $appState.showBYOKModelAccessError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(InsightsError.lunaAccessRequired.localizedDescription)
+        }
+        .sheet(isPresented: $appState.showThirdPartyAIConsent) {
                 TermsAcceptanceView(presentation: .sheet)
                     .preferredColorScheme(.dark)
             }

@@ -21,7 +21,7 @@ final class UpdateService: ObservableObject {
 
     private init() {
         updaterController = SPUStandardUpdaterController(
-            startingUpdater: true,
+            startingUpdater: !AppState.isRunningUnderXCTest,
             updaterDelegate: nil,
             userDriverDelegate: nil
         )

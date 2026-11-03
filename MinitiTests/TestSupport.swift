@@ -8,73 +8,174 @@ import AVFoundation
 @testable import miniti
 #endif
 
-/// One `URLProtocol` for every network test. Two ways to drive it:
-/// - `handler`: the original one-shot `(status, body)` reply used by `ClientAuthTests`.
-/// - `script`: richer, per-request responses with headers, or `throw` a `URLError` to
-///   simulate timeout, offline, or connection loss. `delay` holds the reply back so a
-///   caller can cancel mid-flight.
-final class StubURLProtocol: URLProtocol {
+/// A session retains its script context, so reset cannot redirect an older request to
+/// another test. Every request snapshots its response script and delay before scheduling.
+final class StubURLProtocol: URLProtocol, @unchecked Sendable {
     typealias Reply = (status: Int, body: Data, headers: [String: String])
 
-    nonisolated(unsafe) static var handler: ((URLRequest) -> (Int, Data))?
-    nonisolated(unsafe) static var script: ((URLRequest) throws -> Reply)?
-    nonisolated(unsafe) static var delay: TimeInterval = 0
-    nonisolated(unsafe) static var lastRequest: URLRequest?
-    nonisolated(unsafe) static var requests: [URLRequest] = []
+    final class Context: @unchecked Sendable {
+        let id = UUID().uuidString
+        private let lock = NSLock()
+        private var storedHandler: ((URLRequest) -> (Int, Data))?
+        private var storedScript: ((URLRequest) throws -> Reply)?
+        private var storedDelay: TimeInterval = 0
+        private var captured: [URLRequest] = []
+        private var capturedLast: URLRequest?
+        private var storedGate: ResponseGate?
+        var gate: ResponseGate? {
+            get { lock.withLock { storedGate } }
+            set { lock.withLock { storedGate = newValue } }
+        }
+        var lastRequest: URLRequest? {
+            get { lock.withLock { capturedLast } }
+            set { lock.withLock { capturedLast = newValue } }
+        }
 
-    static func reset() {
-        handler = nil
-        script = nil
-        delay = 0
-        lastRequest = nil
-        requests = []
+        var handler: ((URLRequest) -> (Int, Data))? {
+            get { lock.withLock { storedHandler } }
+            set { lock.withLock { storedHandler = newValue } }
+        }
+        var script: ((URLRequest) throws -> Reply)? {
+            get { lock.withLock { storedScript } }
+            set { lock.withLock { storedScript = newValue } }
+        }
+        var delay: TimeInterval {
+            get { lock.withLock { storedDelay } }
+            set { lock.withLock { storedDelay = newValue } }
+        }
+        var requests: [URLRequest] {
+            get { lock.withLock { captured } }
+            set { lock.withLock { captured = newValue } }
+        }
+
+        fileprivate func capture(_ request: URLRequest) -> (TimeInterval, () throws -> Reply) {
+            lock.withLock {
+                captured.append(request)
+                capturedLast = request
+                let script = storedScript
+                let handler = storedHandler
+                return (storedDelay, {
+                    if let script { return try script(request) }
+                    let (status, body) = handler?(request) ?? (500, Data())
+                    return (status, body, ["Content-Type": "application/json"])
+                })
+            }
+        }
+    }
+
+    /// Explicit response suspension for cancellation and authority-race fixtures.
+    final class ResponseGate: @unchecked Sendable {
+        private let lock = NSLock()
+        private var pending: [DispatchWorkItem] = []
+        private var released = false
+        var pendingCount: Int { lock.withLock { pending.count } }
+        fileprivate func hold(_ work: DispatchWorkItem) {
+            let run = lock.withLock {
+                if released { return true }
+                pending.append(work)
+                return false
+            }
+            if run { DispatchQueue.global().async(execute: work) }
+        }
+        func release() {
+            let work = lock.withLock {
+                released = true
+                let work = pending
+                pending.removeAll()
+                return work
+            }
+            for item in work { DispatchQueue.global().async(execute: item) }
+        }
+    }
+
+    private static let registryLock = NSLock()
+    nonisolated(unsafe) private static var active = Context()
+    nonisolated(unsafe) private static var contexts: [String: Context] = [:]
+    static var context: Context { registryLock.withLock { active } }
+    static var handler: ((URLRequest) -> (Int, Data))? {
+        get { context.handler }
+        set { context.handler = newValue }
+    }
+    static var script: ((URLRequest) throws -> Reply)? {
+        get { context.script }
+        set { context.script = newValue }
+    }
+    static var delay: TimeInterval {
+        get { context.delay }
+        set { context.delay = newValue }
+    }
+    static var requests: [URLRequest] {
+        get { context.requests }
+        set { context.requests = newValue }
+    }
+    static var lastRequest: URLRequest? {
+        get { context.lastRequest }
+        set { context.lastRequest = newValue }
+    }
+
+    static func reset() { registryLock.withLock { active = Context() } }
+    static func configure(_ config: URLSessionConfiguration, context: Context) {
+        registryLock.withLock { contexts[context.id] = context }
+        config.protocolClasses = [StubURLProtocol.self]
+        config.httpAdditionalHeaders = ["X-Miniti-Test-Context": context.id]
     }
 
     static func json(_ status: Int, _ body: String) -> Reply {
         (status, Data(body.utf8), ["Content-Type": "application/json"])
     }
 
+    private let deliveryLock = NSRecursiveLock()
+    private var stopped = false
+    private var work: DispatchWorkItem?
+
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
 
     override func startLoading() {
-        Self.lastRequest = request
-        Self.requests.append(request)
-        let work = { [self] in
-            if let script = Self.script {
-                do {
-                    let reply = try script(self.request)
-                    self.respond(reply)
-                } catch {
-                    self.client?.urlProtocol(self, didFailWithError: error)
-                }
-                return
-            }
-            let (status, body) = Self.handler?(self.request) ?? (500, Data())
-            self.respond((status, body, ["Content-Type": "application/json"]))
+        guard let id = request.value(forHTTPHeaderField: "X-Miniti-Test-Context"),
+              let context = Self.registryLock.withLock({ Self.contexts[id] }) else {
+            client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
+            return
         }
-        if Self.delay > 0 {
-            DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay, execute: work)
-        } else {
-            work()
+        let (delay, reply) = context.capture(request)
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.deliveryLock.lock(); defer { self.deliveryLock.unlock() }
+            guard !self.stopped else { return }
+            do { self.respond(try reply()) }
+            catch { self.client?.urlProtocol(self, didFailWithError: error) }
+            self.work = nil
         }
+        deliveryLock.lock()
+        if stopped { item.cancel() }
+        else { work = item }
+        deliveryLock.unlock()
+        if let gate = context.gate { gate.hold(item) }
+        else { DispatchQueue.global().asyncAfter(deadline: .now() + delay, execute: item) }
     }
 
-    override func stopLoading() {}
+    override func stopLoading() {
+        deliveryLock.lock(); defer { deliveryLock.unlock() }
+        stopped = true
+        work?.cancel()
+        work = nil
+    }
 
     private func respond(_ reply: Reply) {
         let response = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: nil, headerFields: reply.headers)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        guard !stopped else { return }
         client?.urlProtocol(self, didLoad: reply.body)
+        guard !stopped else { return }
         client?.urlProtocolDidFinishLoading(self)
     }
 }
 
 enum TestSupport {
     /// Ephemeral session routed entirely through `StubURLProtocol`.
-    static func stubbedSession() -> URLSession {
+    static func stubbedSession(context: StubURLProtocol.Context = StubURLProtocol.context) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
-        config.protocolClasses = [StubURLProtocol.self]
+        StubURLProtocol.configure(config, context: context)
         config.timeoutIntervalForRequest = 5
         return URLSession(configuration: config)
     }
@@ -178,6 +279,7 @@ enum TestHost {
     /// True only when the host may actually read the microphone. The runner has a default
     /// input device that delivers nothing, so the device list alone is not enough.
     static var microphoneIsAuthorized: Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+        ProcessInfo.processInfo.environment["MINITI_HARDWARE_TESTS"] == "1"
+            && AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
     }
 }

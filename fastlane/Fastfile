@@ -72,7 +72,7 @@ end
 # simulators share a name (there are usually two "iPhone 17 Pro"s, which `name=` can't tell apart).
 def ios_unit_test_simulator_name
   name = ENV["MINITI_IOS_TEST_DEVICE_NAME"].to_s.strip
-  name.empty? ? "iPhone 17" : name
+  name.empty? ? "iPhone 16" : name
 end
 
 def ios_unit_test_simulator
@@ -96,8 +96,9 @@ def ios_unit_test_simulator
 
   preferred = ios_unit_test_simulator_name
   match = candidates.find { |device| device["name"] == preferred }
-  UI.important("Simulator '#{preferred}' not available — falling back.") if match.nil?
-  match ||= candidates.find { |device| device["name"].start_with?("iPhone") } || candidates.first
+  released_models = ["iPhone 16", "iPhone 17", "iPhone 16 Pro", "iPhone 17 Pro"]
+  match ||= released_models.filter_map { |name| candidates.find { |device| device["name"] == name } }.first
+  UI.user_error!("No supported released iPhone simulator is available. Install an iPhone 16 or iPhone 17 simulator.") if match.nil?
 
   UI.message("Using iOS simulator #{match['name']} (#{match['udid']})")
   match
@@ -165,6 +166,7 @@ platform :ios do
   desc "Run MinitiMobileTests unit tests on iOS Simulator"
   lane :test do
     run_tests(
+      configuration: "Testing",
       project: PROJECT_PATH,
       scheme: IOS_SCHEME,
       destination: ios_unit_test_destination,
@@ -362,6 +364,7 @@ platform :mac do
   desc "Run MinitiTests unit tests"
   lane :test do
     run_tests(
+      configuration: "Testing",
       project: PROJECT_PATH,
       scheme: MAC_SCHEME,
       destination: "platform=macOS",

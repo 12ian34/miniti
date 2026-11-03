@@ -19,3 +19,8 @@ The immediate retry/spin and blocked-first-job starvation are still open R4 work
 ## QA and history
 
 Physical 5/30/60-minute capture, wrist down, phone absent/reconnect, interruptions, low storage, locked phone and battery measurements lack complete recorded evidence. Simulator success does not close these checks. See [validation register](../runbooks/validation.md), [original Watch record](../archive/apple-watch-plan.md) and [voice-print record](../archive/voice-prints-plan.md). No Linux Watch app is implied; shared billing/document changes still require Linux contract tracking.
+
+
+## Local 3.7.0 speaker-work compatibility
+
+Prerecorded Watch diarization awaits completion of each one-second chunk instead of queueing a whole file into the live worker's eight-second/128-packet limit. Each wait is bounded to two seconds; failure/cancellation keeps the existing Deepgram labels and prevents voice learning from incomplete local work. There is no flush between chunks. File ingestion, live audio callbacks, failure reporting and finalization carry their owning speaker-session ID, so a live recording that falls back to provider labels cannot feed, stop or report the Watch worker as its own. Controlled backpressure, timeout and stale-owner tests cover this boundary. Physical Watch transfer/long-file performance remains separate validation.

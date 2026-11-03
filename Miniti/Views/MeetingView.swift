@@ -20,6 +20,14 @@ struct MeetingView: View {
                         RecordingIssueBanner(message: issue, isDismissible: false)
                     }
 
+                    if let issue = appState.speakerSeparationIssue {
+                        Label(issue, systemImage: "person.crop.circle.badge.exclamationmark")
+                            .font(.caption)
+                            .foregroundStyle(ColorPalette.Status.warning)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(MinitiDesignSystem.Spacing.comfortable)
+                    }
+
                     if let grace = appState.endingGrace {
                         EndingGraceBanner(grace: grace)
                     }
@@ -2446,12 +2454,9 @@ struct TerminalHeader: View {
     
     private var recoveryAccent: Color {
         switch appState.audioRecoveryState {
-        case .healthy:
-            return Color(hex: "3FB950")
-        case .recovering:
-            return Color(hex: "D29922")
-        case .degraded:
-            return Color(hex: "F85149")
+        case .healthy: return ColorPalette.Status.success
+        case .recovering, .awaitingTranscript: return ColorPalette.Status.warning
+        case .degraded: return ColorPalette.Status.error
         }
     }
     

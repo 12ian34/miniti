@@ -15,10 +15,10 @@ cd "$REPO_ROOT"
 run() {
   local name=$1 scheme=$2 dest=$3 only=$4
   echo "» $name: running $only with coverage"
-  xcodebuild test -project Miniti.xcodeproj -scheme "$scheme" -destination "$dest" \
+  xcodebuild test -configuration Testing -project Miniti.xcodeproj -scheme "$scheme" -destination "$dest" \
     -derivedDataPath "$REPO_ROOT/DerivedDataLocal" -enableCodeCoverage YES \
     -resultBundlePath "$OUT/$name.xcresult" -only-testing:"$only" -quiet 2>&1 \
-    | grep -E "error:|TEST (SUCCEEDED|FAILED)" || true
+    | tee "$OUT/$name.log" | (grep -E "error:|TEST (SUCCEEDED|FAILED)" || true)
   xcrun xccov view --report --json "$OUT/$name.xcresult" > "$OUT/$name.json"
   python3 - "$OUT/$name.json" "$name" <<'PY'
 import json, sys, collections

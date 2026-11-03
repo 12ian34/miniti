@@ -89,7 +89,7 @@ final class MeetingJourneyTests: XCTestCase {
         XCTAssertFalse(StubURLProtocol.requests.isEmpty, "final insights were attempted against the backend")
     }
 
-    func testStopWithNoContentSavesNothingAndDoesNotFinalize() async throws {
+    func testStopWithNoContentDrainsThenSavesNothing() async throws {
         let state = makeState()
         state.currentMeeting = Meeting(title: "empty")
         state.isRecording = true
@@ -98,8 +98,10 @@ final class MeetingJourneyTests: XCTestCase {
         state.stopRecording()
 
         XCTAssertFalse(state.isRecording)
-        XCTAssertFalse(state.isFinalizingMeeting)
+        XCTAssertTrue(state.isFinalizingMeeting)
+        try await TestSupport.waitUntil { !state.isFinalizingMeeting }
         XCTAssertEqual(state.finalizationStatusText, "Saved automatically")
+        XCTAssertTrue(try persistedMeetings().isEmpty)
     }
 
     // MARK: kill mid-meeting → relaunch → resume
@@ -840,5 +842,237 @@ extension SavedMeetingDeliveryTests {
         XCTAssertEqual(replacement.destination, state.webhookURL)
         XCTAssertEqual(replacement.held, false)
         XCTAssertEqual(meeting.webhookCompletion?.phase, .handedOff)
+    }
+}
+
+
+extension MeetingJourneyTests {
+    func testStopBeforeFirstWordsDrainsBothSourcesAndPersistsLateFinals() async throws {
+        let state = makeState()
+        let meeting = Meeting(title: "late words")
+        state.currentMeeting = meeting
+        state.isRecording = true
+        state.insightsService = nil
+        state.beginRecordingDiagnostics()
+        var finalEvidence: [String: String]?
+        state.diagnosticEventObserver = { name, fields in if name == "recording_final" { finalEvidence = fields } }
+        let service = try XCTUnwrap(state.deepgramService)
+        service.finalDrainDuration = .milliseconds(150)
+        var flushes = 0
+        service.finalDrainOperation = {
+            flushes += 1
+            for (index, text) in ["first source tail", "second source tail"].enumerated() {
+                try? await Task.sleep(for: .milliseconds(25))
+                service.speakerSegments = [.init(id: UUID(), speaker: index, text: text,
+                    startTime: Double(index * 2), endTime: Double(index * 2 + 1), isFinal: true,
+                    confidence: 1, channelIndex: nil, source: .system)]
+            }
+        }
+        state.stopRecording()
+        state.stopRecording() // A duplicate Stop must not start another drain or completion.
+        XCTAssertTrue(state.isFinalizingMeeting)
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+        XCTAssertEqual(flushes, 1)
+        XCTAssertEqual(finalEvidence?["transcription_outcome"], "words_seen", "Final classification follows both-source drain")
+        let saved = try XCTUnwrap(persistedMeetings().first)
+        XCTAssertEqual(saved.id, meeting.id)
+        XCTAssertEqual(saved.segments.sorted { $0.timestamp < $1.timestamp }.map(\.text),
+                       ["first source tail", "second source tail"])
+    }
+
+    func testFinalDrainIsBoundedWhenItsCloseOperationNeverCompletes() async throws {
+        let service = DeepgramService()
+        service.finalDrainDuration = .milliseconds(50)
+        var gate: CheckedContinuation<Void, Never>?
+        service.finalDrainOperation = { await withCheckedContinuation { gate = $0 } }
+        let started = ContinuousClock.now
+        await service.gracefulDisconnect()
+        XCTAssertNotNil(gate)
+        XCTAssertLessThan(started.duration(to: .now), .seconds(1))
+        XCTAssertEqual(service.connectionState, .disconnected)
+        gate?.resume()
+    }
+
+    func testAnOlderDrainDoesNotDisconnectAReplacementConnection() async throws {
+        let service = DeepgramService()
+        service.finalDrainDuration = .milliseconds(100)
+        var started = false
+        service.finalDrainOperation = { started = true }
+        let drain = Task { await service.gracefulDisconnect() }
+        try await TestSupport.waitUntil { started }
+        service.disconnect()
+        service.socketStarter = { _ in } // Keep a replacement handshake pending, with no network.
+        service.configure(credential: "synthetic-key", authorizationScheme: .token)
+        service.connect()
+        await drain.value
+        XCTAssertEqual(service.connectionState, .connecting)
+        service.disconnect()
+    }
+}
+
+
+extension MeetingJourneyTests {
+    func testConnectionWaitAllowsHandshakeToSettleAndRejectsReplacement() async throws {
+        let service = DeepgramService()
+        service.connectionTimeoutSeconds = 0.5
+        service.connectionState = .connecting
+        let slowHandshake = Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            service.connectionState = .connected
+        }
+        let connected = await service.waitForConnectionAttempt()
+        XCTAssertTrue(connected)
+        await slowHandshake.value
+        service.connectionState = .connecting
+        let wait = Task { await service.waitForConnectionAttempt() }
+        try await Task.sleep(for: .milliseconds(25))
+        service.disconnect()
+        service.connectionState = .connected
+        let replaced = await wait.value
+        XCTAssertFalse(replaced, "A newer socket cannot complete the older attempt")
+        service.disconnect()
+    }
+}
+
+extension MeetingJourneyTests {
+    func testResumedRecordingDoesNotUseExistingMeetingWordsAsFreshTranscriptionEvidence() async throws {
+        let state = makeState()
+        let meeting = Meeting(title: "resumed recording")
+        state.currentMeeting = meeting
+        state.liveSegments = [segment("words from the earlier recording", at: 1)]
+        state.isRecording = true
+        state.insightsService = nil
+        state.deepgramService?.finalDrainDuration = .milliseconds(20)
+        state.beginRecordingDiagnostics()
+        var finalEvidence: [String: String]?
+        state.diagnosticEventObserver = { name, fields in if name == "recording_final" { finalEvidence = fields } }
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+        XCTAssertEqual(finalEvidence?["transcription_outcome"], "no_speech_evidence")
+        XCTAssertEqual(try persistedMeetings().first?.segments.map(\.text), ["words from the earlier recording"])
+    }
+}
+
+extension MeetingJourneyTests {
+    func testFinalAIDecodeFailureKeepsTranscriptAndSettlesCompletionWithBoundedDiagnostics() async throws {
+        let state = makeState()
+        let sharing = state.shareDiagnostics
+        defer { state.shareDiagnostics = sharing }
+        state.shareDiagnostics = true
+        let meeting = Meeting(title: "decode fixture")
+        state.currentMeeting = meeting
+        state.liveSegments = [segment("retained transcript fixture", at: 1)]
+        state.isRecording = true
+        state.beginRecordingDiagnostics()
+        state.deepgramService?.finalDrainDuration = .milliseconds(20)
+        StubURLProtocol.script = { _ in StubURLProtocol.json(200, "broken JSON") }
+        var failures: [[String: String]] = []
+        state.diagnosticEventObserver = { name, fields in if name == "insights_request_failed" { failures.append(fields) } }
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting && !state.currentMeetingFinalAIInProgress }
+        let saved = try XCTUnwrap(persistedMeetings().first)
+        XCTAssertEqual(saved.segments.map(\.text), ["retained transcript fixture"])
+        let final = try XCTUnwrap(failures.first { $0["ai_stage"] == "final" && $0["task_mode"] == "standard" })
+        XCTAssertEqual(final["failure_category"], "decode")
+        XCTAssertEqual(final["status"], "200")
+        XCTAssertNotNil(final["request_id"].flatMap(UUID.init(uuidString:)))
+        XCTAssertFalse(final.values.contains { $0.contains("fixture") || $0.contains("JSON") })
+    }
+
+    func testAIDiagnosticModeConsentPrivateAndOwnerGates() async {
+        let state = makeState()
+        let sharing = state.shareDiagnostics
+        defer { state.shareDiagnostics = sharing; state.privateModeEnabled = false }
+        state.shareDiagnostics = true
+        var names: [String] = []
+        state.diagnosticEventObserver = { name, _ in names.append(name) }
+        state.reportAIRequestFailure(URLError(.timedOut), mode: "standard", stage: "live")
+        XCTAssertEqual(names, ["insights_request_failed"])
+        state.shareDiagnostics = false
+        state.reportAIRequestFailure(URLError(.timedOut), mode: "standard", stage: "live")
+        state.shareDiagnostics = true
+        state.privateModeEnabled = true
+        state.reportAIRequestFailure(URLError(.timedOut), mode: "standard", stage: "live")
+        state.privateModeEnabled = false
+        state.appModeRaw = AppMode.byok.rawValue
+        state.reportAIRequestFailure(URLError(.timedOut), mode: "standard", stage: "live")
+        state.appModeRaw = AppMode.managed.rawValue
+        let old = AIRequestObservation(accountID: "acct_other", credentialGeneration: -1, stage: "final")
+        await AIRequestDiagnostics.$current.withValue(old) {
+            state.reportAIRequestFailure(URLError(.timedOut), mode: "standard", stage: "final")
+        }
+        XCTAssertEqual(names, ["insights_request_failed"])
+    }
+}
+
+
+extension MeetingJourneyTests {
+    func testPlannedRestartKeepsOneOwnerAndIgnoresQueuedOldConnectionStates() async throws {
+        let state = makeState()
+        state.shareDiagnostics = true
+        let service = try XCTUnwrap(state.deepgramService)
+        service.socketStarter = { _ in } // No provider traffic.
+        service.connectionState = .connected
+        state.isRecording = true
+        state.beginRecordingDiagnostics()
+        var names: [String] = []
+        var restart: [String: String]?
+        state.diagnosticEventObserver = { name, fields in
+            names.append(name)
+            if name == "recording_restart_planned" { restart = fields }
+        }
+        state.handleDeepgramConnectionState(.error) // Old queued notification.
+        XCTAssertFalse(names.contains("deepgram_connection_error"))
+        state.scheduleDeepgramReconnect(reason: "manual retry")
+        state.scheduleDeepgramReconnect(reason: "unexpected disconnect")
+        try await TestSupport.waitUntil(timeout: 5) { restart != nil }
+        state.handleDeepgramConnectionState(.disconnected)
+        XCTAssertEqual(names.filter { $0 == "deepgram_reconnect_scheduled" }.count, 1)
+        XCTAssertFalse(names.contains("deepgram_unexpected_disconnect"))
+        XCTAssertEqual(restart?["recovery_reason"], "manual")
+        XCTAssertEqual(restart?["recovery_generation"], "1")
+        XCTAssertFalse(names.contains("recording_transcription_resumed"))
+        state.stopRecording()
+        try await TestSupport.waitUntil { !state.isFinalizingMeeting }
+    }
+}
+
+extension MeetingJourneyTests {
+    func testLocalFinishLongerThanTwoSecondsSavesTailOnceAfterReceiveWindow() async throws {
+        let state = makeState()
+        state.currentMeeting = Meeting(title: "local tail")
+        state.isRecording = true
+        state.insightsService = nil
+        let service = try XCTUnwrap(state.deepgramService)
+        var gate: CheckedContinuation<Void, Never>?
+        var flushes = 0
+        service.localFinishOperation = {
+            flushes += 1
+            await withCheckedContinuation { gate = $0 }
+            service.speakerSegments = [.init(id: UUID(), speaker: 1000, text: "final local words",
+                startTime: 0, endTime: 1, isFinal: true, confidence: 1, channelIndex: nil, source: .microphone)]
+        }
+        state.stopRecording(); state.stopRecording()
+        try await TestSupport.waitUntil { gate != nil }
+        try await Task.sleep(for: .milliseconds(2300))
+        XCTAssertTrue(state.isFinalizingMeeting)
+        let released = ContinuousClock.now
+        gate?.resume()
+        try await TestSupport.waitUntil(timeout: 5) { !state.isFinalizingMeeting }
+        XCTAssertGreaterThanOrEqual(released.duration(to: .now), .milliseconds(800))
+        XCTAssertEqual(flushes, 1)
+        XCTAssertEqual(try XCTUnwrap(persistedMeetings().first).segments.map(\.text), ["final local words"])
+    }
+
+    func testHungLocalFinishHasHardCap() async throws {
+        let service = DeepgramService()
+        service.localFinishTimeout = .milliseconds(50)
+        var gate: CheckedContinuation<Void, Never>?
+        service.localFinishOperation = { await withCheckedContinuation { gate = $0 } }
+        let start = ContinuousClock.now
+        await service.gracefulDisconnect()
+        XCTAssertNotNil(gate)
+        XCTAssertLessThan(start.duration(to: .now), .seconds(1))
+        gate?.resume()
     }
 }

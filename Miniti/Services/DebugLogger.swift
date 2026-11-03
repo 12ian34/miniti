@@ -217,6 +217,9 @@ final class DiagnosticTimeline: @unchecked Sendable {
         case signingRecovered = "signing_recovered", refreshStarted = "refresh_started", refreshSucceeded = "refresh_succeeded", refreshFailed = "refresh_failed"
         case authRefused = "auth_refused", credentialStale = "credential_stale", accountChanged = "account_changed"
         case recordingAttempt = "recording_attempt", recordingReady = "recording_ready", recordingFailed = "recording_failed", recordingFinal = "recording_final"
+        case deviceCapabilities = "device_capabilities", speakerSeparationFailed = "speaker_separation_failed", speakerSeparationState = "speaker_separation_state"
+        case connectionRestored = "recording_connection_restored", transcriptionResumed = "recording_transcription_resumed", restartPlanned = "recording_restart_planned"
+        case transcriptionOutcome = "recording_transcription_outcome", insightsRequestFailed = "insights_request_failed"
         case audioReceived = "audio_received", transcriptReceived = "transcript_received", transcriptionConnected = "transcription_connected"
         case captureFailed = "microphone_capture_failed", audioStall = "transcript_starvation_detected"
         case recoveryDegraded = "audio_recovery_degraded", recoveryHealthy = "audio_recovery_healthy"
@@ -227,6 +230,9 @@ final class DiagnosticTimeline: @unchecked Sendable {
 
         var category: String {
             switch self {
+            case .insightsRequestFailed: return "insights"
+            case .deviceCapabilities: return "app"
+            case .speakerSeparationFailed, .speakerSeparationState, .transcriptionOutcome, .connectionRestored, .transcriptionResumed, .restartPlanned: return "audio"
             case .keychainRead, .keychainWrite, .keychainFallback: return "keychain"
             case .recordingAttempt, .recordingReady, .recordingFailed, .recordingFinal, .audioReceived, .transcriptReceived, .transcriptionConnected, .captureFailed, .audioStall, .recoveryDegraded, .recoveryHealthy, .connectionFailed, .reconnectExhausted: return "audio"
             case .cloudPaused, .cloudStarted, .cloudSucceeded, .cloudFailed, .cloudSuperseded, .cloudUpload, .cloudRemoval, .cloudChoice: return "cloud"
@@ -302,7 +308,8 @@ final class DiagnosticTimeline: @unchecked Sendable {
         let numbers: Set<String> = ["error_code", "status", "duration_seconds", "pending_uploads", "pending_removals", "dropped"]
         var result: [String: String] = [:]
         for (key, value) in fields {
-            if vocabularies[key]?.contains(value) == true { result[key] = value }
+            if RecordingReportingContract.valid(key, value) { result[key] = value }
+            else if vocabularies[key]?.contains(value) == true { result[key] = value }
             else if booleans.contains(key), value == "true" || value == "false" { result[key] = value }
             else if numbers.contains(key), let n = Int(value), (-10_000_000...10_000_000).contains(n) { result[key] = String(n) }
             else if key == "attempt_id", let id = UUID(uuidString: value) { result[key] = id.uuidString.lowercased() }

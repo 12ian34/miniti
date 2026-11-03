@@ -23,11 +23,24 @@
       </BuildActionEntries>
    </BuildAction>
    <TestAction
-      buildConfiguration = "Debug"
+      buildConfiguration = "Testing"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
-      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldUseLaunchSchemeArgsEnv = "NO"
       shouldAutocreateTestPlan = "YES">
+      <MacroExpansion>
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "C60000010000000000000001"
+               BuildableName = "MinitiMobile.app"
+               BlueprintName = "MinitiMobile"
+               ReferencedContainer = "container:Miniti.xcodeproj">
+            </BuildableReference>
+      </MacroExpansion>
+      <EnvironmentVariables>
+         <EnvironmentVariable key="MINITI_HARDWARE_TESTS" value="$(MINITI_HARDWARE_TESTS)" isEnabled="YES"/>
+         <EnvironmentVariable key="MINITI_WIRE_DIR" value="$(MINITI_WIRE_DIR)" isEnabled="YES"/>
+      </EnvironmentVariables>
       <Testables>
          <TestableReference
             skipped = "NO">

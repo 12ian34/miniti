@@ -196,9 +196,11 @@ struct InstallationKey {
     }
 
     static func generate(preferSecureEnclave: Bool = true) -> InstallationKey {
+        #if !MINITI_TEST_HOST
         if preferSecureEnclave, SecureEnclave.isAvailable, let key = try? SecureEnclave.P256.Signing.PrivateKey() {
             return InstallationKey(backing: .secureEnclave(key))
         }
+        #endif
         return InstallationKey(backing: .software(P256.Signing.PrivateKey()))
     }
 
@@ -521,7 +523,7 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
         diagnostic = value
     }
 
-    init(backend: KeychainBackend = SecurityKeychainBackend()) {
+    init(backend: KeychainBackend = DefaultKeychainBackend.make) {
         slot = KeychainSlot(
             service: "com.miniti.device-auth",
             account: "credentials",

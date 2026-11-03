@@ -14,6 +14,17 @@ env:
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
 
 jobs:
+  runner-contract:
+    name: Runner and documentation contracts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/check-coverage-runner.py
+      - run: python3 scripts/check-test-contracts.py
+      - run: python3 scripts/check-doc-links.py
+      - name: Verify release metadata consistency
+        run: python3 scripts/check-release-metadata.py
+
   macos:
     name: macOS tests
     runs-on: macos-26
@@ -40,7 +51,7 @@ jobs:
         run: |
           set -o pipefail
           run_tests() {
-            xcodebuild test \
+            xcodebuild test -configuration Testing \
               -project Miniti.xcodeproj \
               -scheme Miniti \
               -destination 'platform=macOS' \
@@ -100,9 +111,10 @@ jobs:
           UDID=$(xcrun simctl list devices available -j | python3 -c '
           import json,sys
           d=json.load(sys.stdin)["devices"]
-          cands=[dev for rt,devs in d.items() if "iOS" in rt for dev in devs if dev["name"].startswith("iPhone")]
-          cands.sort(key=lambda x: x["name"])
-          print(cands[-1]["udid"] if cands else "")')
+          models=["iPhone 16", "iPhone 17", "iPhone 16 Pro", "iPhone 17 Pro"]
+          cands=[dev for rt,devs in d.items() if "iOS" in rt for dev in devs if dev["name"] in models]
+          cands.sort(key=lambda x: models.index(x["name"]))
+          print(cands[0]["udid"] if cands else "")')
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           test -n "$UDID"
 
@@ -110,7 +122,7 @@ jobs:
         run: |
           set -o pipefail
           run_tests() {
-            xcodebuild test \
+            xcodebuild test -configuration Testing \
               -project Miniti.xcodeproj \
               -scheme MinitiMobile \
               -destination "platform=iOS Simulator,id=${{ steps.sim.outputs.udid }}" \

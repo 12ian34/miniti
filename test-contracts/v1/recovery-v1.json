@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "events": [
+    "recording_connection_restored",
+    "recording_transcription_resumed",
+    "recording_restart_planned"
+  ],
+  "enum_fields": {
+    "recovery_reason": [
+      "connection_error",
+      "unexpected_close",
+      "transcript_stall",
+      "retry_exhausted",
+      "manual",
+      "capture_gap",
+      "unknown"
+    ]
+  },
+  "integer_fields": {
+    "connection_generation": 99999999,
+    "recovery_generation": 99999999,
+    "send_attempts": 99999999,
+    "send_completions": 99999999,
+    "local_ingest_attempts": 99999999,
+    "dropped_packets": 99999999,
+    "audio_gap_seconds": 86400
+  }
+}

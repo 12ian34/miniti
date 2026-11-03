@@ -319,6 +319,11 @@ struct MainWindow: View {
         }
         .frame(minWidth: 760, minHeight: 520)
         .background(Theme.bg)
+        .alert("OpenAI model access", isPresented: $appState.showBYOKModelAccessError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(InsightsError.lunaAccessRequired.localizedDescription)
+        }
         .sheet(isPresented: $appState.showThirdPartyAIConsent) {
             TermsAcceptanceView(presentation: .sheet)
                 .frame(width: 560, height: 520)

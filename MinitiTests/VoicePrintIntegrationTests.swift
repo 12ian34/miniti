@@ -33,17 +33,21 @@ final class VoicePrintIntegrationTests: XCTestCase {
 
         func run(from start: Int, seconds: Int) async -> [VoicePrintCollector.SlotVoice] {
             let collector = VoicePrintCollector(embed: embed)
-            let timeline = diarization.beginSession(sources: [.microphone], collector: collector)!
+            guard let timeline = diarization.beginSession(sources: [.microphone], collector: collector),
+                  let sessionID = diarization.activeSessionID else { XCTFail("No prerecorded session"); return [] }
             var offset = start * rate
             let end = min(samples.count, (start + seconds) * rate)
             var first = true
             while offset < end {
                 let next = min(end, offset + rate)
-                diarization.ingest(samples: Array(samples[offset..<next]), source: .microphone)
+                guard await diarization.ingestPrerecorded(samples: Array(samples[offset..<next]), source: .microphone, expectedID: sessionID) else {
+                    await diarization.endSessionAndWait(expectedID: sessionID)
+                    XCTFail("Prerecorded processing failed or timed out"); return []
+                }
                 if first { timeline.markSocketStart(); first = false }
                 offset = next
             }
-            await diarization.endSessionAndWait()
+            await diarization.endSessionAndWait(expectedID: sessionID)
             await collector.finish()
             let mature = timeline.matureSlots(source: .microphone)
             print("voiceprint integration: \(start)s+\(seconds)s mature slots \(mature); processed \(Int(timeline.processedSeconds(source: .microphone))) s; \(collector.diagnostics)")
