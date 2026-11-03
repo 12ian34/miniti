@@ -30,8 +30,8 @@ All targets share the same version string. When bumping, update every location l
 
 Two build settings, each in multiple places:
 
-- `MARKETING_VERSION` — 6 occurrences (2 per target × 3 targets, Debug + Release). Must match the new semver.
-- `CURRENT_PROJECT_VERSION` — 10 occurrences. Must match the new build number.
+- `MARKETING_VERSION`: update every relevant target/configuration, including Watch, extensions and Testing. Do not rely on an old occurrence count.
+- `CURRENT_PROJECT_VERSION`: update every occurrence to the new build number, including Testing.
 
 **`CURRENT_PROJECT_VERSION` wins over `CFBundleVersion` in Info.plist at build time** — always keep both in sync, or the built binary will have a different build number than the source-controlled Info.plist claims.
 
@@ -45,7 +45,7 @@ sed -i '' 's/CURRENT_PROJECT_VERSION = OLD_N;/CURRENT_PROJECT_VERSION = NEW_N;/g
 ### 3. CHANGELOG.md heading
 
 - Prepend a new version section at the top: `### YYYY-MM-DD - vX.Y.Z`
-- Use today's date.
+- Use the actual release date when publishing; keep an explicit Unreleased heading during preparation.
 - Entries follow the `changelog` skill's rules (user-facing, no code refs, ordered new → improvement → fix).
 
 ### 4. Fastlane release notes
@@ -73,13 +73,13 @@ Check with: `grep -n "v[0-9]\." fastlane/metadata/en-US/description.txt` before 
 
 1. Read the current semver from `Miniti/Info.plist` (`CFBundleShortVersionString`) and the current build number from `CFBundleVersion` to confirm the old values.
 2. Update all locations above, old → new. Remember BOTH numbers — semver + build number.
-3. Verify with grep: `rg "OLD_SEMVER"` should return zero hits outside `CHANGELOG.md` history. `rg "CURRENT_PROJECT_VERSION = OLD_N"` should return zero hits.
+3. Run `python3 scripts/check-release-metadata.py` and inspect the version/build settings. Historical release records and research legitimately retain older versions; do not rewrite them to make a global search empty.
 
 ## Not updated here
 
 - **`fastlane/metadata/copyright.txt`** — only needs the current year, not the version.
 - **Backend `miniti-api` version endpoint + appcast** — updated during the release workflow (see `release-workflow` skill), lives in a different repo.
-- **DMG filename** — always `miniti.dmg` (unversioned); the versioned upload to Netlify Blobs happens in the release step using the semver read from Info.plist.
+- **DMG filename** — always `miniti.dmg` (unversioned); the versioned GitHub release asset is published in the release step using the semver read from Info.plist.
 
 ## Common mistake
 

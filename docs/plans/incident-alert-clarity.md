@@ -81,6 +81,6 @@ Backend-only correction selected alongside 3.6.0, independently deployable when 
 
 Independent review identified and fixed two delivery boundaries: an unsent post-baseline notification remains pending when it ages beyond two hours and later sends with historical wording; recurrence compares recovery occurrence with the notified failure occurrence, not the email send time. Four deterministic tests cover these cases, first-seen late events and recovery before an alert was accepted. Capacity is bounded by send attempts, including failures. No new queue or Redis atomic transition was introduced.
 
-Final backend suite: **695 passed, 5 skipped**; type generation, TypeScript and lint clean. Production build and exact command evidence are in the release record. No alert was sent to a customer, no production state was reset, and no deployment was performed. The first normal deployed hourly run remains an operational release check.
+Final backend suite: **695 passed, 5 skipped**; type generation, TypeScript and lint clean. Production build and exact command evidence are in the release record. At this local checkpoint no customer alert or deployment had been performed. Subsequent deployment and normal hourly observation are recorded in [3.6.0](../releases/3.6.0.md); the local checkpoint is not the current rollout status.
 
-Initial implementation commit: `467601e`; the 2026-10-31 capability correction is recorded in the release evidence. Full production build passed after the final fixes; public operational deployment remains pending.
+Initial implementation commit: `467601e`; the 2026-10-31 capability correction is recorded in the release evidence. Full production build passed after the final fixes; deployment followed in backend `031c692` on 2026-10-31.

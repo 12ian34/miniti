@@ -18,7 +18,7 @@ Neither lives in `AGENTS.md` — that is the slim dev-facing index. Don't put ch
 
 ## CHANGELOG.md
 
-Entries live under the current version heading (`### YYYY-MM-DD - vX.Y.Z`) under the `## Releases` section.
+Prepare new work under an explicit Unreleased heading. At publication use `### YYYY-MM-DD - vX.Y.Z` under `## Releases`. Keep dates and versions accurate; historical entries stay unchanged unless Ian explicitly requests a correction.
 
 ### Format
 
@@ -31,7 +31,7 @@ Prefixes: `new`, `improvement`, `fix`.
 ### Tone
 
 - **User-facing only.** Write what changed from the user's perspective.
-- **Concise.** One line per change. No filler words.
+- **Concise.** One line per change. No filler words. Product name is lowercase miniti; no em dashes, bold or exclamation marks.
 - **No implementation details.** No code references, function names, file paths, class names, or technical architecture.
 - **Lowercase prefixes.** `- new:` not `- New:`.
 - **No period at end** unless the entry has multiple sentences.
@@ -62,13 +62,15 @@ Within a version, entries are sorted by prefix: all `new` first, then `improveme
 
 ### Rules
 
-- Never modify older changelog entries. Add corrections as new entries at the top.
+- Never modify older changelog entries unless Ian explicitly requests a historical correction. Add ordinary corrections to the unreleased entry.
 - Group related changes into one entry when possible (e.g. "iOS native toolbar items" covers home + recording + history).
 - Add entries immediately after making changes, not at the end of a session.
 
 ## Release notes (`fastlane/metadata`)
 
 These are iOS App Store "What's New" text. Update both `en-US` and `en-GB` locales. `CHANGELOG.md` is the source of truth — these files are mirrored from it at release time, filtered to iOS-relevant bullets.
+
+Keep metadata for the currently selected release until release preparation selects the next version; docs-only changes do not replace live release notes.
 
 ### Scope
 

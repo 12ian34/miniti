@@ -1,6 +1,6 @@
 # Operations, diagnostics and support
 
-Current deployed behavior reconciled 2026-10-30 after 3.5.0. [Logging and monitoring](../plans/logging-and-monitoring.md) is the delivered implementation record; [incident alert clarity](../plans/incident-alert-clarity.md) owns the next correction. Backend [runbook](../../../miniti-api/docs/agents/05-runbook.md) and [environment contract](../../../miniti-api/docs/agents/02-environment.md) own command/config details.
+Deployed baseline reconciled through 3.6.0; local 3.7.0 additions are identified separately. [Logging and monitoring](../plans/logging-and-monitoring.md) and [incident alert clarity](../plans/incident-alert-clarity.md) are delivered records; [operator emails](../plans/operator-alert-emails.md) owns the local 3.7.0 correction. Backend [runbook](../../../miniti-api/docs/agents/05-runbook.md) and [environment contract](../../../miniti-api/docs/agents/02-environment.md) own command/config details.
 
 ## Read health without triggering checks or mail
 
@@ -31,25 +31,25 @@ Polar config trims/validates known malformed UUID-shaped env input, reads subscr
 2. Inspect stored provider health and client events together. Separate mic/source failure, no converted PCM, pre-connect refusal, connected-but-no-transcript and auth/grant failure. A successful `/api/session` does not prove the client reached Deepgram.
 3. Read warnings as well as errors and retain the event timestamp/version. Repeated recoveries are evidence of degradation, not necessarily successful recording. Ordinary silence is not transcript failure.
 4. If no events exist, inspect diagnostic choice, queue/auth connectivity and retention coverage. The client may be unable to report because the credential or network is the failure. Ask for the local diagnostic export when needed; no reports does not mean healthy.
-5. Match the actual release and recording route to known fixes. 3.4.0 fixes failed-mic coupling and reports buffer-based health; it does not close initial Deepgram handshake completion/timeout handling. Do not promise the release fixes every silent recording.
+5. Match the actual release and recording route to known fixes. 3.4.0 fixed failed-mic coupling; 3.5.0 added generation-fenced initial Deepgram completion and timeout handling. Local 3.7.0 adds bounded drain, coordinated retries and separate connection/transcript recovery evidence. Do not promise the release fixes every silent recording.
 
-The global event list is capped at 2,000, per-device at 300. It is not a guaranteed seven-day archive. No time-based pruning/complete denominator exists yet. Queue arrivals across await and lost-response replay need O2; current counts are observations, not exact incident totals. Share Diagnostics choice and content-free fields remain mandatory; no raw ring-log upload, transcript, audio, email, device name or unrestricted error description.
+The global event list is capped at 2,000, per-device at 300. It is not a guaranteed seven-day archive. O2 shipped in 3.5.0: a durable single-flush queue preserves arrivals across awaits, stable event IDs deduplicate lost-response retries, detailed events/dedupe expire after 30 days and aggregates after 90. Capacity, older clients and missing reports still prevent a complete denominator; counts are observations, not exact incident totals. Share Diagnostics choice and content-free fields remain mandatory; no raw ring-log upload, transcript, audio, email, device name or unrestricted error description.
 
 ## Outstanding operator checks
 
-Vercel failed-deploy/domain notifications, bot read-token usage and a rotation drill need recorded verification. Deepgram auto-recharge was deliberately deferred by Ian, not accidentally omitted. An external dead-man/mail-path check is proposed, not configured. Use synthetic provider inputs; never activate a license or send a test alert without appropriate explicit authorization.
+Vercel failed-deploy/domain notifications, bot read-token usage and a rotation drill need recorded verification. Deepgram auto-recharge was deliberately deferred by Ian, not accidentally omitted. UptimeRobot setup/mail QA was reported by Ian for 3.5.0; independent configuration, alert-contact and inbox evidence is not recorded. Use synthetic provider inputs; never activate a license or send a test alert without appropriate explicit authorization.
 
 Historical deployment/config evidence: [ops](../archive/ops-alerting-plan.md), [admin access](../archive/admin-stats-access-plan.md). Preserve timestamps; do not treat their old green results as current health.
 
-## Prepared changes, not active yet (2026-10-29)
+## Monitoring deployment evidence
 
-[O1–O4 code](../reference/monitoring-cloud-purchase.md) and the [QA/activation handoff](../releases/monitoring-cloud-purchase-qa.md) are ready locally. The deployed table above remains the baseline until deployment is recorded. UptimeRobot was inspected while signed in, with an HTTP monitor selected as the free-account approach, but no monitor exists yet. The session had expired at the final browser check; sign in again at activation. Its target will be `https://api.miniti.app/api/health/monitoring`, a minimal stored-health bit. Configure only after deployment and fresh job evidence; verify the alert contact and controlled inbox test separately. Do not mark provider acceptance as inbox delivery.
+O1–O6 and `/api/health/monitoring` are deployed. Ian reported UptimeRobot setup and grouped QA in the [3.5.0 release record](../releases/3.5.0.md). Earlier browser inspection found no monitor before that report; it is historical, not current configuration evidence. Preserve the distinction between user-reported setup, independently observed configuration, provider mail acceptance and inbox delivery. Do not recreate or send a test alert merely to read health.
 
 ## Alert drill-down and age
 
 Incident emails now link to `/admin?device_id=<UUID>#client-diagnostics` through dashboard login (backend `2458ddb`). Old API links redirect for HTML browser navigation; API reads retain authentication and JSON responses. Filtering matches both uppercase legacy and lowercase canonical IDs.
 
-The 2026-10-30 11:45 run sent four recording alerts based on 2026-10-29 events on 3.4.0, not four new failures at send time. Shipped 3.4.0 does not emit the strong `recording_recovered` event; later legacy healthy/reconnect events do not prove transcript recovery. Distinguish evidence age, receipt delay and current failure. [Next-release alert plan](../plans/incident-alert-clarity.md) records the limitation.
+The 2026-10-30 11:45 run sent four recording alerts based on 2026-10-29 events on 3.4.0, not four new failures at send time. Shipped 3.4.0 does not emit the strong `recording_recovered` event; later legacy healthy/reconnect events do not prove transcript recovery. Distinguish evidence age, receipt delay and current failure. The [delivered alert-clarity plan](../plans/incident-alert-clarity.md) records the deployed distinction between recent failures, historical evidence and unconfirmed recovery; repeats need new failure evidence.
 
 For stale cloud counts or early webhooks, use [sync/delivery investigation](../plans/sync-and-delivery-reliability.md): check actual remote presence and event type/revision before interpreting a recent "Last synced" timestamp or a receiver's cloud lookup as proof of successful completion.
 
@@ -57,6 +57,10 @@ For stale cloud counts or early webhooks, use [sync/delivery investigation](../p
 
 Both managed Luna groups are now enabled. The hourly OpenAI check probes GPT-5 mini, GPT-5.4 mini and Luna once each; central insights routing adds Luna only while either opt-in is enabled. Luna uses reasoning none, previous models keep low reasoning, and all probes use tiny synthetic inputs with `store: false`. Read `checks.openai.data.models` and its `checked_at` before claiming fresh per-model evidence. HTTP success proves access, not transcript accuracy. No customer text is used. The [3.6.0 activation record](../releases/3.6.0.md#both-luna-groups-activated-and-verified-2026-11-01) separates live API smoke results from later hourly observations.
 
+
+## Local model-probe and email update, 3.7.0
+
+Not deployed. The retirement update probes Luna none and pinned GPT-5.4 mini low only. Routing determines each model's current tasks and fallback roles: `configuration_fallback` is true only if it serves no current task and has fallback routes. A primary GPT-5.4 mini specialist route is not labelled fallback-only. Emails retain bounded provider rejection detail and separate observed probe failure from possible customer impact. See [operator emails](../plans/operator-alert-emails.md) and the [release record](../releases/3.7.0.md).
 
 ## Local recording usage support, 3.7.0
 

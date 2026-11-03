@@ -1,6 +1,6 @@
 # Settings, Privacy, Models and consent
 
-3.5.0 reference: Privacy/Models/Help changes are live on Mac and submitted on iOS; 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).
+3.5.0 reference: Privacy/Models/Help changes shipped on Mac and iOS; 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).
 
 ## Navigation and layout
 
@@ -30,17 +30,17 @@ Private mode is locked while starting, recording, resuming or finalizing with St
 
 [3.4.0 release evidence](../releases/3.4.0.md) owns actual renders/device checks and waivers. The blank selected iPad sidebar label and real resize/accessibility checks remain unverified unless evidence is recorded there. Historical [Settings design](../archive/settings-redesign-plan.md) and [UX implementation/reviews](../archive/account-sending-consent-ux-plan.md) retain detailed rationale; old “not implemented” wording in those archives is not current status.
 
-## Models (local change, 2026-10-29)
+## Models (shipped in 3.5.0)
 
 Setup, Models lists every supported local model family: Nemotron 3.5 speech transcription (Mac only, downloaded on demand, existing disk-size/removal control), bundled Nemotron speaker separation (Mac/iOS), and CAM++ voice recognition (Mac/iOS, existing observed preparation status). Configure links go to Transcription for feature choices and Voices for remembered identities. No model is enabled, downloaded or deleted merely by opening the tab. Hosted OpenAI/Deepgram/Jev services are covered by Privacy, not presented as local models.
 
 The persisted `sending`, `dataFlow` and `whatLeaves` destinations resolve to Privacy; `models` now resolves to Models. Search/deep-link anchors `sending.overview` and `privacy.models` are deliberately retained under their new owners. Both platforms now render the shared consent row at `privacy.thirdPartyAI`, so the overview's permission Configure link has a real target. iOS Configure within Privacy scrolls the current destination rather than pushing a second Privacy screen.
 
-## Help and explicit reports (local change, 2026-10-29)
+## Help and explicit reports (shipped in 3.5.0)
 
 Help is available in managed mode, BYOK and signed-out/broken-key states. It shows account/device identifiers, app version/build, OS/architecture, sign-in/key status and the current relevant capture/transcription/cloud/permission preferences as a timestamped snapshot. Refresh details and log recaptures it. These are support context, not proof of account ownership. No hardware serial, user name, raw device name, credentials or meeting content is collected. The legacy `account.deviceID` and `about.support` search anchors now belong to Help.
 
-The report box accepts 4,000 UTF-16 units and an optional reply email. Include diagnostic log is initially on: it includes up to 100 sanitized steps from the last 48 hours (including previous launches), with successful milestones, fixed outcome fields, UTC timestamps, error codes and first/last/repeat counts. The encoded event budget is 32,000 bytes; the local timeline is capped at 300 events and 96 KiB. Uninstrumented legacy errors retain a code-only fallback from the last 15 minutes. Raw debug messages can contain titles/paths/names and are deliberately never attached. Copy all and Preview use the same report as Send; unchecking the option removes those events. No send happens on opening Help, refresh, preview or copy. An explicit Send works independently of automatic diagnostics consent. The UI names the data and email-provider delivery, retains text after failure, and requires a matching accepted receipt before showing success. The backend is additive and must deploy before delivery works.
+The report box accepts 4,000 UTF-16 units and an optional reply email. Include diagnostic log is initially on: it includes up to 100 sanitized steps from the last 48 hours (including previous launches), with successful milestones, fixed outcome fields, UTC timestamps, error codes and first/last/repeat counts. The encoded event budget is 32,000 bytes; the local timeline is capped at 300 events and 96 KiB. Uninstrumented legacy errors retain a code-only fallback from the last 15 minutes. Raw debug messages can contain titles/paths/names and are deliberately never attached. Copy all and Preview use the same report as Send; unchecking the option removes those events. No send happens on opening Help, refresh, preview or copy. An explicit Send works independently of automatic diagnostics consent. The UI names the data and email-provider delivery, retains text after failure, and requires a matching accepted receipt before showing success. The additive backend is deployed; preserve its receipt contract for these clients.
 
 About puts Acknowledgements last. Both its outer disclosure and per-licence disclosures use `MinitiDisclosureStyle`, including Reduce Motion handling.
 
@@ -48,7 +48,11 @@ CAM++ status distinguishes configured voice features from model residency: Off o
 
 Home Feedback (3.5.0): a bottom-right control opens a short message/optional-reply sheet. Uses Help's server-only delivery path with a fixed feedback subject, but no diagnostic log/account details. Both forms share in-flight/cooldown admission and backend burst/hour/day limits. Account's API mode choices use shared `APIModeOptions`, two stacked full-width selectable rows on Mac and iOS, preserving the existing mode/usage-refresh handling.
 
-## Local 3.6.0 delivery and sync status, not released
+<a id="local-360-delivery-and-sync-status-not-released"></a>
+
+## 3.6.0 delivery and sync status
+
+Released on macOS on 2026-10-31 and iOS on 2026-11-01. See the release record for device waivers.
 
 Cloud now separates Last checked (a completed pass) from Cloud count checked (a successful status read). Old or failed counts are labelled last known; local pending uploads/removals, protected recording/edits and oversized meetings stay visible. A failed count refresh does not undo uploads. See [cloud behavior](cloud-sync.md#local-360-implementation-not-released).
 

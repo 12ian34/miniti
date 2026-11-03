@@ -771,7 +771,7 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 
 **Don't**
 
-- Don't introduce custom display fonts or switch prose back to monospaced. The system font is the readability baseline; monospaced type is reserved for the existing wordmark, primary navigation identity, and changing numeric readouts.
+- Don't introduce custom display fonts or switch prose back to monospaced. The system font is the readability baseline; monospaced type is reserved for the existing wordmark and changing numeric readouts.
 - Don't ship a light-mode variant of a screen. The product is dark-only; there is no light token set.
 - Don't add drop shadows or blurs to simulate depth. Use surface stacking and borders instead.
 - Don't pass a Questions, Coaching, Sales, Playbook, speaker, or metric accent into ordinary button chrome.

@@ -22,15 +22,15 @@ Tests: offline immediate failure makes one attempt until eligible; persistent li
 
 ### R5: coalescing an in-flight webhook
 
-Moved, not completed: [sync/delivery R5](sync-and-delivery-reliability.md#r5-immutable-in-flight-webhook-completion-identity) owns the fix and held-sender tests. Complete it before R6. This anchor remains for historical links; do not implement a second competing outbox design here.
+Delivered in 3.6.0: [sync/delivery R5](sync-and-delivery-reliability.md#r5-immutable-in-flight-webhook-completion-identity) owns the fix and held-sender tests. R5 and R6 shipped together. This anchor remains for historical links; do not implement a second competing outbox design here.
 
 ### R6: useful manual webhook retry
 
-Moved and implemented locally, release QA pending: [3.6.0 resend contract](sync-and-delivery-reliability.md#r6-resend-the-current-saved-meeting) owns the production-body rebuild, new delivery identity, error states and tests. Do not revive bodyless terminal items here.
+Delivered in 3.6.0, with device waivers retained in its release record: [3.6.0 resend contract](sync-and-delivery-reliability.md#r6-resend-the-current-saved-meeting) owns the production-body rebuild, new delivery identity, error states and tests. Do not revive bodyless terminal items here.
 
 ### R7: History responses belong to the request's revision
 
-Moved and implemented locally, release QA pending: [3.6.0 response-authority contract](sync-and-delivery-reliability.md#r7-history-responses-belong-to-their-input-revision) owns revision/generation checks and the saved-model/export regressions. This anchor preserves old links.
+Delivered in 3.6.0, with device waivers retained in its release record: [3.6.0 response-authority contract](sync-and-delivery-reliability.md#r7-history-responses-belong-to-their-input-revision) owns revision/generation checks and the saved-model/export regressions. This anchor preserves old links.
 
 ### R8: atomic single-use link consumption
 

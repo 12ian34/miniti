@@ -1,6 +1,6 @@
 # Monitoring, cloud privacy and purchase return: implementation contract
 
-Built 2026-10-29 and delivered 2026-10-30: macOS 3.5.0 live, backend/site deployed, iOS submitted. [Release evidence](../releases/3.5.0.md) owns platform availability and QA limits. [QA and delivery gates](../releases/monitoring-cloud-purchase-qa.md). Existing 3.4.0 contracts and account ownership remain unchanged.
+Built 2026-10-29 and delivered 2026-10-30: macOS 3.5.0 live, backend/site deployed, iOS confirmed available on 2026-10-31. [Release evidence](../releases/3.5.0.md) owns platform availability and QA limits. [QA and delivery gates](../releases/monitoring-cloud-purchase-qa.md). Existing 3.4.0 contracts and account ownership remain unchanged.
 
 ## Diagnostics and incidents
 
@@ -14,7 +14,7 @@ Built 2026-10-29 and delivered 2026-10-30: macOS 3.5.0 live, backend/site deploy
 
 `RecordingDiagnosticAttempt` and AppState emit attempt, ready, degradation/recovery and final outcomes with coarse per-source PCM/speech/transcript flags and build/OS. Recording readiness is not inferred from words, and final events are not guaranteed after a crash. ClientAuth pairs repair attempts/outcomes without changing credential authority. `DeepgramService` now handles pre-handshake completion/refusal and a 12-second initial timeout, fenced to the task and generation; stale callbacks cannot fail a newer socket.
 
-Ops checks both shipped OpenAI models. Three consecutive hourly unknown provider checks warn; forced checks in one hour do not advance the streak. Polar success copy describes only the actual read/shape checks. Digest includes incident/version and aggregate outcomes; unavailable aggregates do not suppress the rest of the digest.
+The original 3.5.0 ops check covered two OpenAI models. The deployed 3.6.0 configuration probes three with Luna enabled; local 3.7.0 retires GPT-5 mini and probes Luna plus GPT-5.4 mini only. See the [operations runbook](../runbooks/operations.md#active-model-probes-2026-11-01). Three consecutive hourly unknown provider checks warn; forced checks in one hour do not advance the streak. Polar success copy describes only the actual read/shape checks. Digest includes incident/version and aggregate outcomes; unavailable aggregates do not suppress the rest of the digest.
 
 `GET /api/health/monitoring` returns only 200 `{status:"ok"}` or 503 `{status:"unavailable"}`, no-store. It reads stored job/check ages, incident mail failures, Resend state and last digest provider acceptance. It does not run probes, send mail or disclose diagnostics. It detects a stopped job or unavailable alert path; it cannot prove inbox receipt, or that every user is healthy.
 
@@ -36,7 +36,7 @@ The per-meeting explicit choice wins over late calendar association. Without an 
 
 `PurchaseReturnController` validates the callback, coalesces duplicates, opens Account, checks for at most 30 seconds and respects retry throttling. Account plus credential generation fence each response and the usage refresh. A callback never grants Pro itself. AppDelegate queues a cold-launch callback until AppState exists. iOS StoreKit is unchanged.
 
-## Explicit support reports (O5, local 2026-10-29)
+## Explicit support reports (O5, shipped in 3.5.0)
 
 `HelpSettingsView.swift` is shared by both app targets: expanded support metadata, optional reply/description, Preview and Copy all, with default-on sanitized diagnostic inclusion (O6 below). It combines the structured local timeline with a bounded legacy code-only fallback, discards raw messages, limits recent events, and uses an unauthenticated explicit-send transport so broken sign-in can still be reported. No request runs on merely viewing/copying. Failures retain the form; a matching server receipt is required for success.
 
@@ -48,6 +48,6 @@ The additive backend route `/api/support/report` uses `lib/supportReports.ts` an
 
 Retention is 300 events / 96 KiB / 48 hours, 64 pending records, two-second batched atomic writes, mode 0600 and excluded from backup. Repeated equal code/fields fold into a count while occurrences remain less than 60 seconds apart. Milestones are emitted once through the existing recording sampler; background cloud passes only report real work/failures. Diagnostic write failure leaves functionality intact and is visible in Help. Help retains up to 100 entries within its encoded budget, including first/last/count and safe operation fields; Debug Copy/Save appends the timeline and Clear removes it. XCTest uses an in-memory singleton, never the user's persisted timeline. No new network requests or changes to automatic-diagnostics consent.
 
-Local 3.6.0 sync/delivery changes are described in [patterns](patterns.md#saved-ai-and-webhook-delivery-local-360-not-released) and [cloud sync](cloud-sync.md#local-360-implementation-not-released). The webhook outbox is distinct from the diagnostic outbox above: its held completion marker, immutable delivery identities and current-data resend do not change diagnostics consent, retention or the support schema. These client changes are not yet released.
+Released 3.6.0 sync/delivery changes are described in [patterns](patterns.md#saved-ai-and-webhook-delivery-local-360-not-released) and [cloud sync](cloud-sync.md#local-360-implementation-not-released). The webhook outbox is distinct from the diagnostic outbox above: its held completion marker, immutable delivery identities and current-data resend do not change diagnostics consent, retention or the support schema. They shipped on Mac on 2026-10-31 and iOS on 2026-11-01.
 
-Post-release work is owned by separate plans: [sync/delivery](../plans/sync-and-delivery-reliability.md) and [incident alert clarity](../plans/incident-alert-clarity.md). Backend `2458ddb` already routes alert links through dashboard login with the device filter retained.
+Delivered 3.6.0 follow-through is recorded in separate plans: [sync/delivery](../plans/sync-and-delivery-reliability.md) and [incident alert clarity](../plans/incident-alert-clarity.md). Backend `2458ddb` already routes alert links through dashboard login with the device filter retained.

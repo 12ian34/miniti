@@ -6,9 +6,9 @@ Selected by Ian on 2026-11-03 for 3.7.0. Implemented locally on Apple, backend a
 
 OpenAI's [official deprecation schedule](https://developers.openai.com/api/docs/deprecations#2026-06-11-gpt-5-and-o3-model-deprecations), rechecked on 2026-11-03, schedules both `gpt-5-mini` and `gpt-5-mini-2025-08-07` for shutdown on **2026-12-11**. Complete deployment and client distribution before that date, allowing time for App Review and users to update. GPT-5.4 mini is a separate model and is not covered by this retirement entry.
 
-The source audit found these active dependencies:
+The pre-migration source audit found the dependencies below. They still describe released 3.6.0 Apple BYOK and the pre-retirement backend; local 3.7.0 replacements are recorded under Local implementation evidence. This table is not a map of the current working tree:
 
-| Surface | Current dependency | Delivery owner |
+| Surface | Pre-migration dependency | Delivery owner |
 |---|---|---|
 | macOS and iOS BYOK | `OpenAIModel.gpt5Mini`, direct insight-service defaults and AppState call sites use the pinned model for insights and helper tasks. Investigations use GPT-5.4 mini. | Apple 3.7.0 |
 | Linux BYOK | `src-tauri/src/insights/mod.rs` selects `MODEL_MINI` for every mode except investigation. | Linux release, tracked in its PLAN.md |

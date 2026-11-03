@@ -69,13 +69,13 @@ Reconciled 2026-10-27. This register preserves where old material went; it does 
 
 ## Test audit disposition
 
-Priority updated 2026-10-31 at Ian's request: [roadmap test follow-through](../roadmap.md#test-audit-follow-through) assigns the full audit to delivery positions. Foundation is next after 3.6.0; UI/recovery, model quality and CRM partial failures are planned follow-ups rather than unselected candidates. Versions remain unassigned outside the existing 3.6.0 scope.
+Priority updated 2026-10-31 at Ian's request: [roadmap test follow-through](../roadmap.md#test-audit-follow-through) assigns the full audit to delivery positions. Foundation is implemented and validated locally for 3.7.0, with remote CI/publication pending; UI/recovery, model quality and CRM partial failures are planned follow-ups rather than unselected candidates. Versions remain unassigned outside the existing 3.6.0 scope.
 
 | Original slices | Current owner / remaining scope |
 |---|---|
 | T01/T06/T07/T14 | test-foundation: honest runner/isolation, insights handler coverage, real storage, cross-client fixtures. |
 | T02/T04/T05 | account-ownership: exact/concurrent usage and Apple/Polar purchase/entitlement lifecycle. Implement before its cutovers. |
-| T03/T10 | T03 → 3.6.0 sync/delivery R5/R6, released on Mac, submitted on iOS, with device waivers recorded separately; T10 → reliability R4 at order 3, complete Watch retry/import lifecycle. |
+| T03/T10 | T03 → 3.6.0 sync/delivery R5/R6, released on Mac and iOS, with device waivers recorded separately; T10 → reliability R4 at order 3, complete Watch retry/import lifecycle. |
 | T08 | Shipped R1/narrow R2/R3 and credential regressions retained; R7 → 3.6.0 sync/delivery; R8 → reliability at order 3; ownership races in their plans. Wider R2 remains deferred. |
 | T09 | Shipped audio/auth boundaries retained; monitor handshake tests in logging; lifecycle/handoff/resource tests in checkpoints/performance. |
 | T11 | Truthful recovery/journey assertions at order 2; disk reload/abrupt exit and released-store migrations with durable-checkpoints at order 8. Bound implementation scope before starting. |

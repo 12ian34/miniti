@@ -11,13 +11,13 @@ From 2.10.0 the app bundle carries the Nemotron-3 diarization model (about 190 M
 ## iOS (MinitiMobile)
 
 - Bundle ID: `com.miniti.mobile`, deployment target iOS 17.0
-- Distribution: App Store (no sandbox restrictions for mic-only recording)
+- Distribution: App Store; microphone permission and the iOS sandbox/background-audio rules still apply
 - In-app purchase: StoreKit 2 auto-renewable subscription product `com.miniti.mobile.pro.monthly` (`$4.99/month`)
 - Background audio: `UIBackgroundModes: [audio]` + `AVAudioSession` category `.playAndRecord` enables recording while backgrounded
 - Live Activity: `MinitiLiveActivityExtension` widget extension (bundle ID: `com.miniti.mobile.live-activity`), embedded in MinitiMobile via "Embed App Extensions" build phase. Shows recording on Dynamic Island + Lock Screen, redacts transcript text when the user disables it, and returns to the active meeting through the app's `miniti://meeting/<UUID>` URL scheme.
 - No system audio capture — iOS sandbox prevents it entirely
-- Export compliance: `ITSAppUsesNonExemptEncryption: NO` in Info.plist — app only uses HTTPS (OS-provided TLS), which is exempt. This key bypasses the App Store Connect encryption compliance dialog and unblocks TestFlight distribution.
-- Xcode targets: `Miniti` (macOS app) + `MinitiMobile` (iOS app) + `MinitiLiveActivityExtension` (widget extension) + `MinitiTests` (XCTest, macOS host) + `MinitiMobileTests` (XCTest, iOS host)
+- Export compliance: `ITSAppUsesNonExemptEncryption: NO` in Info.plist — the app declares no non-exempt encryption. Preserve the declaration only while it matches the shipped capabilities; device-bound signing also uses system cryptography. This flag is not a substitute for checking changes at release.
+- Xcode targets: `Miniti` (macOS app) + `MinitiMobile` (iOS app) + `MinitiLiveActivityExtension` (widget extension) + `MinitiWatch` (embedded watchOS companion) + `MinitiTests` (XCTest, macOS host) + `MinitiMobileTests` (XCTest, iOS host)
 
 ## Release scripts
 
@@ -68,33 +68,15 @@ Miniti's bundle identifier ends in `.app`. Sparkle 2.9.1 incorrectly used that i
 
 ## DMG hosting
 
-macOS DMGs are stored in Netlify Blobs under the `downloads` store, two keys per release:
+Since 2.10.0, current DMGs are GitHub release assets in `12ian34/miniti`. The website's `/dmg/*` and latest-download routes redirect to them through `EXTERNAL_DMG_URLS` and `LATEST_DMG_VERSION` in `../minitidotapp/netlify/functions/_download.mjs`. Sparkle uses the immutable versioned GitHub asset URL. See [RELEASE.md step 4](../../RELEASE.md#4-publish-the-dmg-as-a-github-release-asset) for naming and publication commands.
 
-- `miniti.dmg` — the "latest" DMG for the marketing site's download-now button.
-- `miniti-X.Y.Z.dmg` — the versioned DMG. Sparkle's appcast `<enclosure url>` points at `https://miniti.app/dmg/miniti-X.Y.Z.dmg` for each release. Pinned forever for that version, because Sparkle verifies the signature against the exact bytes at that URL.
-
-The marketing site's `/dmg/*` route resolves to the versioned blob. Never overwrite a versioned blob post-release — once an appcast `<item>` is live, that URL must return the exact bytes that were signed.
-
-All website functions that serve DMGs use Netlify's modern `Request`/`Response` API with a Blob-backed stream. Keep them streamed: classic function responses base64-encode binary data, making Netlify's 6 MB buffered limit effectively about 4.5 MB and returning 502 for larger release artifacts.
-
-Upload pattern (from the website repo, `../minitidotapp`):
-
-```sh
-netlify blobs:set downloads miniti-X.Y.Z.dmg --input ../miniti/miniti.dmg --force
-netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
-```
-
-For v1.25.0 specifically: `netlify blobs:set downloads miniti-1.25.0.dmg --input ../miniti/miniti.dmg --force; netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force`
+Legacy smaller DMGs may remain in Netlify Blobs under `downloads`, with versioned keys and a historical `miniti.dmg` latest key. This is not the current upload path: large bundled-model DMGs exceeded the function streaming window. Never overwrite bytes referenced by a published Sparkle signature. Verify both the direct asset and website redirect against the final signed local bytes.
 
 ## How `/api/version` coexists with Sparkle
 
-Sparkle is the primary update UX on macOS. `/api/version` stays around because:
+Sparkle is the normal macOS update UI; iOS uses the App Store. Normal updates do not appear as Home banners. `/api/version` retains the per-platform minimum-version gate: below-minimum clients receive the real latest version and show `ForceUpdateView`, while supported clients receive their own version to suppress the removed optional banner.
 
-- **iOS has no Sparkle** — the blue home-screen banner reads from `/api/version` and deep-links to the App Store.
-- **Force-update gate** — setting `MACOS_MIN_VERSION` / `IOS_MIN_VERSION` hard-blocks older clients via `ForceUpdateView`. Sparkle can only offer updates, not force them.
-- **Belt-and-braces for macOS** — even on macOS the blue banner fires from `/api/version` as a fallback if Sparkle ever fails silently for a user (stale appcast, network issue, signature mismatch).
-
-Every release bumps `/api/version` constants AND appends to `public/appcast.xml`. They're kept in lockstep.
+Backend constants live in `miniti-api/lib/releaseMetadata.ts`. Advance each platform's latest version only when that build is installable. Mac appcast publication and iOS App Store availability are independent; Linux has its own release line. Do not advance minimum versions unless explicitly selecting a forced update. See [release step 5](../../RELEASE.md#5-update-backend).
 
 ## Postmortem: v1.24.0 — "my history is wiped" (resolved in v1.24.1)
 

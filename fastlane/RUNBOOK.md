@@ -27,12 +27,12 @@ No separate `fastlane/.env` is needed.
 ### `fastlane ios test`
 
 What it does:
-- builds the `MinitiMobile` scheme (Debug)
-- runs all tests in the `MinitiMobileTests` target on the iOS Simulator (default device name `iPhone 17`)
+- builds the `MinitiMobile` scheme with the isolated `Testing` configuration; installed-app settings, credentials and history are not used
+- runs all tests in the `MinitiMobileTests` target on the iOS Simulator (default device name `iPhone 16`)
 - resolves that simulator's UDID from `xcrun simctl list devices available --json` (newest installed iOS runtime first) and passes `destination: platform=iOS Simulator,id=<udid>`, bypassing scan's own simulator picker — it compares SDK and runtime versions with exact string equality ([fastlane#29974](https://github.com/fastlane/fastlane/issues/29974)), so an SDK that is a point release ahead of the runtime (26.5.1 vs 26.5) produces a destination matching no device, and the lane dies on `-showBuildSettings timed out`. A UDID also disambiguates duplicate device names.
 - reports pass/fail count
 
-Optional: set `MINITI_IOS_TEST_DEVICE_NAME` if your default simulator is not `iPhone 17` (must match an installed simulator name; the lane falls back to any available iPhone and warns).
+Optional: set `MINITI_IOS_TEST_DEVICE_NAME` to an installed simulator name. Without a match, the lane falls back only to a supported released iPhone model and warns. It fails if none is available. Ordinary tests keep hardware checks off; explicit capture/device-switch validation requires `MINITI_HARDWARE_TESTS=1`. See [testing](../docs/reference/testing.md).
 
 ```sh
 fastlane ios test
@@ -129,7 +129,7 @@ Notes:
 ### `fastlane mac test`
 
 What it does:
-- builds the `Miniti` scheme (Debug)
+- builds the `Miniti` scheme with the isolated `Testing` configuration; installed-app settings, credentials and history are not used
 - runs all tests in the `MinitiTests` target
 - reports pass/fail count
 

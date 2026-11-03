@@ -8,7 +8,7 @@ description: >-
 
 # Release Workflow
 
-The authoritative runbook is [`RELEASE.md`](../../../RELEASE.md) at the repo root. This skill is a quick reference for the most common flows.
+The authoritative runbook is [`RELEASE.md`](../../../RELEASE.md) at the repo root. This skill is a quick reference for the most common flows. Read the current release-specific gates first. Preparing or auditing documentation does not authorize publication, deployment or submission.
 
 For deeper context:
 
@@ -16,6 +16,8 @@ For deeper context:
 - Sparkle / notarization / postmortems → [`docs/reference/distribution.md`](../../../docs/reference/distribution.md)
 
 ## Prerequisites (both platforms)
+
+Run both Apple bundles in `Testing`; hardware checks remain opt-in. Record exact commands, revisions and results in the release record. Mac and iOS publish independently; backend latest-version values follow actual availability.
 
 - Xcode signed into team `9AUR5U5KTF` with automatic signing on all targets.
 - Repo root `.env` contains: `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
@@ -36,7 +38,7 @@ fastlane mac release
 bash scripts/release-info.sh
 ```
 
-`fastlane mac release` runs build → **Sparkle framework re-sign (preserving entitlements)** → **verify entitlements survived** → notarize → staple → DMG with `sign_update`.
+`fastlane mac release` runs build → **Sparkle framework re-sign (preserving entitlements)** → **verify entitlements survived** → notarize → staple → DMG creation → DMG signing/notarization/stapling → `sign_update` over the final bytes.
 
 `scripts/release-info.sh` prints the five appcast values + sanity checks. **All `[ok]` required before ship.** In particular:
 
@@ -47,21 +49,12 @@ bash scripts/release-info.sh
 
 1. `fastlane mac build` — archives with Developer ID signing, outputs `build/macos/miniti.app`.
 2. `fastlane mac notarize_app` — re-signs Sparkle nested binaries, preserves entitlements, verifies, submits to notarytool, staples, copies to repo root.
-3. `fastlane mac dmg` — runs `scripts/build-dmg.sh`, creates `miniti.dmg`, runs `sign_update` for the appcast signature.
+3. `fastlane mac dmg` runs `scripts/build-dmg.sh`, signs/notarizes/staples `miniti.dmg`, verifies it, then runs `sign_update` for the appcast signature.
 4. `bash scripts/release-info.sh` — sanity-check + print appcast values.
-5. Upload DMG to Netlify Blobs (both keys, from the website repo `../minitidotapp`):
-
-   ```bash
-   netlify blobs:set downloads miniti-X.Y.Z.dmg --input ../miniti/miniti.dmg --force
-   netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force
-   ```
-
-   For v1.25.0 specifically: `netlify blobs:set downloads miniti-1.25.0.dmg --input ../miniti/miniti.dmg --force; netlify blobs:set downloads miniti.dmg --input ../miniti/miniti.dmg --force`
-
-   Versioned key is what Sparkle's appcast enclosure URL points at — never overwrite post-release.
+5. Publish the versioned DMG as a GitHub release asset in `12ian34/miniti`, following [RELEASE.md step 4](../../../RELEASE.md#4-publish-the-dmg-as-a-github-release-asset). Update the website's `EXTERNAL_DMG_URLS` and `LATEST_DMG_VERSION` redirects. Netlify Blobs is legacy storage only. Never replace signed bytes at a published version URL.
 6. Update backend (`miniti-api`):
    - `public/appcast.xml` — add new `<item>` at top with the five values from step 4. Keep prior `<item>`s for release-note history.
-   - `app/api/version/route.ts` — bump `MACOS_LATEST_VERSION` + `MACOS_RELEASE_NOTES`.
+   - `lib/releaseMetadata.ts`: advance Mac metadata only when installable; advance iOS separately after confirmed App Store availability. Do not touch Linux versions.
    - Deploy.
 7. Smoke-test Sparkle on a machine running the previous version: Miniti menu → Check for Updates… → one-click install should work end-to-end.
 
@@ -70,8 +63,7 @@ bash scripts/release-info.sh
 Product → Archive → Distribute App → Developer ID → Upload (notarizes), then:
 
 ```bash
-./scripts/build-dmg.sh miniti.app
-sign_update miniti.dmg   # manual signature for the appcast
+fastlane mac dmg   # includes DMG signing, notarization, stapling, then Sparkle signing
 ```
 
 ## iOS
@@ -117,7 +109,7 @@ Product → Archive → Distribute App → App Store Connect → Upload.
 2. Commit + tag:
 
    ```bash
-   git add -A
+   git add <reviewed-release-files>
    git commit -m "Release vX.Y.Z"
    git tag vX.Y.Z
    git push origin main vX.Y.Z
@@ -135,7 +127,7 @@ Product → Archive → Distribute App → App Store Connect → Upload.
 ## Key safety rules
 
 - **Never ship if `release-info.sh` shows `[FAIL] app-sandbox entitlement MISSING`.** That's the v1.24.0 regression that wiped history for every user — see postmortem in [`docs/reference/distribution.md`](../../../docs/reference/distribution.md).
-- **Never overwrite a versioned Netlify blob** (`miniti-X.Y.Z.dmg`) after release. Sparkle pins the signature to the exact bytes at that URL.
+- **Never overwrite a published versioned DMG**, whether a current GitHub asset or a legacy Netlify blob. Sparkle pins the signature to the exact bytes at that URL.
 - **Never call `codesign --force --sign` on a bundle with entitlements without passing `--entitlements`** — silently strips them.
 
 ## Reference
@@ -146,4 +138,4 @@ Product → Archive → Distribute App → App Store Connect → Upload.
 - `scripts/build-dmg.sh` — requires `create-dmg` (auto-installed via Homebrew)
 - `scripts/release-info.sh` — post-build sanity checks + appcast values
 - StoreKit product: `com.miniti.mobile.pro.monthly` ($4.99/month)
-- Export compliance: `ITSAppUsesNonExemptEncryption: NO` (HTTPS only, exempt)
+- Export compliance: `ITSAppUsesNonExemptEncryption: NO` (declares no non-exempt encryption; verify against shipped capabilities)

@@ -1,6 +1,6 @@
 # Per-meeting cloud storage and calendar-title rules
 
-Status: delivered in macOS 3.5.0 build 142 on 2026-10-30; shared backend/site deployed. iOS build 142 submitted, availability not confirmed. This is the implementation record, not future build scope. [Release evidence](../releases/3.5.0.md) owns delivery and remaining evidence; [roadmap](../roadmap.md) owns subsequent work.
+Status: delivered in macOS 3.5.0 build 142 on 2026-10-30; shared backend/site deployed. iOS build 142 confirmed available on 2026-10-31. This is the implementation record, not future build scope. [Release evidence](../releases/3.5.0.md) owns delivery and remaining evidence; [roadmap](../roadmap.md) owns subsequent work.
 
 ## Product contract
 

@@ -2,6 +2,8 @@
 
 Status: **both Luna groups enabled in production on 2026-11-01**, after Ian explicitly authorized activation and the baseline observation gate completed. `INSIGHTS_LIGHTWEIGHT_LUNA=on` and `INSIGHTS_STANDARD_LUNA=on` select Luna none; the incremental-quality kill switch remains unset. Synthetic production API checks passed. The [release record](../releases/3.6.0.md) owns deployment and validation evidence. No commercial pricing or client binary change. Earlier disabled-rollout entries below are historical.
 
+Local 3.7.0 supersedes the retiring fallback IDs below: every configuration fallback now selects pinned GPT-5.4 mini low, and Apple/Linux BYOK adopt the approved task split. Those changes are not deployed; this document retains the 3.6.0 rollout record. Use [model retirement](gpt-5-mini-retirement.md) for the current implementation and safe future rollback contract.
+
 ## Bounded decision
 
 The lightweight group comprises managed `speaker_names`, `catchup`, `docs_topics` and `template_draft`. These move to `gpt-6-luna`, reasoning `none`, only with explicit `INSIGHTS_LIGHTWEIGHT_LUNA=on`. The default remains GPT-5 mini with low reasoning. Backend `lib/insights.ts` centrally selects the model and reasoning. The client-supplied model remains ignored.

@@ -13,30 +13,30 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## 3.6.0 release preparation
+## Current release preparation: 3.7.0
 
-Use [3.6.0 evidence](docs/releases/3.6.0.md) for the selected scope and remaining checks. Alert clarity can deploy independently; the client sync/webhook fixes introduce no new backend route dependency. The 3.5.0 contracts below are already deployed and remain required baseline compatibility. A 3.5.0 downgrade does not understand held webhook rows; resolve them first or use a forward patch.
+Use the [3.7.0 checklist](docs/releases/3.7.0.md) for selected scope, exact test commands/results and remaining checks. Implementation and local automated validation are complete. Physical/provider checks, internal App Store metadata correction, remote CI and distribution remain open. No push, deployment or release is authorized by this document.
 
-### 3.6.0 rollout gates
+- Hosted tests must use `Testing`; ordinary suites leave hardware tests opt-in. Use the released iPhone 16 simulator through the project runner, or an explicitly selected supported destination. See [testing](docs/reference/testing.md).
+- Publish the Apple foundation files before relying on the backend's new CI wire job, which checks out this repository. This source-publication dependency does not authorize distributing an app before its backend is ready.
+- Deploy and verify additive recording-usage acceptance, diagnostic fields/Help sanitization, ownership removal and admin reporting before shipping Apple producers. Model retirement and full operator-email work remain in this package; backend deployment may precede the apps when authorized.
+- Preserve the already-enabled production Luna groups. Retirement changes their off/rollback destinations to pinned GPT-5.4 mini; do not repeat the initial 3.6.0 disabled rollout. Keep historical accounting and notification state. Verify the two supported probes through the ordinary scheduled run.
+- Apply the internal iOS privacy-metadata correction recorded in the checklist. It is an accuracy check, not reviewer outreach. Publish prepared public docs/site/changelog with the corresponding rollout; 3.7.0 remains upcoming until then.
+- Complete Apple and independent Linux BYOK distribution before 2026-12-11, allowing for user upgrades and App Review. No automatic cross-model retry or new force-update policy is selected. A rollback must not restore a retired model.
+- Run remote CI after an authorized push and record the final archive/build hashes, physical checks or explicit waivers, Mac publication and independent iOS availability. Local automated passes are not distribution evidence.
 
-Use the normal repositories under `/Users/ian/dev/` for release preparation: `miniti`, `miniti-api`, `miniti-docs`, `minitidotapp` and `miniti-linux`. Release fixes are committed on their existing `main` branches. Concurrent planning/documentation edits remain uncommitted; stage only reviewed release files, not all working changes. The temporary release worktrees have been removed. See the release record for revisions and artifact locations.
+<a id="360-release-preparation"></a>
+<a id="360-rollout-gates"></a>
 
-- Repackage the verified build 146 app with the final Retina artwork using `fastlane mac dmg`; a full app rebuild is unnecessary for artwork alone. This lane signs, submits to Apple notarization, staples and Sparkle-signs the installer. Record the final byte count, hash and signature. The IPA is unaffected. Never publish the earlier installer while promising the new artwork.
-- Luna defaults off in code. `INSIGHTS_LIGHTWEIGHT_LUNA=on` enables the four lightweight tasks; `INSIGHTS_STANDARD_LUNA=on` independently enables full/incremental standard summaries. Both affect all managed clients, including older Apple versions and Linux. Unset, blank, `off` or unrecognized values retain each group's previous model. The legacy `INSIGHTS_INCREMENTAL_QUALITY_MODEL=off` still wins for standard incremental requests. Before the first backend deployment, verify neither Luna variable is explicitly `on` in production. An unset variable no longer needs changing before deployment. This first rollout deploys alert clarity/recovery changes while retaining the previous lightweight model.
-- Review at least a day of hourly alert runs after that deployment. This checks the alert/backend rollout only; Luna is off, so it provides no Luna quality evidence. Confirm selected-mode synthetic results and speaker naming (explicit, ambiguous, long-context cases) and the expanded standard-summary evidence before separately authorizing either Luna opt-in and redeploying. Then check selected-model telemetry, errors, latency and naming reports during an initial observation period. Rollback is the selected group's flag (`INSIGHTS_LIGHTWEIGHT_LUNA` or `INSIGHTS_STANDARD_LUNA`) set to `off` plus redeploy, not an immediate runtime toggle. Check summary fact/owner preservation as well as naming and latency. Do not copy customer transcripts into an evaluation.
-- Do not push the website or public-docs release commits with the earlier backend deployment. The already-live purchase-return page satisfies the prerequisite below. Publish 3.6.0 release copy with the corresponding app rollout and confirmed platform availability. Keep Luna out of shipped release notes until its activation is verified; the local upcoming docs are not a claim of availability.
-- Run GitHub CI after an authorized app push and check the fixed account-email race test on that revision before submission/publication. Existing physical-device checks remain open unless explicitly waived. These gates do not authorize a push, production configuration change, deployment or App Store submission.
+## Completed 3.6.0 rollout
+
+Mac build 146 shipped on 2026-10-31; iOS became available on 2026-11-01. The Retina installer and both Luna activation stages are complete. [3.6.0 evidence](docs/releases/3.6.0.md) retains revisions, artifacts, initial default-off sequencing and device waivers. Those earlier rollout instructions are historical, not steps to repeat for 3.7.0. A 3.5.0 downgrade does not understand held webhook rows; resolve them first or use a forward patch.
 
 ## Required deployment order for the 3.5.0 contracts
 
-This is a release blocker, not a preference. Complete and record these prerequisites before publishing a DMG/appcast or uploading the new client to TestFlight/App Review:
+The prerequisite sequence was site purchase-return page, then additive backend, then Apple distribution. It is already satisfied in the [3.5.0 release record](docs/releases/3.5.0.md); detailed QA and its evidence limits remain in the [handoff](docs/releases/monitoring-cloud-purchase-qa.md).
 
-1. Deploy and verify the site's purchase-return page, including Open miniti and the no-app fallback. Push only the page and its test script: the regenerated changelog, new screenshots and LLM text in the same working tree describe the unreleased build and go live with the apps.
-2. Deploy the additive backend and verify event-ID receipts on `/api/client-events`, explicit deleted-meeting restore support, purchase-status confirmation and the Help/Feedback report contract. Old count-only event responses cannot acknowledge the new durable queue; shipping the client first makes it retry until expiry. Keep older clients supported.
-3. With both live, run the QA that depends on them: two-device cloud deletion and restore, the sandbox purchase return, one authorised Help report and one Feedback message confirmed in the inbox, cron state, UptimeRobot activation and the approved alert-mail check.
-4. Only then distribute the Apple apps. Record exact site/backend revisions and live contract checks in [the QA handoff](docs/releases/monitoring-cloud-purchase-qa.md). Passing local tests or having uncommitted code is not deployment evidence.
-
-Do not roll the backend back to a version missing these contracts while dependent clients are in use. None of these steps is authorized merely by reading this checklist.
+Preserve the deployed purchase-return page, event-ID receipts, deleted-meeting restore support, purchase-status confirmation and Help/Feedback receipt contract while dependent clients remain in use. Do not roll the backend back to a version missing them. Fresh installation or recovery work must restore these prerequisites before distributing clients. Reading this runbook does not authorize deployment or test messages.
 
 ## The 10 steps
 

@@ -9,6 +9,10 @@ description: >-
 
 All colors must use `ColorPalette` from `Miniti/Models/ColorPalette.swift`. Never hardcode hex values in views.
 
+Use `MinitiDesignSystem` and the shared control components for spacing, typography and semantic control roles. Coaching content uses `ColorPalette.Coaching`; ordinary controls must not borrow feature colors. See [design.md](../../../design.md) and [AGENTS.md](../../../AGENTS.md).
+
+The table is a navigation aid, not an exhaustive API. Check the current palette before choosing a token. Speaker color does not establish identity; shared-room mic speakers can have neutral labels, and only resolved self identity is You.
+
 ## Available namespaces
 
 | Namespace | Keys | Example |

@@ -1,6 +1,6 @@
 # Meeting search, imports and saved results
 
-Current baseline, reconciled after 3.4.0. [Patterns](patterns.md) owns persistence; [cloud](cloud-sync.md) owns sync deduplication. Large-history optimization is a [separate plan](../plans/history-and-session-performance.md).
+Current baseline, reconciled through released 3.6.0. [Patterns](patterns.md) owns persistence; [cloud](cloud-sync.md) owns sync deduplication. Large-history optimization is a [separate plan](../plans/history-and-session-performance.md).
 
 ## Search
 
@@ -14,4 +14,4 @@ ZIP supports stored/deflate entries, not encrypted/ZIP64; unsupported archives s
 
 ## Saved results and exports
 
-User edits, transcript trims, deleted meetings and template changes must retain current data. R7’s late History result fence is still planned in [reliability](../plans/reliability.md); final-insight fencing is not proof every History path is protected. Custom templates persist a per-meeting definition snapshot so editing/deleting a template does not break old exports. Cloud pulls do not trigger CRM/webhook sends. Delivery retries/coalescing are R5/R6, not completed by the existence of the persisted outbox.
+User edits, transcript trims, deleted meetings and template changes must retain current data. R7’s late History result fences shipped in [3.6.0 sync/delivery](../plans/sync-and-delivery-reliability.md): request, transcript, account and template authority reject stale results without clearing newer work. Custom templates persist a per-meeting definition snapshot so editing/deleting a template does not break old exports. Cloud pulls do not trigger CRM/webhook sends. R5/R6 also shipped in 3.6.0: released webhook bodies have immutable delivery IDs, and terminal failures can resend current saved data with a new ID. Device/receiver waivers remain in the release record.

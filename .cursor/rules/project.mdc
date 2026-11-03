@@ -6,7 +6,7 @@ alwaysApply: true
 
 # miniti — Cursor project rules
 
-Start with `README.md` (what the product is, how to build and test). Maintainers also keep an `AGENTS.md` and a `docs/` folder with internal plans; both are gitignored and may be absent in a fresh clone.
+Start with tracked `AGENTS.md` for contracts and `docs/roadmap.md` for priority. `README.md` is the public introduction and build guide. Private research/financial notes remain ignored; current agent, reference and plan docs are tracked.
 
 Quick-reference pointers:
 
@@ -29,3 +29,5 @@ Quick-reference pointers:
 
 1. Add a test next to the code you touch; the same `MinitiTests` sources run against both apps.
 2. For any release-adjacent change (build, sign, notarize, appcast, version files), treat `RELEASE.md` as the spec — don't improvise.
+
+Hosted XCTest uses `Testing`, with hardware opt-in. Keep current docs in sync, use no em dashes in product copy, and preserve release authorization boundaries.

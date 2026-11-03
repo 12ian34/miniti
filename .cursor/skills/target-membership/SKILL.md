@@ -7,13 +7,14 @@ description: >-
 
 # Target Membership
 
-Three Xcode targets in `Miniti.xcodeproj`:
+Four application/extension targets in `Miniti.xcodeproj`:
 
 | Target | Platform | Bundle ID |
 |---|---|---|
 | `Miniti` | macOS | `com.miniti.app` |
 | `MinitiMobile` | iOS | `com.miniti.mobile` |
 | `MinitiLiveActivityExtension` | iOS | `com.miniti.mobile.live-activity` |
+| `MinitiWatch` | watchOS | `com.miniti.mobile.watchkitapp` |
 
 Plus two XCTest targets (`MinitiTests`, `MinitiMobileTests`) — see the `testing` section in [`docs/reference/testing.md`](../../../docs/reference/testing.md).
 
@@ -28,7 +29,7 @@ Current shared files:
 
 - `AppState.swift`, `Meeting.swift`, `ColorPalette.swift`
 - `DeepgramService.swift`, `InsightsService.swift`, `DeviceIdentifier.swift`, `MinitiAPIService.swift`, `DebugLogger.swift`, `Secrets.swift`, `WebhookService.swift`
-- `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `TermsAcceptanceView.swift`, `ForceUpdateView.swift`, `UsageBanner.swift`, `LimitReachedView.swift`
+- `TranscriptView.swift`, `InsightsView.swift`, `DebugLogView.swift`, `OnboardingView.swift`, `TermsAcceptanceView.swift`, `ForceUpdateView.swift`, `UsageBanner.swift`, `LimitWarningBanner.swift`
 - `Assets.xcassets`
 
 ### macOS-only files
@@ -56,6 +57,10 @@ Target: **MinitiLiveActivityExtension only** (plus shared attributes).
 
 - `MinitiLiveActivityBundle.swift`, `MinitiLiveActivityLiveActivity.swift`, `Info.plist`
 - `RecordingActivityAttributes.swift` — shared between **MinitiMobile + MinitiLiveActivityExtension** (not macOS)
+
+## Watch and test-host membership
+
+`Shared/WatchRecordingProtocol.swift` is compiled by Watch and the receiving apps. Watch capture/store/UI files remain Watch-only. `project.pbxproj` is authoritative; directory placement alone does not establish membership. Both XCTest bundles use the separate `Testing` host configuration, not the installed app IDs above.
 
 ## When creating a new file
 
