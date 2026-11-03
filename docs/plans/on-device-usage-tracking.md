@@ -2,7 +2,7 @@
 
 Selected by Ian on 2026-11-02 for 3.7.0; implemented locally on Apple/backend, with validation and release checks below; not deployed. The [roadmap](../roadmap.md#selected-next-release-370) owns priority. Follow the selected test foundation before running hosted app tests.
 
-## Problem and current behavior
+## Problem in released 3.6.0
 
 Local transcription opens no managed session and sends no session-end usage report (`AppState.startManagedRecording` and `stopRecording`). Backend `incrementUsage` feeds device cycle/lifetime usage, daily admin charts and Deepgram cost estimates. Consequently, those minute totals omit local recordings even when managed AI requests generate separately tracked costs.
 

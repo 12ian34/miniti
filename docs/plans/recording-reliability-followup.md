@@ -1,6 +1,6 @@
 # Recording reliability and diagnostic follow-up
 
-Analysis requested and bounded scope accepted by Ian on 2026-11-02 after the 3.6.0 rollout review and discussion of app behavior, performance, reliability, transcript completeness, cost and privacy. **Selected for 3.7.0; implementation started locally on 2026-11-03, not released.** The [roadmap](../roadmap.md) owns ordering; [on-device usage tracking](on-device-usage-tracking.md) is selected separately. This work does not reopen delivered O1–O6 or the shipped incident-alert plan wholesale. Recovery changes still require controlled reproduction; acceptance of this scope is not evidence that the specific iPhone incident's root cause is known.
+Analysis requested and bounded scope accepted by Ian on 2026-11-02 after the 3.6.0 rollout review and discussion of app behavior, performance, reliability, transcript completeness, cost and privacy. **Selected for 3.7.0; implementation and automated review validation completed locally on 2026-11-03, not released.** The [roadmap](../roadmap.md) owns ordering; [on-device usage tracking](on-device-usage-tracking.md) is selected separately. This work does not reopen delivered O1–O6 or the shipped incident-alert plan wholesale. Recovery changes still require controlled reproduction; acceptance of this scope is not evidence that the specific iPhone incident's root cause is known.
 
 ## Evidence and confidence
 

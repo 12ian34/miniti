@@ -1,5 +1,15 @@
 # Changelog
 
+### Unreleased - v3.7.0
+
+- improvement: (macOS and iOS) BYOK uses GPT-6 Luna for summaries and helpers, and GPT-5.4 mini for specialist insights. Missing model access shows a clear message
+- improvement: (macOS) Settings, Privacy explains recording-duration reports and optional device diagnostics. Local recording still does not use your Deepgram allowance
+- fix: (macOS and iOS) stopping waits for pending transcript before saving, even if no words have appeared yet
+- fix: (macOS) local transcription and speaker labels have more time to finish when you stop
+- fix: (macOS and iOS) a slow transcription connection is no longer replaced before its timeout
+- fix: (macOS and iOS) local speaker failures show unknown speaker labels while recording continues. A slow session no longer disables local speakers for the next recording
+- fix: (macOS) local transcription keeps normal microphone labels when local speaker separation is off
+
 ### 2026-10-31 - v3.6.0
 
 Available on Mac since 31 October 2026, and on iPhone and iPad since 1 November 2026.

@@ -61,7 +61,7 @@ This is a retirement-driven compatibility migration, separate from the delivered
 
 ## Local implementation evidence, 2026-11-03
 
-- Apple direct Chat Completions requests now explicitly send model-specific reasoning for every mode and helper. Responses investigations remain pinned quality/low. AppState and both Settings views use the approved split. The request tests exercise full/incremental task selection, helper output decoding, and a 404 model-access error with the provider explanation and exactly one request, without cross-model retry.
+- Apple direct Chat Completions requests now explicitly send model-specific reasoning for every mode and helper. Responses investigations remain pinned quality/low. AppState and both Settings views use the approved split. The request tests exercise full/incremental task selection, helper output decoding, and a 404 model-access error with clear key-access guidance and exactly one request, without cross-model retry.
 - Backend fallback/rollback routes now resolve to pinned GPT-5.4 mini. Both supported models are probed once with explicit reasoning; historical costs remain intact. Normal enabled-Luna routing is preserved.
 - Linux uses the same task split and explicit reasoning through its actual chat body builder. Rust suite: 220 passed, 1 ignored live-enrollment case; frontend build passed. These are macOS-hosted checks, not Linux desktop/audio QA.
 - Apple macOS full isolated suite passed at `Test-Miniti-2026.11.03_12-02-10-+0000.xcresult`. The generic iOS Simulator test build passed; the iPhone 16 Device panel discovery problem prevents claiming a replacement iOS execution pass. The earlier Duo run predates this migration.
