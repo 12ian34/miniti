@@ -1,44 +1,47 @@
-miniti is an AI meeting assistant and speaking coach for iPhone and iPad. Record conversations with live transcription, get clear AI insights after every meeting, and improve your communication over time.
+miniti is an AI meeting assistant and speaking coach for iPhone and iPad. Record a meeting, get a live transcript with names, clear insights as you go, and coaching that helps you speak better over time.
 
-LIVE TRANSCRIPTION AND RECORDING
-- Real-time speech-to-text while recording
-- 11 languages: English, Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish, Russian
-- Automatic speaker naming — miniti infers real names from the transcript, or you can rename any speaker yourself
-- Background recording support
-- Dynamic Island and Lock Screen Live Activity with optional live transcript text and tap-to-return
+LIVE TRANSCRIPTION
+- Real-time transcript in 11 languages: English, Spanish, French, German, Portuguese, Italian, Dutch, Swedish, Greek, Polish and Russian
+- Speaker separation, with real names worked out from the conversation and your calendar. Rename anyone yourself
+- Optional on-device speaker separation on iPhone and iPad
+- Keeps recording in the background, with a Dynamic Island and Lock Screen Live Activity
+- Record from your wrist with the Apple Watch app. It transcribes on your iPhone
 
 AI MEETING INSIGHTS
-- Structured summaries and clear action items
-- Discussion flow, key decisions, and topic extraction
-- Summary insights, with optional MEDDPICC Sales analysis and a Docs-grounded Playbook
-- Questions: AI suggests smart, context-specific questions to ask based on what's been said
-- "i zoned out" — tap to catch up on the current topic, any questions directed at you, and recent decisions
-- Regenerate insights anytime from meeting history
+- Summary, discussion flow, action items, key decisions and topics, updated during the meeting
+- Questions: smart things to ask next, based on what has been said
+- Sales analysis with the eight MEDDPICC fields
+- Templates for BANT, SPIN, interview scorecards, customer check-ins, stand-ups and 1:1s
+- Playbook: answers from your own docs, with citations
+- i zoned out: catch up on the current topic, questions aimed at you and recent decisions
+- Investigate: look up a company, person or term from the conversation when you ask
 
-REAL-TIME SPEECH COACHING
-- Filler word tracking with per-word frequency breakdown and custom tracking
-- Talk ratio between speakers
-- Pace (words per minute), longest monologue, and questions asked
-- Clarity score to help you improve meeting by meeting
-- Optional real-time nudges when you've been monologuing or your filler rate spikes
+SPEECH COACHING
+- Filler words, talk ratio, pace, longest monologue, questions asked and clarity
+- Trends across meetings, with examples from your own transcripts
+- Optional live nudges when you talk too long or your filler rate climbs
 
-BUILT FOR REPEAT USE
-- Full meeting history with transcripts, insights, and coaching metrics
-- Pin important meetings and browse clear date groups
-- Search meetings by title, transcript, notes, insights, or any content
-- Import Granola CSV exports with duplicate protection and source labels
-- Trim transcripts with Undo, then regenerate insights from the edited meeting
-- Share transcripts and insights as markdown
-- Compact, Standard, and Large interface scales, plus adaptive iPad sidebar navigation
+CALENDAR AND MEETINGS
+- Google Calendar shows what's next, with prep notes and join links for Meet, Zoom and Teams
+- Auto-start and smart prompts when a meeting looks finished or the next one is starting
+- Searchable meeting history: titles, transcripts, notes and insights
+- Pin meetings, trim transcripts and regenerate insights
+- Import your Granola exports
+- Share as markdown or send to your own tools with webhooks
+
+YOUR DATA
+- Meetings are saved on your device
+- Optional Cloud sync for Pro keeps meetings in step across your iPhone, iPad and Mac
+- Choose Cloud or Local for any meeting
+- Settings, Privacy shows what leaves your device and who receives it
 
 PRICING
 - Free: 500 transcription minutes per month
-- Pro: 5,000 transcription minutes per month for $4.99/month
+- Pro: 5,000 transcription minutes per month for $4.99/month, plus Cloud sync
+- Bring your own Deepgram and OpenAI keys: unlimited, you pay the providers directly
 
 SUBSCRIPTION INFO
 If you choose Pro, payment is charged to your Apple ID account at confirmation of purchase. The subscription renews automatically unless canceled at least 24 hours before the end of the current period. You can manage or cancel from your App Store account settings.
 
-TERMS OF USE (EULA) 
+TERMS OF USE (EULA)
 https://www.apple.com/legal/internet-services/itunes/dev/stdeula/
-
-v3.5.0

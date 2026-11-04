@@ -51,7 +51,7 @@ Edit:
 - `Miniti.xcodeproj/project.pbxproj` — `MARKETING_VERSION = X.Y.Z;` (6 places) and `CURRENT_PROJECT_VERSION = N;` (10 places). `CURRENT_PROJECT_VERSION` wins over `Info.plist` at build time; keep them in sync.
 - `fastlane/metadata/en-US/release_notes.txt` — user-facing release notes for iOS. Also mirror to `en-GB/release_notes.txt`.
 - `CHANGELOG.md` — use `### Unreleased - vX.Y.Z` while preparing the release, then replace `Unreleased` with `YYYY-MM-DD` immediately before shipping.
-- `fastlane/metadata/en-US/description.txt` + `en-GB/description.txt` — only if there's a literal `vX.Y.Z` footer; bump it.
+- `fastlane/metadata/en-US/description.txt` + `en-GB/description.txt` — no version footer since 3.7.0; update when iPhone features change. Uploaded by `fastlane ios release` or `fastlane ios metadata`.
 - `../minitidotapp/changelog/index.html` — add the same release, grouped for the public website. Keep it marked unreleased until shipping.
 - `../minitidotapp` marketing/LLM/legal copy and `../miniti-docs` — update every affected product fact. App Store release notes stay iOS/iPad-only; do not copy macOS-only bullets into them.
 
