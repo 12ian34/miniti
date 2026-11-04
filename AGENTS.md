@@ -161,7 +161,7 @@ Next-release reliability selection (2026-11-02): Ian accepted the bounded [recor
 
 Monitoring O1–O6, selective cloud privacy C1, purchase return B6d and the Settings/Help/Feedback changes shipped on macOS in 3.5.0 build 142. Backend/site are deployed; iOS build 142 was confirmed available on 2026-10-31. [Release evidence](docs/releases/3.5.0.md) distinguishes Ian-reported QA from independently observed checks. [Contracts](docs/reference/monitoring-cloud-purchase.md) describe current behavior.
 
-C1 UX revision (2026-10-29): no Home/pre-recording cloud checkbox. The live and saved meeting toolbars share the blue Cloud/Local control and brief confirmation; title rules still apply at creation. Add rule opens a focused editor. See the selective-cloud-privacy plan for current acceptance, including pending removal and private-mode handling.
+C1 UX revision (2026-10-29): no Home/pre-recording cloud checkbox. The live and saved meeting views share the Cloud/Local control and brief confirmation (native toolbar button on iOS since 3.7.0, labelled header control on Mac); title rules still apply at creation. Add rule opens a focused editor. See the selective-cloud-privacy plan for current acceptance, including pending removal and private-mode handling.
 
 Settings UX revision (delivered in 3.5.0): Sending is folded into Privacy; Setup, Models owns the local model inventory. Existing model choices stay in Transcription. Legacy Sending/model search links resolve to their new owners; see [Settings](docs/reference/settings.md).
 

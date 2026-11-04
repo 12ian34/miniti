@@ -4,6 +4,9 @@
 
 - improvement: (macOS and iOS) BYOK uses GPT-6 Luna for summaries and helpers, and GPT-5.4 mini for specialist insights. Missing model access shows a clear message
 - improvement: (macOS) Settings, Privacy explains recording-duration reports and optional device diagnostics. Local recording still does not use your Deepgram allowance
+- improvement: (iOS) the Cloud button uses the standard iPhone and iPad toolbar
+- improvement: (macOS and iOS) after you stop, the button says done while the final insights finish
+- improvement: (macOS and iOS) Settings, Transcription says whether the speaker model failed to load or stopped during a recording, with a load model again button
 - fix: (macOS and iOS) stopping waits for pending transcript before saving, even if no words have appeared yet
 - fix: (macOS) local transcription and speaker labels have more time to finish when you stop
 - fix: (macOS and iOS) a slow transcription connection is no longer replaced before its timeout

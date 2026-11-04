@@ -453,9 +453,9 @@ private struct PostMeetingReviewBar: View {
                 } label: {
                     MinitiControlLabel(role: .primary, isEmphasized: true) {
                         HStack(spacing: 6) {
-                            Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "rectangle.stack" : "clock.arrow.circlepath")
+                            Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "checkmark" : "clock.arrow.circlepath")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text(appState.isCurrentMeetingGeneratingFinalInsights ? "back to meetings" : "open in history")
+                            Text(appState.isCurrentMeetingGeneratingFinalInsights ? "done" : "open in history")
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                     }
@@ -2569,10 +2569,10 @@ struct TerminalHeader: View {
                         } label: {
                             MinitiControlLabel(role: .primary, isEmphasized: true) {
                                 HStack(spacing: 6) {
-                                    Image(systemName: "rectangle.stack")
+                                    Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
                                         .frame(width: 11)
-                                    Text("back to meetings")
+                                    Text("done")
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                 }
                             }

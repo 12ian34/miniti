@@ -518,9 +518,6 @@ struct MeetingDetail_iOS: View {
         }
         .meetingCloudFeedback(for: meeting.id)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                MeetingCloudStorageButton(meeting: meeting)
-            }
             ToolbarItem(placement: .topBarLeading) {
                 Button {
                     dismiss()
@@ -538,10 +535,11 @@ struct MeetingDetail_iOS: View {
             }
             ToolbarItem(placement: .topBarTrailing) {
                 ShareLink(item: shareContent) {
-                    Image(systemName: "square.and.arrow.up")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(ColorPalette.Text.muted)
+                    Label("Share", systemImage: "square.and.arrow.up")
                 }
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                MeetingCloudStorageButton(meeting: meeting, inToolbar: true)
             }
         }
     }

@@ -493,7 +493,28 @@ struct MeetingCloudStorageButton: View {
     private var locked: Bool {
         appState.currentMeeting?.id == meeting.id && appState.privateModeEnabled && appState.privateModeLocked
     }
+    /// In a system toolbar the control is a native toolbar button, so the platform draws its
+    /// chrome (Liquid Glass on iOS 26). Elsewhere it keeps the shared labelled control.
+    var inToolbar = false
+
     var body: some View {
+        if inToolbar {
+            Button { appState.toggleMeetingCloudStorage(meeting) } label: {
+                // Toolbars reduce a Label to its icon; Cloud and Local need the word.
+                HStack(spacing: 5) {
+                    Image(systemName: meeting.syncExcluded ? "icloud.slash" : "icloud")
+                    Text(meeting.syncExcluded ? "Local" : "Cloud")
+                }
+            }
+            .disabled(locked)
+            .accessibilityLabel(meeting.syncExcluded ? "Local, keep this meeting off the cloud" : "Cloud, save this meeting to the cloud")
+            .accessibilityHint(locked ? "Private mode keeps this recording local." : "Changes cloud storage for this meeting only. Transcription, AI and exports still use your settings.")
+        } else {
+            labelledControl
+        }
+    }
+
+    private var labelledControl: some View {
         Button { appState.toggleMeetingCloudStorage(meeting) } label: {
             MinitiControlLabel(role: .primary, isEmphasized: !meeting.syncExcluded && appState.cloudPauseReason == nil) {
                 HStack(spacing: 6) {

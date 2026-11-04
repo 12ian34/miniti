@@ -1,5 +1,8 @@
 IMPROVED
 - With your own API keys, summaries and helpers use GPT-6 Luna and specialist insights use GPT-5.4 mini. Missing model access shows a clear message.
+- The Cloud button uses the standard toolbar.
+- After you stop, the button says done while the final insights finish.
+- Settings, Transcription says whether the speaker model failed to load or stopped, with a load model again button.
 
 FIXED
 - Stopping waits for pending transcript before saving, even if no words have appeared yet.

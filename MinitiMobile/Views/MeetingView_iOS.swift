@@ -227,26 +227,21 @@ struct MeetingView_iOS: View {
                     }
                 }
             }
-            ToolbarItem(placement: .topBarTrailing) {
-                HStack(spacing: 12) {
-                    if let event = appState.selectedCalendarEvent, event.joinURL != nil {
-                        Button {
-                            _ = appState.openMeetingLink(for: event, allowingRepeat: true)
-                        } label: {
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundStyle(ColorPalette.Text.muted)
-                        }
-                        .accessibilityLabel("Rejoin call")
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if let event = appState.selectedCalendarEvent, event.joinURL != nil {
+                    Button {
+                        _ = appState.openMeetingLink(for: event, allowingRepeat: true)
+                    } label: {
+                        Label("Rejoin call", systemImage: "arrow.up.right.square")
                     }
-                    ShareLink(item: shareContent) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                    }
-                    if let meeting = appState.currentMeeting {
-                        MeetingCloudStorageButton(meeting: meeting)
-                    }
+                }
+                ShareLink(item: shareContent) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+            }
+            if let meeting = appState.currentMeeting {
+                ToolbarItem(placement: .topBarTrailing) {
+                    MeetingCloudStorageButton(meeting: meeting, inToolbar: true)
                 }
             }
         }
@@ -330,7 +325,7 @@ struct MeetingView_iOS: View {
                     if appState.isFinalizingMeeting {
                         flexFinalizingStatus
                     } else if appState.isCurrentMeetingGeneratingFinalInsights {
-                        flexButton(icon: "rectangle.stack", label: "meetings", role: .primary) {
+                        flexButton(icon: "checkmark", label: "done", role: .primary) {
                             appState.goHome()
                         }
                     } else {

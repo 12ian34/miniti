@@ -53,7 +53,7 @@ Monitoring O1–O6, C1 and B6d shipped with macOS 3.5.0 and the deployed backend
 
 ### Per-meeting Cloud/Local, 3.5.0
 
-Home and pre-meeting calendar/countdown screens have no cloud checkbox. The live and saved meeting toolbars share the labelled blue Cloud/Local control at top right. Four-second confirmation uses conditional wording when sync is paused and pending wording for removal of an existing copy. It changes cloud storage only. Private-mode recordings cannot be opted in while running. Settings, Cloud → Add rule opens a focused editor rather than requiring typing into an unrelated-looking field first.
+Home and pre-meeting calendar/countdown screens have no cloud checkbox. The live and saved meeting views share the Cloud/Local control at top right. On iPhone and iPad (3.7.0) it is a native toolbar button with its icon and word, grouped with Share in the system toolbar; on the Mac it stays the labelled control in the meeting header. Four-second confirmation uses conditional wording when sync is paused and pending wording for removal of an existing copy. It changes cloud storage only. Private-mode recordings cannot be opted in while running. Settings, Cloud → Add rule opens a focused editor rather than requiring typing into an unrelated-looking field first.
 
 Settings revision (shipped in v3.5.0): the former Sending overview is embedded in Privacy. Setup, Models contains all local model families with platform-appropriate availability and Configure links. See [Settings](settings.md) for retained legacy destinations and search anchors.
 
