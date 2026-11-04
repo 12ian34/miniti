@@ -831,7 +831,7 @@ struct ReadyStateView_iOS: View {
                     }
                 } else if appState.isLimitReached {
                     VStack(spacing: 10) {
-                        Text("Monthly limit reached")
+                        Text("monthly limit reached")
                             .font(.system(size: 14, weight: .medium, design: .default))
                             .foregroundStyle(ColorPalette.Status.limitReached)
 
@@ -856,7 +856,7 @@ struct ReadyStateView_iOS: View {
                                         .scaleEffect(0.8)
                                     Text("purchasing...")
                                 } else {
-                                    Text("Upgrade to Pro, $4.99/month")
+                                    Text("upgrade to pro, $4.99/month")
                                 }
                             }
                             .font(.system(size: 12, weight: .semibold, design: .default))
@@ -912,7 +912,7 @@ struct ReadyStateView_iOS: View {
                             } else {
                                 Image(systemName: "record.circle")
                                     .font(.system(size: 18))
-                                Text("Start meeting")
+                                Text("start meeting")
                                     .font(.system(size: 16, weight: .semibold, design: .default))
                                     .lineLimit(1)
                             }
@@ -1739,7 +1739,7 @@ struct MeetingLanguagePicker_iOS: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text(selectedLang.rawValue.uppercased())
+                Text(selectedLang.rawValue)
                     .font(.system(size: 13, weight: .semibold, design: .default))
                 Text(selectedLang.displayName)
                     .font(.system(size: 13, weight: .medium, design: .default))
@@ -2041,7 +2041,7 @@ private struct CompactEventRow_iOS: View {
         } else {
             fmt.dateFormat = "EEE HH:mm"
         }
-        return fmt.string(from: start)
+        return fmt.string(from: start).lowercased()
     }
 }
 

@@ -34,17 +34,17 @@ enum TranscriptionLanguage: String, CaseIterable, Codable {
     
     var displayName: String {
         switch self {
-        case .english: return "\(flag) English"
-        case .spanish: return "\(flag) Español"
-        case .swedish: return "\(flag) Svenska"
-        case .greek: return "\(flag) Ελληνικά"
-        case .french: return "\(flag) Français"
-        case .german: return "\(flag) Deutsch"
-        case .portuguese: return "\(flag) Português"
-        case .italian: return "\(flag) Italiano"
-        case .dutch: return "\(flag) Nederlands"
-        case .polish: return "\(flag) Polski"
-        case .russian: return "\(flag) Русский"
+        case .english: return "\(flag) english"
+        case .spanish: return "\(flag) español"
+        case .swedish: return "\(flag) svenska"
+        case .greek: return "\(flag) ελληνικά"
+        case .french: return "\(flag) français"
+        case .german: return "\(flag) deutsch"
+        case .portuguese: return "\(flag) português"
+        case .italian: return "\(flag) italiano"
+        case .dutch: return "\(flag) nederlands"
+        case .polish: return "\(flag) polski"
+        case .russian: return "\(flag) русский"
         }
     }
     

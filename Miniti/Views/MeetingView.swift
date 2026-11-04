@@ -1476,7 +1476,7 @@ struct MeetingLanguagePicker: View {
             }
         } label: {
             HStack(spacing: 6) {
-                Text(selectedLang.rawValue.uppercased())
+                Text(selectedLang.rawValue)
                     .font(.system(size: 11, weight: .semibold, design: .default))
                 Text(selectedLang.displayName)
                     .font(.system(size: 11, weight: .medium, design: .default))

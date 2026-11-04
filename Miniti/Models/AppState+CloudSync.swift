@@ -535,7 +535,7 @@ enum AccountEmailState: Equatable {
 }
 
 /// The outcome of adding an email, for the control that asked.
-enum AccountEmailAddOutcome: Equatable {
+enum AccountEmailAddOutcome: Equatable, Sendable {
     /// A confirmation link went to the address; it is pending until opened.
     case sent(String)
     /// The address is already the verified one.
@@ -548,7 +548,7 @@ enum AccountEmailAddOutcome: Equatable {
     case staleAccount
 }
 
-enum AccountEmailRemoveOutcome: Equatable {
+enum AccountEmailRemoveOutcome: Equatable, Sendable {
     case removed
     case failed(String)
     /// The account changed while the request ran: nothing was applied or shown (F1).
@@ -695,7 +695,7 @@ extension AppState {
 
     /// Serialize one mutation behind the previous one, revalidate the account before dispatch,
     /// invalidate older reads, and reconcile afterwards through the F2 queue.
-    private func withAccountEmailMutation<T>(stale: T, _ body: @escaping @MainActor (Int) async -> T) async -> T {
+    private func withAccountEmailMutation<T: Sendable>(stale: T, _ body: @escaping @MainActor (Int) async -> T) async -> T {
         let previous = accountEmailMutationTask
         let generation = accountGeneration
         let result = Task<T, Never> { @MainActor [weak self] in

@@ -155,9 +155,9 @@ final class DeepgramParsingTests: XCTestCase {
     // MARK: - TranscriptionLanguage enum
 
     func testTranscriptionLanguageDisplayNames() {
-        XCTAssertEqual(TranscriptionLanguage.english.displayName, "🇬🇧 English")
-        XCTAssertEqual(TranscriptionLanguage.spanish.displayName, "🇪🇸 Español")
-        XCTAssertEqual(TranscriptionLanguage.greek.displayName, "🇬🇷 Ελληνικά")
+        XCTAssertEqual(TranscriptionLanguage.english.displayName, "🇬🇧 english")
+        XCTAssertEqual(TranscriptionLanguage.spanish.displayName, "🇪🇸 español")
+        XCTAssertEqual(TranscriptionLanguage.greek.displayName, "🇬🇷 ελληνικά")
     }
 
     func testTranscriptionLanguageRawValues() {

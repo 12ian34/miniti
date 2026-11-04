@@ -953,7 +953,7 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); keyFailureActive = true; keyFailurePermanent = { if case .unusable = failure { return true }; return false }(); cachedKey = nil; lock.unlock()
         switch failure {
         case .unusable(let reason):
-            if !hasRecovery { lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock() }
+            if !hasRecovery { lock.withLock { keyUnusableWithoutRecovery = true } }
             emit("client_auth_key_unusable", level: .error, details: Self.keyFailureDetails(reason: reason, phase: phase, recovery: hasRecovery))
             return .keyUnusable
         case .temporary(let reason):
@@ -1101,7 +1101,7 @@ final class ClientAuthManager: @unchecked Sendable {
         }
         guard credentialEpoch == generation else { throw ClientAuthError.notEnrolled }
         let task = Task<Int, Error> { [self] in
-            defer { lock.lock(); repairTask = nil; lock.unlock() }
+            defer { lock.withLock { repairTask = nil } }
             let attempt = UUID().uuidString
             emit("client_auth_repair_attempt", level: .info, details: ["attempt_id": attempt])
             do {
@@ -1129,7 +1129,7 @@ final class ClientAuthManager: @unchecked Sendable {
             return (credentials.recoveryKey, credentials.enrollmentPath, credentials.recoveryKeyAcknowledged, credentialEpoch)
         }()
         guard !recoveryKey.isEmpty else {
-            lock.lock(); keyUnusableWithoutRecovery = true; lock.unlock()
+            lock.withLock { keyUnusableWithoutRecovery = true }
             throw ClientAuthError.keyUnusable
         }
         let key = InstallationKey.generate()
