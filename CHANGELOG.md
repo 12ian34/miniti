@@ -1,6 +1,8 @@
 # Changelog
 
-### Unreleased - v3.7.0
+### 2026-11-04 - v3.7.0
+
+Available on Mac since 4 November 2026. iPhone and iPad are waiting for App Review.
 
 - improvement: (macOS and iOS) BYOK uses GPT-6 Luna for summaries and helpers, and GPT-5.4 mini for specialist insights. Missing model access shows a clear message
 - improvement: (macOS) Settings, Privacy explains recording-duration reports and optional device diagnostics. Local recording still does not use your Deepgram allowance
