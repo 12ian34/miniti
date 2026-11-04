@@ -474,6 +474,27 @@ final class LocalSpeakerFailureTests: XCTestCase {
         await single.endSessionAndWait()
     }
 
+    func testRetryIsOfferedOnlyForAFailedModelAndWaitsForTheRecordingToEnd() async throws {
+        let processor = FixtureSpeakerProcessor(process: { _ in throw Fault.fixture })
+        let service = try await readyService(processor)
+        XCTAssertEqual(service.retryAvailability(recordingActive: false), .hidden)
+        XCTAssertNotNil(service.beginSession(sources: [.microphone]))
+        var failed = false
+        service.onSessionFailure = { _, _ in failed = true }
+        service.ingest(samples: [0, 0], source: .microphone)
+        try await TestSupport.waitUntil { failed }
+        XCTAssertEqual(service.retryAvailability(recordingActive: true), .afterRecording)
+        await service.endSessionAndWait()
+        try await TestSupport.waitUntil { service.canRetry }
+        XCTAssertEqual(service.retryAvailability(recordingActive: false), .available)
+        XCTAssertEqual(service.retryAvailability(recordingActive: true), .afterRecording)
+        XCTAssertTrue(service.statusDescription.contains("stopped during the last recording"))
+        XCTAssertFalse(service.statusDescription.contains("—"))
+        service.prepare(sources: [.microphone])
+        try await TestSupport.waitUntil { service.isReady }
+        XCTAssertEqual(service.retryAvailability(recordingActive: false), .hidden)
+    }
+
     func testInferenceFailureInvalidatesTimelineCollectorAndRequiresFreshPreparation() async throws {
         for source in [TranscriptSource.microphone, .system] {
             let processor = FixtureSpeakerProcessor(process: { _ in throw Fault.fixture })

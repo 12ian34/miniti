@@ -1642,12 +1642,20 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
         Text(service.statusDescription)
             .font(.caption)
             .foregroundStyle(.secondary)
-        if appState.onDeviceSpeakerSeparationEnabled, !service.isReady {
-            Button { appState.refreshOnDeviceDiarizationAvailability() } label: {
-                MinitiControlLabel { Label("Retry preparation", systemImage: "arrow.clockwise") }
+        if appState.onDeviceSpeakerSeparationEnabled {
+            switch service.retryAvailability(recordingActive: appState.isRecording || appState.isStartingMeeting || appState.isFinalizingMeeting) {
+            case .hidden:
+                EmptyView()
+            case .available:
+                Button { appState.refreshOnDeviceDiarizationAvailability() } label: {
+                    MinitiControlLabel { Label("Load model again", systemImage: "arrow.clockwise") }
+                }
+                .buttonStyle(.plain)
+            case .afterRecording:
+                Text("You can load it again when this recording ends.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain)
-            .disabled(!service.canRetry || appState.isRecording || appState.isStartingMeeting || appState.isFinalizingMeeting)
         }
     }
 }

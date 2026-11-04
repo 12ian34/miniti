@@ -350,9 +350,25 @@ final class OnDeviceDiarizationService: ObservableObject {
             return fraction > 0 ? "Downloading and preparing the model, \(Int((fraction * 100).rounded()))%." : "Preparing the model."
         case .ready:
             return "Ready. New recordings separate speakers on this device."
-        case .failed:
-            return "Local speaker separation is unavailable. Retry preparation before the next recording."
+        case .failed(let reason):
+            return reason == "load"
+                ? "The speaker model could not load on this device. Load it again to use local speaker separation."
+                : "The speaker model stopped during the last recording. Load it again before the next recording."
         }
+    }
+
+    /// Whether Settings offers "Load model again". Only a failed model can be retried;
+    /// while it prepares, is ready or is off there is nothing to retry, so no button shows.
+    enum RetryAvailability: Equatable {
+        case hidden
+        case available
+        /// Failed, but a recording is running or still settling; retry once it ends.
+        case afterRecording
+    }
+
+    func retryAvailability(recordingActive: Bool) -> RetryAvailability {
+        guard case .failed = status else { return .hidden }
+        return recordingActive || !canRetry ? .afterRecording : .available
     }
 
     /// Preparation never changes an active recording's route. Late cancelled loads
