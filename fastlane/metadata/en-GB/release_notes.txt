@@ -1,13 +1,6 @@
-NEW
-- Resend a failed webhook with the latest saved transcript and summary.
-
 IMPROVED
-- Cloud shows pending changes, when the count was checked and whether it will retry.
+- With your own API keys, summaries and helpers use GPT-6 Luna and specialist insights use GPT-5.4 mini. Missing model access shows a clear message.
 
 FIXED
-- Finished meetings sync without leaving the meeting screen. New edits no longer interrupt uploads.
-- Webhooks wait for final AI processing and keep newer updates.
-- Stalled webhook deliveries expire after 24 hours and no longer block later updates.
-- Late AI responses no longer overwrite edits or renamed meetings.
-- Changing a finished meeting's template clears the previous template's results.
-- Settings goes back one page at a time without jumping to Home.
+- Stopping waits for pending transcript before saving, even if no words have appeared yet.
+- A slow transcription connection is no longer replaced before its timeout.
