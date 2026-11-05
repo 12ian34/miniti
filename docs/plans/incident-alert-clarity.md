@@ -84,3 +84,24 @@ Independent review identified and fixed two delivery boundaries: an unsent post-
 Final backend suite: **695 passed, 5 skipped**; type generation, TypeScript and lint clean. Production build and exact command evidence are in the release record. At this local checkpoint no customer alert or deployment had been performed. Subsequent deployment and normal hourly observation are recorded in [3.6.0](../releases/3.6.0.md); the local checkpoint is not the current rollout status.
 
 Initial implementation commit: `467601e`; the 2026-10-31 capability correction is recorded in the release evidence. Full production build passed after the final fixes; deployment followed in backend `031c692` on 2026-10-31.
+
+## Harm-based alert policy (2026-11-05, local, not deployed)
+
+Ian asked why quiet patches in meetings were emailing him. Measured over 4 Nov 05:30 to 5 Nov 09:10 UTC (49 recordings, about 850 minutes, 17 devices): 105 `transcript_starvation_detected` warnings on 12 devices, 23 of 49 recordings with at least one (82% on iPhone), usually reconnecting in 1 to 2 seconds with words back in 4 to 8 seconds where 3.7.0 reports it. About 8 emails went out; 3 recordings with speech had no words at all. The detector fires when audio loud enough to be speech has produced no words for 20 seconds (a stuck socket, music or noise), not on silence.
+
+The trigger (terminal event, or three ten-second windows in ten minutes) and every incident record stay unchanged for admin and the digest. `lib/clientIncidents.ts` now classifies each incident and only emails an `alert_reason`:
+
+| Reason | Rule |
+|---|---|
+| `lost_meeting` | `recording_final` with `speech_seen=true`, `transcript_seen=false` and at least 60 seconds. A trigger on its own, without other warnings. |
+| `transcript_gap` | At least 120 seconds without words: a reported `gap_seconds` (3.7.0+) on starvation/reattempt events, or a reconnect that gave up with no connection back, recovery or recording end for 120 seconds. |
+| `storage` / `account_access` | Existing families: the device may not show meetings or record. |
+| `start_failed` | `recording_failed` or `microphone_capture_failed` on the newest platform version only. |
+
+Digest-only `quiet_reason`: `brief_problems` (everything the app fixed itself), `device_offline` (every failed connection in the episode had code `network`), `older_version` (older than the previous minor of the platform latest, or unknown; at a major boundary only the current major; Linux uses `LINUX_LATEST_VERSION` when set). Recovery mail only follows incidents that are alert-worthy under this policy.
+
+A multi-device email replaces single-device mail when at least three devices, and at least half of the devices recording in that hour, had hard failures within 60 minutes: lost meetings, reconnects that gave up, failed starts, non-network failed connections or reported gaps of 120+ seconds. Brief stalls are excluded because several concurrent recordings with stalls are common at this scale. One email at most every six hours; covered devices are marked notified so they neither mail individually later nor send recoveries. It counts toward the 20-send cap.
+
+A closed gap's classification is kept for the same failure evidence, because gap-end evidence lives in the 2,000-event general list and would otherwise age out before the failure leaves the signals list. `recording_final` and `transcript_reconnect_reattempt` are now also retained in the 30-day signals list. A state without `alert_policy` is baselined: non-recent evidence is marked notified, so deployment does not re-mail history.
+
+Replay of the same production window through the new evaluator: 4 emails (three lost meetings, one history-store failure), no multi-device alert; a dry run seeded with the current production state sent nothing on its first four runs. 3.6.0 and older do not report `gap_seconds`, so a long hole in a recording that later produced words is only visible there through a reconnect that gave up. Full backend suite, both tsc configurations and lint pass.
