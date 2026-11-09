@@ -694,7 +694,7 @@ Spacing uses an even-step scale (`"1"` = 2px through `"12"` = 32px). The 2px bas
 Containers follow the same small-step rhythm:
 
 - The meeting view splits horizontally into a transcript + notes column and an insights rail. Both use `surface-panel` for the background and `border` for the 1px divider.
-- On macOS, the sidebar collapses to a compact icon rail via `⌘[`; the insights pane collapses via `⌘]`. Collapsed states share the `sidebar` component tokens.
+- On macOS, the sidebar collapses to a compact icon rail via `⌘[`; the right pane collapses via `⌘]` (calendar on Home, insights in meetings). Collapsed states share the `sidebar` component tokens.
 - macOS history rows keep their locale-formatted start time and duration on one metadata line. Titles use the full row width at rest; hover actions temporarily overlay the trailing title edge without changing layout. Background AI work uses a separate `finishing insights…` status line, so neither state compresses or reflows the metadata.
 - On iOS, the recording view keeps share in the native trailing toolbar slot and places the labelled neutral `catch me up` action immediately left of the red Stop action in the bottom control bar. Investigate and Catch me up both use real native `Button` owners with the shared horizontal `MinitiControlLabel` icon/label layout; on macOS, Investigate opens its Web/Codebase chooser from a `Button`-owned popover rather than styling a `Menu` to resemble a button. Catch me up uses the `clock.arrow.circlepath` SF Symbol rather than an emoji. There is no tab bar during recording.
 
@@ -800,3 +800,5 @@ Build 160 setup polish (approved source, not packaged): guide headings, field la
 
 
 Home layout, 2026-11-09: keep language above the green Start meeting action in the bottom inset. iOS uses three equal-width/equal-height neutral Home utility cells in one row, with captions scaling through xxxLarge, system large-content viewers and minimum 44pt targets. Guide prose still uses the full requested size; at accessibility sizes, status and chevron precede full-width task text. Mac retains its footer arrangement and has a separate right calendar sidebar, independent of setup. HomeSetup owns its 320pt panel, 40pt collapsed rail and 360pt minimum main-column tokens. Below the combined width, use an overlay and native dismiss button, not new window constraints. Keep the calendar mounted across collapse/resize and use Reduce Motion-aware disclosure transitions. This supersedes the earlier top-aligned action and separate iOS feedback-row layout.
+
+Mac folder sheets use primary palette backgrounds and full-row `MinitiDisclosureStyle` controls with 44pt minimum targets. Home Models uses the same labelled neutral footer chrome as setup/calendar/feedback; readiness remains visible through its status icon and accessible value.

@@ -98,3 +98,8 @@ Ian selected an optional organise-your-meetings setup task and a focused folder 
 The optional setup task starts unreviewed, even when automatic filing is already enabled. Opening or hiding it does not complete it. Confirm folder choices marks it reviewed without changing settings or filing history; review persistence lives in HomeSetupState. The task has the same hide/General restore controls and help popover as the other tasks. Home loads at most 1,000 finished meetings, only when Preview is requested. It does not observe or fetch the whole history for the checklist. The existing History entry point uses its supplied meetings.
 
 Source is newer than private build 161. Focused runtime and rendered validation are recorded in the release evidence; full suites and a new package are required before the next distribution.
+
+
+### Mac folder presentation refinement, 2026-11-09
+
+Folder sheets use the miniti primary surface and dark appearance. More options, Preview options and category disclosures use the existing full-row MinitiDisclosureStyle with a minimum 44pt target. Clicking the label or empty row space toggles it. iOS navigation, form styling and keyboard-safe actions remain unchanged. Matching, filing and persistence are unchanged.

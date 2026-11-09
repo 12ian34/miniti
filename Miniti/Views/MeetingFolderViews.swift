@@ -112,6 +112,10 @@ struct MeetingFolderManager: View {
         }
         #if os(macOS)
         .frame(minWidth: 520, idealWidth: 620, minHeight: 560, idealHeight: 680)
+        .disclosureGroupStyle(MinitiDisclosureStyle(minimumHeight: MinitiDesignSystem.Control.minimumIconHitSize))
+        .background(ColorPalette.Background.primary)
+        .presentationBackground(ColorPalette.Background.primary)
+        .preferredColorScheme(.dark)
         #endif
         .confirmationDialog("Delete this folder? Meetings will stay in Unfiled.", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
             Button("Delete folder", role: .destructive) {
@@ -183,6 +187,10 @@ struct MeetingFolderManager: View {
             }
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        .scrollContentBackground(.hidden)
+        .background(ColorPalette.Background.primary)
+        #endif
     }
 
     private func journey(_ title: String, detail: String, icon: String, id: String, action: @escaping () -> Void) -> some View {
@@ -243,6 +251,10 @@ struct MeetingFolderManager: View {
             }
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        .scrollContentBackground(.hidden)
+        .background(ColorPalette.Background.primary)
+        #endif
         .safeAreaInset(edge: .bottom) {
             actionBar {
                 Button("Apply organisation") {
@@ -280,6 +292,10 @@ struct MeetingFolderManager: View {
             syncIssue
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        .scrollContentBackground(.hidden)
+        .background(ColorPalette.Background.primary)
+        #endif
         .safeAreaInset(edge: .bottom) {
             actionBar {
                 Button(editing == nil ? "Create" : "Save") { save() }
@@ -320,6 +336,10 @@ struct MeetingFolderManager: View {
             undoAction
         }
         .formStyle(.grouped)
+        #if os(macOS)
+        .scrollContentBackground(.hidden)
+        .background(ColorPalette.Background.primary)
+        #endif
     }
 
     @ViewBuilder private var syncIssue: some View {

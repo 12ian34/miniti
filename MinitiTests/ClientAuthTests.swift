@@ -3614,6 +3614,49 @@ final class HomeSetupPolicyTests: XCTestCase {
         XCTAssertTrue(state.isHomeSetupExpanded, "Calendar controls must not dismiss the Mac guide")
     }
 
+    @MainActor func testMacFolderDisclosureOpensFromLabelAndEmptyRowSpace() async throws {
+        var expanded = false
+        let host = NSHostingView(rootView:
+            VStack(spacing: 0) {
+                DisclosureGroup(isExpanded: Binding(get: { expanded }, set: { expanded = $0 })) {
+                    Text("Folder options")
+                } label: { Text("More options") }
+                Spacer(minLength: 0)
+            }
+            .disclosureGroupStyle(MinitiDisclosureStyle(minimumHeight: MinitiDesignSystem.Control.minimumIconHitSize))
+            .frame(width: 480, height: 160)
+            .background(ColorPalette.Background.primary))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 160),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded()
+        for x in [40.0, 350.0] {
+            // Click the label, then empty row space, never the disclosure arrow.
+            let point = host.convert(NSPoint(x: x, y: host.isFlipped ? 22 : 138), to: nil)
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = try XCTUnwrap(NSEvent.mouseEvent(with: type, location: point,
+                    modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+                    clickCount: 1, pressure: 1))
+                window.sendEvent(event)
+            }
+            XCTAssertEqual(expanded, x == 40, "The full disclosure row must toggle")
+            try await Task.sleep(for: .milliseconds(30))
+            host.layoutSubtreeIfNeeded()
+        }
+        let folderHost = NSHostingView(rootView: MeetingFolderManager(meetings: [])
+            .environmentObject(AppState()))
+        window.contentView = folderHost; window.setContentSize(NSSize(width: 620, height: 600))
+        try await Task.sleep(for: .milliseconds(100))
+        folderHost.layoutSubtreeIfNeeded(); folderHost.displayIfNeeded()
+        let bitmap = try XCTUnwrap(folderHost.bitmapImageRepForCachingDisplay(in: folderHost.bounds))
+        folderHost.cacheDisplay(in: folderHost.bounds, to: bitmap)
+        let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        capture.name = "Mac folder surface and full-row disclosure"; capture.lifetime = .keepAlways; add(capture)
+    }
+
     @MainActor func testSetupLayoutPerformanceAcrossSteps() {
         let state = AppState()
         let oldOnboarding = state.hasCompletedOnboarding

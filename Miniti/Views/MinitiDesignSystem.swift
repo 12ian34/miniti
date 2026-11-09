@@ -378,6 +378,7 @@ struct MinitiTabStripSurface<Content: View>: View {
 /// style (Ian, 2026-10-27). Content slides in below with a left inset. Reduce Motion drops
 /// the turn and the slide.
 struct MinitiDisclosureStyle: DisclosureGroupStyle {
+    var minimumHeight: CGFloat? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var hovering = false
 
@@ -401,6 +402,7 @@ struct MinitiDisclosureStyle: DisclosureGroupStyle {
                         .background(Circle().fill(ColorPalette.Background.card))
                         .overlay(Circle().stroke(ColorPalette.Border.primary, lineWidth: 1))
                 }
+                .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
                 .contentShape(Rectangle())
                 .padding(.vertical, MinitiDesignSystem.Spacing.hairline)
             }

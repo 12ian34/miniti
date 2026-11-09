@@ -110,3 +110,8 @@ Home account entry uses a centered prompt directly on the background. Neutral ac
 
 
 3.8.0 folder setup: the optional organise-your-meetings task opens the shared folder overview. Preview, creation and management are separate focused screens. Create/Save/Apply appear only in their relevant screen; back cancels the unfinished form or preview. Explicit Confirm folder choices completes the setup task, preserving actual settings. Hiding does not complete the task; General restores it.
+
+
+### Mac Home and folder controls, 2026-11-09
+
+The Models readiness shortcut is a labelled footer button beside setup/calendar, opening Models settings. Cmd-] toggles the Home calendar when available and insights in a meeting. Folder sheets use palette backgrounds and full-row disclosure buttons, including empty row space, with expanded/collapsed accessibility values.

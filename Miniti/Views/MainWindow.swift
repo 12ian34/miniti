@@ -519,8 +519,15 @@ struct MainWindow: View {
         }
 
         keyboardService.onToggleInsightsCollapse = { [self] in
-            withAnimation(.easeInOut(duration: 0.16)) {
-                appState.isLiveInsightsCollapsed.toggle()
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration)) {
+                if currentNavigationDestination == .home && !appState.isRecording &&
+                    (appState.currentMeeting == nil || appState.isStartingMeeting) {
+                    guard appState.googleCalendarEnabled, appState.isGoogleCalendarConnected,
+                          appState.pendingAutoStartEvent == nil else { return }
+                    appState.toggleHomeCalendar()
+                } else {
+                    appState.isLiveInsightsCollapsed.toggle()
+                }
             }
         }
         

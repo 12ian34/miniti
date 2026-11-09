@@ -7,10 +7,10 @@
 - new: (macOS) setup explains local and online audio choices, Markdown copies and the AI assistant meeting list
 - new: (macOS and iOS) choose to sign in or continue without signing in when setting up miniti
 - new: (macOS and iOS) rename devices in settings, account
-- improvement: (macOS) home keeps language and recording near the bottom, with a collapsible calendar sidebar
+- improvement: (macOS) home keeps language and recording near the bottom, with a calendar sidebar you can toggle with ⌘]
 - improvement: (iOS) language and recording sit above one row of setup, calendar and feedback controls
 - improvement: (macOS and iOS) upcoming meetings are grouped into today, tomorrow and later, with sections you can collapse
-- improvement: (macOS) local models show preparation progress, with a status shortcut to Models settings
+- improvement: (macOS) local models show preparation progress, with a labelled models shortcut at the bottom of home
 - improvement: (macOS and iOS) info buttons explain calendar automation and audio settings, with links to the docs
 - improvement: (macOS and iOS) smoother handoff from live words to the finished transcript
 - improvement: (macOS) long speaking turns use shorter paragraphs in the transcript

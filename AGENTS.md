@@ -1,6 +1,6 @@
 # Miniti
 
-Post-162 Home refinement, 2026-11-09: Ian is performing physical-device QA; no waiver was given. New source moves language/recording above the bottom controls, aligns the iOS footer and gives Mac Home an independent collapsible right calendar sidebar. Build 162 remains a historical testing artifact and must not be published as this revised candidate. Build 163 is signed, verified and available as a DMG and internal TestFlight build. Full local suites and the corrected remote CI run pass.
+Post-163 UI refinement, 2026-11-09: Mac folder disclosures use full-row targets and miniti surfaces; Home gains a labelled Models footer button and Cmd-] toggles its calendar sidebar. These changes are not in DMG/TestFlight 163. Fresh validation and packaging are required before publishing this revised candidate. Physical QA remains in progress; App Privacy is owner-confirmed complete.
 
 Release authorized, 2026-11-09: Ian requested the full coordinated release across repositories. Build 163 includes the final Home and folder setup/journey changes. Full local Apple validation and signed-package verification pass; TestFlight 163 is available. Public Apple release remains pending the physical-QA disposition. Ian confirmed the App Store privacy correction on 2026-11-09. This authorization supersedes earlier preparation-only publication restrictions. Unverified physical gates remain distinct from automated passes; the release checklist owns their disposition. No public availability is claimed by this note.
 

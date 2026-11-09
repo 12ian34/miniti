@@ -104,7 +104,7 @@ final class KeyboardShortcutsService: ObservableObject {
             return nil
         }
 
-        // ⌘] - Toggle insights collapse
+        // ⌘] - Toggle the right pane (calendar on Home, insights in meetings)
         if modifiers == .command && event.keyCode == kVK_ANSI_RightBracket {
             onToggleInsightsCollapse?()
             return nil
@@ -261,7 +261,7 @@ let allKeyboardShortcuts: [KeyboardShortcut] = [
     KeyboardShortcut(keys: "↓ / J", description: "Next in history", category: "Navigation"),
     KeyboardShortcut(keys: "⌘H", description: "Go home", category: "Navigation"),
     KeyboardShortcut(keys: "⌘[", description: "Toggle sidebar", category: "Navigation"),
-    KeyboardShortcut(keys: "⌘]", description: "Toggle insights", category: "Navigation"),
+    KeyboardShortcut(keys: "⌘]", description: "Toggle calendar / insights", category: "Navigation"),
     KeyboardShortcut(keys: "/", description: "Search meetings", category: "Navigation"),
     KeyboardShortcut(keys: "Esc", description: "Go home / Close", category: "Navigation"),
     

@@ -205,3 +205,8 @@ Ian selected this refinement while performing physical QA. Language sits above S
 On Mac, the footer retains setup/calendar at left and feedback at right. Language and Start sit just above it in the main column. Upcoming meetings use a separate right sidebar with an expand/collapse rail. Setup and calendar can be visible together; collapsing or removing the guide does not change the Mac calendar preference. At narrower content widths, the calendar overlays Home with a dismissible backdrop instead of increasing the window minimum. Its section and scroll state survive collapse and width transitions. Pending automatic-start prompts still take priority.
 
 Presentation state remains in HomeSetupState. No new AppState publication, history query, timer, audio capture, account, sync or automation behavior is introduced. iOS Home no longer observes an unused full-history query. Sidebar geometry stays local to Home and does not set NSWindow constraints. Native buttons, semantic design tokens and Reduce Motion behavior remain required. The release record owns focused and full validation and the replacement package; build 162 predates this layout.
+
+
+### Mac footer and sidebar refinement, 2026-11-09
+
+Models moves from the Home header to a labelled neutral footer control beside setup/calendar, retaining readiness, preparation and failure status in its icon and accessible value. Cmd-] toggles calendar on idle Home, preserving insights behavior in meeting views and the existing calendar availability guards. Use the shared disclosure motion and Reduce Motion behavior. Source follows build 163 and needs fresh packaging.

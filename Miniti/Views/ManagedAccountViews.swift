@@ -797,10 +797,14 @@ struct HomeCalendarButton: View {
 
 /// One equal-cell row on iOS; preserve the desktop footer placement.
 struct HomeUtilityBar: View {
+    @EnvironmentObject private var appState: AppState
     private var presentationControls: some View {
         HStack(spacing: MinitiDesignSystem.Spacing.standard) {
             HomeSetupButton()
             HomeCalendarButton()
+            #if os(macOS) && arch(arm64)
+            LocalModelsStatusButton(transcription: appState.onDeviceTranscription, speakers: appState.onDeviceDiarization)
+            #endif
         }
         .fixedSize(horizontal: true, vertical: false)
     }
@@ -2399,15 +2403,15 @@ struct LocalModelsStatusButton: View {
             appState.selectedSettingsTab = SettingsDestination.models.rawValue
             openSettings()
         } label: {
-            Image(systemName: states.contains("failed") ? "exclamationmark.circle" :
-                    states.isEmpty ? "cpu" : states.allSatisfy({ $0 == "ready" }) ? "checkmark.circle" : "arrow.down.circle")
-                .font(.callout)
-                .foregroundStyle(states.contains("failed") ? ColorPalette.Status.warning : ColorPalette.Text.muted)
-                .padding(MinitiDesignSystem.Spacing.control)
+            MinitiHomeActionLabel(
+                icon: states.contains("failed") ? "exclamationmark.circle" :
+                    states.isEmpty ? "cpu" : states.allSatisfy({ $0 == "ready" }) ? "checkmark.circle" : "arrow.down.circle",
+                label: "models")
         }
         .buttonStyle(.plain)
         .help(description + ". Open Models settings.")
-        .accessibilityLabel(description)
+        .accessibilityLabel("Models")
+        .accessibilityValue(description)
         .accessibilityHint("Open Models settings")
         .accessibilityIdentifier("models.status")
     }

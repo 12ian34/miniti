@@ -604,9 +604,6 @@ struct ReadyStateView: View {
                             .fixedSize()
                         Spacer()
                         HStack(spacing: 8) {
-                            #if arch(arm64)
-                            LocalModelsStatusButton(transcription: appState.onDeviceTranscription, speakers: appState.onDeviceDiarization)
-                            #endif
                             HomeActionButton(
                                 icon: "keyboard",
                                 label: "shortcuts",
