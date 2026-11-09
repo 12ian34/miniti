@@ -7,16 +7,10 @@ struct MeetingView_iOS: View {
     @Environment(\.readingMetrics) private var readingMetrics
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
-    @State private var activeSection: MeetingSection = ScreenshotMode.current?.wantsInsightsSection == true ? .insights : .transcript
+    @State private var activeSection: MinitiMeetingSection = ScreenshotMode.current?.wantsInsightsSection == true ? .insights : .transcript
     @State private var showDiscardConfirmation = false
     @State private var isResumingRecording = false
     @State private var showSavedOverlay = false
-    
-    enum MeetingSection: String, CaseIterable {
-        case transcript = "transcript"
-        case insights = "insights"
-        case notes = "notes"
-    }
     
     private var canUpdateInsights: Bool {
         appState.currentMeeting != nil && !appState.liveSegments.isEmpty
@@ -513,30 +507,7 @@ struct MeetingView_iOS: View {
     // MARK: - Section Picker
     
     private var sectionPicker: some View {
-        MinitiTabStripSurface {
-            HStack(spacing: 0) {
-                ForEach(MeetingSection.allCases, id: \.self) { section in
-                    let isSelected = activeSection == section
-                    Button {
-                        activeSection = section
-                    } label: {
-                        MinitiTabLabel(
-                            title: section.rawValue,
-                            isSelected: isSelected,
-                            height: 44,
-                            fillsAvailableWidth: true
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .accessibilityAddTraits(isSelected ? .isSelected : [])
-                }
-            }
-        }
-        .frame(maxWidth: 500)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        MinitiMeetingSectionPicker(selection: $activeSection)
     }
 
     // MARK: - Live Insights Content
@@ -610,6 +581,7 @@ struct MeetingView_iOS: View {
     private var notesEditor: some View {
         VStack(spacing: 0) {
             TextEditor(text: $appState.liveNotes)
+                .accessibilityIdentifier("meeting.notes.editor")
                 .font(.system(size: readingMetrics.notesBodySize, design: .default))
                 .scrollContentBackground(.hidden)
                 .background(ColorPalette.Background.primary)

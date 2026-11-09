@@ -167,6 +167,57 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(iOS)
+    func testLiveMeetingSectionsHaveSharedTargetsAndRetainNotes() {
+        launch(screenshotScene: "recording-insights")
+        assertMeetingSectionNavigation()
+    }
+
+    func testSavedMeetingSectionsHaveSharedTargetsAndRetainNotes() {
+        launch(screenshotScene: "meeting")
+        assertMeetingSectionNavigation()
+    }
+
+    private func assertMeetingSectionNavigation() {
+        let sections = ["transcript", "insights", "notes"]
+        var previous: CGRect?
+        var frames = ""
+        for section in sections {
+            let button = app.buttons["meeting.section.\(section)"]
+            XCTAssertTrue(button.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertEqual(button.label, section)
+            let frame = button.frame
+            XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44)
+            XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44)
+            if let previous { XCTAssertLessThanOrEqual(previous.maxX, frame.minX + 0.001) }
+            frames += "\(section): \(frame)\n"
+            previous = frame
+        }
+        let attachment = XCTAttachment(string: frames)
+        attachment.name = "Meeting section target frames"
+        attachment.lifetime = .keepAlways; add(attachment)
+        captureCoachingHistory("Meeting section picker before navigation")
+        XCTAssertTrue(app.buttons["meeting.section.insights"].isSelected)
+        for section in ["transcript", "notes"] {
+            app.buttons["meeting.section.\(section)"].coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: 2, dy: 2)).tap()
+            for candidate in sections {
+                XCTAssertEqual(app.buttons["meeting.section.\(candidate)"].isSelected, candidate == section)
+            }
+            XCTAssertFalse(app.buttons["insights.update"].exists)
+        }
+        let notes = app.textViews["meeting.notes.editor"]
+        XCTAssertTrue(notes.waitForExistence(timeout: 5))
+        notes.tap()
+        notes.typeText(" UI2 retained note")
+        let edited = notes.value as? String
+        XCTAssertTrue(edited?.contains("UI2 retained note") == true)
+        app.buttons["meeting.section.insights"].tap()
+        XCTAssertTrue(app.buttons["insights.update"].waitForExistence(timeout: 5))
+        XCTAssertFalse(notes.exists)
+        app.buttons["meeting.section.notes"].tap()
+        XCTAssertEqual(notes.value as? String, edited)
+    }
+
     func testNarrowCoachingHistoryScrollsWithoutShrinkingTargets() {
         openCoachingHistory(narrow: true)
         guard assertCoachingSortFrames(minimum: 44) else { return }

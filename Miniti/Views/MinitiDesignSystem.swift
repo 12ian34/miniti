@@ -394,6 +394,47 @@ struct MinitiTabStripSurface<Content: View>: View {
     }
 }
 
+#if os(iOS)
+/// Screen-local destinations shared by live and saved meeting views.
+enum MinitiMeetingSection: String, CaseIterable {
+    case transcript, insights, notes
+}
+
+/// Both screens retain their own selection and content; this owns only navigation chrome.
+struct MinitiMeetingSectionPicker: View {
+    @Binding var selection: MinitiMeetingSection
+
+    var body: some View {
+        MinitiTabStripSurface {
+            HStack(spacing: 0) {
+                ForEach(MinitiMeetingSection.allCases, id: \.self) { section in
+                    let isSelected = selection == section
+                    Button {
+                        selection = section
+                    } label: {
+                        MinitiTabLabel(
+                            title: section.rawValue,
+                            isSelected: isSelected,
+                            height: 44,
+                            fillsAvailableWidth: true
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("meeting.section.\(section.rawValue)")
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
+                }
+            }
+        }
+        .frame(maxWidth: 500)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+}
+#endif
+
 /// Settings disclosures: a full-width row with the title, an optional trailing summary and a
 /// chevron in a small round well that turns when open, instead of the bare ">" of the default
 /// style (Ian, 2026-10-27). Content slides in below with a left inset. Reduce Motion drops

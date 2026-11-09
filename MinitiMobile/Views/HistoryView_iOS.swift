@@ -352,14 +352,8 @@ struct MeetingDetail_iOS: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.readingMetrics) private var readingMetrics
     @EnvironmentObject var appState: AppState
-    @State private var activeSection: DetailSection = ScreenshotMode.current?.opensSavedMeeting == true ? .insights : .transcript
+    @State private var activeSection: MinitiMeetingSection = ScreenshotMode.current?.opensSavedMeeting == true ? .insights : .transcript
     @State private var renamingSpeaker: Int? = nil
-
-    enum DetailSection: String, CaseIterable {
-        case transcript = "transcript"
-        case insights = "insights"
-        case notes = "notes"
-    }
 
     private var shareContent: String {
         switch activeSection {
@@ -448,7 +442,7 @@ struct MeetingDetail_iOS: View {
                 .padding(.top, 6)
             }
 
-            // Custom section picker (matching recording screen style)
+            // Shared picker, with selection owned by this saved-meeting screen.
             sectionPicker
 
             // Content
@@ -571,37 +565,9 @@ struct MeetingDetail_iOS: View {
     }
     
     private var sectionPicker: some View {
-        HStack(spacing: 0) {
-            ForEach(DetailSection.allCases, id: \.self) { section in
-                Button {
-                    activeSection = section
-                } label: {
-                    Text(section.rawValue)
-                        .font(.system(size: 12, weight: activeSection == section ? .bold : .medium, design: .default))
-                        .foregroundStyle(activeSection == section ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background(
-                            activeSection == section
-                                ? RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F"))
-                                : RoundedRectangle(cornerRadius: 4).fill(Color.clear)
-                        )
-                }
-            }
-        }
-        .padding(3)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "09090B"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                )
-        )
-        .padding(.horizontal)
-        .padding(.vertical, 8)
+        MinitiMeetingSectionPicker(selection: $activeSection)
     }
-    
+
     // MARK: - Transcript (per-segment with speaker turn headers)
 
     private var transcriptContent: some View {
@@ -903,6 +869,7 @@ struct MeetingDetail_iOS: View {
     
     private var notesContent: some View {
         TextEditor(text: $meeting.notes)
+            .accessibilityIdentifier("meeting.notes.editor")
             .font(.system(size: readingMetrics.notesBodySize, design: .default))
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
