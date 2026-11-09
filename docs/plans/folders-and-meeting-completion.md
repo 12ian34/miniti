@@ -102,4 +102,4 @@ Source is newer than private build 161. Focused runtime and rendered validation 
 
 ### Mac folder presentation refinement, 2026-11-09
 
-Folder sheets use the miniti primary surface and dark appearance. More options, Preview options and category disclosures use the existing full-row MinitiDisclosureStyle with a minimum 44pt target. Clicking the label or empty row space toggles it. iOS navigation, form styling and keyboard-safe actions remain unchanged. Matching, filing and persistence are unchanged.
+Folder sheets use the miniti primary surface and dark appearance. More options, Preview options and category disclosures use the existing full-row MinitiDisclosureStyle with a platform minimum target. Clicking the label or empty row space toggles it. iOS navigation, form styling and keyboard-safe actions remain unchanged. Matching, filing and persistence are unchanged.

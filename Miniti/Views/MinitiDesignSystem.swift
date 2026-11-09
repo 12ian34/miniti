@@ -34,13 +34,20 @@ enum MinitiDesignSystem {
         static let modeSpacing: CGFloat = 4
     }
 
+    enum Sidebar {
+        static let collapsedWidth: CGFloat = 52
+        static let toggleSize: CGFloat = 26
+        static let collapsedToggleSize: CGFloat = 28
+        static let footerVerticalPadding: CGFloat = 14
+    }
+
     enum HomeSetup {
         static let maximumWidth: CGFloat = 480
         static let actionColumnWidth: CGFloat = 320
         static let desktopUtilityClearance: CGFloat = 72
         static let footerMaximumDynamicTypeSize: DynamicTypeSize = .xxxLarge
         static let calendarSidebarWidth: CGFloat = 320
-        static let calendarRailWidth: CGFloat = 40
+        static let calendarRailWidth = Sidebar.collapsedWidth
         static let minimumContentWidth: CGFloat = 360
     }
 
@@ -442,6 +449,34 @@ enum MinitiPasteboard {
 }
 
 
+
+/// Mirrored sidebar controls share the same footer chrome and shortcut hints.
+/// The enclosing native Button owns interaction and accessibility.
+struct MinitiSidebarToggleLabel: View {
+    let edge: HorizontalEdge
+    let isCollapsed: Bool
+
+    var body: some View {
+        HStack(spacing: MinitiDesignSystem.Spacing.compact) {
+            if !isCollapsed {
+                Text(edge == .leading ? "⌘[" : "⌘]")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(ColorPalette.Text.dim.opacity(MinitiDesignSystem.ControlOpacity.supportingContent))
+            }
+            Image(systemName: (edge == .leading) == isCollapsed ? "sidebar.left" : "sidebar.right")
+                .font(.system(size: isCollapsed ? 12 : 11, weight: .semibold))
+                .foregroundStyle(ColorPalette.Text.dim)
+                .frame(width: toggleSize, height: toggleSize)
+                .background(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                    .fill(ColorPalette.Background.tertiary))
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var toggleSize: CGFloat {
+        isCollapsed ? MinitiDesignSystem.Sidebar.collapsedToggleSize : MinitiDesignSystem.Sidebar.toggleSize
+    }
+}
 
 /// Home utility actions share typography as well as compact control chrome.
 struct MinitiHomeActionLabel: View {

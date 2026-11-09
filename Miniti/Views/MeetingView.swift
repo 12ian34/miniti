@@ -583,6 +583,10 @@ struct ReadyStateView: View {
                     .frame(maxWidth: .infinity)
                     .background(ColorPalette.Background.primary)
             }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                HomeUtilityBar().padding(MinitiDesignSystem.Spacing.comfortable)
+                    .background(ColorPalette.Background.primary)
+            }
         } calendar: {
             if appState.upcomingMeetingEvents.isEmpty {
                 Text("No upcoming meetings")
@@ -591,10 +595,6 @@ struct ReadyStateView: View {
             } else {
                 UpcomingEventsPanel(confirmEvent: $confirmEvent)
             }
-        }
-        .safeAreaInset(edge: .bottom) {
-            HomeUtilityBar().padding(MinitiDesignSystem.Spacing.comfortable)
-                .background(ColorPalette.Background.primary)
         }
         .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
@@ -783,14 +783,14 @@ private struct HomeCalendarSidebarLayout<Content: View, CalendarContent: View>: 
                         .allowsHitTesting(expanded)
                         .accessibilityHidden(!expanded)
                     if !expanded {
-                        VStack {
-                            sidebarToggle
+                        VStack(spacing: 0) {
                             Spacer(minLength: 0)
+                            sidebarFooter
                         }
-                        .padding(.top, MinitiDesignSystem.Spacing.comfortable)
                         .frame(width: MinitiDesignSystem.HomeSetup.calendarRailWidth)
                         .frame(maxHeight: .infinity)
-                        .background(ColorPalette.Background.panel)
+                        .background(ColorPalette.Background.secondary)
+                        .overlay(alignment: .leading) { sidebarBorder }
                     }
                 }
             }
@@ -804,36 +804,46 @@ private struct HomeCalendarSidebarLayout<Content: View, CalendarContent: View>: 
                 Text("calendar").font(.callout.weight(.semibold))
                     .foregroundStyle(ColorPalette.Text.secondary)
                 Spacer(minLength: MinitiDesignSystem.Spacing.standard)
-                sidebarToggle
             }
             .padding(MinitiDesignSystem.Spacing.comfortable)
-            MinitiFadingDivider(accent: ColorPalette.Border.light)
+            GradientDivider()
             ScrollView {
                 calendar()
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(MinitiDesignSystem.Spacing.comfortable)
             }
             .scrollIndicators(.never)
+            sidebarFooter
         }
         .frame(maxHeight: .infinity)
-        .background(ColorPalette.Background.panel)
-        .overlay(alignment: .leading) {
-            ColorPalette.Border.primary.frame(width: 1)
-        }
+        .background(ColorPalette.Background.secondary)
+        .overlay(alignment: .leading) { sidebarBorder }
         .accessibilityIdentifier("home.calendar.sidebar")
     }
 
-    private var sidebarToggle: some View {
-        Button(action: toggle) {
-            MinitiControlLabel(role: .secondary) {
-                Image(systemName: "sidebar.right")
-                    .font(.caption.weight(.medium))
+    private var sidebarBorder: some View {
+        ColorPalette.Border.primary
+            .overlay(LinearGradient(colors: [ColorPalette.Border.primary.opacity(0), ColorPalette.Border.light.opacity(0.5), ColorPalette.Border.primary.opacity(0)], startPoint: .top, endPoint: .bottom))
+            .frame(width: 1)
+    }
+
+    private var sidebarFooter: some View {
+        VStack(spacing: 0) {
+            GradientDivider()
+            HStack(spacing: 0) {
+                if !state.calendarHidden { Spacer(minLength: 0) }
+                Button(action: toggle) {
+                    MinitiSidebarToggleLabel(edge: .trailing, isCollapsed: state.calendarHidden)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("home.calendar.sidebar.toggle")
+                .accessibilityLabel(state.calendarHidden ? "Expand calendar sidebar" : "Collapse calendar sidebar")
+                .accessibilityValue(state.calendarHidden ? "hidden" : "shown")
+                .help((state.calendarHidden ? "Expand calendar" : "Collapse calendar") + " (⌘])")
             }
+            .padding(.horizontal, state.calendarHidden ? 0 : MinitiDesignSystem.Spacing.section)
+            .padding(.vertical, MinitiDesignSystem.Sidebar.footerVerticalPadding)
         }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("home.calendar.sidebar.toggle")
-        .accessibilityLabel(state.calendarHidden ? "Expand calendar sidebar" : "Collapse calendar sidebar")
-        .help(state.calendarHidden ? "Expand calendar" : "Collapse calendar")
     }
 
     private func toggle() {

@@ -795,19 +795,9 @@ struct HomeCalendarButton: View {
     }
 }
 
-/// One equal-cell row on iOS; preserve the desktop footer placement.
+/// Equal cells on iOS; left-aligned setup, models and feedback on Mac.
 struct HomeUtilityBar: View {
     @EnvironmentObject private var appState: AppState
-    private var presentationControls: some View {
-        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
-            HomeSetupButton()
-            HomeCalendarButton()
-            #if os(macOS) && arch(arm64)
-            LocalModelsStatusButton(transcription: appState.onDeviceTranscription, speakers: appState.onDeviceDiarization)
-            #endif
-        }
-        .fixedSize(horizontal: true, vertical: false)
-    }
 
     var body: some View {
         #if os(iOS)
@@ -825,16 +815,13 @@ struct HomeUtilityBar: View {
         .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity)
         #else
-        ViewThatFits(in: .horizontal) {
-            HStack(spacing: MinitiDesignSystem.Spacing.standard) {
-                presentationControls
-                Spacer(minLength: MinitiDesignSystem.Spacing.standard)
-                HomeFeedbackButton().fixedSize()
-            }
-            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
-                presentationControls
-                HStack { Spacer(); HomeFeedbackButton() }
-            }
+        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+            HomeSetupButton()
+            #if arch(arm64)
+            LocalModelsStatusButton(transcription: appState.onDeviceTranscription, speakers: appState.onDeviceDiarization)
+            #endif
+            HomeFeedbackButton()
+            Spacer(minLength: 0)
         }
         #endif
     }

@@ -104,7 +104,7 @@ iOS Home uses a visible navigation-bar background in Background.primary above it
 
 3.8.0 Home presentation (updated 2026-11-09): the large logo, wordmark and tagline are removed. Language sits above Start meeting in a fixed bottom area. On iOS, setup/progress, calendar and feedback share one equal-cell row below Start. Setup and calendar share the scrolling content area: expanding setup hides calendar, and collapsing/removing setup returns to it.
 
-Mac retains the existing footer positions and places language/Start just above them. Its calendar is an independent collapsible right sidebar, so setup can remain visible alongside it. Narrow Home widths use an overlay with a dismissible backdrop instead of increasing the window minimum. Calendar collapse and resize retain section/scroll state. Changing presentation uses HomeSetupState, without changing calendar connection, automatic recording or recording state. See the [setup plan](../plans/home-setup-guide.md#bottom-recording-controls-and-mac-calendar-sidebar-2026-11-09).
+Mac groups setup, models and feedback at bottom left and places language/Start just above them. Its calendar is an independent collapsible right sidebar, so setup can remain visible alongside it. Narrow Home widths use an overlay with a dismissible backdrop instead of increasing the window minimum. Calendar collapse and resize retain section/scroll state. Changing presentation uses HomeSetupState, without changing calendar connection, automatic recording or recording state. See the [setup plan](../plans/home-setup-guide.md#bottom-recording-controls-and-mac-calendar-sidebar-2026-11-09).
 
 Home account entry uses a centered prompt directly on the background. Neutral account actions and the green recording action share the design-system action-column width and control radius.
 
@@ -114,4 +114,4 @@ Home account entry uses a centered prompt directly on the background. Neutral ac
 
 ### Mac Home and folder controls, 2026-11-09
 
-The Models readiness shortcut is a labelled footer button beside setup/calendar, opening Models settings. Cmd-] toggles the Home calendar when available and insights in a meeting. Folder sheets use palette backgrounds and full-row disclosure buttons, including empty row space, with expanded/collapsed accessibility values.
+The Models readiness shortcut is a labelled footer button between setup and feedback, opening Models settings. The calendar control sits at the bottom right of its full-height sidebar, with the same icon/hint styling and surface as the left sidebar. Cmd-] toggles the Home calendar when available and insights in a meeting. Folder sheets use palette backgrounds and full-row disclosure buttons, including empty row space, with expanded/collapsed accessibility values.

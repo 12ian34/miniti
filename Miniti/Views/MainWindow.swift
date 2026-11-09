@@ -222,7 +222,7 @@ struct MainWindow: View {
                         ),
                         closesAfterNavigation: false
                     )
-                    .frame(width: sidebarIsEffectivelyCollapsed ? 52 : 220)
+                    .frame(width: sidebarIsEffectivelyCollapsed ? MinitiDesignSystem.Sidebar.collapsedWidth : 220)
                     .animation(.easeInOut(duration: 0.2), value: sidebarIsEffectivelyCollapsed)
 
                     // Subtle gradient divider
@@ -1020,18 +1020,11 @@ struct TerminalSidebar: View {
                 Button {
                     isCollapsed = false
                 } label: {
-                    Image(systemName: "sidebar.left")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.textDim)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(Theme.bgTertiary)
-                        )
+                    MinitiSidebarToggleLabel(edge: .leading, isCollapsed: true)
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                .padding(.vertical, 14)
+                .padding(.vertical, MinitiDesignSystem.Sidebar.footerVerticalPadding)
             }
         }
         .background(Theme.bgSecondary)
@@ -1343,25 +1336,13 @@ struct TerminalSidebar: View {
                     Button {
                         isCollapsed = true
                     } label: {
-                        HStack(spacing: 4) {
-                            Text("⌘[")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(Theme.textDim.opacity(0.5))
-                            Image(systemName: "sidebar.right")
-                                .font(.system(size: 11, weight: .semibold))
-                                .foregroundStyle(Theme.textDim)
-                                .frame(width: 26, height: 26)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(Theme.bgTertiary)
-                                )
-                        }
+                        MinitiSidebarToggleLabel(edge: .leading, isCollapsed: false)
                     }
                     .buttonStyle(.plain)
                     .focusable(false)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.vertical, MinitiDesignSystem.Sidebar.footerVerticalPadding)
             }
         }
         .background(Theme.bgSecondary)
