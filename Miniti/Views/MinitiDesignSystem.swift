@@ -240,8 +240,9 @@ struct MinitiFadingDivider: View {
 }
 
 private extension View {
-    /// Allocate target space in normal layout. Never expand a hit shape beyond
-    /// its assigned frame, where it could steal a neighbouring control's input.
+    /// Allocate target space in normal layout. Parents must allow this minimum:
+    /// a smaller outer frame can still make SwiftUI content overflow its slot.
+    /// Audit constrained containers; this helper is not a clipping boundary.
     func minitiMinimumControlTarget() -> some View {
         frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize,
               minHeight: MinitiDesignSystem.Control.minimumIconHitSize)

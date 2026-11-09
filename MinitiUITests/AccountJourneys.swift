@@ -72,7 +72,11 @@ final class AccountJourneys: XCTestCase {
         menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         app.buttons["Choose"].tap()
         XCTAssertEqual(app.staticTexts["target.menuCounts"].label, "menu=1 disabled=0")
-        XCTAssertFalse(app.buttons["target.disabled"].isEnabled)
+        let disabled = app.buttons["target.disabled"]
+        XCTAssertFalse(disabled.isEnabled)
+        disabled.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertEqual(app.staticTexts["target.menuCounts"].label, "menu=1 disabled=0")
+        XCTAssertFalse(app.buttons["Choose"].exists, "Disabled padding must not open the neighbouring menu")
         let details = app.buttons["details"]
         XCTAssertGreaterThanOrEqual(details.frame.height, 44)
         // Native grouped Forms clip the row's rounded corners. Probe its top
