@@ -669,11 +669,11 @@ struct MenuBarIcon: View {
                 HStack(spacing: 4) {
                     Image(systemName: "phone.down.fill")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(ColorPalette.OnAccent.recording)
                     Text("ENDING \(remaining)s")
                         .font(.system(size: 10, weight: .bold, design: .default))
                         .monospacedDigit()
-                        .foregroundStyle(.white)
+                        .foregroundStyle(ColorPalette.OnAccent.recording)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: true)
                 }
@@ -687,7 +687,7 @@ struct MenuBarIcon: View {
             } else if isRecording {
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(.white)
+                        .fill(ColorPalette.OnAccent.recording)
                         .frame(width: 6, height: 6)
                         .opacity(isPulsing && !reduceMotion ? 1.0 : 0.5)
 
@@ -696,7 +696,7 @@ struct MenuBarIcon: View {
                     Text("REC \(elapsedText)")
                         .font(.system(size: 10, weight: .bold, design: .default))
                         .monospacedDigit()
-                        .foregroundStyle(.white)
+                        .foregroundStyle(ColorPalette.OnAccent.recording)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: true)
                 }

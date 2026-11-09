@@ -37,7 +37,7 @@ colors:
   text-dim: "#A1A1AA"
   text-meta: "#8B949E"
   text-disabled: "#71717A"
-  text-placeholder: "#52525B"
+  text-placeholder: "#A1A1AA"
   text-subtle: "#484F58"
 
   success: "#3FB950"
@@ -653,12 +653,9 @@ The palette is derived from `Miniti/Models/ColorPalette.swift` and is the single
 
 **Coaching metrics** use a separate six-color taxonomy owned by `ColorPalette.Coaching`: fillers gold, pace periwinkle, clarity lavender, questions warm coral, talk ratio cyan, and longest monologue rose. The mapping is identical in live coaching, saved meeting detail, trend sections, history charts, and overview tables. These hues are content labels only and deliberately differ from primary, positive, recording, warning, and trend-status tokens. “You” remains green as speaker identity; question-frequency content never reuses that green.
 
-**Known WCAG AA exceptions.** Two component pairings ship below the 4.5:1 threshold and are called out explicitly rather than papered over:
+**Meaningful text contrast.** Explanations, metadata, available actions and empty-field hints use the ordinary-text target of at least 4.5:1 on their actual surface. Placeholder text is meaningful guidance and is not exempt. `text-placeholder` aliases readable `text-dim` (`#A1A1AA`); question context and coaching units use `text-meta`, while copy actions and coaching column headings use `text-dim`. The Mac recording/ending capsule pairs `OnAccent.recording` (near black) with the solid recording red instead of assuming white is readable on every accent.
 
-- `input-field-empty` — `text-placeholder` (`#52525B`) on `surface-panel`. Placeholders are intentionally dim so they read as ghosted rather than as real content; WCAG AA explicitly exempts inactive/placeholder text.
-- `text-divider-label` — `text-subtle` (`#484F58`) on the app background. Used only for non-essential divider labels (e.g. section separators in Settings) that duplicate information available elsewhere.
-
-Any *new* component must clear 4.5:1. These two are pinned to the in-code palette (they serve the "ghosted" and "decorative" roles by design) and a fix belongs in `ColorPalette.swift` first, then here.
+`text-subtle` (`#484F58`) remains for purely decorative separators which duplicate information available elsewhere. It must not carry unique information, available actions or placeholder guidance. These role-pair checks do not certify all legacy surfaces; remaining legacy literals are tracked by UI3 and their feature owners.
 
 ## Typography
 
@@ -779,7 +776,7 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 - Don't reassign MEDDPICC letter colors ad-hoc in a view — route through `ColorPalette.MEDDPICC` so a retune stays atomic.
 - Don't hardcode a speaker color — always call `ColorPalette.Speaker.color(for:micSpeakerID:)` so the mic speaker stays green.
 - Don't mix radii within a single surface (e.g. a 6px button inside an 8px card is fine; a 6px button next to a 7px sibling is not — pick one).
-- Don't use `text-subtle` or `text-placeholder` for body copy. They exist only for disabled/empty states.
+- Use readable body roles for prose. Reserve `text-subtle` for decoration and `text-placeholder` for readable empty-field guidance; disabled text has its own role.
 
 ## Optional Home setup
 

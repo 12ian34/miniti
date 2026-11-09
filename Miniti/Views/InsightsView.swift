@@ -670,7 +670,7 @@ private struct LiveTrainingContent_iOSPlain: View {
                     }
                     Text("lower = clearer = better")
                         .font(.system(size: 10, weight: .regular, design: .default))
-                        .foregroundStyle(Color(hex: "484F58"))
+                        .foregroundStyle(ColorPalette.Text.meta)
                 }
             }
         }
@@ -687,7 +687,7 @@ private struct TrainingMetricRow_iOS: View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
                 .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                .foregroundStyle(speaker.isLocalMic ? ColorPalette.Speaker.mic : ColorPalette.Text.meta)
                 .frame(width: 62, alignment: .leading)
             Text(value)
                 .font(.system(size: readingMetrics.insightBodySize, weight: .medium, design: .default))
@@ -696,7 +696,7 @@ private struct TrainingMetricRow_iOS: View {
             if let trailing {
                 Text(trailing)
                     .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.meta)
             }
         }
     }
@@ -860,12 +860,12 @@ private struct QuestionCard: View {
                         Text(showCopied ? "copied" : "copy")
                             .font(.system(size: 10, weight: .medium, design: .default))
                     }
-                    .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(hex: "1C1C1F"))
+                            .fill(ColorPalette.Border.primary)
                     )
                 }
                 .buttonStyle(.plain)
@@ -880,13 +880,13 @@ private struct QuestionCard: View {
                 .padding(.leading, 12)
 
             Rectangle()
-                .fill(Color(hex: "1C1C1F"))
+                .fill(ColorPalette.Border.primary)
                 .frame(height: 1)
                 .padding(.leading, 12)
 
             Text(question.context)
                 .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                .foregroundStyle(Color(hex: "484F58"))
+                .foregroundStyle(ColorPalette.Text.meta)
                 .lineSpacing(readingMetrics.insightLineSpacing)
                 .padding(.leading, 12)
         }
@@ -1748,7 +1748,7 @@ private struct TerminalTrainingMetricRow: View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
                 .font(.system(size: 11, weight: .medium, design: .default))
-                .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
+                .foregroundStyle(speaker.isLocalMic ? ColorPalette.Speaker.mic : ColorPalette.Text.meta)
                 .frame(width: 48, alignment: .leading)
             
             Text(primary)
@@ -1758,7 +1758,7 @@ private struct TerminalTrainingMetricRow: View {
             if let secondary {
                 Text(secondary)
                     .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
+                    .foregroundStyle(ColorPalette.Text.meta)
             }
         }
     }
@@ -3408,21 +3408,21 @@ private struct TrainingStatHeader: View {
 
             Text("all \(allCount)")
                 .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last \(meetingCount)")
                 .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: TrainingStatRow.colWidth)
 
             Spacer(minLength: 8)
 
             Text("last 1")
                 .font(.system(size: TrainingStatRow.headerFontSize, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .frame(width: TrainingStatRow.colWidth)
 
             Color.clear

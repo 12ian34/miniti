@@ -339,11 +339,16 @@ struct ColorPalette {
         static let muted = Color(hex: "D4D4D8")         // Muted text
         static let dim = Color(hex: "A1A1AA")           // Dim text
         static let disabled = Color(hex: "71717A")       // Disabled text
-        static let placeholder = Color(hex: "52525B")    // Placeholder text
+        static let placeholder = dim                       // Readable empty-field hints
         static let subtle = Color(hex: "484F58")        // Very subtle text
         static let meta = Color(hex: "8B949E")          // Meta/helper text
     }
     
+    /// Foregrounds paired with solid accent fills, not accent-coloured text.
+    struct OnAccent {
+        static let recording = Background.primary
+    }
+
     // MARK: - Accent Colors
     struct Accent {
         static let green = Color(hex: "22C55E")         // Primary green accent

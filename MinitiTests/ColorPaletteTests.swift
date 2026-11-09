@@ -173,4 +173,101 @@ final class ColorPaletteTests: XCTestCase {
             }
         }
     }
+    // These are resolved sRGB role pairs used by the migrated surfaces. They
+    // measure contrast, rather than pinning a particular palette hex value.
+    func testMeaningfulTextAndRecordingLabelsMeetOrdinaryTextContrast() {
+        let pairs: [(String, Color, Color)] = [
+            ("question context", ColorPalette.Text.meta, ColorPalette.Background.primary),
+            ("coaching units", ColorPalette.Text.meta, ColorPalette.Background.panel),
+            ("coaching headers", ColorPalette.Text.dim, ColorPalette.Background.tertiary),
+            ("copy", ColorPalette.Text.dim, ColorPalette.Border.primary),
+            ("copied", ColorPalette.Status.success, ColorPalette.Border.primary),
+            ("placeholder", ColorPalette.Text.placeholder, ColorPalette.Background.panel),
+            ("recording and ending", ColorPalette.OnAccent.recording, ColorPalette.Status.recording),
+        ]
+        for (name, foreground, background) in pairs {
+            XCTAssertEqual(colorComponents(foreground).a, 1, accuracy: 0.001, name)
+            XCTAssertEqual(colorComponents(background).a, 1, accuracy: 0.001, name)
+            XCTAssertGreaterThanOrEqual(contrast(foreground, background), 4.5, name)
+        }
+    }
+
+    func testContrastCheckRejectsTheSupersededLowContrastPairs() {
+        XCTAssertLessThan(contrast(Color(hex: "484F58"), ColorPalette.Background.primary), 4.5)
+        XCTAssertLessThan(contrast(Color(hex: "52525B"), ColorPalette.Border.primary), 4.5)
+        XCTAssertLessThan(contrast(.white, ColorPalette.Status.recording), 4.5)
+    }
+
+    @MainActor
+    func testRenderedQuestionCardUsesReadableContextAndCopyRoles() throws {
+        let view = QuestionsContent(questions: [SuggestedQuestion(
+            question: "What would make the pilot useful?", type: "deeper",
+            context: "The team has not agreed on a success measure.")])
+            .minitiInterfaceScale(.compact)
+            .frame(width: 420)
+            .padding(12)
+            .background(ColorPalette.Background.primary)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.meta, in: raster), 10, "Actual context text must use its readable role")
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, "Actual copy label must use its readable role")
+    }
+
+    #if os(macOS)
+    @MainActor
+    func testRenderedRecordingAndEndingCapsulesUseTheirOnAccentForeground() throws {
+        for remaining in [Int?.none, 5] {
+            let view = MenuBarIcon(isRecording: true, elapsedText: "00:12",
+                                  graceRemainingSeconds: remaining, nextEventTitle: nil, nextEventTime: nil)
+            let renderer = ImageRenderer(content: view)
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Status.recording, in: raster), 50)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.OnAccent.recording, in: raster), 10,
+                                 "Actual REC/ENDING text must use the solid-red foreground pair")
+        }
+    }
+    #endif
+
+    /// Sample opaque interior pixels, ignoring antialiased text edges. Render
+    /// into sRGB explicitly so the assertion is independent of display gamut.
+    private func pixelCount(_ color: Color, in image: CGImage) throws -> Int {
+        let width = image.width, height = image.height
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        try bytes.withUnsafeMutableBytes { buffer in
+            let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: width, height: height,
+                                                 bitsPerComponent: 8, bytesPerRow: width * 4, space: space,
+                                                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        let expected = colorComponents(color)
+        let red = Int((expected.r * 255).rounded())
+        let green = Int((expected.g * 255).rounded())
+        let blue = Int((expected.b * 255).rounded())
+        var count = 0
+        for offset in stride(from: 0, to: bytes.count, by: 4) {
+            guard bytes[offset + 3] == 255 else { continue }
+            let matchesRed = abs(Int(bytes[offset]) - red) <= 5
+            let matchesGreen = abs(Int(bytes[offset + 1]) - green) <= 5
+            let matchesBlue = abs(Int(bytes[offset + 2]) - blue) <= 5
+            if matchesRed && matchesGreen && matchesBlue { count += 1 }
+        }
+        return count
+    }
+
+    private func contrast(_ foreground: Color, _ background: Color) -> Double {
+        func luminance(_ color: Color) -> Double {
+            let c = colorComponents(color)
+            func linear(_ channel: CGFloat) -> Double {
+                let value = Double(channel)
+                return value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
+            }
+            return 0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+        }
+        let a = luminance(foreground), b = luminance(background)
+        return (max(a, b) + 0.05) / (min(a, b) + 0.05)
+    }
+
 }

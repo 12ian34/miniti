@@ -75,7 +75,7 @@ Before insight editing, custom coaching templates/goals or video UI is implement
 
 ## Acceptance and impact review
 
-Initial reading-metrics native-hosting and suite evidence is recorded in the [release checklist](../releases/3.9.0.md#ui1-reading-metrics-evidence). The broader rendered, accessibility and performance matrix remains pending; the source audit and passing document checks do not satisfy those gates.
+Reading-metrics and bounded contrast native-rendering/suite evidence is recorded in the [release checklist](../releases/3.9.0.md#ui1-reading-metrics-evidence). The broader rendered, accessibility and performance matrix remains pending; the source audit and passing document checks do not satisfy those gates.
 
 | Dimension | Planning disposition | Required implementation evidence |
 |---|---|---|

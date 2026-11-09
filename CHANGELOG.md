@@ -4,6 +4,8 @@
 
 - improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
+- improvement: (macOS and iOS) clearer question context, copy labels and coaching details
+- improvement: (macOS) clearer recording and ending text in the menu bar
 
 ### 2026-11-09 - v3.8.0
 
