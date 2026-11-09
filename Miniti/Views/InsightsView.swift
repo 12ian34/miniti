@@ -2459,6 +2459,7 @@ struct TrainingMainView: View {
                         )
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("coaching.tab.\(tab.rawValue)")
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                     .accessibilityHint(tab.accessibilityHint)
@@ -2478,12 +2479,28 @@ struct TrainingMainView: View {
         case .stats:
             TrainingStatsOverview(rows: store.rows)
         case .history:
-            VStack(alignment: .leading, spacing: 2) {
-                trainingTableHeader
-
-                ForEach(displayedRows) { row in
-                    trainingTableRow(row)
+            #if os(iOS)
+            ViewThatFits(in: .horizontal) {
+                historyTable
+                    .frame(minWidth: Self.minimumTableWidth, idealWidth: Self.minimumTableWidth,
+                           maxWidth: .infinity, alignment: .leading)
+                ScrollView(.horizontal) {
+                    historyTable.frame(width: Self.minimumTableWidth)
                 }
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("coaching.history.horizontal")
+            }
+            #else
+            historyTable
+            #endif
+        }
+    }
+
+    private var historyTable: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            trainingTableHeader
+            ForEach(displayedRows) { row in
+                trainingTableRow(row)
             }
         }
     }
@@ -2505,7 +2522,11 @@ struct TrainingMainView: View {
 
     #if os(iOS)
     private static let dateColumnWidth: CGFloat = 62
-    private static let statColumnWidth: CGFloat = 32
+    private static let statColumnWidth = MinitiDesignSystem.Control.minimumIconHitSize
+    // Keep the meeting heading and its selected-sort chevron on one line.
+    private static let meetingColumnMinimumWidth: CGFloat = 70
+    // Date gap, meeting inset and outer padding stay aligned with the data rows.
+    private static let minimumTableWidth = dateColumnWidth + 4 + meetingColumnMinimumWidth + 4 * statColumnWidth + 16
     #else
     private static let dateColumnWidth: CGFloat = 80
     private static let statColumnWidth: CGFloat = 70
@@ -2518,7 +2539,7 @@ struct TrainingMainView: View {
                 .padding(.trailing, 4)
             sortableHeader("meeting", unit: nil, column: .name, alignment: .leading)
                 .padding(.leading, 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: Self.meetingColumnMinimumWidth, maxWidth: .infinity, alignment: .leading)
             compactStatHeader("f", fullLabel: "fillers", column: .fillers, color: ColorPalette.Coaching.fillers, info: .fillers)
             compactStatHeader("p", fullLabel: "pace", column: .pace, color: ColorPalette.Coaching.pace, info: .pace)
             compactStatHeader("c", fullLabel: "clarity", column: .clarity, color: ColorPalette.Coaching.clarity, info: .clarity)
@@ -2561,8 +2582,15 @@ struct TrainingMainView: View {
                 }
             }
             .frame(width: Self.statColumnWidth)
+            .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("coaching.sort.\(column.rawValue)")
+        .accessibilityLabel("Sort by \(fullLabel)")
+        .accessibilityValue(sortColumn == column ? (sortAscending ? "Ascending" : "Descending") : "Not sorted")
+        .accessibilityAddTraits(sortColumn == column ? .isSelected : [])
+        .accessibilityHint("Touch and hold for metric help")
+        .accessibilityAction(named: "About \(fullLabel)") { infoPopupColumn = column }
         .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
             infoPopupColumn = column
         })
@@ -2600,9 +2628,13 @@ struct TrainingMainView: View {
                     headerContent(label, unit: unit, column: column, alignment: .trailing)
                 }
             }
+            .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
-        .focusable(false)
+        .accessibilityIdentifier("coaching.sort.\(column.rawValue)")
+        .accessibilityLabel("Sort by \(label)")
+        .accessibilityValue(sortColumn == column ? (sortAscending ? "Ascending" : "Descending") : "Not sorted")
+        .accessibilityAddTraits(sortColumn == column ? .isSelected : [])
         .frame(width: width, alignment: alignment)
     }
 
@@ -2667,7 +2699,7 @@ struct TrainingMainView: View {
                 .foregroundStyle(ColorPalette.Text.primary)
                 .lineLimit(1)
                 .padding(.leading, 2)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: Self.meetingColumnMinimumWidth, maxWidth: .infinity, alignment: .leading)
 
             Text(String(format: "%.1f", row.fillers))
                 .font(.system(size: 12, weight: .semibold, design: .default))
@@ -2731,7 +2763,7 @@ struct TrainingMainView: View {
 
 }
 
-private enum TrainingSortColumn {
+private enum TrainingSortColumn: String {
     case date, name, fillers, pace, clarity, questions
 }
 
@@ -2743,7 +2775,7 @@ private struct TrainingColumnInfoCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Text(info.title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(ColorPalette.Text.primary)
@@ -2754,8 +2786,11 @@ private struct TrainingColumnInfoCard: View {
                         .foregroundStyle(ColorPalette.Text.primary)
                         .frame(width: 22, height: 22)
                         .background(Circle().fill(Color.white.opacity(0.08)))
+                        .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("coaching.help.close")
+                .accessibilityLabel("Close metric help")
             }
 
             Text(info.summary)

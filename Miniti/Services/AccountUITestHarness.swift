@@ -248,7 +248,17 @@ struct AccountUITestReady: ViewModifier {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(ColorPalette.Background.primary)
             } else {
+                #if os(iOS)
+                if AccountUITestHarness.isActive,
+                   ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "narrowCoaching",
+                   ScreenshotMode.current == .coaching {
+                    content.frame(width: 320).frame(maxWidth: .infinity)
+                } else {
+                    content
+                }
+                #else
                 content
+                #endif
             }
             #else
             content

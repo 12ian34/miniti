@@ -43,6 +43,130 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    private func openCoachingHistory(narrow: Bool = false) {
+        launch(narrow ? "narrowCoaching" : "first", screenshotScene: "coaching")
+        let history = app.buttons["coaching.tab.history"]
+        XCTAssertTrue(history.waitForExistence(timeout: 10), app.debugDescription)
+        #if os(macOS)
+        history.click()
+        #else
+        history.tap()
+        #endif
+        XCTAssertTrue(app.buttons["coaching.sort.date"].waitForExistence(timeout: 10), app.debugDescription)
+    }
+
+    func testCoachingHistorySortTargetsDoNotOverlap() {
+        openCoachingHistory()
+        #if os(macOS)
+        let minimum: CGFloat = 24
+        #else
+        let minimum: CGFloat = 44
+        #endif
+        #if os(iOS)
+        XCTAssertFalse(app.scrollViews["coaching.history.horizontal"].exists,
+                       "Normal-width history should not need horizontal scrolling")
+        #endif
+        guard assertCoachingSortFrames(minimum: minimum) else { return }
+        let date = app.buttons["coaching.sort.date"]
+        XCTAssertEqual(date.value as? String, "Descending")
+        activateCoachingSort(date)
+        XCTAssertEqual(date.value as? String, "Ascending")
+        let firstRow = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Open ")).firstMatch
+        XCTAssertEqual(firstRow.label, "Open Vendor call: data warehouse")
+        for column in ["fillers", "pace", "clarity", "questions"] {
+            let button = app.buttons["coaching.sort.\(column)"]
+            activateCoachingSort(button)
+            XCTAssertEqual(button.value as? String, "Ascending")
+            XCTAssertTrue(button.isSelected)
+            XCTAssertEqual(date.value as? String, "Not sorted")
+        }
+    }
+
+    private func assertCoachingSortFrames(minimum: CGFloat) -> Bool {
+        continueAfterFailure = true
+        // XCUI can report 44pt as 43.99999999999997 after coordinate conversion.
+        let epsilon: CGFloat = 0.001
+        var frames = ""
+        var previousFrame: CGRect?
+        var validLayout = true
+        for column in ["date", "name", "fillers", "pace", "clarity", "questions"] {
+            let button = app.buttons["coaching.sort.\(column)"]
+            XCTAssertTrue(button.exists)
+            let frame = button.frame
+            XCTAssertGreaterThanOrEqual(frame.width + epsilon, minimum, column)
+            XCTAssertGreaterThanOrEqual(frame.height + epsilon, minimum, column)
+            if let previousFrame {
+                XCTAssertLessThanOrEqual(previousFrame.maxX, frame.minX + epsilon, column)
+                validLayout = validLayout && previousFrame.maxX <= frame.minX + epsilon
+            }
+            validLayout = validLayout && frame.width + epsilon >= minimum && frame.height + epsilon >= minimum
+            frames += "\(column): \(frame)\n"
+            previousFrame = frame
+        }
+        let evidence = XCTAttachment(string: frames)
+        evidence.name = "Coaching history sort target frames"
+        evidence.lifetime = .keepAlways; add(evidence)
+        captureCoachingHistory("Coaching history sort targets")
+        continueAfterFailure = false
+        return validLayout
+    }
+
+    private func activateCoachingSort(_ button: XCUIElement) {
+        let padding = button.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2))
+        #if os(macOS)
+        padding.click()
+        #else
+        padding.tap()
+        #endif
+    }
+
+    private func captureCoachingHistory(_ name: String) {
+        #if os(macOS)
+        let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
+        #else
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        #endif
+        capture.name = name
+        capture.lifetime = .keepAlways; add(capture)
+    }
+
+    #if os(iOS)
+    func testNarrowCoachingHistoryScrollsWithoutShrinkingTargets() {
+        openCoachingHistory(narrow: true)
+        guard assertCoachingSortFrames(minimum: 44) else { return }
+        let scroll = app.scrollViews["coaching.history.horizontal"]
+        XCTAssertTrue(scroll.exists)
+        XCTAssertLessThan(scroll.frame.width, 328)
+        let meeting = app.buttons["coaching.sort.name"]
+        activateCoachingSort(meeting)
+        XCTAssertEqual(meeting.value as? String, "Descending")
+        captureCoachingHistory("Narrow Coaching history with meeting sort selected")
+        scroll.swipeLeft()
+        let questions = app.buttons["coaching.sort.questions"]
+        XCTAssertEqual(questions.frame.intersection(scroll.frame).width, 44, accuracy: 0.5,
+                       "The full target must become visible after scrolling")
+        activateCoachingSort(questions)
+        XCTAssertEqual(questions.value as? String, "Ascending")
+        captureCoachingHistory("Narrow Coaching history after horizontal scrolling")
+    }
+
+    func testCoachingHistoryMetricHelpHasNamedCloseTarget() {
+        openCoachingHistory()
+        app.buttons["coaching.sort.fillers"].press(forDuration: 0.6)
+        let close = app.buttons["coaching.help.close"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
+        captureCoachingHistory("Coaching history metric help")
+        XCTAssertGreaterThanOrEqual(close.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(close.frame.height, 44)
+        XCTAssertEqual(close.label, "Close metric help")
+        let title = app.staticTexts["Fillers"]
+        XCTAssertTrue(title.exists)
+        XCTAssertEqual(title.frame.midY, close.frame.midY, accuracy: 1)
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+    }
+    #endif
+
     func testLiveInsightUpdateHasMinimumTarget() {
         launch(screenshotScene: "recording-insights")
         assertInsightUpdateTarget()
