@@ -204,9 +204,17 @@ private struct InterfaceScaleModifier: ViewModifier {
 extension View {
     /// Preserve the unshifted system size for prose before applying the existing
     /// InterfaceScale step to semantic controls. Prose combines the two once.
-    func minitiInterfaceScale(_ scale: InterfaceScale, systemSize: DynamicTypeSize? = nil) -> some View {
+    func minitiInterfaceScale(_ scale: InterfaceScale) -> some View {
+        modifier(InterfaceScaleModifier(scale: scale, override: nil))
+    }
+
+    #if MINITI_TEST_HOST
+    /// Deterministic renderer fixtures only. Production roots always read the
+    /// hosting view's live environment; an App-level override cannot compile.
+    func minitiInterfaceScale(_ scale: InterfaceScale, systemSize: DynamicTypeSize) -> some View {
         modifier(InterfaceScaleModifier(scale: scale, override: systemSize))
     }
+    #endif
 
     func minitiReduceMotionAware() -> some View {
         modifier(ReduceMotionAwareModifier())

@@ -213,21 +213,20 @@ enum PersistentStore {
 
     /// The launch-time open used by both app entry points.
     static func open() -> PersistentStoreState {
-        #if MINITI_TEST_HOST
-        // Selected at compile time, before the app scene or test bundle initializes.
-        // Tests of disk recovery pass an explicit scratch URL to the overload below.
-        // Explicit screenshot scenes also stay in memory, so native UI checks
-        // can exercise the real screens without using a normal app's store.
-        if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) { return .ready(seeded) }
-        if let container = makeInMemoryFallback() { return .ready(container) }
-        preconditionFailure("Could not create the isolated test-host model container")
-        #else
+        // Explicit screenshot scenes use the same in-memory ready/recovery
+        // state in every configuration, including the isolated Testing host.
         if let seeded = ScreenshotMode.makeSeededContainer(schema: schema) {
             if ScreenshotMode.current == .storeRecovery {
                 return .failed(ScreenshotMode.syntheticStoreFailure, readOnly: seeded)
             }
             return .ready(seeded)
         }
+        #if MINITI_TEST_HOST
+        // Selected at compile time, before the app scene or test bundle initializes.
+        // Tests of disk recovery pass an explicit scratch URL to the overload below.
+        if let container = makeInMemoryFallback() { return .ready(container) }
+        preconditionFailure("Could not create the isolated test-host model container")
+        #else
         return open(schema: schema, url: storeURLOverride)
         #endif
     }
