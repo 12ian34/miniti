@@ -3603,11 +3603,11 @@ final class HomeSetupPolicyTests: XCTestCase {
                 XCTAssertEqual(host.bounds.width, width, accuracy: 1)
                 XCTAssertEqual(host.bounds.height, contentHeight, accuracy: 1)
                 XCTAssertEqual(window.contentMinSize, originalMin)
-                if expanded {
+                if expanded || width == 980 {
                     let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
                     host.cacheDisplay(in: host.bounds, to: bitmap)
                     let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
-                    capture.name = "Mac calendar sidebar width \(width)"; capture.lifetime = .keepAlways; add(capture)
+                    capture.name = "Mac calendar sidebar width \(width) expanded \(expanded)"; capture.lifetime = .keepAlways; add(capture)
                 }
             }
         }
