@@ -1351,9 +1351,9 @@ struct TerminalSidebar: View {
     private func collapsedNavButton(icon: String, color: Color, isSelected: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
+                .font(.system(size: MinitiDesignSystem.Sidebar.navigationIconSize, weight: .semibold))
                 .foregroundStyle(isSelected ? color : Theme.textDim)
-                .frame(width: 36, height: 34)
+                .frame(width: MinitiDesignSystem.Sidebar.navigationIconWidth, height: MinitiDesignSystem.Sidebar.navigationIconHeight)
                 .background(
                     RoundedRectangle(cornerRadius: 7)
                         .fill(isSelected ? Theme.bgTertiary : Color.clear)

@@ -35,6 +35,9 @@ enum MinitiDesignSystem {
     }
 
     enum Sidebar {
+        static let navigationIconSize: CGFloat = 14
+        static let navigationIconWidth: CGFloat = 36
+        static let navigationIconHeight: CGFloat = 34
         static let collapsedWidth: CGFloat = 52
         static let toggleSize: CGFloat = 26
         static let collapsedToggleSize: CGFloat = 28

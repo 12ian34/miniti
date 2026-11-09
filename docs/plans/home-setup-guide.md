@@ -213,4 +213,6 @@ Models moves from the Home header to a labelled neutral footer control between s
 
 The right calendar sidebar extends to the bottom edge. It shares the left sidebar's secondary surface, gradient dividers, toggle label and footer measurements. The collapsed rail is 52pt, matching the left rail. Home utilities stay in the main column. Calendar content remains mounted during collapse/resize, and narrow widths retain the overlay rather than changing window minimums.
 
-Collapsed calendar discovery: a visible calendar icon and label at the top of the 52pt rail form a native button that expands the pane. The bottom sidebar toggle and Cmd-] remain available. No hover is required to identify the rail.
+Collapsed calendar discovery: a visible calendar icon and compact “cal” label at the top of the 52pt rail form a native button that expands the pane. The bottom sidebar toggle and Cmd-] remain available. No hover is required to identify the rail.
+
+The calendar icon shares the left navigation rail's 14pt semibold size and 36×34pt icon frame through Sidebar tokens. Keep the full “Show calendar” accessibility label and tooltip even though visible copy is shortened to “cal”.

@@ -786,8 +786,10 @@ private struct HomeCalendarSidebarLayout<Content: View, CalendarContent: View>: 
                         VStack(spacing: 0) {
                             Button(action: toggle) {
                                 VStack(spacing: MinitiDesignSystem.Spacing.compact) {
-                                    Image(systemName: "calendar").font(.callout)
-                                    Text("calendar").font(.caption2.weight(.medium))
+                                    Image(systemName: "calendar")
+                                        .font(.system(size: MinitiDesignSystem.Sidebar.navigationIconSize, weight: .semibold))
+                                        .frame(width: MinitiDesignSystem.Sidebar.navigationIconWidth, height: MinitiDesignSystem.Sidebar.navigationIconHeight)
+                                    Text("cal").font(.caption2.weight(.medium))
                                 }
                                 .foregroundStyle(ColorPalette.Text.secondary)
                                 .frame(maxWidth: .infinity, minHeight: MinitiDesignSystem.Sidebar.collapsedWidth)
@@ -798,6 +800,7 @@ private struct HomeCalendarSidebarLayout<Content: View, CalendarContent: View>: 
                             .accessibilityLabel("Show calendar")
                             .accessibilityHint("Expand upcoming meetings")
                             .help("Show calendar (⌘])")
+                            .padding(.top, MinitiDesignSystem.Spacing.control)
                             Spacer(minLength: 0)
                             sidebarFooter
                         }
