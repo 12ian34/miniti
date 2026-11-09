@@ -102,11 +102,11 @@ Post-158 transcript review (2026-11-07): Mac display paragraphs break at the fir
 
 iOS Home uses a visible navigation-bar background in Background.primary above its scrolling content. iOS 17/18 physical visual confirmation remains separate from the available iOS 27 simulator evidence.
 
-3.8.0 Home presentation (2026-11-08): the large logo, wordmark and tagline are removed. Setup replaces the calendar while expanded. Collapsing/removing setup returns to the calendar, and the adjacent calendar control can independently hide/show it without changing calendar connection or automation. The shared Home footer adapts to narrow widths. The [setup plan](../plans/home-setup-guide.md#home-presentation-selected-for-380-2026-11-08) owns the current contract.
+3.8.0 Home presentation (updated 2026-11-09): the large logo, wordmark and tagline are removed. Language sits above Start meeting in a fixed bottom area. On iOS, setup/progress, calendar and feedback share one equal-cell row below Start. Setup and calendar share the scrolling content area: expanding setup hides calendar, and collapsing/removing setup returns to it.
 
-Home Start meeting is top-aligned within the scrollable content. Switching setup/calendar or hiding both does not vertically recenter it. The language choice stays with the recording action.
+Mac retains the existing footer positions and places language/Start just above them. Its calendar is an independent collapsible right sidebar, so setup can remain visible alongside it. Narrow Home widths use an overlay with a dismissible backdrop instead of increasing the window minimum. Calendar collapse and resize retain section/scroll state. Changing presentation uses HomeSetupState, without changing calendar connection, automatic recording or recording state. See the [setup plan](../plans/home-setup-guide.md#bottom-recording-controls-and-mac-calendar-sidebar-2026-11-09).
 
-Home account entry uses a centered prompt directly on the background. Neutral account actions and the green recording action share the design-system action-column width and control radius. On iOS, Feedback has its own centered footer row below setup/calendar. Mac keeps Feedback at the right.
+Home account entry uses a centered prompt directly on the background. Neutral account actions and the green recording action share the design-system action-column width and control radius.
 
 
 3.8.0 folder setup: the optional organise-your-meetings task opens the shared folder overview. Preview, creation and management are separate focused screens. Create/Save/Apply appear only in their relevant screen; back cancels the unfinished form or preview. Explicit Confirm folder choices completes the setup task, preserving actual settings. Hiding does not complete the task; General restores it.

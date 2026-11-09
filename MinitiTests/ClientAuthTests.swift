@@ -3434,7 +3434,7 @@ final class SigningDefaultsGate: UserDefaults, @unchecked Sendable {
 }
 
 final class HomeSetupPolicyTests: XCTestCase {
-    @MainActor func testHomeCalendarAndSetupAreExclusiveWithoutChangingAutomation() {
+    @MainActor func testHomeCalendarPresentationPreservesAutomationAndPlatformBehavior() {
         let state = AppState()
         let original = (state.hasCompletedOnboarding, state.appMode, state.homeSetupHidden,
                         state.homeSetupDismissed, state.homeSetupState.calendarHidden)
@@ -3446,6 +3446,23 @@ final class HomeSetupPolicyTests: XCTestCase {
         state.hasCompletedOnboarding = true
         state.appMode = .byok
         let preferences = [state.googleCalendarEnabled, state.autoStartFromCalendar]
+        state.homeSetupState.calendarHidden = false
+        #if os(macOS)
+        state.setHomeSetupDismissed(false)
+        XCTAssertTrue(state.isHomeSetupExpanded)
+        XCTAssertTrue(state.isHomeCalendarVisible, "Mac calendar is independent of the guide")
+        state.toggleHomeCalendar()
+        XCTAssertTrue(state.isHomeSetupExpanded)
+        XCTAssertFalse(state.isHomeCalendarVisible)
+        XCTAssertTrue(AppState().homeSetupState.calendarHidden)
+        state.setHomeSetupCollapsed(true)
+        XCTAssertFalse(state.isHomeCalendarVisible, "Collapsing the guide preserves sidebar choice")
+        state.setHomeSetupDismissed(true)
+        XCTAssertFalse(state.isHomeCalendarVisible)
+        state.toggleHomeCalendar()
+        XCTAssertTrue(state.isHomeCalendarVisible)
+        XCTAssertFalse(state.isHomeSetupExpanded)
+        #else
         state.setHomeSetupDismissed(false)
         XCTAssertTrue(state.isHomeSetupExpanded)
         XCTAssertFalse(state.isHomeCalendarVisible)
@@ -3464,6 +3481,7 @@ final class HomeSetupPolicyTests: XCTestCase {
         state.setHomeSetupCollapsed(false)
         state.setHomeSetupDismissed(true)
         XCTAssertTrue(state.isHomeCalendarVisible, "Removing setup also returns to the calendar")
+        #endif
         XCTAssertEqual([state.googleCalendarEnabled, state.autoStartFromCalendar], preferences)
     }
 
@@ -3490,6 +3508,7 @@ final class HomeSetupPolicyTests: XCTestCase {
         state.hasResolvedCalendarConnection = true
         state.homeSetupMicrophonePermission = .authorized
         state.homeSetupSkippedSteps = ""; state.setHomeSetupDismissed(false)
+        state.homeSetupState.calendarHidden = false
         for presentation in ["setup", "calendar", "account"] {
             let collapsed = presentation != "setup"
             state.setHomeSetupCollapsed(collapsed)
@@ -3518,8 +3537,78 @@ final class HomeSetupPolicyTests: XCTestCase {
             capture.name = "Mac Home \(presentation)"
             capture.lifetime = .keepAlways; add(capture)
             XCTAssertEqual(state.isHomeSetupExpanded, !collapsed)
-            XCTAssertEqual(state.isHomeCalendarVisible, collapsed)
+            XCTAssertTrue(state.isHomeCalendarVisible, "Mac calendar visibility is independent of setup")
         }
+    }
+
+    @MainActor func testMacHomeSidebarResizesWithoutGrowingWindowOrPublishingPresentationActions() async throws {
+        let state = AppState()
+        let old = (state.appMode, state.hasCompletedOnboarding, state.googleCalendarEnabled,
+                   state.homeSetupHidden, state.homeSetupDismissed, state.homeSetupState.calendarHidden)
+        defer {
+            state.appMode = old.0; state.hasCompletedOnboarding = old.1; state.googleCalendarEnabled = old.2
+            state.homeSetupHidden = old.3; state.homeSetupDismissed = old.4; state.homeSetupState.calendarHidden = old.5
+        }
+        state.appMode = .byok; state.hasCompletedOnboarding = true
+        state.googleCalendarEnabled = true; state.isGoogleCalendarConnected = true
+        state.hasResolvedCalendarConnection = true; state.homeSetupMicrophonePermission = .authorized
+        state.setHomeSetupDismissed(false); state.homeSetupState.calendarHidden = false
+        let formatter = ISO8601DateFormatter()
+        let tomorrow = Calendar.current.startOfDay(for: Date()).addingTimeInterval(36 * 3600)
+        state.upcomingEvents = try (0..<24).map { index in
+            let start = tomorrow.addingTimeInterval(Double(index) * 1800)
+            let event: [String: Any] = ["id": "home-resize-\(index)", "title": "Product planning and customer feedback \(index + 1)",
+                "start": formatter.string(from: start), "end": formatter.string(from: start.addingTimeInterval(1800)),
+                "isAllDay": false, "status": "confirmed", "attendees": []]
+            return try JSONDecoder().decode(MinitiAPIService.CalendarEvent.self, from: JSONSerialization.data(withJSONObject: event))
+        }
+        let host = NSHostingView(rootView: ReadyStateView().environmentObject(state)
+            .environmentObject(KeyboardShortcutsService.shared).environment(\.colorScheme, .dark)
+            .background(ColorPalette.Background.primary))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let deadline = Date().addingTimeInterval(2)
+        while window.contentMinSize.width == 0 && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+            host.layoutSubtreeIfNeeded()
+        }
+        let originalMin = window.contentMinSize
+        XCTAssertGreaterThan(originalMin.width, 0)
+        var invalidations = 0
+        let observation = state.objectWillChange.sink { invalidations += 1 }
+        defer { observation.cancel() }
+        // The Home header already has an intrinsic minimum of about 543 pt.
+        // Exercise supported widths on both sides of the 680 pt overlay threshold.
+        for width in [980.0, 760, 680, 560, 980] {
+            for expanded in [true, false] {
+                // AppState's audio-device discovery can publish asynchronously. Count only
+                // the presentation action here; existing isolation tests cover setup actions too.
+                let beforeToggle = invalidations
+                if state.isHomeCalendarVisible != expanded { state.toggleHomeCalendar() }
+                XCTAssertEqual(invalidations, beforeToggle, "Calendar toggles must only publish HomeSetupState")
+                let start = CFAbsoluteTimeGetCurrent()
+                window.setContentSize(NSSize(width: width, height: 680))
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                // Let SwiftUI consume presentation publication before reading/capturing layout.
+                try await Task.sleep(for: .milliseconds(30))
+                host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+                print("HOME_RESIZE_PROFILE: width=\(width) expanded=\(expanded) \(CFAbsoluteTimeGetCurrent() - start)s including 30ms observation yield")
+                XCTAssertEqual(host.bounds.width, width, accuracy: 1)
+                XCTAssertEqual(host.bounds.height, 680, accuracy: 1)
+                XCTAssertEqual(window.contentMinSize, originalMin)
+                if expanded {
+                    let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+                    host.cacheDisplay(in: host.bounds, to: bitmap)
+                    let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+                    capture.name = "Mac calendar sidebar width \(width)"; capture.lifetime = .keepAlways; add(capture)
+                }
+            }
+        }
+        XCTAssertTrue(state.isHomeSetupExpanded, "Calendar controls must not dismiss the Mac guide")
     }
 
     @MainActor func testSetupLayoutPerformanceAcrossSteps() {

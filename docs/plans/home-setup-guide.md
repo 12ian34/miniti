@@ -1,6 +1,6 @@
 # Home setup guide, 3.8.0 (SG1)
 
-Ian selected this addition on 2026-11-04 after an older-install upgrade showed simultaneous, differently sized email and calendar panels and an unresponsive Add email action. Implementation is local; validation is owned by the [release record](../releases/3.8.0.md). No publication is authorized.
+Ian selected this addition on 2026-11-04 after an older-install upgrade showed simultaneous, differently sized email and calendar panels and an unresponsive Add email action. Implementation and publication gates are owned by the [release record](../releases/3.8.0.md). Release execution is authorized; physical QA is in progress.
 
 ## Evidence and chosen experience
 
@@ -178,6 +178,8 @@ Guide headings, field labels and action labels use lowercase, while provider/pro
 
 ## Home presentation selected for 3.8.0, 2026-11-08
 
+Historical layout and evidence. The 2026-11-09 refinement below supersedes action placement and the Mac calendar arrangement.
+
 Ian selected this layout for the current release. Mac and iOS Home remove the large hexagon, miniti wordmark and tagline. Start meeting and its language choice remain near the top, with 40pt of header clearance (page plus section spacing), without vertical recentering when switching panels. The content remains scrollable on small windows. Setup and upcoming meetings occupy one shared area: opening setup hides the calendar, while collapsing or removing setup returns to it. The calendar button beside set up miniti shows or hides the calendar; showing it collapses setup. An explicit calendar hide persists across launches. This presentation choice does not disconnect Google Calendar, disable calendar display in Settings or change automatic recording. Pending automatic-start prompts retain priority.
 
 The calendar control appears for an enabled, connected calendar, including when there are no upcoming events. The empty state says No upcoming meetings. Native buttons use shared neutral Home control chrome, with an emphasized visible state and calendar/calendar.badge.minus icons. Setup and calendar stay adjacent. On iOS, the presentation controls are centered above a separate centered Feedback row. On Mac, Feedback stays at the right and moves to a second row only when needed. Home controls retain the shared iOS minimum hit size and transitions respect Reduce Motion. HomeSetupState owns presentation invalidations so changing panels does not invalidate History. Existing consent, account, recording and task-completion behavior is unchanged. Build 160 predates this source change.
@@ -194,3 +196,12 @@ Ian selected an optional organise-your-meetings setup task and a focused folder 
 The optional setup task starts unreviewed, even when automatic filing is already enabled. Opening or hiding it does not complete it. Confirm folder choices marks it reviewed without changing settings or filing history; review persistence lives in HomeSetupState. The task has the same hide/General restore controls and help popover as the other tasks. Home loads at most 1,000 finished meetings, only when Preview is requested. It does not observe or fetch the whole history for the checklist. The existing History entry point uses its supplied meetings.
 
 Source is newer than private build 161. Focused runtime and rendered validation are recorded in the release evidence; full suites and a new package are required before the next distribution.
+
+
+## Bottom recording controls and Mac calendar sidebar, 2026-11-09
+
+Ian selected this refinement while performing physical QA. Language sits above Start meeting in a fixed bottom area. On iOS, setup/progress, calendar and feedback occupy one equal-width, equal-height footer row below Start. Footer labels grow through xxxLarge; at accessibility sizes, native long-press large-content viewers keep each compact navigation action readable without consuming the content viewport. Guide prose retains the full selected text size, with status and chevron above full-width task text at accessibility sizes. The scrollable guide and calendar retain their mutually exclusive behavior. Keyboard-presented setup sheets keep their own existing actions.
+
+On Mac, the footer retains setup/calendar at left and feedback at right. Language and Start sit just above it in the main column. Upcoming meetings use a separate right sidebar with an expand/collapse rail. Setup and calendar can be visible together; collapsing or removing the guide does not change the Mac calendar preference. At narrower content widths, the calendar overlays Home with a dismissible backdrop instead of increasing the window minimum. Its section and scroll state survive collapse and width transitions. Pending automatic-start prompts still take priority.
+
+Presentation state remains in HomeSetupState. No new AppState publication, history query, timer, audio capture, account, sync or automation behavior is introduced. iOS Home no longer observes an unused full-history query. Sidebar geometry stays local to Home and does not set NSWindow constraints. Native buttons, semantic design tokens and Reduce Motion behavior remain required. The release record owns focused and full validation and the replacement package; build 162 predates this layout.

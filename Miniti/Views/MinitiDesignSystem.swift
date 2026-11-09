@@ -38,6 +38,10 @@ enum MinitiDesignSystem {
         static let maximumWidth: CGFloat = 480
         static let actionColumnWidth: CGFloat = 320
         static let desktopUtilityClearance: CGFloat = 72
+        static let footerMaximumDynamicTypeSize: DynamicTypeSize = .xxxLarge
+        static let calendarSidebarWidth: CGFloat = 320
+        static let calendarRailWidth: CGFloat = 40
+        static let minimumContentWidth: CGFloat = 360
     }
 
     enum Documentation {
@@ -443,15 +447,31 @@ struct MinitiHomeActionLabel: View {
     let label: String
     var shortcut: String? = nil
     var isEmphasized = false
+    var fillsFooterCell = false
     var body: some View {
-        MinitiControlLabel(role: .secondary, isEmphasized: isEmphasized,
-                           height: max(MinitiDesignSystem.Control.compactHeight, MinitiDesignSystem.Control.minimumIconHitSize)) {
-            HStack(spacing: MinitiDesignSystem.Spacing.standard) {
-                Image(systemName: icon).font(.system(size: 11, weight: .semibold))
-                Text(label).font(.system(size: 11, weight: .medium)).lineLimit(1)
-                if let shortcut, !shortcut.isEmpty {
-                    Text(shortcut).font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(ColorPalette.Text.meta).lineLimit(1)
+        if fillsFooterCell {
+            MinitiControlLabel(role: .secondary, isEmphasized: isEmphasized, height: nil,
+                               horizontalPadding: MinitiDesignSystem.Spacing.small) {
+                VStack(spacing: MinitiDesignSystem.Spacing.compact) {
+                    Image(systemName: icon).font(.caption.weight(.semibold))
+                    Text(label).font(.caption2.weight(.medium))
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, MinitiDesignSystem.Spacing.standard)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+            }
+        } else {
+            MinitiControlLabel(role: .secondary, isEmphasized: isEmphasized,
+                               height: max(MinitiDesignSystem.Control.compactHeight, MinitiDesignSystem.Control.minimumIconHitSize)) {
+                HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                    Image(systemName: icon).font(.system(size: 11, weight: .semibold))
+                    Text(label).font(.system(size: 11, weight: .medium)).lineLimit(1)
+                    if let shortcut, !shortcut.isEmpty {
+                        Text(shortcut).font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(ColorPalette.Text.meta).lineLimit(1)
+                    }
                 }
             }
         }

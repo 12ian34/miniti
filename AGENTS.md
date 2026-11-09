@@ -1,5 +1,7 @@
 # Miniti
 
+Post-162 Home refinement, 2026-11-09: Ian is performing physical-device QA; no waiver was given. New source moves language/recording above the bottom controls, aligns the iOS footer and gives Mac Home an independent collapsible right calendar sidebar. Build 162 remains a historical testing artifact and must not be published as this revised candidate. Build 163 freezes the new layout; focused checks pass and full validation and replacement packaging are in progress.
+
 Release authorized, 2026-11-09: Ian requested the full coordinated release across repositories. Build 162 freezes the post-161 folder setup/journey changes. Full automated Apple validation and signed-package verification pass; TestFlight 162 is available. Public Apple release remains pending the physical-QA disposition and App Store privacy correction. This authorization supersedes earlier preparation-only publication restrictions. Unverified physical gates remain distinct from automated passes; the release checklist owns their disposition. No public availability is claimed by this note.
 
 macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month), or BYOK (own API keys, unlimited). Pro purchase rail is platform-specific: Polar.sh on macOS and StoreKit auto-renewable subscription on iOS.

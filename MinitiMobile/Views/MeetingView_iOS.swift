@@ -765,14 +765,13 @@ private struct SmartMeetingBanner_iOS: View {
 struct ReadyStateView_iOS: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.scenePhase) private var scenePhase
-    @Query(sort: \Meeting.startTime, order: .reverse) private var meetings: [Meeting]
     @State private var isMicTesting = false
     @State private var isPurchasingPro = false
     @State private var subscriptionMessage: String?
     @State private var prepEvent: MinitiAPIService.CalendarEvent?
 
     var body: some View {
-        GeometryReader { geometry in
+        VStack(spacing: 0) {
         ScrollView {
         VStack(spacing: 0) {
             if isMicTesting && appState.isMonitoring {
@@ -803,126 +802,6 @@ struct ReadyStateView_iOS: View {
                     AutoStartBanner_iOS(event: event, countdown: appState.autoStartCountdown)
                 }
 
-                // Start button or blocked state
-                if appState.isDeviceDisabled {
-                    VStack(spacing: 8) {
-                        Text("account disabled")
-                            .font(.system(size: 14, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Status.limitReached)
-
-                        Text("contact support for help")
-                            .font(.system(size: 12, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                    }
-                } else if appState.isLimitReached {
-                    VStack(spacing: 10) {
-                        Text("monthly limit reached")
-                            .font(.system(size: 14, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Status.limitReached)
-
-                        Button {
-                            guard !isPurchasingPro else { return }
-                            isPurchasingPro = true
-                            subscriptionMessage = nil
-                            Task {
-                                let success = await appState.purchaseProSubscription()
-                                isPurchasingPro = false
-                                if success {
-                                    subscriptionMessage = "Pro subscription is now active."
-                                } else {
-                                    subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                if isPurchasingPro {
-                                    ProgressView()
-                                        .tint(.white)
-                                        .scaleEffect(0.8)
-                                    Text("purchasing...")
-                                } else {
-                                    Text("upgrade to pro, $4.99/month")
-                                }
-                            }
-                            .font(.system(size: 12, weight: .semibold, design: .default))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
-                            .background(Capsule().fill(MinitiControlRole.primary.accent))
-                        }
-                        .disabled(isPurchasingPro)
-
-                        VStack(spacing: 4) {
-                            Text("miniti Pro Monthly · $4.99/month · auto-renewable")
-                                .font(.system(size: 10, weight: .semibold, design: .default))
-                                .foregroundStyle(ColorPalette.Text.muted)
-                                .multilineTextAlignment(.center)
-
-                            HStack(spacing: 8) {
-                                Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
-                                Text("•").foregroundStyle(ColorPalette.Text.disabled)
-                                Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
-                            }
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                        }
-
-                        if let subscriptionMessage {
-                            Text(subscriptionMessage)
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(ColorPalette.Text.muted)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 20)
-                        }
-
-                        Button("Switch to BYOK") {
-                            appState.appMode = .byok
-                        }
-                        .font(.system(size: 12, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Accent.blue)
-                    }
-                } else {
-                    Button {
-                        if !appState.isStartingMeeting {
-                            appState.startNewMeeting()
-                        }
-                    } label: {
-                        HStack(spacing: 8) {
-                            if appState.isStartingMeeting {
-                                ProgressView()
-                                    .tint(.black)
-                                    .scaleEffect(0.8)
-                                Text("starting...")
-                                    .font(.system(size: 16, weight: .semibold, design: .default))
-                                    .lineLimit(1)
-                            } else {
-                                Image(systemName: "record.circle")
-                                    .font(.system(size: 18))
-                                Text("start meeting")
-                                    .font(.system(size: 16, weight: .semibold, design: .default))
-                                    .lineLimit(1)
-                            }
-                        }
-                        .foregroundStyle(.black)
-                        .padding(.horizontal, 32)
-                        .padding(.vertical, 14)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
-                                .fill(appState.isStartingMeeting
-                                      ? ColorPalette.Text.muted
-                                      : appState.canStartRecording
-                                          ? ColorPalette.Accent.green
-                                          : ColorPalette.Text.disabled)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
-                    .disabled(!appState.canStartRecording || appState.isStartingMeeting)
-
-                    MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
-
-                }
-
                 HomeSetupOrCalendar {
                     if appState.pendingAutoStartEvent == nil,
                        appState.googleCalendarEnabled, appState.isGoogleCalendarConnected {
@@ -936,17 +815,20 @@ struct ReadyStateView_iOS: View {
                 }
             }
 
-            Spacer()
         }
         .padding(.horizontal)
-        .padding(.top, MinitiDesignSystem.Spacing.page + MinitiDesignSystem.Spacing.section)
+        .padding(.top, MinitiDesignSystem.Spacing.section)
         .padding(.bottom, MinitiDesignSystem.Spacing.section)
-        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+        .frame(maxWidth: .infinity)
         }
-        }
-        .safeAreaInset(edge: .bottom) {
-            HomeUtilityBar().padding(.horizontal).padding(.vertical, MinitiDesignSystem.Spacing.standard)
-                .background(ColorPalette.Background.primary)
+            VStack(spacing: MinitiDesignSystem.Spacing.section) {
+                recordingControls
+                HomeUtilityBar()
+            }
+            .padding(.horizontal, MinitiDesignSystem.Spacing.section)
+            .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)
+            .frame(maxWidth: .infinity)
+            .background(ColorPalette.Background.primary)
         }
         .onDisappear {
             if isMicTesting {
@@ -1001,6 +883,131 @@ struct ReadyStateView_iOS: View {
         .sheet(item: $prepEvent) { event in
             EventPrepSheet_iOS(event: event)
                 .environmentObject(appState)
+        }
+    }
+
+    private var recordingControls: some View {
+        VStack(spacing: MinitiDesignSystem.Spacing.comfortable) {
+            // Start button or blocked state
+            if appState.isDeviceDisabled {
+                VStack(spacing: 8) {
+                    Text("account disabled")
+                        .font(.system(size: 14, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Status.limitReached)
+
+                    Text("contact support for help")
+                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            } else if appState.isLimitReached {
+                VStack(spacing: 10) {
+                    Text("monthly limit reached")
+                        .font(.system(size: 14, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Status.limitReached)
+
+                    Button {
+                        guard !isPurchasingPro else { return }
+                        isPurchasingPro = true
+                        subscriptionMessage = nil
+                        Task {
+                            let success = await appState.purchaseProSubscription()
+                            isPurchasingPro = false
+                            if success {
+                                subscriptionMessage = "Pro subscription is now active."
+                            } else {
+                                subscriptionMessage = appState.storeKitService?.purchaseErrorMessage ?? "Purchase not completed."
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 8) {
+                            if isPurchasingPro {
+                                ProgressView()
+                                    .tint(.white)
+                                    .scaleEffect(0.8)
+                                Text("purchasing...")
+                            } else {
+                                Text("upgrade to pro, $4.99/month")
+                            }
+                        }
+                        .font(.system(size: 12, weight: .semibold, design: .default))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Capsule().fill(MinitiControlRole.primary.accent))
+                    }
+                    .disabled(isPurchasingPro)
+
+                    VStack(spacing: 4) {
+                        Text("miniti Pro Monthly · $4.99/month · auto-renewable")
+                            .font(.system(size: 10, weight: .semibold, design: .default))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .multilineTextAlignment(.center)
+
+                        HStack(spacing: 8) {
+                            Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
+                            Text("•").foregroundStyle(ColorPalette.Text.disabled)
+                            Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
+                        }
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                    }
+
+                    if let subscriptionMessage {
+                        Text(subscriptionMessage)
+                            .font(.system(size: 10, weight: .medium, design: .default))
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 20)
+                    }
+
+                    Button("Switch to BYOK") {
+                        appState.appMode = .byok
+                    }
+                    .font(.system(size: 12, weight: .semibold, design: .default))
+                    .foregroundStyle(ColorPalette.Accent.blue)
+                }
+            } else {
+                MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
+                    .accessibilityIdentifier("home.language")
+                Button {
+                    if !appState.isStartingMeeting {
+                        appState.startNewMeeting()
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        if appState.isStartingMeeting {
+                            ProgressView()
+                                .tint(.black)
+                                .scaleEffect(0.8)
+                            Text("starting...")
+                                .font(.system(size: 16, weight: .semibold, design: .default))
+                                .lineLimit(1)
+                        } else {
+                            Image(systemName: "record.circle")
+                                .font(.system(size: 18))
+                            Text("start meeting")
+                                .font(.system(size: 16, weight: .semibold, design: .default))
+                                .lineLimit(1)
+                        }
+                    }
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                            .fill(appState.isStartingMeeting
+                                  ? ColorPalette.Text.muted
+                                  : appState.canStartRecording
+                                      ? ColorPalette.Accent.green
+                                      : ColorPalette.Text.disabled)
+                    )
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
+                .accessibilityIdentifier("home.start")
+                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
+
+            }
         }
     }
 

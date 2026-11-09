@@ -1,5 +1,7 @@
 # Release Process
 
+Post-162 Home refinement, 2026-11-09: Ian is performing physical-device QA; no waiver was given. New source moves language/recording above the bottom controls, aligns the iOS footer and gives Mac Home an independent collapsible right calendar sidebar. Build 162 remains a historical testing artifact and must not be published as this revised candidate. Build 163 freezes the new layout; focused checks pass and full validation and replacement packaging are in progress.
+
 Release authorized, 2026-11-09: Ian requested the full coordinated release across repositories. Build 162 freezes the post-161 folder setup/journey changes. Full automated Apple validation and signed-package verification pass; TestFlight 162 is available. Public Apple release remains pending the physical-QA disposition and App Store privacy correction. This authorization supersedes earlier preparation-only publication restrictions. Unverified physical gates remain distinct from automated passes; the release checklist owns their disposition. No public availability is claimed by this note.
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).

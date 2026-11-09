@@ -270,12 +270,14 @@ struct HelpSettingsSections: View {
 
 /// Lightweight Home entry point. Feedback never attaches account details or diagnostic logs.
 struct HomeFeedbackButton: View {
+    var fillsFooterCell = false
     @State private var showing = false
     var body: some View {
         Button { showing = true } label: {
-            MinitiHomeActionLabel(icon: "bubble.left", label: "feedback")
+            MinitiHomeActionLabel(icon: "bubble.left", label: "feedback", fillsFooterCell: fillsFooterCell)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("home.feedback")
         .sheet(isPresented: $showing) { FeedbackSheet() }
     }
 }

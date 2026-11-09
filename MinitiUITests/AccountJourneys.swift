@@ -425,6 +425,7 @@ final class AccountJourneys: XCTestCase {
         let start = app.buttons["start meeting"]
         XCTAssertTrue(start.isHittable)
         let startY = start.frame.minY
+        assertHomeFooterGeometry()
         setup.tap()
         XCTAssertTrue(header.waitForNonExistence(timeout: 5))
         XCTAssertEqual(toggle.value as? String, "hidden")
@@ -447,6 +448,38 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(header.waitForExistence(timeout: 5))
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Home calendar with shared presentation controls"; capture.lifetime = .keepAlways; add(capture)
+    }
+
+    func testHomeFooterAlignmentAtLargestTextSize() {
+        launch("calendar", largeText: true)
+        let account = app.buttons["account.continueAnonymous"]
+        for _ in 0..<8 where !account.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        account.tap()
+        XCTAssertTrue(account.waitForNonExistence(timeout: 10))
+        assertHomeFooterGeometry()
+        app.buttons["setup.reopen"].tap()
+        assertHomeFooterGeometry()
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Home footer at largest text size"; capture.lifetime = .keepAlways; add(capture)
+    }
+
+    private func assertHomeFooterGeometry(file: StaticString = #filePath, line: UInt = #line) {
+        let setup = app.buttons["setup.reopen"]
+        let calendar = app.buttons["home.calendar.toggle"]
+        let feedback = app.buttons["home.feedback"]
+        let start = app.buttons["home.start"]
+        let language = app.buttons["home.language"]
+        XCTAssertTrue(language.exists, file: file, line: line)
+        XCTAssertLessThanOrEqual(language.frame.maxY, start.frame.minY, file: file, line: line)
+        XCTAssertGreaterThan(start.frame.minY, app.frame.midY, file: file, line: line)
+        XCTAssertLessThan(start.frame.maxY, setup.frame.minY, file: file, line: line)
+        for button in [setup, calendar, feedback] {
+            XCTAssertTrue(button.isHittable, file: file, line: line)
+            XCTAssertEqual(button.frame.minY, setup.frame.minY, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(button.frame.width, setup.frame.width, accuracy: 1, file: file, line: line)
+            XCTAssertEqual(button.frame.height, setup.frame.height, accuracy: 1, file: file, line: line)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44, file: file, line: line)
+        }
     }
 
     func testCalendarSectionSpacerTogglesWithoutOpeningMeeting() {
@@ -522,7 +555,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(account.waitForNonExistence(timeout: 10))
         let home = app.scrollViews.firstMatch
         let accountStep = app.buttons["setup.step.account"]
-        for _ in 0..<10 where !accountStep.isHittable || accountStep.frame.maxY >= app.buttons["setup.reopen"].frame.minY { home.swipeUp(velocity: .slow) }
+        for _ in 0..<10 where !accountStep.isHittable || accountStep.frame.maxY >= home.frame.maxY { home.swipeUp(velocity: .slow) }
         XCTAssertTrue(accountStep.isHittable, app.debugDescription)
         XCTAssertLessThan(accountStep.frame.height, home.frame.height, "A task header must fit within the accessible viewport")
         let headerEvidence = XCTAttachment(screenshot: app.screenshot())
@@ -530,7 +563,7 @@ final class AccountJourneys: XCTestCase {
         headerEvidence.lifetime = .keepAlways; self.add(headerEvidence)
         if accountStep.exists && !app.buttons["setup.action.account"].exists { accountStep.tap() }
         let add = app.buttons["setup.action.account"]
-        for _ in 0..<10 where !add.isHittable || add.frame.maxY >= app.buttons["setup.reopen"].frame.minY { home.swipeUp(velocity: .slow) }
+        for _ in 0..<10 where !add.isHittable || add.frame.maxY >= home.frame.maxY { home.swipeUp(velocity: .slow) }
         let evidence = XCTAttachment(screenshot: app.screenshot())
         evidence.name = "Home setup at accessibility text size"; evidence.lifetime = .keepAlways; self.add(evidence)
         XCTAssertTrue(add.isHittable, app.debugDescription)

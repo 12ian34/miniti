@@ -629,12 +629,18 @@ extension AppState {
     }
 
     var isHomeCalendarVisible: Bool {
+        #if os(macOS)
+        !homeSetupState.calendarHidden
+        #else
         !isHomeSetupExpanded && !homeSetupState.calendarHidden
+        #endif
     }
 
     func toggleHomeCalendar() {
         let wasVisible = isHomeCalendarVisible
+        #if os(iOS)
         homeSetupHidden = true
+        #endif
         homeSetupState.calendarHidden = wasVisible
         homeSetupState.revision += 1
     }
@@ -654,7 +660,9 @@ extension AppState {
 
     func setHomeSetupCollapsed(_ collapsed: Bool) {
         homeSetupHidden = collapsed
+        #if os(iOS)
         if collapsed { homeSetupState.calendarHidden = false }
+        #endif
         homeSetupState.revision += 1
     }
 
@@ -671,7 +679,9 @@ extension AppState {
 
     func setHomeSetupDismissed(_ dismissed: Bool) {
         homeSetupDismissed = dismissed
+        #if os(iOS)
         if dismissed { homeSetupState.calendarHidden = false }
+        #endif
         if !dismissed { homeSetupHidden = false }
         homeSetupState.revision += 1
     }
@@ -709,6 +719,7 @@ struct HomeSetupStateObserver<Content: View>: View {
 
 /// Fixed Home utility control, paired with Feedback outside the scrolling content.
 struct HomeSetupButton: View {
+    var fillsFooterCell = false
     @EnvironmentObject private var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -721,7 +732,7 @@ struct HomeSetupButton: View {
                         if reduceMotion { update() }
                         else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
                     } label: {
-                        MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded)
+                        MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded, fillsFooterCell: fillsFooterCell)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("setup.reopen")
@@ -756,6 +767,7 @@ struct HomeSetupOrCalendar<CalendarContent: View>: View {
 }
 
 struct HomeCalendarButton: View {
+    var fillsFooterCell = false
     @EnvironmentObject private var appState: AppState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -769,21 +781,21 @@ struct HomeCalendarButton: View {
                 } label: {
                     MinitiHomeActionLabel(
                         icon: appState.isHomeCalendarVisible ? "calendar" : "calendar.badge.minus",
-                        label: "calendar", isEmphasized: appState.isHomeCalendarVisible)
+                        label: "calendar", isEmphasized: appState.isHomeCalendarVisible, fillsFooterCell: fillsFooterCell)
                 }
                 .buttonStyle(.plain)
                 .disabled(appState.pendingAutoStartEvent != nil)
                 .accessibilityIdentifier("home.calendar.toggle")
                 .accessibilityLabel("Calendar")
                 .accessibilityValue(appState.isHomeCalendarVisible ? "shown" : "hidden")
-                .accessibilityHint(appState.isHomeCalendarVisible ? "Hide upcoming meetings" : "Show upcoming meetings and collapse setup")
+                .accessibilityHint(appState.isHomeCalendarVisible ? "Hide upcoming meetings" : "Show upcoming meetings")
                 .help("Show or hide upcoming meetings. Calendar connection and automatic recording stay unchanged.")
             }
         }
     }
 }
 
-/// Keep setup and calendar together, with a second row for Feedback when needed.
+/// One equal-cell row on iOS; preserve the desktop footer placement.
 struct HomeUtilityBar: View {
     private var presentationControls: some View {
         HStack(spacing: MinitiDesignSystem.Spacing.standard) {
@@ -795,10 +807,18 @@ struct HomeUtilityBar: View {
 
     var body: some View {
         #if os(iOS)
-        VStack(spacing: MinitiDesignSystem.Spacing.standard) {
-            presentationControls
-            HomeFeedbackButton()
+        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+            HomeSetupButton(fillsFooterCell: true)
+                .accessibilityShowsLargeContentViewer()
+            HomeCalendarButton(fillsFooterCell: true)
+                .accessibilityShowsLargeContentViewer()
+            HomeFeedbackButton(fillsFooterCell: true)
+                .accessibilityShowsLargeContentViewer()
         }
+        // Compact navigation keeps a usable content viewport at accessibility sizes.
+        // Each native button offers the system large-content viewer on long press.
+        .dynamicTypeSize(...MinitiDesignSystem.HomeSetup.footerMaximumDynamicTypeSize)
+        .fixedSize(horizontal: false, vertical: true)
         .frame(maxWidth: .infinity)
         #else
         ViewThatFits(in: .horizontal) {
@@ -936,23 +956,48 @@ struct HomeSetupGuide: View {
                 if reduceMotion { change() }
                 else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), change) }
             } label: {
-                HStack(alignment: .center, spacing: MinitiDesignSystem.Spacing.control) {
-                    Image(systemName: item.status == .complete ? "checkmark.circle.fill" :
-                        item.status == .waiting ? "clock" : item.status == .skipped ? "minus.circle" : "circle")
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .font(.body).accessibilityHidden(true)
-                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
-                        Text(item.step.title).font(.callout.weight(.medium))
-                            .strikethrough(item.status == .complete)
-                            .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.primary)
-                        Text(summary(item)).font(.caption)
-                            .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+                // Give reading text the full column at accessibility sizes. Keeping
+                // status/chevron beside large prose can make one task taller than Home.
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        HStack {
+                            Image(systemName: item.status == .complete ? "checkmark.circle.fill" :
+                                item.status == .waiting ? "clock" : item.status == .skipped ? "minus.circle" : "circle")
+                                .foregroundStyle(ColorPalette.Text.muted)
+                                .font(.body).accessibilityHidden(true)
+                            Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.callout).foregroundStyle(ColorPalette.Text.muted).accessibilityHidden(true)
+                                .frame(width: MinitiDesignSystem.Control.minimumIconHitSize, height: MinitiDesignSystem.Control.minimumIconHitSize)
+                        }
+                        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                            Text(item.step.title).font(.callout.weight(.medium))
+                                .strikethrough(item.status == .complete)
+                                .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.primary)
+                            Text(summary(item)).font(.caption)
+                                .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        HStack(alignment: .center, spacing: MinitiDesignSystem.Spacing.control) {
+                            Image(systemName: item.status == .complete ? "checkmark.circle.fill" :
+                                item.status == .waiting ? "clock" : item.status == .skipped ? "minus.circle" : "circle")
+                                .foregroundStyle(ColorPalette.Text.muted)
+                                .font(.body).accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                                Text(item.step.title).font(.callout.weight(.medium))
+                                    .strikethrough(item.status == .complete)
+                                    .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.primary)
+                                Text(summary(item)).font(.caption)
+                                    .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+                            }
+                            .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: MinitiDesignSystem.Spacing.compact)
+                            Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                                .font(.callout).foregroundStyle(ColorPalette.Text.muted).accessibilityHidden(true)
+                                .frame(width: MinitiDesignSystem.Control.minimumIconHitSize, height: MinitiDesignSystem.Control.minimumIconHitSize)
+                        }
                     }
-                    .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: MinitiDesignSystem.Spacing.compact)
-                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                        .font(.callout).foregroundStyle(ColorPalette.Text.muted).accessibilityHidden(true)
-                        .frame(width: MinitiDesignSystem.Control.minimumIconHitSize, height: MinitiDesignSystem.Control.minimumIconHitSize)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                 .padding(.vertical, MinitiDesignSystem.Spacing.standard)

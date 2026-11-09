@@ -5,7 +5,7 @@ struct MeetingView: View {
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
     var meetings: [Meeting] = []
-    
+
     var body: some View {
         Group {
             if appState.isRecording || (appState.currentMeeting != nil && !appState.isStartingMeeting) {
@@ -47,12 +47,12 @@ struct MeetingView: View {
                        appState.isFinalizingMeeting || !appState.liveSegments.isEmpty {
                         PostMeetingReviewBar()
                     }
-                    
+
                     // Divider
                     Rectangle()
                         .fill(Color(hex: "1C1C1F"))
                         .frame(height: 1)
-                    
+
                     // Main content - split view with transcript+notes and live insights
                     HSplitView {
                         // Left side - transcript and notes
@@ -74,7 +74,7 @@ struct MeetingView: View {
                             }
                         }
                         .frame(minWidth: 400)
-                        
+
                         // Live Insights (right side)
                         Group {
                             if appState.isLiveInsightsCollapsed {
@@ -518,161 +518,79 @@ struct ReadyStateView: View {
     var meetings: [Meeting] = []
 
     var body: some View {
-        GeometryReader { geometry in
-        ScrollView(showsIndicators: false) {
-        VStack(spacing: MinitiDesignSystem.Spacing.section) {
-            // BYOK mode: API key pills
-            if appState.appMode == .byok {
-                HStack(spacing: 12) {
-                    APIStatusPill(
-                        label: "deepgram",
-                        key: $appState.deepgramApiKey,
-                        isEditing: $editingDeepgram,
-                        placeholder: "dg_..."
-                    )
+        HomeCalendarSidebarLayout(
+            state: appState.homeSetupState,
+            available: appState.googleCalendarEnabled && appState.isGoogleCalendarConnected && appState.pendingAutoStartEvent == nil,
+            onToggle: { appState.toggleHomeCalendar() }
+        ) {
+            ScrollView(showsIndicators: false) {
+                VStack(spacing: MinitiDesignSystem.Spacing.section) {
+                    // BYOK mode: API key pills
+                    if appState.appMode == .byok {
+                        HStack(spacing: 12) {
+                            APIStatusPill(
+                                label: "deepgram",
+                                key: $appState.deepgramApiKey,
+                                isEditing: $editingDeepgram,
+                                placeholder: "dg_..."
+                            )
 
-                    APIStatusPill(
-                        label: "openai",
-                        key: $appState.openaiApiKey,
-                        isEditing: $editingOpenAI,
-                        placeholder: "sk-..."
-                    )
-                }
-            }
-
-            // Limit reached warning (managed mode)
-            if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
-                LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
-            }
-
-            if appState.appMode == .managed && !appState.isRecording,
-               !appState.clientAuthStatus.isEnrolled {
-                ManagedAccessChoiceCard()
-            }
-
-            // Exports failing (missing folder): say so where the person will see it.
-            if appState.autoExportMarkdown,
-               appState.markdownExportIssue != nil,
-               !appState.isMarkdownExportIssueCardDismissed {
-                MarkdownExportIssueCard()
-            }
-
-            // Auto-start banner
-            if let event = appState.pendingAutoStartEvent {
-                AutoStartBanner(
-                    event: event,
-                    countdown: appState.autoStartCountdown,
-                    isWaitingForCall: appState.autoStartIsWaitingForCall
-                )
-            }
-
-            // Start button or blocked state
-            if appState.isDeviceDisabled {
-                VStack(spacing: 8) {
-                    Text("account disabled")
-                        .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Status.error)
-                    
-                    Text("contact support for help")
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                }
-            } else if appState.isLimitReached {
-                VStack(spacing: 8) {
-                    Text("limit reached")
-                        .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Status.error)
-                    
-                    Button {
-                        appState.appModeRaw = AppMode.byok.rawValue
-                    } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 10))
-                            Text("switch to BYOK")
-                                .font(.system(size: 11, weight: .medium, design: .default))
+                            APIStatusPill(
+                                label: "openai",
+                                key: $appState.openaiApiKey,
+                                isEditing: $editingOpenAI,
+                                placeholder: "sk-..."
+                            )
                         }
-                        .foregroundStyle(ColorPalette.Accent.blue)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(ColorPalette.Accent.blue.opacity(0.12))
+                    }
+
+                    // Limit reached warning (managed mode)
+                    if appState.appMode == .managed, let usage = appState.usageInfo, usage.minutesRemaining < 60, !usage.isLimitReached {
+                        LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
+                    }
+
+                    if appState.appMode == .managed && !appState.isRecording,
+                       !appState.clientAuthStatus.isEnrolled {
+                        ManagedAccessChoiceCard()
+                    }
+
+                    // Exports failing (missing folder): say so where the person will see it.
+                    if appState.autoExportMarkdown,
+                       appState.markdownExportIssue != nil,
+                       !appState.isMarkdownExportIssueCardDismissed {
+                        MarkdownExportIssueCard()
+                    }
+
+                    // Auto-start banner
+                    if let event = appState.pendingAutoStartEvent {
+                        AutoStartBanner(
+                            event: event,
+                            countdown: appState.autoStartCountdown,
+                            isWaitingForCall: appState.autoStartIsWaitingForCall
                         )
                     }
-                    .buttonStyle(.plain)
-                    .focusable(false)
+
+                    HomeSetupOrCalendar { EmptyView() }
                 }
-            } else {
-                Button(action: {
-                    if !appState.isStartingMeeting {
-                        appState.startNewMeeting()
-                    }
-                }) {
-                    HStack(spacing: 10) {
-                        if appState.isStartingMeeting {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(ColorPalette.Background.primary)
-                            Text("starting...")
-                                .font(.system(size: 13, weight: .semibold, design: .default))
-                        } else {
-                            Image(systemName: "record.circle")
-                                .font(.system(size: 15))
-                            Text("start meeting")
-                                .font(.system(size: 13, weight: .semibold, design: .default))
-                                .lineLimit(1)
-                        }
-                        
-                        if !appState.isStartingMeeting {
-                            Text("⌘⇧R")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(ColorPalette.Background.primary.opacity(0.5))
-                        }
-                    }
-                    .foregroundStyle(ColorPalette.Background.primary)
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 14)
+                .padding(MinitiDesignSystem.Spacing.page)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.never)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                recordingControls
+                    .padding(.horizontal, MinitiDesignSystem.Spacing.page)
+                    .padding(.vertical, MinitiDesignSystem.Spacing.page)
                     .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
-                            .fill(appState.isStartingMeeting
-                                  ? ColorPalette.Text.disabled
-                                  : appState.canStartRecording ? ColorPalette.Accent.green : ColorPalette.Text.disabled)
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
-                .focusable(false)
-                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
-
-                if let reason = appState.recordingUnavailableReason {
-                    Text(reason).font(.caption).foregroundStyle(ColorPalette.Status.error)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                MeetingLanguagePicker(language: $appState.meetingLanguage)
+                    .background(ColorPalette.Background.primary)
             }
-
-            HomeSetupOrCalendar {
-                if appState.pendingAutoStartEvent == nil,
-                   appState.googleCalendarEnabled && appState.isGoogleCalendarConnected {
-                    if appState.upcomingMeetingEvents.isEmpty {
-                        Text("No upcoming meetings").font(.callout).foregroundStyle(ColorPalette.Text.muted)
-                    } else {
-                        UpcomingEventsPanel(confirmEvent: $confirmEvent)
-                            .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth)
-                    }
-                }
+        } calendar: {
+            if appState.upcomingMeetingEvents.isEmpty {
+                Text("No upcoming meetings")
+                    .font(.callout).foregroundStyle(ColorPalette.Text.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                UpcomingEventsPanel(confirmEvent: $confirmEvent)
             }
-
-            Spacer()
-        }
-        .padding(.horizontal, MinitiDesignSystem.Spacing.page)
-        .padding(.top, MinitiDesignSystem.Spacing.page + MinitiDesignSystem.Spacing.section)
-        .padding(.bottom, MinitiDesignSystem.Spacing.section)
-        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
-        }
-        .scrollIndicators(.never)
         }
         .safeAreaInset(edge: .bottom) {
             HomeUtilityBar().padding(MinitiDesignSystem.Spacing.comfortable)
@@ -732,9 +650,199 @@ struct ReadyStateView: View {
                 .transition(.opacity.combined(with: .scale(scale: 0.95)))
             }
         }
-        
+
     }
 
+    private var recordingControls: some View {
+        VStack(spacing: MinitiDesignSystem.Spacing.section) {
+            // Start button or blocked state
+            if appState.isDeviceDisabled {
+                VStack(spacing: 8) {
+                    Text("account disabled")
+                        .font(.system(size: 13, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Status.error)
+
+                    Text("contact support for help")
+                        .font(.system(size: 11, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.muted)
+                }
+            } else if appState.isLimitReached {
+                VStack(spacing: 8) {
+                    Text("limit reached")
+                        .font(.system(size: 13, weight: .semibold, design: .default))
+                        .foregroundStyle(ColorPalette.Status.error)
+
+                    Button {
+                        appState.appModeRaw = AppMode.byok.rawValue
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 10))
+                            Text("switch to BYOK")
+                                .font(.system(size: 11, weight: .medium, design: .default))
+                        }
+                        .foregroundStyle(ColorPalette.Accent.blue)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(ColorPalette.Accent.blue.opacity(0.12))
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                }
+            } else {
+                MeetingLanguagePicker(language: $appState.meetingLanguage)
+                    .accessibilityIdentifier("home.language")
+                Button(action: {
+                    if !appState.isStartingMeeting {
+                        appState.startNewMeeting()
+                    }
+                }) {
+                    HStack(spacing: 10) {
+                        if appState.isStartingMeeting {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(ColorPalette.Background.primary)
+                            Text("starting...")
+                                .font(.system(size: 13, weight: .semibold, design: .default))
+                        } else {
+                            Image(systemName: "record.circle")
+                                .font(.system(size: 15))
+                            Text("start meeting")
+                                .font(.system(size: 13, weight: .semibold, design: .default))
+                                .lineLimit(1)
+                        }
+
+                        if !appState.isStartingMeeting {
+                            Text("⌘⇧R")
+                                .font(.system(size: 10, weight: .medium, design: .default))
+                                .foregroundStyle(ColorPalette.Background.primary.opacity(0.5))
+                        }
+                    }
+                    .foregroundStyle(ColorPalette.Background.primary)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                            .fill(appState.isStartingMeeting
+                                  ? ColorPalette.Text.disabled
+                                  : appState.canStartRecording ? ColorPalette.Accent.green : ColorPalette.Text.disabled)
+                    )
+                }
+                .buttonStyle(.plain)
+                .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
+                .focusable(false)
+                .accessibilityIdentifier("home.start")
+                .disabled(!appState.canStartRecording || appState.isStartingMeeting)
+
+                if let reason = appState.recordingUnavailableReason {
+                    Text(reason).font(.caption).foregroundStyle(ColorPalette.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+        }
+    }
+
+}
+
+/// Geometry stays local to Home. Narrow windows overlay the panel rather than
+/// increasing the window's minimum size or squeezing the recording controls.
+private struct HomeCalendarSidebarLayout<Content: View, CalendarContent: View>: View {
+    @ObservedObject var state: HomeSetupState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let available: Bool
+    let onToggle: () -> Void
+    @ViewBuilder var content: () -> Content
+    @ViewBuilder var calendar: () -> CalendarContent
+
+    var body: some View {
+        GeometryReader { geometry in
+            let expanded = available && !state.calendarHidden
+            let inline = geometry.size.width >= MinitiDesignSystem.HomeSetup.minimumContentWidth + MinitiDesignSystem.HomeSetup.calendarSidebarWidth
+            let panelWidth = min(MinitiDesignSystem.HomeSetup.calendarSidebarWidth,
+                                 max(0, geometry.size.width - MinitiDesignSystem.HomeSetup.calendarRailWidth))
+            ZStack(alignment: .trailing) {
+                content()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.trailing, available ? (expanded && inline ? panelWidth : MinitiDesignSystem.HomeSetup.calendarRailWidth) : 0)
+                    .accessibilityHidden(expanded && !inline)
+                if expanded && !inline {
+                    Button(action: toggle) {
+                        ColorPalette.Background.primary.opacity(MinitiDesignSystem.ControlOpacity.emphasizedFill)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close calendar sidebar")
+                    .accessibilityIdentifier("home.calendar.backdrop")
+                }
+                if available {
+                    // Keep section/scroll state and avoid rebuilding event rows on each toggle.
+                    sidebar.frame(width: panelWidth)
+                        .offset(x: expanded ? 0 : panelWidth)
+                        .allowsHitTesting(expanded)
+                        .accessibilityHidden(!expanded)
+                    if !expanded {
+                        VStack {
+                            sidebarToggle
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.top, MinitiDesignSystem.Spacing.comfortable)
+                        .frame(width: MinitiDesignSystem.HomeSetup.calendarRailWidth)
+                        .frame(maxHeight: .infinity)
+                        .background(ColorPalette.Background.panel)
+                    }
+                }
+            }
+            .clipped()
+        }
+    }
+
+    private var sidebar: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("calendar").font(.callout.weight(.semibold))
+                    .foregroundStyle(ColorPalette.Text.secondary)
+                Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                sidebarToggle
+            }
+            .padding(MinitiDesignSystem.Spacing.comfortable)
+            MinitiFadingDivider(accent: ColorPalette.Border.light)
+            ScrollView {
+                calendar()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(MinitiDesignSystem.Spacing.comfortable)
+            }
+            .scrollIndicators(.never)
+        }
+        .frame(maxHeight: .infinity)
+        .background(ColorPalette.Background.panel)
+        .overlay(alignment: .leading) {
+            ColorPalette.Border.primary.frame(width: 1)
+        }
+        .accessibilityIdentifier("home.calendar.sidebar")
+    }
+
+    private var sidebarToggle: some View {
+        Button(action: toggle) {
+            MinitiControlLabel(role: .secondary) {
+                Image(systemName: "sidebar.right")
+                    .font(.caption.weight(.medium))
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("home.calendar.sidebar.toggle")
+        .accessibilityLabel(state.calendarHidden ? "Expand calendar sidebar" : "Collapse calendar sidebar")
+        .help(state.calendarHidden ? "Expand calendar" : "Collapse calendar")
+    }
+
+    private func toggle() {
+        if reduceMotion { onToggle() }
+        else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), onToggle) }
+    }
 }
 
 private struct AutoStartBanner: View {
@@ -744,7 +852,7 @@ private struct AutoStartBanner: View {
     /// Auto-start is holding this event for its call to connect (2.11.0) rather than
     /// counting down to the scheduled minute.
     var isWaitingForCall: Bool = false
-    
+
     var body: some View {
         VStack(spacing: 10) {
             HStack(spacing: 8) {
@@ -753,17 +861,17 @@ private struct AutoStartBanner: View {
                     .frame(width: 8, height: 8)
                     .opacity(countdown % 2 == 0 ? 1 : 0.4)
                     .animation(.easeInOut(duration: 0.5), value: countdown)
-                
+
                 Text(event.title)
                     .font(.system(size: 13, weight: .semibold, design: .default))
                     .foregroundStyle(ColorPalette.Text.primary)
                     .lineLimit(1)
             }
-            
+
             Text(isWaitingForCall ? "waiting for your call to connect" : "starting in \(countdown)s")
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(ColorPalette.Accent.green)
-            
+
             HStack(spacing: 12) {
                 if event.joinURL != nil {
                     Button {
@@ -798,7 +906,7 @@ private struct AutoStartBanner: View {
                 }
                 .buttonStyle(.plain)
                 .focusable(false)
-                
+
                 Button {
                     appState.dismissAutoStart()
                 } label: {
@@ -1108,72 +1216,74 @@ private struct CompactEventRow: View {
     @EnvironmentObject private var appState: AppState
     let event: MinitiAPIService.CalendarEvent
     @State private var isHovered = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(formattedTime)
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
-                .frame(width: 66, alignment: .leading)
-
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
             Text(event.title)
-                .font(.system(size: 11, weight: .medium, design: .default))
-                .foregroundStyle(isHovered ? ColorPalette.Text.primary : ColorPalette.Text.secondary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                .font(.callout.weight(.medium))
+                .foregroundStyle(ColorPalette.Text.primary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                Text(formattedTime)
+                    .font(.system(size: 10, weight: .semibold, design: .default))
+                    .foregroundStyle(isActive ? ColorPalette.Accent.green : ColorPalette.Text.muted)
+                    .frame(width: 66, alignment: .leading)
 
-            Spacer(minLength: 4)
+                Spacer(minLength: 4)
 
-            if let dur = durationText {
-                Text(dur)
-                    .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(ColorPalette.Text.dim)
-            }
+                if let dur = durationText {
+                    Text(dur)
+                        .font(.system(size: 10, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                }
 
-            if !event.attendees.isEmpty {
-                let extCount = event.externalAttendees.count
-                HStack(spacing: 5) {
-                    if !allExternalDomains.isEmpty {
-                        HStack(spacing: 3) {
-                            ForEach(displayDomains, id: \.self) { domain in
-                                DomainFavicon(domain: domain)
+                if !event.attendees.isEmpty {
+                    let extCount = event.externalAttendees.count
+                    HStack(spacing: 5) {
+                        if !allExternalDomains.isEmpty {
+                            HStack(spacing: 3) {
+                                ForEach(displayDomains, id: \.self) { domain in
+                                    DomainFavicon(domain: domain)
+                                }
                             }
                         }
-                    }
 
-                    HStack(spacing: 2) {
-                        Image(systemName: "person.2.fill")
-                            .font(.system(size: 8))
-                        Text("\(extCount > 0 ? extCount : event.attendees.count)")
-                            .font(.system(size: 10, weight: .semibold, design: .default))
+                        HStack(spacing: 2) {
+                            Image(systemName: "person.2.fill")
+                                .font(.system(size: 8))
+                            Text("\(extCount > 0 ? extCount : event.attendees.count)")
+                                .font(.system(size: 10, weight: .semibold, design: .default))
+                        }
+                        .foregroundStyle(ColorPalette.Text.dim)
                     }
-                    .foregroundStyle(ColorPalette.Text.dim)
                 }
-            }
 
-            if !appState.prepNotes(for: event).isEmpty {
-                Image(systemName: "note.text")
+                if !appState.prepNotes(for: event).isEmpty {
+                    Image(systemName: "note.text")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(ColorPalette.Accent.blue)
+                        .accessibilityLabel("Has prep notes")
+                }
+
+                Image(systemName: "record.circle")
                     .font(.system(size: 9, weight: .semibold))
-                    .foregroundStyle(ColorPalette.Accent.blue)
-                    .accessibilityLabel("Has prep notes")
+                    .foregroundStyle(ColorPalette.Accent.green)
+                    .opacity(isHovered ? 1 : 0)
             }
-
-            Image(systemName: "record.circle")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(ColorPalette.Accent.green)
-                .opacity(isHovered ? 1 : 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        .padding(.horizontal, MinitiDesignSystem.Spacing.standard)
+        .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)
         .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(isHovered ? ColorPalette.Accent.green.opacity(0.08) : Color.clear)
+            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                .fill(isHovered ? ColorPalette.Background.tertiary : ColorPalette.Background.panel)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(isHovered ? ColorPalette.Accent.green.opacity(0.25) : Color.clear, lineWidth: 1)
+            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
+                .stroke(isHovered ? ColorPalette.Border.hover : ColorPalette.Border.primary, lineWidth: 1)
         )
-        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .animation(reduceMotion ? nil : .easeOut(duration: MinitiDesignSystem.Motion.hoverDuration), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
             if hovering {
@@ -1276,7 +1386,7 @@ private struct FlashingTagline: View {
     let text: String
     let isIdle: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    
+
     var body: some View {
         Group {
             if reduceMotion {
@@ -1292,14 +1402,14 @@ private struct FlashingTagline: View {
             }
         }
     }
-    
+
     private var baseText: some View {
         Text(text)
             .font(.system(size: 12, weight: .medium, design: .default))
             .foregroundStyle(ColorPalette.Text.muted)
             .tracking(2)
     }
-    
+
     private func highlightedText(motion: FlashMotion) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .medium, design: .default))
@@ -1315,17 +1425,17 @@ private struct FlashingTagline: View {
                     let secondaryX = width * motion.secondaryCenter
                     let primaryWidth = max(width * motion.primaryWidth, 22)
                     let secondaryWidth = max(width * motion.secondaryWidth, 14)
-                    
+
                     ZStack {
                         Rectangle()
                             .fill(Color.white.opacity(0.05 + (0.04 * motion.spark)))
-                        
+
                         Capsule()
                             .fill(Color.white.opacity(0.92))
                             .frame(width: primaryWidth, height: max(height * 0.95, 12))
                             .blur(radius: 5)
                             .offset(x: primaryX - (width / 2))
-                        
+
                         Capsule()
                             .fill(Color.white.opacity(0.62))
                             .frame(width: secondaryWidth, height: max(height * 0.8, 10))
@@ -1335,7 +1445,7 @@ private struct FlashingTagline: View {
                 }
             }
     }
-    
+
     private func flashMotion(at time: TimeInterval) -> FlashMotion {
         let t = time * 0.9
         let primaryCenter = clamp01(0.5 + (0.36 * sin(t * 1.4)) + (0.12 * sin((t * 3.1) + 0.8)))
@@ -1343,7 +1453,7 @@ private struct FlashingTagline: View {
         let primaryWidth = CGFloat(0.18 + (0.22 * (0.5 + (0.5 * sin((t * 2.45) + 0.4)))))
         let secondaryWidth = CGFloat(0.09 + (0.14 * (0.5 + (0.5 * sin((t * 3.8) + 2.0)))))
         let spark = CGFloat(0.5 + (0.5 * sin((t * 6.7) + (0.5 * sin(t * 2.2)))))
-        
+
         return FlashMotion(
             primaryCenter: primaryCenter,
             secondaryCenter: secondaryCenter,
@@ -1352,7 +1462,7 @@ private struct FlashingTagline: View {
             spark: spark
         )
     }
-    
+
     private func clamp01(_ value: Double) -> CGFloat {
         CGFloat(min(max(value, 0), 1))
     }
@@ -1373,12 +1483,12 @@ struct APIStatusPill: View {
     @Binding var key: String
     @Binding var isEditing: Bool
     let placeholder: String
-    
+
     @FocusState private var isFocused: Bool
     @State private var isHovering = false
-    
+
     var isConnected: Bool { !key.isEmpty }
-    
+
     var body: some View {
         if isEditing {
             // Edit mode - show input field
@@ -1386,14 +1496,14 @@ struct APIStatusPill: View {
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "71717A"))
-                
+
                 HStack(spacing: 8) {
                     SecureField(placeholder, text: $key)
                         .font(.system(size: 11, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "E6EDF3"))
                         .textFieldStyle(.plain)
                         .focused($isFocused)
-                    
+
                     Button {
                         isEditing = false
                     } label: {
@@ -1428,11 +1538,11 @@ struct APIStatusPill: View {
                     Circle()
                         .fill(isConnected ? Color(hex: "3FB950") : Color(hex: "71717A"))
                         .frame(width: 6, height: 6)
-                    
+
                     Text(label)
                         .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(isConnected ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
-                    
+
                     if isConnected {
                         Text("connected")
                             .font(.system(size: 10, weight: .regular, design: .default))
@@ -1451,8 +1561,8 @@ struct APIStatusPill: View {
                         .overlay(
                             Capsule()
                                 .stroke(
-                                    isConnected 
-                                        ? Color(hex: "3FB950").opacity(isHovering ? 0.5 : 0.3) 
+                                    isConnected
+                                        ? Color(hex: "3FB950").opacity(isHovering ? 0.5 : 0.3)
                                         : Color(hex: "3F3F46").opacity(isHovering ? 0.8 : 0.5),
                                     lineWidth: 1
                                 )
@@ -1472,11 +1582,11 @@ struct APIStatusPill: View {
 
 struct MeetingLanguagePicker: View {
     @Binding var language: String
-    
+
     private var selectedLang: TranscriptionLanguage {
         TranscriptionLanguage(rawValue: language) ?? .english
     }
-    
+
     var body: some View {
         Menu {
             ForEach(TranscriptionLanguage.allCases, id: \.self) { lang in
@@ -1520,20 +1630,20 @@ struct MeetingLanguagePicker: View {
 struct StatusCheckRow: View {
     let label: String
     let isReady: Bool
-    
+
     var body: some View {
         HStack(spacing: 12) {
             Text(isReady ? "✓" : "○")
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(isReady ? Color(hex: "3FB950") : Color(hex: "484F58"))
                 .frame(width: 16)
-            
+
             Text(label)
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
-            
+
             Spacer()
-            
+
             Text(isReady ? "configured" : "missing")
                 .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(isReady ? Color(hex: "3FB950") : Color(hex: "D29922"))
@@ -1546,9 +1656,9 @@ struct SectionHeader: View {
     let icon: String
     var shortcut: String? = nil
     var onCopy: (() -> String)? = nil
-    
+
     @State private var showCopied = false
-    
+
     var body: some View {
         HStack(spacing: 8) {
             Text(icon)
@@ -1558,7 +1668,7 @@ struct SectionHeader: View {
                 .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             Spacer()
-            
+
             // Copy button
             if let onCopy = onCopy {
                 Button {
@@ -1591,7 +1701,7 @@ struct SectionHeader: View {
                 .buttonStyle(.plain)
                 .focusable(false)
             }
-            
+
             if let shortcut = shortcut {
                 Text(shortcut)
                     .font(.system(size: 10, weight: .medium, design: .default))
@@ -1611,26 +1721,26 @@ struct SectionHeader: View {
 struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
     let transcript: Transcript
     let notes: Notes
-    
+
     @State private var notesHeight: CGFloat = 100
     @GestureState private var dragOffset: CGFloat = 0
     private let minNotesHeight: CGFloat = 50
     private let maxNotesHeight: CGFloat = 500
     private let minTranscriptHeight: CGFloat = 200
     private let dividerHeight: CGFloat = 8
-    
+
     init(@ViewBuilder transcript: () -> Transcript, @ViewBuilder notes: () -> Notes) {
         self.transcript = transcript()
         self.notes = notes()
     }
-    
+
     private func maximumNotesHeight(availableHeight: CGFloat) -> CGFloat {
         min(
             maxNotesHeight,
             max(minNotesHeight, availableHeight - minTranscriptHeight - dividerHeight)
         )
     }
-    
+
     var body: some View {
         GeometryReader { geometry in
             let maximumNotesHeight = maximumNotesHeight(availableHeight: geometry.size.height)
@@ -1687,7 +1797,7 @@ struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
 struct NotesEditor: View {
     @EnvironmentObject var appState: AppState
     @FocusState private var isFocused: Bool
-    
+
     var body: some View {
         ZStack(alignment: .topLeading) {
             // Placeholder
@@ -1698,7 +1808,7 @@ struct NotesEditor: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             }
-            
+
             // Text editor
             TextEditor(text: $appState.liveNotes)
                 .font(.system(size: 12, weight: .regular, design: .default))
@@ -1715,9 +1825,9 @@ struct NotesEditor: View {
 struct InsightsSectionHeader: View {
     @EnvironmentObject var appState: AppState
     var onCopyInsights: (() -> String)? = nil
-    
+
     @State private var showCopied = false
-    
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
@@ -1727,9 +1837,9 @@ struct InsightsSectionHeader: View {
                 Text("insights")
                     .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
-                
+
                 Spacer()
-                
+
                 if let onCopyInsights = onCopyInsights {
                     Button {
                         let markdown = onCopyInsights()
@@ -1764,7 +1874,7 @@ struct InsightsSectionHeader: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
-            
+
             InsightsModeTabs()
         }
     }
@@ -1773,16 +1883,16 @@ struct InsightsSectionHeader: View {
 private struct LiveInsightsColumn: View {
     @EnvironmentObject var appState: AppState
     let onCopyInsights: () -> String
-    
+
     var body: some View {
         VStack(spacing: 0) {
             InsightsSectionHeader(onCopyInsights: onCopyInsights)
             LiveInsightsPanel()
-            
+
             Rectangle()
                 .fill(Color(hex: "1C1C1F"))
                 .frame(height: 1)
-            
+
             HStack {
                 HStack(spacing: 4) {
                     InsightsPaneToggleButton(direction: .collapse) {
@@ -1794,7 +1904,7 @@ private struct LiveInsightsColumn: View {
                         .font(.system(size: 10, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "71717A").opacity(0.5))
                 }
-                
+
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -1806,7 +1916,7 @@ private struct LiveInsightsColumn: View {
 
 private struct CollapsedInsightsRail: View {
     @EnvironmentObject var appState: AppState
-    
+
     var body: some View {
         VStack(spacing: 0) {
             Text("insights")
@@ -1816,13 +1926,13 @@ private struct CollapsedInsightsRail: View {
                 .fixedSize()
                 .frame(height: 120)
                 .padding(.top, 12)
-            
+
             Spacer()
-            
+
             Rectangle()
                 .fill(Color(hex: "1C1C1F"))
                 .frame(height: 1)
-            
+
             HStack {
                 Spacer()
                 VStack(spacing: 3) {
@@ -1849,10 +1959,10 @@ private struct InsightsPaneToggleButton: View {
         case collapse
         case expand
     }
-    
+
     let direction: Direction
     let action: () -> Void
-    
+
     var body: some View {
         Button(action: action) {
             Image(systemName: direction == .collapse ? "sidebar.right" : "sidebar.left")
@@ -1872,15 +1982,15 @@ private struct InsightsPaneToggleButton: View {
 struct LiveInsightsPanel: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.interfaceScale) private var interfaceScale
-    
+
     private var canUpdateInsights: Bool {
         appState.currentMeeting != nil && !appState.liveSegments.isEmpty
     }
-    
+
     private var showsUpdateButton: Bool {
         appState.insightsMode != .training && appState.insightsMode != .docs
     }
-    
+
     private var hasMEDDPICCContent: Bool {
         [appState.liveMetrics, appState.liveEconomicBuyer, appState.liveDecisionCriteria,
          appState.liveDecisionProcess, appState.livePaperProcess, appState.liveIdentifiedPain,
@@ -1890,7 +2000,7 @@ struct LiveInsightsPanel: View {
             return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
         }
     }
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -1928,11 +2038,11 @@ struct LiveInsightsPanel: View {
                         .disabled(!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress)
                         .opacity((!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress) ? 0.5 : 1.0)
                     }
-                    
+
                     Spacer()
                 }
                 .padding(.horizontal, 16)
-                
+
                 if appState.insightsMode == .training {
                     // Training mode: locally-computed speech metrics
                     if let metrics = appState.trainingMetrics {
@@ -1997,9 +2107,9 @@ struct LiveInsightsPanel: View {
                         }
                         .padding(.horizontal, 16)
                     }
-                    
+
                     LiveMEDDPICCSections()
-                    
+
                     if !hasMEDDPICCContent && !appState.isGeneratingInsights {
                         LiveInsightsEmptyState()
                     }
@@ -2014,7 +2124,7 @@ struct LiveInsightsPanel: View {
                         }
                         .padding(.horizontal, 16)
                     }
-                    
+
                     if !appState.liveSummary.isEmpty {
                         LiveInsightSection(title: "summary", color: Color(hex: "58A6FF")) {
                             SelectableTextView(
@@ -2055,7 +2165,7 @@ struct LiveInsightsPanel: View {
                             )
                         }
                     }
-                    
+
                     if !appState.liveTopics.isEmpty {
                         LiveInsightSection(title: "topics", color: Color(hex: "A371F7")) {
                             FlowLayout(spacing: 6) {
@@ -2071,12 +2181,12 @@ struct LiveInsightsPanel: View {
                             }
                         }
                     }
-                    
+
                     if appState.liveSummary.isEmpty && !appState.isGeneratingInsights {
                         LiveInsightsEmptyState()
                     }
                 }
-                
+
                 Spacer(minLength: 20)
             }
             .padding(.top, 12)
@@ -2090,7 +2200,7 @@ struct LiveInsightsPanel: View {
 struct LiveMEDDPICCSections: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.interfaceScale) private var interfaceScale
-    
+
     private var fields: [(title: String, color: String, value: String?)] {
         [
             ("metrics", "3B82F6", appState.liveMetrics),
@@ -2103,7 +2213,7 @@ struct LiveMEDDPICCSections: View {
             ("competition", "6366F1", appState.liveCompetition),
         ]
     }
-    
+
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             LiveInsightSection(title: field.title, color: Color(hex: field.color)) {
@@ -2112,7 +2222,7 @@ struct LiveMEDDPICCSections: View {
             }
         }
     }
-    
+
     private func hasValue(_ value: String?) -> Bool {
         guard let value else { return false }
         let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -2207,15 +2317,15 @@ struct LiveTrainingInsightsContent: View {
     private var speakerPresentations: [TrainingMetrics.SpeakerPresentation] {
         metrics.speakerPresentations()
     }
-    
+
     private var displaySpeakers: [TrainingMetrics.SpeakerStats] {
         speakerPresentations.map(\.summary)
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             LiveTrainingFillersSection(presentations: speakerPresentations)
-            
+
             if metrics.speakers.count > 1 {
                 LiveInsightSection(title: "talk ratio", color: ColorPalette.Coaching.talkRatio, info: .talkRatio) {
                     VStack(alignment: .leading, spacing: 8) {
@@ -2231,7 +2341,7 @@ struct LiveTrainingInsightsContent: View {
                         }
                         .frame(height: 12)
                         .clipShape(RoundedRectangle(cornerRadius: 2))
-                        
+
                         HStack {
                             Text("you \(Int(metrics.talkRatioYou * 100))%")
                                 .font(.system(size: 10, weight: .medium, design: .default))
@@ -2244,7 +2354,7 @@ struct LiveTrainingInsightsContent: View {
                     }
                 }
             }
-            
+
             LiveInsightSection(title: "pace", color: ColorPalette.Coaching.pace, info: .pace) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
@@ -2256,7 +2366,7 @@ struct LiveTrainingInsightsContent: View {
                     }
                 }
             }
-            
+
             LiveInsightSection(title: "longest monologue", color: ColorPalette.Coaching.monologue, info: .longestMonologue) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
@@ -2269,7 +2379,7 @@ struct LiveTrainingInsightsContent: View {
                     }
                 }
             }
-            
+
             LiveInsightSection(title: "questions asked", color: ColorPalette.Coaching.questions, info: .questionsAsked) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
@@ -2280,7 +2390,7 @@ struct LiveTrainingInsightsContent: View {
                     }
                 }
             }
-            
+
             LiveInsightSection(title: "clarity", color: ColorPalette.Coaching.clarity, info: .clarity) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(displaySpeakers) { speaker in
@@ -2290,7 +2400,7 @@ struct LiveTrainingInsightsContent: View {
                             trailing: "avg words/turn"
                         )
                     }
-                    
+
                     Text("lower = clearer = better")
                         .font(.system(size: 10, weight: .regular, design: .default))
                         .foregroundStyle(Color(hex: "3F3F46"))
@@ -2303,7 +2413,7 @@ struct LiveTrainingInsightsContent: View {
 private struct LiveTrainingFillersSection: View {
     let presentations: [TrainingMetrics.SpeakerPresentation]
     @State private var expandedPresentationIDs: Set<String> = []
-    
+
     var body: some View {
         ForEach(presentations) { presentation in
             let speaker = presentation.summary
@@ -2317,7 +2427,7 @@ private struct LiveTrainingFillersSection: View {
                         Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
                             .font(.system(size: 10, weight: .regular, design: .default))
                             .foregroundStyle(Color(hex: "71717A"))
-                        
+
                         if presentation.hasMultipleDetails {
                             Button {
                                 toggleDetails(for: presentation.id)
@@ -2392,18 +2502,18 @@ private struct LiveTrainingMetricRow: View {
     let speaker: TrainingMetrics.SpeakerStats
     let value: String
     var trailing: String? = nil
-    
+
     var body: some View {
         HStack(spacing: 8) {
             Text(speaker.speakerLabel.lowercased())
                 .font(.system(size: 11, weight: .medium, design: .default))
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 48, alignment: .leading)
-            
+
             Text(value)
                 .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
-            
+
             if let trailing {
                 Text(trailing)
                     .font(.system(size: 10, weight: .regular, design: .default))
@@ -2418,7 +2528,7 @@ struct LiveInsightSection<Content: View>: View {
     let color: Color
     let info: TerminalSectionInfo?
     @ViewBuilder let content: () -> Content
-    
+
     init(
         title: String,
         color: Color,
@@ -2430,7 +2540,7 @@ struct LiveInsightSection<Content: View>: View {
         self.info = info
         self.content = content
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -2445,7 +2555,7 @@ struct LiveInsightSection<Content: View>: View {
                     TerminalSectionInfoButton(info: info, accent: color)
                 }
             }
-            
+
             content()
                 .padding(.leading, 12)
         }
@@ -2458,7 +2568,7 @@ struct TerminalHeader: View {
     @Binding var meetingTitle: String
     @State private var isEditingTitle = false
     @State private var showDiscardConfirmation = false
-    
+
     private let headerActionHeight = MinitiDesignSystem.Control.compactHeight
 
     private var isStopped: Bool {
@@ -2468,7 +2578,7 @@ struct TerminalHeader: View {
     private var isResumePending: Bool {
         isStopped && appState.isResumingRecording
     }
-    
+
     private var recoveryAccent: Color {
         switch appState.audioRecoveryState {
         case .healthy: return ColorPalette.Status.success
@@ -2476,7 +2586,7 @@ struct TerminalHeader: View {
         case .degraded: return ColorPalette.Status.error
         }
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
@@ -2492,7 +2602,7 @@ struct TerminalHeader: View {
                                 Text("discard")
                                     .font(.system(size: 11, weight: .medium, design: .default))
                             }
-                            
+
                             Text("⌘⌫")
                                 .font(.system(size: 10, weight: .medium, design: .default))
                                 .foregroundStyle(Color(hex: "F85149").opacity(0.5))
@@ -2515,7 +2625,7 @@ struct TerminalHeader: View {
                     .buttonStyle(.plain)
                     .keyboardShortcut(.delete, modifiers: .command)
                 }
-                
+
                 Button {
                     guard !isResumePending else { return }
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -2555,7 +2665,7 @@ struct TerminalHeader: View {
                 .buttonStyle(.plain)
                 .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights || (!appState.isRecording && appState.recordingUnavailableReason != nil))
                 .accessibilityLabel(appState.isRecording ? "Stop recording" : "Resume recording")
-                
+
                 if isStopped {
                     if appState.isFinalizingMeeting {
                         HStack(spacing: 6) {
@@ -2642,7 +2752,7 @@ struct TerminalHeader: View {
                             .fill(ColorPalette.Background.tertiary)
                     )
                 }
-                
+
                 if let meeting = appState.currentMeeting, !meeting.attendees.isEmpty {
                     HStack(spacing: 3) {
                         Image(systemName: "person.2.fill")
@@ -2658,13 +2768,13 @@ struct TerminalHeader: View {
                             .fill(ColorPalette.Background.tertiary)
                     )
                 }
-                
+
                 Spacer(minLength: 0)
                 if let meeting = appState.currentMeeting {
                     MeetingCloudStorageButton(meeting: meeting)
                 }
             }
-            
+
             HStack(spacing: 8) {
                 Circle()
                     .fill(recoveryAccent)
@@ -2695,7 +2805,7 @@ struct TerminalHeader: View {
             .opacity(appState.audioRecoveryState == .healthy ? 0 : 1)
             .allowsHitTesting(appState.audioRecoveryState == .degraded)
             .accessibilityHidden(appState.audioRecoveryState == .healthy)
-            
+
             if appState.wasAutoStopped && isStopped {
                 let reason = appState.autoStopReason ?? .silence
                 HStack(spacing: 6) {
@@ -2716,7 +2826,7 @@ struct TerminalHeader: View {
                         .stroke(ColorPalette.Accent.amber.opacity(0.2), lineWidth: 1)
                 )
             }
-            
+
             if appState.calendarEventEndedWhileRecording && appState.isRecording {
                 HStack(spacing: 6) {
                     Image(systemName: "calendar.badge.clock")
@@ -2745,14 +2855,14 @@ struct TerminalHeader: View {
                                 .fill(Color(hex: "F85149"))
                                 .frame(width: 8, height: 8)
                                 .shadow(color: Color(hex: "F85149").opacity(0.5), radius: 4)
-                            
+
                             Text(appState.formattedDuration)
                                 .font(.system(size: 13, weight: .medium, design: .default))
                                 .monospacedDigit()
                                 .foregroundStyle(Color(hex: "F85149"))
                         }
                         .fixedSize()
-                        
+
                         if appState.captureMicrophone {
                             HStack(spacing: 4) {
                                 Image(systemName: "mic.fill")
@@ -2770,7 +2880,7 @@ struct TerminalHeader: View {
                             }
                             .fixedSize()
                         }
-                        
+
                         if appState.captureSystemAudio {
                             HStack(spacing: 4) {
                                 Image(systemName: "speaker.wave.2.fill")
@@ -2790,12 +2900,12 @@ struct TerminalHeader: View {
                         }
                     }
                 }
-                
+
                 HStack(spacing: 6) {
                     Text("~")
                         .font(.system(size: 13, weight: .medium, design: .default))
                         .foregroundStyle(Color(hex: "484F58"))
-                    
+
                     if isEditingTitle {
                         TextField("session_name", text: $meetingTitle)
                             .textFieldStyle(.plain)
@@ -2901,7 +3011,7 @@ struct SourceWaveform: View {
     let bandCount: Int
     let barWidth: CGFloat
     let maxHeight: CGFloat
-    
+
     init(level: Float, color: Color, bandCount: Int = 5, barWidth: CGFloat = 3, maxHeight: CGFloat = 18) {
         self.level = level
         self.color = color
@@ -2909,13 +3019,13 @@ struct SourceWaveform: View {
         self.barWidth = barWidth
         self.maxHeight = maxHeight
     }
-    
+
     @State private var bands: [CGFloat] = []
     @State private var previousLevel: CGFloat = 0
     @State private var idleTick = false
-    
+
     let timer = Timer.publish(every: 1.0 / 16.0, on: .main, in: .common).autoconnect()
-    
+
     var body: some View {
         HStack(spacing: 2) {
             ForEach(0..<bandCount, id: \.self) { index in
@@ -2942,7 +3052,7 @@ struct SourceWaveform: View {
                 let amplified = gated > 0 ? min(1.0, pow(gated, 0.2)) : 0.0
                 let delta = amplified - previousLevel
                 previousLevel = amplified
-                
+
                 for i in 0..<bandCount {
                     let position = CGFloat(i) / CGFloat(bandCount - 1)
                     let bassWeight = 1.0 - position * 0.35
@@ -2963,9 +3073,9 @@ struct SourceWaveform: View {
 struct AudioSourcePanel: View {
     @EnvironmentObject var appState: AppState
     @State private var isTesting = false
-    
+
     private var isActive: Bool { isTesting && appState.isMonitoring }
-    
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             // Mic pill + waveform below it
@@ -3140,9 +3250,9 @@ struct AudioSourcePill: View {
     let label: String
     @Binding var isEnabled: Bool
     let color: Color
-    
+
     @State private var isHovering = false
-    
+
     var body: some View {
         Button {
             isEnabled.toggle()
@@ -3151,7 +3261,7 @@ struct AudioSourcePill: View {
                 Circle()
                     .fill(isEnabled ? color.opacity(0.5) : Color(hex: "71717A"))
                     .frame(width: 6, height: 6)
-                
+
                 Text(label)
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(isEnabled ? Color(hex: "D4D4D8") : Color(hex: "71717A"))
