@@ -60,7 +60,12 @@ final class AccountJourneys: XCTestCase {
         // Honour the machine's navigation setting; never change global defaults.
         let mode = app.staticTexts["ui-test.keyboardNavigation"]
         XCTAssertTrue(mode.waitForExistence(timeout: 5))
-        try XCTSkipUnless(mode.value as? String == "Keyboard navigation on",
+        guard let state = mode.value as? String,
+              ["Keyboard navigation on", "Keyboard navigation off"].contains(state) else {
+            XCTFail("Keyboard navigation badge is unreadable: value=\(String(describing: mode.value)), label=\(mode.label)")
+            return
+        }
+        try XCTSkipUnless(state == "Keyboard navigation on",
                           "Keyboard navigation is off. Enable it for the Mac keyboard acceptance run.")
         XCTAssertTrue(app.buttons["Copy answer"].waitForExistence(timeout: 5))
         for _ in 0..<12 {
