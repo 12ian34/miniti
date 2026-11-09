@@ -328,14 +328,7 @@ struct LiveInsightsContent: View {
                     // Action Items
                     if !appState.liveActionItems.isEmpty {
                         TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                            SelectableTextView(
-                                SelectableAttributed.bulletList(
-                                    items: appState.liveActionItems,
-                                    prefix: "→",
-                                    prefixColor: Color(hex: "3FB950"),
-                                    fontSize: readingMetrics.insightBodySize
-                                )
-                            )
+                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
                         }
                     }
                     
@@ -444,27 +437,13 @@ private struct LiveInsightsContent_iOSPlain: View {
 
                     if !appState.liveDiscussionFlow.isEmpty {
                         InsightsPlainBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
-                            SelectableTextView(
-                                SelectableAttributed.bulletList(
-                                    items: appState.liveDiscussionFlow,
-                                    prefix: "->",
-                                    prefixColor: Color(hex: "D29922"),
-                                    fontSize: readingMetrics.insightBodySize
-                                )
-                            )
+                            InsightList(items: appState.liveDiscussionFlow, markerColor: ColorPalette.Accent.orange)
                         }
                     }
 
                     if !appState.liveActionItems.isEmpty {
                         InsightsPlainBlock_iOS(title: "action items", color: Color(hex: "3FB950")) {
-                            SelectableTextView(
-                                SelectableAttributed.bulletList(
-                                    items: appState.liveActionItems,
-                                    prefix: "→",
-                                    prefixColor: Color(hex: "3FB950"),
-                                    fontSize: readingMetrics.insightBodySize
-                                )
-                            )
+                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
                         }
                     }
                     
@@ -1807,40 +1786,19 @@ struct TerminalInsightsContent: View {
 
                 if !meeting.discussionFlow.isEmpty {
                     TerminalSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                        SelectableTextView(
-                            SelectableAttributed.bulletList(
-                                items: meeting.discussionFlow,
-                                prefix: "->",
-                                prefixColor: Color(hex: "D29922"),
-                                fontSize: readingMetrics.insightBodySize
-                            )
-                        )
+                        InsightList(items: meeting.discussionFlow, markerColor: ColorPalette.Accent.orange)
                     }
                 }
 
                 if !meeting.actionItems.isEmpty {
                     TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                        SelectableTextView(
-                            SelectableAttributed.bulletList(
-                                items: meeting.actionItems,
-                                prefix: "→",
-                                prefixColor: Color(hex: "3FB950"),
-                                fontSize: readingMetrics.insightBodySize
-                            )
-                        )
+                        InsightList(items: meeting.actionItems, markerColor: ColorPalette.Status.success)
                     }
                 }
 
                 if !meeting.keyDecisions.isEmpty {
                     TerminalSection(title: "decisions", color: Color(hex: "D29922")) {
-                        SelectableTextView(
-                            SelectableAttributed.bulletList(
-                                items: meeting.keyDecisions,
-                                prefix: "->",
-                                prefixColor: Color(hex: "D29922"),
-                                fontSize: readingMetrics.insightBodySize
-                            )
-                        )
+                        InsightList(items: meeting.keyDecisions, markerColor: ColorPalette.Accent.orange)
                     }
                 }
                 
@@ -3768,38 +3726,6 @@ private struct CoachingMetricLineChart: View {
     }
 }
 
-struct TerminalListItem: View {
-    @Environment(\.readingMetrics) private var readingMetrics
-    let index: Int
-    let text: String
-    let style: ListStyle
-    
-    enum ListStyle {
-        case arrow
-        case bullet
-    }
-    
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            switch style {
-            case .arrow:
-                Text("->")
-                    .font(.system(size: 12, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "D29922"))
-            case .bullet:
-                Text("•")
-                    .font(.system(size: 12, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "484F58"))
-            }
-            
-            Text(text)
-                .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
-                .foregroundStyle(ColorPalette.Text.secondary)
-                .lineSpacing(readingMetrics.insightLineSpacing)
-        }
-    }
-}
-
 struct TerminalTag: View {
     let text: String
     
@@ -3966,26 +3892,21 @@ struct InsightSection<Content: View>: View {
     }
 }
 
-/// Meeting actions are readable/exportable text, not a local completion checklist.
-struct ActionItemRow: View {
+/// Standard insight lists share reading metrics and a single native selection
+/// surface. Selection may span items; there is no task-completion state.
+struct InsightList: View {
     @Environment(\.readingMetrics) private var readingMetrics
-    let text: String
+    let items: [String]
+    var marker: SelectableAttributed.ListMarker = .literal("→")
+    let markerColor: Color
+    var textColor: Color = ColorPalette.Text.secondary
 
     var body: some View {
-        SelectableTextView(SelectableAttributed.bulletList(
-            items: [text],
-            prefix: "→",
-            prefixColor: ColorPalette.Status.success,
-            fontSize: readingMetrics.insightBodySize,
+        SelectableTextView(SelectableAttributed.list(
+            items: items, marker: marker, markerColor: markerColor,
+            fontSize: readingMetrics.insightBodySize, textColor: textColor,
             lineSpacing: readingMetrics.insightLineSpacing
         ))
-    }
-}
-
-struct BulletPoint: View {
-    let text: String
-    var body: some View {
-        TerminalListItem(index: 0, text: text, style: .arrow)
     }
 }
 

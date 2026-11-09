@@ -577,7 +577,19 @@ enum SelectableAttributed {
         ])
     }
 
-    /// Bulleted list — each item rendered on its own line with a prefix, all in one string.
+    enum ListMarker {
+        case literal(String)
+        case numbered
+
+        func text(at index: Int) -> String {
+            switch self {
+            case .literal(let prefix): return prefix.isEmpty ? "" : prefix + " "
+            case .numbered: return "\(index + 1). "
+            }
+        }
+    }
+
+    /// Compatibility entry point for Sales/template bullets.
     static func bulletList(
         items: [String],
         prefix: String,
@@ -586,25 +598,54 @@ enum SelectableAttributed {
         textColor: Color = ColorPalette.Text.secondary,
         lineSpacing: CGFloat = 0
     ) -> NSAttributedString {
+        list(items: items, marker: .literal(prefix), markerColor: prefixColor,
+             fontSize: fontSize, textColor: textColor, lineSpacing: lineSpacing)
+    }
+
+    /// One selectable document per list. Measure the marker in its actual font,
+    /// so wrapped text and multi-digit numbered items share the body column.
+    static func list(
+        items: [String],
+        marker: ListMarker,
+        markerColor: Color,
+        fontSize: CGFloat,
+        textColor: Color = ColorPalette.Text.secondary,
+        lineSpacing: CGFloat
+    ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let font = appFont(size: fontSize, weight: .regular)
-        let prefixFont = appFont(size: fontSize, weight: .medium)
-        let para = NSMutableParagraphStyle()
-        para.paragraphSpacing = 6
-        para.lineSpacing = lineSpacing
-        para.headIndent = (prefix.count == 3 ? 32 : 20) // crude indent for wrapped lines
-        for (idx, item) in items.enumerated() {
-            result.append(NSAttributedString(string: prefix + " ", attributes: [
-                .font: prefixFont,
-                .foregroundColor: platformColor(for: prefixColor),
-                .paragraphStyle: para,
-            ]))
-            let trailing = idx == items.count - 1 ? "" : "\n"
-            result.append(NSAttributedString(string: item + trailing, attributes: [
+        let markerFont = appFont(size: fontSize, weight: .medium)
+        let markers = items.indices.map { marker.text(at: $0) }
+        let widths = markers.map { NSAttributedString(string: $0, attributes: [.font: markerFont]).size().width }
+        let bodyIndent = widths.max() ?? 0
+        for (index, item) in items.enumerated() {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.paragraphSpacing = 6
+            paragraph.lineSpacing = lineSpacing
+            paragraph.firstLineHeadIndent = bodyIndent - widths[index]
+            paragraph.headIndent = bodyIndent
+            let rendered = markers[index] + item + (index == items.count - 1 ? "" : "\n")
+            let attributed = NSMutableAttributedString(string: rendered, attributes: [
                 .font: font,
                 .foregroundColor: platformColor(for: textColor),
-                .paragraphStyle: para,
-            ]))
+                .paragraphStyle: paragraph,
+            ])
+            attributed.addAttributes([
+                .font: markerFont,
+                .foregroundColor: platformColor(for: markerColor),
+            ], range: NSRange(location: 0, length: markers[index].utf16.count))
+            // An explicit paragraph break inside an item is a continuation,
+            // not another marker. Keep the original text/newlines unchanged.
+            let continuation = paragraph.mutableCopy() as! NSMutableParagraphStyle
+            continuation.firstLineHeadIndent = bodyIndent
+            rendered.enumerateSubstrings(in: rendered.startIndex..<rendered.endIndex, options: .byParagraphs) {
+                _, _, range, _ in
+                if range.lowerBound != rendered.startIndex {
+                    attributed.addAttribute(.paragraphStyle, value: continuation,
+                                            range: NSRange(range, in: rendered))
+                }
+            }
+            result.append(attributed)
         }
         return result
     }

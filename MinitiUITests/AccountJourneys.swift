@@ -186,8 +186,29 @@ final class AccountJourneys: XCTestCase {
         XCTAssertFalse(app.keyboards.firstMatch.exists, "Action text is selectable, not editable")
         app.buttons["meeting.section.notes"].tap()
         app.buttons["meeting.section.insights"].tap()
-        XCTAssertTrue(action.exists)
+        XCTAssertTrue(action.waitForExistence(timeout: 5))
         XCTAssertEqual(completionButtons.count, 0)
+    }
+
+    func testSavedInsightListOffersNativeSelectionAcrossItems() {
+        launch(screenshotScene: "meeting")
+        let first = "Share the data retention and deletion policy with Marcus"
+        let last = "Send the security questionnaire back before Friday"
+        let actions = app.textViews.matching(NSPredicate(format: "value CONTAINS %@", first)).firstMatch
+        for _ in 0..<5 {
+            if actions.exists && actions.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(actions.exists && actions.isHittable, app.debugDescription)
+        XCTAssertTrue((actions.value as? String)?.contains(last) == true,
+                      "All action items must share one selectable text surface")
+        captureAppScreen("Saved insight lists before selection")
+        actions.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 50, dy: 8)).press(forDuration: 1)
+        let copy = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        captureAppScreen("Saved action native selection menu")
     }
 
     func testLiveMeetingSectionsHaveSharedTargetsAndRetainNotes() {

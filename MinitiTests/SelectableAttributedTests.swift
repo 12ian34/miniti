@@ -248,9 +248,129 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertEqual(attr.length, 0)
     }
 
+    func testListWrappingAlignsWithTheFirstWordAtReadingSizes() throws {
+        for points: CGFloat in [13, 17, 36] {
+            for prefix in ["→", "->", "•"] {
+                let text = SelectableAttributed.bulletList(
+                    items: [String(repeating: "readable words ", count: 12)],
+                    prefix: prefix, prefixColor: ColorPalette.Status.success,
+                    fontSize: points, lineSpacing: 5)
+                let storage = NSTextStorage(attributedString: text)
+                let layout = NSLayoutManager()
+                let container = NSTextContainer(size: CGSize(width: 260, height: 4000))
+                container.lineFragmentPadding = 0
+                storage.addLayoutManager(layout)
+                layout.addTextContainer(container)
+                layout.ensureLayout(for: container)
+                let firstWord = layout.glyphIndexForCharacter(at: (prefix + " ").utf16.count)
+                var line = NSRange()
+                let firstRect = layout.lineFragmentRect(forGlyphAt: firstWord, effectiveRange: &line)
+                let firstX = firstRect.minX + layout.location(forGlyphAt: firstWord).x
+                let nextLine = NSMaxRange(line)
+                XCTAssertLessThan(nextLine, layout.numberOfGlyphs)
+                let nextRect = layout.lineFragmentRect(forGlyphAt: nextLine, effectiveRange: nil)
+                let wrappedX = nextRect.minX + layout.location(forGlyphAt: nextLine).x
+                XCTAssertEqual(firstX, wrappedX, accuracy: 0.5, "\(prefix), \(points) pt")
+            }
+        }
+    }
+
     func testBodyBuilderHandlesEmptyString() {
         let attr = SelectableAttributed.body("")
         XCTAssertEqual(attr.length, 0)
+    }
+
+    func testNumberedListAlignsSingleAndDoubleDigitItemsAndPreservesParagraphs() throws {
+        let items = (1...12).map { "Item \($0) " + String(repeating: "readable words ", count: 8) }
+        for points: CGFloat in [13, 36] {
+            let text = SelectableAttributed.list(items: items, marker: .numbered,
+                markerColor: ColorPalette.Text.muted, fontSize: points, lineSpacing: 5)
+            XCTAssertEqual(text.string, items.enumerated().map { "\($0.offset + 1). \($0.element)" }.joined(separator: "\n"))
+            let storage = NSTextStorage(attributedString: text)
+            let layout = NSLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: 280, height: 20000))
+            container.lineFragmentPadding = 0
+            storage.addLayoutManager(layout); layout.addTextContainer(container)
+            layout.ensureLayout(for: container)
+            var bodyColumn: CGFloat?
+            for index in 1...12 {
+                let range = (text.string as NSString).range(of: "Item \(index) ")
+                let glyph = layout.glyphIndexForCharacter(at: range.location)
+                var line = NSRange()
+                let rect = layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &line)
+                let x = rect.minX + layout.location(forGlyphAt: glyph).x
+                if let bodyColumn { XCTAssertEqual(x, bodyColumn, accuracy: 0.5) }
+                bodyColumn = x
+                let next = NSMaxRange(line)
+                let nextRect = layout.lineFragmentRect(forGlyphAt: next, effectiveRange: nil)
+                XCTAssertEqual(x, nextRect.minX + layout.location(forGlyphAt: next).x, accuracy: 0.5)
+            }
+        }
+        let content = "First 👩🏽‍💻 line\r\nSecond paragraph\nThird paragraph"
+        let text = SelectableAttributed.bulletList(items: [content, "Last item"], prefix: "→",
+            prefixColor: ColorPalette.Status.success, fontSize: 17, lineSpacing: 5)
+        XCTAssertEqual(text.string, "→ " + content + "\n→ Last item")
+        let first = try XCTUnwrap(text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        for word in ["Second", "Third"] {
+            let range = (text.string as NSString).range(of: word)
+            let continuation = try XCTUnwrap(text.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)
+            XCTAssertEqual(continuation.firstLineHeadIndent, first.headIndent)
+            XCTAssertEqual(continuation.headIndent, first.headIndent)
+        }
+    }
+
+    @MainActor
+    func testInsightListUsesOneSelectableNativeDocumentAtEveryReadingScale() async throws {
+        for scale in InterfaceScale.allCases {
+            for size in [DynamicTypeSize.large, .accessibility5] {
+                let root = InsightList(items: ["First action", "Second action"], markerColor: ColorPalette.Status.success)
+                    .minitiInterfaceScale(scale, systemSize: size)
+                #if os(macOS)
+                let host = NSHostingView(rootView: root)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 700),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host; window.orderFront(nil)
+                defer { window.orderOut(nil); window.close() }
+                #else
+                let host = UIHostingController(rootView: root)
+                let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+                let previousWindow = scene.windows.first(where: \.isKeyWindow)
+                let window = UIWindow(windowScene: scene)
+                window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+                window.rootViewController = host; window.makeKeyAndVisible()
+                host.view.layoutIfNeeded()
+                defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+                #endif
+                try await TestSupport.waitUntil {
+                    Self.nativeReadingTextViews(in: host.viewForReadingTest).contains {
+                        Self.readingText($0).string.contains("Second action")
+                    }
+                }
+                let views = Self.nativeReadingTextViews(in: host.viewForReadingTest)
+                XCTAssertEqual(views.count, 1, "Selection must span the whole list")
+                let view = try XCTUnwrap(views.first)
+                let text = Self.readingText(view)
+                XCTAssertEqual(text.string, "→ First action\n→ Second action")
+                XCTAssertTrue(view.isSelectable)
+                XCTAssertFalse(view.isEditable)
+                let metrics = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: size)
+                let font = try XCTUnwrap(text.attribute(.font, at: 2, effectiveRange: nil) as? ReadingNativeFont)
+                let paragraph = try XCTUnwrap(text.attribute(.paragraphStyle, at: 2, effectiveRange: nil) as? NSParagraphStyle)
+                XCTAssertEqual(font.pointSize, metrics.insightBodySize, accuracy: 0.01)
+                XCTAssertEqual(paragraph.lineSpacing, metrics.insightLineSpacing, accuracy: 0.01)
+                let selection = NSRange(location: 2, length: text.length - 2)
+                #if os(macOS)
+                view.setSelectedRange(selection)
+                XCTAssertEqual(view.selectedRange(), selection)
+                #else
+                view.selectedRange = selection
+                XCTAssertEqual(view.selectedRange, selection)
+                XCTAssertFalse(view.adjustsFontForContentSizeCategory)
+                #endif
+                XCTAssertEqual(Self.readingText(view).string, text.string)
+            }
+        }
     }
 
     func testBodyBuilderUsesReadableProportionalSystemFont() {

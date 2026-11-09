@@ -2174,29 +2174,14 @@ struct LiveInsightsPanel: View {
 
                     if !appState.liveDiscussionFlow.isEmpty {
                         LiveInsightSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                            SelectableTextView(
-                                SelectableAttributed.bulletList(
-                                    items: appState.liveDiscussionFlow.enumerated().map { "\($0.offset + 1). \($0.element)" },
-                                    prefix: "",
-                                    prefixColor: Color(hex: "F59E0B"),
-                                    fontSize: readingMetrics.insightSecondarySize,
-                                    textColor: Color(hex: "D4D4D8")
-                                )
-                            )
+                            InsightList(items: appState.liveDiscussionFlow, marker: .numbered,
+                                        markerColor: ColorPalette.Text.muted, textColor: ColorPalette.Text.muted)
                         }
                     }
 
                     if !appState.liveActionItems.isEmpty {
                         LiveInsightSection(title: "actions", color: Color(hex: "3FB950")) {
-                            SelectableTextView(
-                                SelectableAttributed.bulletList(
-                                    items: appState.liveActionItems,
-                                    prefix: "→",
-                                    prefixColor: Color(hex: "3FB950"),
-                                    fontSize: readingMetrics.insightSecondarySize,
-                                    textColor: Color(hex: "E6EDF3")
-                                )
-                            )
+                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
                         }
                     }
 

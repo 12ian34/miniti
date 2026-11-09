@@ -668,31 +668,19 @@ struct MeetingDetail_iOS: View {
 
                     if !meeting.discussionFlow.isEmpty {
                         HistoricalDetailBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
-                                    TerminalListItem(index: index, text: item, style: .arrow)
-                                }
-                            }
+                            InsightList(items: meeting.discussionFlow, markerColor: ColorPalette.Accent.orange)
                         }
                     }
 
                     if !meeting.actionItems.isEmpty {
                         HistoricalDetailBlock_iOS(title: "actions", color: Color(hex: "3FB950")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(meeting.actionItems.enumerated()), id: \.offset) { index, item in
-                                    ActionItemRow(text: item)
-                                }
-                            }
+                            InsightList(items: meeting.actionItems, markerColor: ColorPalette.Status.success)
                         }
                     }
 
                     if !meeting.keyDecisions.isEmpty {
                         HistoricalDetailBlock_iOS(title: "decisions", color: Color(hex: "D29922")) {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ForEach(Array(meeting.keyDecisions.enumerated()), id: \.offset) { index, decision in
-                                    TerminalListItem(index: index, text: decision, style: .arrow)
-                                }
-                            }
+                            InsightList(items: meeting.keyDecisions, markerColor: ColorPalette.Accent.orange)
                         }
                     }
 
