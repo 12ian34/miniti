@@ -8,6 +8,7 @@
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
 - improvement: (macOS and iOS) clearer question context, Copy text and coaching details
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (macOS) notes stay editable when their pane is resized smaller
 - fix: (macOS) main, Settings and Debug Log windows stay dark when macOS uses Light appearance
 
 ### 2026-11-09 - v3.8.0

@@ -1751,7 +1751,8 @@ struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
 
     @State private var notesHeight: CGFloat = 100
     @GestureState private var dragOffset: CGFloat = 0
-    private let minNotesHeight: CGFloat = 50
+    // The 44pt header plus editor insets must still leave an editable line.
+    private let minNotesHeight: CGFloat = 100
     private let maxNotesHeight: CGFloat = 500
     private let minTranscriptHeight: CGFloat = 200
     private let dividerHeight: CGFloat = 8
@@ -1839,6 +1840,7 @@ struct NotesEditor: View {
 
             // Text editor
             TextEditor(text: $appState.liveNotes)
+                .accessibilityIdentifier("meeting.notes.editor")
                 .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
                 .scrollContentBackground(.hidden)

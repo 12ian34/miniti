@@ -55,6 +55,42 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.buttons["coaching.sort.date"].waitForExistence(timeout: 10), app.debugDescription)
     }
 
+    #if os(macOS)
+    func testMacLiveNotesRemainEditableAtMinimumHeight() {
+        launch(screenshotScene: "recording-insights")
+        let copy = app.buttons["section.copy.notes"]
+        let editor = app.textViews["meeting.notes.editor"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(editor.exists, app.debugDescription)
+        // The divider sits above the header's 10pt inset and 24pt Copy target.
+        let initialHeight = editor.frame.height
+        let handle = copy.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: -80, dy: -14))
+        handle.click(forDuration: 0.2, thenDragTo: handle.withOffset(CGVector(dx: 0, dy: -100)))
+        XCTAssertGreaterThan(editor.frame.height, initialHeight + 80,
+                             "Prove the real divider moved before checking its lower bound")
+        let expandedHandle = copy.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: -80, dy: -14))
+        expandedHandle.click(forDuration: 0.2,
+                             thenDragTo: expandedHandle.withOffset(CGVector(dx: 0, dy: 180)))
+        let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
+        capture.name = "Live notes at minimum pane height"
+        capture.lifetime = .keepAlways; add(capture)
+        let frames = XCTAttachment(string: "Copy: \(copy.frame)\nEditor: \(editor.frame)")
+        frames.name = "Minimum notes editor frames"
+        frames.lifetime = .keepAlways; add(frames)
+        XCTAssertGreaterThanOrEqual(editor.frame.height, 32,
+                                    "Keep room for a readable editable line below the header")
+        XCTAssertTrue(editor.isHittable)
+        let original = editor.value as? String ?? ""
+        editor.click()
+        editor.typeText(" UI1 minimum note")
+        let updated = editor.value as? String ?? ""
+        XCTAssertTrue(updated.contains("UI1 minimum note"))
+        XCTAssertEqual(updated.count, original.count + " UI1 minimum note".count)
+    }
+    #endif
+
     func testCoachingHistorySortTargetsDoNotOverlap() {
         openCoachingHistory()
         #if os(macOS)
