@@ -651,7 +651,7 @@ private struct TrainingMetricRow_iOS: View {
     }
 }
 
-private struct InsightsPlainBlock_iOS<Content: View>: View {
+struct InsightsPlainBlock_iOS<Content: View>: View {
     let title: String
     let color: Color
     let info: TerminalSectionInfo?
@@ -670,22 +670,10 @@ private struct InsightsPlainBlock_iOS<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(color)
-                    .frame(width: 3, height: 12)
-                    .cornerRadius(1.5)
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold, design: .default))
-                    .foregroundStyle(color)
-                if let info {
-                    TerminalSectionInfoButton(info: info, accent: color)
-                }
-            }
-            
+        MinitiInsightSection(title: title, color: color, style: .mobile) {
+            if let info { TerminalSectionInfoButton(info: info, accent: color) }
+        } content: {
             content()
-                .padding(.leading, 12)
         }
     }
 }
@@ -1933,35 +1921,11 @@ struct TerminalSection<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack(spacing: 8) {
-                if headerStyle == .markdown {
-                    Text("##")
-                        .font(.system(size: 12, weight: .bold, design: .default))
-                        .foregroundStyle(color)
-                }
-                Text(title)
-                    .font(.system(size: 12, weight: .bold, design: .default))
-                    .foregroundStyle(color)
-                if let info {
-                    TerminalSectionInfoButton(info: info, accent: color)
-                }
-            }
-            
-            // Content
+        MinitiInsightSection(title: title, color: color, style: headerStyle == .markdown ? .markdownCard : .plainCard) {
+            if let info { TerminalSectionInfoButton(info: info, accent: color) }
+        } content: {
             content()
-                .padding(.leading, headerStyle == .markdown ? 20 : 0)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color(hex: "0F0F11"))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "1C1C1F"), lineWidth: 1)
-                )
-        )
     }
 }
 

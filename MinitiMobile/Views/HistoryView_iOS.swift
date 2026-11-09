@@ -1103,7 +1103,7 @@ struct HistoricalSavedTrainingContent_iOS: View {
     }
 }
 
-private struct HistoricalDetailBlock_iOS<Content: View>: View {
+struct HistoricalDetailBlock_iOS<Content: View>: View {
     let title: String
     let color: Color
     let info: HistoricalMetricInfo_iOS?
@@ -1122,27 +1122,15 @@ private struct HistoricalDetailBlock_iOS<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(color)
-                    .frame(width: 3, height: 12)
-                    .cornerRadius(1.5)
-                Text(title)
-                    .font(.system(size: 12, weight: .semibold, design: .default))
-                    .foregroundStyle(color)
-                if let info {
-                    HistoricalMetricInfoButton_iOS(info: info, accent: color)
-                }
-            }
-            
+        MinitiInsightSection(title: title, color: color, style: .mobile) {
+            if let info { HistoricalMetricInfoButton_iOS(info: info, accent: color) }
+        } content: {
             content()
-                .padding(.leading, 12)
         }
     }
 }
 
-private struct HistoricalMetricInfo_iOS {
+struct HistoricalMetricInfo_iOS {
     let title: String
     let summary: String
     let guidance: [String]

@@ -161,21 +161,43 @@ enum MinitiCardSurfaceStyle {
     case standard
     case inset
     case accented(Color)
+    case insight
+
+    fileprivate var radius: CGFloat {
+        switch self {
+        case .insight: return MinitiDesignSystem.Radius.control
+        default: return MinitiDesignSystem.Radius.card
+        }
+    }
 
     fileprivate var fill: Color {
         switch self {
         case .standard: return ColorPalette.Background.tertiary
         case .inset: return ColorPalette.Background.panel
-        case .accented: return ColorPalette.Background.panel
+        case .accented, .insight: return ColorPalette.Background.panel
         }
     }
 
     fileprivate var border: Color {
         switch self {
-        case .standard: return ColorPalette.Border.primary
+        case .standard, .insight: return ColorPalette.Border.primary
         case .inset: return ColorPalette.Border.light
         case .accented(let accent): return accent.opacity(0.35)
         }
+    }
+}
+
+/// Shared card drawing without imposing a content width or padding policy.
+struct MinitiCardBackground: View {
+    let style: MinitiCardSurfaceStyle
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: style.radius)
+            .fill(style.fill)
+            .overlay(
+                RoundedRectangle(cornerRadius: style.radius)
+                    .stroke(style.border, lineWidth: 1)
+            )
     }
 }
 
@@ -204,14 +226,61 @@ struct MinitiCardSurface<Content: View>: View {
             .padding(contentPadding)
             .frame(maxWidth: .infinity, alignment: .topLeading)
             .frame(height: height, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
-                    .fill(style.fill)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
-                            .stroke(style.border, lineWidth: 1)
-                    )
-            )
+            .background(MinitiCardBackground(style: style))
+    }
+}
+
+/// Plain sections retain platform density; the existing card presentation
+/// explicitly chooses a markdown prefix or a plain title.
+enum MinitiInsightSectionStyle: Equatable {
+    case desktop, mobile, markdownCard, plainCard
+
+    var isCard: Bool { self == .markdownCard || self == .plainCard }
+    var headerSize: CGFloat { self == .desktop ? 10 : 12 }
+    var headerWeight: Font.Weight { isCard ? .bold : .semibold }
+    var headerSpacing: CGFloat { isCard ? MinitiDesignSystem.Spacing.standard : MinitiDesignSystem.Spacing.small }
+    var contentSpacing: CGFloat { isCard ? MinitiDesignSystem.Spacing.comfortable : MinitiDesignSystem.Spacing.standard }
+    var contentIndent: CGFloat {
+        switch self {
+        case .markdownCard: return 20
+        case .plainCard: return 0
+        case .desktop, .mobile: return MinitiDesignSystem.Spacing.comfortable
+        }
+    }
+}
+
+/// Section geometry only. The caller retains its content and native help
+/// control, including that control's presentation state and accessibility.
+struct MinitiInsightSection<Accessory: View, Content: View>: View {
+    let title: String
+    let color: Color
+    let style: MinitiInsightSectionStyle
+    @ViewBuilder let accessory: () -> Accessory
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: style.contentSpacing) {
+            HStack(spacing: style.headerSpacing) {
+                if style == .markdownCard {
+                    Text("##")
+                        .font(.system(size: style.headerSize, weight: style.headerWeight))
+                        .foregroundStyle(color)
+                } else if !style.isCard {
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(color)
+                        .frame(width: 3, height: 12)
+                }
+                Text(title)
+                    .font(.system(size: style.headerSize, weight: style.headerWeight))
+                    .foregroundStyle(color)
+                accessory()
+            }
+            content().padding(.leading, style.contentIndent)
+        }
+        .padding(style.isCard ? MinitiDesignSystem.Spacing.section : 0)
+        .background {
+            if style.isCard { MinitiCardBackground(style: .insight) }
+        }
     }
 }
 

@@ -311,19 +311,58 @@ final class ColorPaletteTests: XCTestCase {
         XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, "Actual copy label must use its readable role")
     }
 
+    @MainActor
+    func testLiveAndSavedInsightSectionsSharePlatformGeometry() throws {
+        #if os(macOS)
+        let live = AnyView(LiveInsightSection(title: "actions", color: ColorPalette.Insights.actions) {
+            Text("Body fixture").foregroundStyle(ColorPalette.Text.secondary)
+        })
+        let saved = AnyView(DetailInsightBlock(title: "actions", color: ColorPalette.Insights.actions) {
+            Text("Body fixture").foregroundStyle(ColorPalette.Text.secondary)
+        }.padding(.horizontal, 16))
+        #else
+        let live = AnyView(InsightsPlainBlock_iOS(title: "actions", color: ColorPalette.Insights.actions) {
+            Text("Body fixture").foregroundStyle(ColorPalette.Text.secondary)
+        })
+        let saved = AnyView(HistoricalDetailBlock_iOS(title: "actions", color: ColorPalette.Insights.actions) {
+            Text("Body fixture").foregroundStyle(ColorPalette.Text.secondary)
+        })
+        #endif
+        func render(_ view: AnyView) throws -> CGImage {
+            let renderer = ImageRenderer(content: view.frame(width: 420)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            return try XCTUnwrap(renderer.cgImage)
+        }
+        let liveImage = try render(live)
+        let savedImage = try render(saved)
+        XCTAssertEqual(liveImage.width, savedImage.width)
+        XCTAssertEqual(liveImage.height, savedImage.height)
+        let livePixels = try XCTUnwrap(liveImage.dataProvider?.data) as Data
+        let savedPixels = try XCTUnwrap(savedImage.dataProvider?.data) as Data
+        XCTAssertTrue(livePixels == savedPixels,
+                      "Live and saved section type, accent bar, indent and spacing must match within a platform")
+    }
+
     #if os(macOS)
     @MainActor
     func testSavedStandardSectionsUseCanonicalAccents() throws {
-        let meeting = Meeting(summaryText: "Summary fixture", actionItems: ["Action fixture"],
-                              topics: ["Topic fixture"], discussionFlow: ["Discussion fixture"])
-        let renderer = ImageRenderer(content: VStack(alignment: .leading, spacing: 16) {
-            SavedStandardInsightBlocks(meeting: meeting)
-        }.minitiInterfaceScale(.compact).frame(width: 420).padding(16)
-            .background(ColorPalette.Background.primary))
-        renderer.scale = 2
-        let raster = try XCTUnwrap(renderer.cgImage)
-        for color in [ColorPalette.Insights.summary, ColorPalette.Insights.discussion,
-                      ColorPalette.Insights.actions, ColorPalette.Insights.topics] {
+        let fixtures: [(Meeting, Color)] = [
+            (Meeting(summaryText: "Summary fixture"), ColorPalette.Insights.summary),
+            (Meeting(actionItems: ["Action fixture"]), ColorPalette.Insights.actions),
+            (Meeting(topics: ["Topic fixture"]), ColorPalette.Insights.topics),
+            (Meeting(discussionFlow: ["Discussion fixture"]), ColorPalette.Insights.discussion),
+        ]
+        for (meeting, color) in fixtures {
+            // Isolate the first 16pt: body text, action arrows and topic tags
+            // must not satisfy the header's accent assertion (review ST1).
+            let renderer = ImageRenderer(content: SavedStandardInsightBlocks(meeting: meeting)
+                .minitiInterfaceScale(.compact).frame(width: 420)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 16, alignment: .top).clipped()
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
             XCTAssertGreaterThan(try pixelCount(color, in: raster), 10)
         }
     }

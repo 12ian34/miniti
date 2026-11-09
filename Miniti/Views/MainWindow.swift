@@ -2534,22 +2534,10 @@ struct DetailInsightBlock<Content: View>: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(color)
-                    .frame(width: 3, height: 12)
-                    .cornerRadius(1.5)
-                Text(title)
-                    .font(.system(size: 10, weight: .semibold, design: .default))
-                    .foregroundStyle(color)
-                if let info {
-                    TerminalSectionInfoButton(info: info, accent: color)
-                }
-            }
-            
+        MinitiInsightSection(title: title, color: color, style: .desktop) {
+            if let info { TerminalSectionInfoButton(info: info, accent: color) }
+        } content: {
             content()
-                .padding(.leading, 12)
         }
     }
 }
