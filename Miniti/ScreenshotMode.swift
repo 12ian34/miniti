@@ -276,6 +276,13 @@ enum ScreenshotMode {
             appState.selectedSettingsTab = SettingsDestination.templates.rawValue
             appState.pendingSettingsSearchTarget = "templates.custom"
         }
+        #if MINITI_TEST_HOST
+        if AccountUITestHarness.isActive,
+           ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "insightUpdating",
+           scene.isLiveRecording || scene.opensSavedMeeting {
+            appState.isGeneratingInsights = true
+        }
+        #endif
         if scene == .persistenceIssue {
             appState.setPersistenceIssue(PersistenceIssue(operation: .pin, kind: .save))
             appState.persistenceRetryAction = {}

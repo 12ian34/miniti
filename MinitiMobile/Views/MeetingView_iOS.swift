@@ -530,24 +530,7 @@ struct MeetingView_iOS: View {
                                 await appState.generateInsights()
                             }
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 10, weight: .semibold))
-                                Text(appState.currentMeetingFinalAIInProgress ? "finishing" : "update")
-                                    .font(.system(size: 11, weight: .semibold, design: .default))
-                            }
-                            .foregroundStyle(ColorPalette.Text.primary)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(hex: "0F0F11"))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(hex: "27272A"), lineWidth: 1)
-                            )
-                            .minitiMinimumControlTarget()
+                            MinitiInsightUpdateLabel(title: appState.currentMeetingFinalAIInProgress ? "finishing" : "update")
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("insights.update")
@@ -557,6 +540,7 @@ struct MeetingView_iOS: View {
                         if appState.isGeneratingInsights {
                             HStack(spacing: 6) {
                                 ProgressView()
+                                .accessibilityIdentifier("insights.update.progress")
                                     .scaleEffect(0.6)
                                 Text("updating...")
                                     .font(.system(size: 11, weight: .medium, design: .default))

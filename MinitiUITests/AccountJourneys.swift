@@ -1,6 +1,8 @@
 import XCTest
 #if os(macOS)
 import AppKit
+#else
+import UIKit
 #endif
 
 final class AccountJourneys: XCTestCase {
@@ -446,8 +448,121 @@ final class AccountJourneys: XCTestCase {
         frameEvidence.name = "Update and neighboring mode target frames"
         frameEvidence.lifetime = .keepAlways
         add(frameEvidence)
+        assertNeutralUpdateChrome(update)
         // Layout-only: screenshot scenes do not stub user-triggered AI requests.
         // Action dispatch for the shared target primitive is covered separately.
+    }
+
+    func testLiveInsightUpdateStaysDisabledDuringGeneration() {
+        launch("insightUpdating", screenshotScene: "recording-insights")
+        #if os(macOS)
+        assertGeneratingUpdate(hasProgress: false)
+        #else
+        assertGeneratingUpdate(hasProgress: true)
+        #endif
+    }
+
+    func testSavedInsightUpdateStaysDisabledDuringGeneration() {
+        launch("insightUpdating", screenshotScene: "meeting")
+        assertGeneratingUpdate(hasProgress: true)
+    }
+
+    private func assertGeneratingUpdate(hasProgress: Bool) {
+        let update = app.buttons["insights.update"]
+        XCTAssertTrue(update.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(update.isEnabled, "Generation in progress must keep the real Update button disabled")
+        #if os(macOS)
+        let minimum: CGFloat = 24
+        #else
+        let minimum: CGFloat = 44
+        #endif
+        XCTAssertGreaterThanOrEqual(update.frame.width, minimum)
+        XCTAssertGreaterThanOrEqual(update.frame.height, minimum)
+        var frames = "disabled update: \(update.frame)"
+        if hasProgress {
+            let indicator = app.descendants(matching: .any).matching(identifier: "insights.update.progress").firstMatch
+            let status = app.staticTexts["updating..."].firstMatch
+            for neighbor in [indicator, status] {
+                XCTAssertTrue(neighbor.waitForExistence(timeout: 5), app.debugDescription)
+                XCTAssertGreaterThan(neighbor.frame.width, 0)
+                XCTAssertGreaterThan(neighbor.frame.height, 0)
+                let overlap = update.frame.intersection(neighbor.frame)
+                XCTAssertTrue(overlap.isNull || overlap.isEmpty, "Busy Update overlaps its progress sibling")
+                frames += "\nprogress sibling: \(neighbor.frame)"
+            }
+        }
+        let evidence = XCTAttachment(string: frames)
+        evidence.name = "Busy Update and progress frames"
+        evidence.lifetime = .keepAlways; add(evidence)
+        captureAppScreen("Update disabled during generation")
+        // Never activate a production AI action from the offline screenshot scenes.
+    }
+
+    func testInsightUpdateLabelKeepsNativeActionsAndDisabledState() {
+        launch("insightUpdateTargets")
+        let update = app.buttons["update.fixture.enabled"]
+        let regenerate = app.buttons["update.fixture.regenerate"]
+        let disabled = app.buttons["update.fixture.disabled"]
+        XCTAssertTrue(update.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(update.isEnabled && regenerate.isEnabled)
+        XCTAssertFalse(disabled.isEnabled)
+        XCTAssertTrue(regenerate.label.contains("regenerate") && regenerate.label.contains("sales"))
+        XCTAssertTrue(disabled.label.contains("finishing"))
+        #if os(macOS)
+        let minimum: CGFloat = 24
+        #else
+        let minimum: CGFloat = 44
+        #endif
+        for control in [update, regenerate, disabled] {
+            XCTAssertGreaterThanOrEqual(control.frame.width, minimum)
+            XCTAssertGreaterThanOrEqual(control.frame.height, minimum)
+            let coordinate = control.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1))
+            #if os(macOS)
+            coordinate.click()
+            #else
+            coordinate.tap()
+            #endif
+        }
+        let counts = app.staticTexts["update.fixture.counts"]
+        let expected = "update=1 regenerate=1 disabled=0"
+        let match = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@ OR value == %@", expected, expected), object: counts)
+        XCTAssertEqual(XCTWaiter.wait(for: [match], timeout: 3), .completed,
+                       "Native enabled buttons act once; disabled target never dispatches")
+        captureAppScreen("Shared Update native actions and disabled target")
+    }
+
+    private func assertNeutralUpdateChrome(_ update: XCUIElement) {
+        #if os(macOS)
+        // Keep the real pointer off the control: this check owns resting chrome.
+        app.windows["Miniti"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02)).click()
+        #endif
+        let native = update.screenshot().image
+        do {
+            #if os(macOS)
+            let raster = try XCTUnwrap(native.cgImage(forProposedRect: nil, context: nil, hints: nil))
+            #else
+            let raster = try XCTUnwrap(native.cgImage)
+            #endif
+            var pixels = [UInt8](repeating: 0, count: raster.width * raster.height * 4)
+            let space = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+            try pixels.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: raster.width, height: raster.height,
+                    bitsPerComponent: 8, bytesPerRow: raster.width * 4, space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+                context.draw(raster, in: CGRect(x: 0, y: 0, width: raster.width, height: raster.height))
+            }
+            var panelPixels = 0
+            for i in stride(from: 0, to: pixels.count, by: 4) {
+                if abs(Int(pixels[i]) - 15) <= 3 && abs(Int(pixels[i + 1]) - 15) <= 3 && abs(Int(pixels[i + 2]) - 17) <= 3 {
+                    panelPixels += 1
+                }
+            }
+            let fraction = Double(panelPixels) / Double(raster.width * raster.height)
+            XCTAssertGreaterThan(fraction, 0.2,
+                                 "Update must use neutral panel chrome, not just a thin background strip around the target")
+        } catch {
+            XCTFail("Could not inspect the real Update control: \(error)")
+        }
     }
 
     #if os(macOS)

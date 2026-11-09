@@ -781,37 +781,15 @@ struct MeetingDetail_iOS: View {
                     await appState.generateInsightsForMeeting(meeting)
                 }
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text(appState.finalizingInsightMeetingIDs.contains(meeting.id) ? "finishing" : (meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update"))
-                        .font(.system(size: 11, weight: .semibold, design: .default))
+                MinitiInsightUpdateLabel(title: appState.finalizingInsightMeetingIDs.contains(meeting.id) ? "finishing" : (meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")) {
                     if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                         Text("sales")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Text.muted)
                     } else if appState.insightsMode == .questions && !meeting.hasQuestions {
                         Text("questions")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Text.muted)
                     } else if appState.insightsMode == .template && !meeting.hasTemplateInsights {
                         Text((meeting.insightTemplate ?? appState.selectedInsightTemplate).shortName.lowercased())
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                            .foregroundStyle(ColorPalette.Text.muted)
                     }
                 }
-                .foregroundStyle(ColorPalette.Text.primary)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(hex: "0F0F11"))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(hex: "27272A"), lineWidth: 1)
-                )
-                .minitiMinimumControlTarget()
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("insights.update")
@@ -821,6 +799,7 @@ struct MeetingDetail_iOS: View {
             if appState.isGeneratingInsights {
                 HStack(spacing: 6) {
                     ProgressView()
+                        .accessibilityIdentifier("insights.update.progress")
                         .scaleEffect(0.7)
                     Text("updating...")
                         .font(.system(size: 11, weight: .medium, design: .default))

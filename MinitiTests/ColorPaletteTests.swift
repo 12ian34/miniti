@@ -312,6 +312,31 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testInsightUpdateLabelUsesNeutralChromeAtPlatformMinimum() throws {
+        #if os(macOS)
+        let shortcut: String? = "⌘⇧I"
+        let minimum: CGFloat = 24
+        #else
+        let shortcut: String? = nil
+        let minimum: CGFloat = 44
+        #endif
+        let labels = [
+            AnyView(MinitiInsightUpdateLabel(title: "update", shortcut: shortcut)),
+            AnyView(MinitiInsightUpdateLabel(title: "regenerate") { Text("sales") }),
+            AnyView(MinitiInsightUpdateLabel(title: "finishing")),
+        ]
+        for label in labels {
+            let renderer = ImageRenderer(content: label.background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThanOrEqual(CGFloat(raster.width), minimum * 2)
+            XCTAssertGreaterThanOrEqual(CGFloat(raster.height), minimum * 2)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Background.panel, in: raster), raster.width * raster.height / 5)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.muted, in: raster), 10)
+        }
+    }
+
+    @MainActor
     func testLiveAndSavedInsightSectionsSharePlatformGeometry() throws {
         #if os(macOS)
         let live = AnyView(LiveInsightSection(title: "actions", color: ColorPalette.Insights.actions) {
@@ -357,13 +382,17 @@ final class ColorPaletteTests: XCTestCase {
             // Isolate the first 16pt: body text, action arrows and topic tags
             // must not satisfy the header's accent assertion (review ST1).
             let renderer = ImageRenderer(content: SavedStandardInsightBlocks(meeting: meeting)
-                .minitiInterfaceScale(.compact).frame(width: 420)
+                .minitiInterfaceScale(.compact).frame(width: 420, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(height: 16, alignment: .top).clipped()
                 .background(ColorPalette.Background.primary))
             renderer.scale = 2
             let raster = try XCTUnwrap(renderer.cgImage)
-            XCTAssertGreaterThan(try pixelCount(color, in: raster), 10)
+            // Exclude the left 6pt too: the 3pt accent bar must not mask
+            // a text-only heading-colour regression (review GE2).
+            let titleRaster = try XCTUnwrap(raster.cropping(to: CGRect(
+                x: 12, y: 0, width: raster.width - 12, height: raster.height)))
+            XCTAssertGreaterThan(try pixelCount(color, in: titleRaster), 10)
         }
     }
 

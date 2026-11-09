@@ -7,6 +7,7 @@
 - improvement: (macOS and iOS) saved discussion and actions use selectable lists, along with decisions on iOS
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
 - improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
+- improvement: (macOS and iOS) matching Update buttons in live and saved insights
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help

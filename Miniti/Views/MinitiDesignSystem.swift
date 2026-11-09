@@ -319,6 +319,56 @@ extension View {
     }
 }
 
+/// Compact insight utility label. Screen owners retain state wording, native
+/// Button actions, disabled gates and any keyboard shortcut registration.
+struct MinitiInsightUpdateLabel<Detail: View>: View {
+    let title: String
+    let shortcut: String?
+    @ViewBuilder let detail: () -> Detail
+
+    init(title: String, shortcut: String? = nil, @ViewBuilder detail: @escaping () -> Detail) {
+        self.title = title
+        self.shortcut = shortcut
+        self.detail = detail
+    }
+
+    #if os(macOS)
+    private let iconSize: CGFloat = 9
+    private let titleSize: CGFloat = 10
+    private let verticalPadding: CGFloat = 5
+    private let horizontalPadding: CGFloat = 8
+    private let detailColor = ColorPalette.Text.dim
+    #else
+    private let iconSize: CGFloat = 10
+    private let titleSize: CGFloat = 11
+    private let verticalPadding: CGFloat = 7
+    private let horizontalPadding: CGFloat = 10
+    private let detailColor = ColorPalette.Text.muted
+    #endif
+
+    var body: some View {
+        MinitiControlLabel(role: .secondary, height: nil, horizontalPadding: horizontalPadding) {
+            HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: iconSize, weight: .semibold))
+                Text(title).font(.system(size: titleSize, weight: .semibold))
+                detail().font(.system(size: 10, weight: .medium)).foregroundStyle(detailColor)
+                if let shortcut {
+                    Text(shortcut).font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                }
+            }
+            .padding(.vertical, verticalPadding)
+        }
+    }
+}
+
+extension MinitiInsightUpdateLabel where Detail == EmptyView {
+    init(title: String, shortcut: String? = nil) {
+        self.init(title: title, shortcut: shortcut) { EmptyView() }
+    }
+}
+
 /// Shared compact control chrome. The enclosing Button or Menu retains
 /// ownership of actions, focus, disabled state, shortcuts, and accessibility.
 struct MinitiControlLabel<Content: View>: View {

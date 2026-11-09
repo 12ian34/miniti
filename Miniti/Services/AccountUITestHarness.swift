@@ -238,6 +238,9 @@ struct AccountUITestReady: ViewModifier {
                ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "controlTargets" {
                 ControlTargetUITestFixture()
             } else if AccountUITestHarness.isActive,
+                      ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "insightUpdateTargets" {
+                InsightUpdateUITestFixture()
+            } else if AccountUITestHarness.isActive,
                       ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "docsTargets" {
                 DocsTabContent(
                     topics: [DocTopic(label: "Fixture topic", lookupState: .answered,
@@ -282,6 +285,31 @@ struct AccountUITestReady: ViewModifier {
 }
 
 #if MINITI_TEST_HOST
+private struct InsightUpdateUITestFixture: View {
+    @State private var updateCount = 0
+    @State private var regenerateCount = 0
+    @State private var disabledCount = 0
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Button { updateCount += 1 } label: {
+                MinitiInsightUpdateLabel(title: "update")
+            }.accessibilityIdentifier("update.fixture.enabled")
+            Button { regenerateCount += 1 } label: {
+                MinitiInsightUpdateLabel(title: "regenerate") { Text("sales") }
+            }.accessibilityIdentifier("update.fixture.regenerate")
+            Button { disabledCount += 1 } label: {
+                MinitiInsightUpdateLabel(title: "finishing")
+            }.accessibilityIdentifier("update.fixture.disabled").disabled(true).opacity(0.5)
+            Text("update=\(updateCount) regenerate=\(regenerateCount) disabled=\(disabledCount)")
+                .accessibilityIdentifier("update.fixture.counts")
+        }
+        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ColorPalette.Background.primary)
+    }
+}
+
 /// The real shared labels inside native controls, with observable actions.
 /// No alternate hit-testing implementation exists in this fixture.
 private struct ControlTargetUITestFixture: View {

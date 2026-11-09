@@ -2044,28 +2044,7 @@ struct LiveInsightsPanel: View {
                                 await appState.generateInsights()
                             }
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 9, weight: .semibold))
-                                Text(appState.currentMeetingFinalAIInProgress ? "finishing" : "update")
-                                    .font(.system(size: 10, weight: .semibold, design: .default))
-                                Text("⌘⇧I")
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(Color(hex: "52525B"))
-                            }
-                            .foregroundStyle(Color(hex: "D4D4D8"))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(Color(hex: "18181B"))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(Color(hex: "27272A"), lineWidth: 1)
-                            )
-                            .contentShape(RoundedRectangle(cornerRadius: 6))
-                            .minitiMinimumControlTarget()
+                            MinitiInsightUpdateLabel(title: appState.currentMeetingFinalAIInProgress ? "finishing" : "update", shortcut: "⌘⇧I")
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("insights.update")

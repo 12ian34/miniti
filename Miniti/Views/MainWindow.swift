@@ -2143,37 +2143,15 @@ struct MeetingDetailView: View {
                             await appState.generateInsightsForMeeting(meeting)
                         }
                     } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text(appState.finalizingInsightMeetingIDs.contains(meeting.id) ? "finishing" : (meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update"))
-                                .font(.system(size: 10, weight: .semibold, design: .default))
+                        MinitiInsightUpdateLabel(title: appState.finalizingInsightMeetingIDs.contains(meeting.id) ? "finishing" : (meeting.needsInsightsAfterTranscriptEdit ? "regenerate" : "update")) {
                             if appState.insightsMode == .meddpicc && !meeting.hasMEDDPICC {
                                 Text("sales")
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(Theme.textDim)
                             } else if appState.insightsMode == .questions && !meeting.hasQuestions {
                                 Text("questions")
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(Theme.textDim)
                             } else if appState.insightsMode == .template && !meeting.hasTemplateInsights {
                                 Text((meeting.insightTemplate ?? appState.selectedInsightTemplate).shortName.lowercased())
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(Theme.textDim)
                             }
                         }
-                        .foregroundStyle(Theme.text)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Theme.bgTertiary)
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Theme.border, lineWidth: 1)
-                        )
-                        .minitiMinimumControlTarget()
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("insights.update")
@@ -2183,6 +2161,7 @@ struct MeetingDetailView: View {
                     if appState.isGeneratingInsights {
                         HStack(spacing: 6) {
                             ProgressView()
+                                .accessibilityIdentifier("insights.update.progress")
                                 .controlSize(.small)
                             Text("updating...")
                                 .font(.system(size: 10, weight: .medium, design: .default))
