@@ -239,7 +239,7 @@ struct MinitiFadingDivider: View {
     }
 }
 
-private extension View {
+extension View {
     /// Allocate target space in normal layout. Parents must allow this minimum:
     /// a smaller outer frame can still make SwiftUI content overflow its slot.
     /// Audit constrained containers; this helper is not a clipping boundary.

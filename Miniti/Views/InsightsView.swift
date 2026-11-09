@@ -867,9 +867,10 @@ private struct QuestionCard: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(ColorPalette.Border.primary)
                     )
+                    .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
+                .accessibilityLabel(showCopied ? "Question copied" : "Copy question")
             }
 
             Text(question.question)
@@ -1248,13 +1249,14 @@ private struct DocAnswerBody: View {
                         Text(showCopied ? "copied" : "copy")
                             .font(.system(size: 10, weight: .medium, design: .default))
                     }
-                    .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(Color(hex: "1C1C1F")))
+                    .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.Border.primary))
+                    .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
+                .accessibilityLabel(showCopied ? "Answer copied" : "Copy answer")
             }
 
             if !card.citations.isEmpty {
@@ -1940,9 +1942,11 @@ struct TerminalSectionInfoButton: View {
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(accent.opacity(0.75))
                 .padding(2)
+                .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
         .help("How to read this metric")
+        .accessibilityLabel("About \(info.title.lowercased())")
         #if os(iOS)
         .fullScreenCover(isPresented: $showInfo) {
             ZStack {
@@ -2033,8 +2037,10 @@ private struct TerminalSectionInfoOverlayCard_iOS: View {
                             Circle()
                                 .fill(Color.white.opacity(0.06))
                         )
+                        .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close metric help")
             }
 
             Text(info.summary)

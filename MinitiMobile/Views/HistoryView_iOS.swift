@@ -1237,8 +1237,10 @@ private struct HistoricalMetricInfoButton_iOS: View {
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(accent.opacity(0.85))
                 .padding(2)
+                .minitiMinimumControlTarget()
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("About \(info.title.lowercased())")
         .fullScreenCover(isPresented: $showInfo) {
             ZStack {
                 Color.black.opacity(0.45)
@@ -1279,8 +1281,10 @@ private struct HistoricalMetricInfoOverlayCard_iOS: View {
                             Circle()
                                 .fill(Color.white.opacity(0.08))
                         )
+                        .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel("Close metric help")
             }
 
             Text(info.summary)

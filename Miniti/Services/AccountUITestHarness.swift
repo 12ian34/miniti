@@ -229,6 +229,16 @@ struct AccountUITestReady: ViewModifier {
             if AccountUITestHarness.isActive,
                ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "controlTargets" {
                 ControlTargetUITestFixture()
+            } else if AccountUITestHarness.isActive,
+                      ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "docsTargets" {
+                DocsTabContent(
+                    topics: [DocTopic(label: "Fixture topic", lookupState: .answered,
+                                      card: DocPlaybookCard(topic: "Fixture topic", answer: "A synthetic answer with a real copy action.", citations: []))],
+                    isExtracting: false, hasMCPURL: true, autoLookup: false,
+                    onRefresh: {}, onLookup: { _ in })
+                    .frame(width: 300).padding(20)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(ColorPalette.Background.primary)
             } else {
                 content
             }

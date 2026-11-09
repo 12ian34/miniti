@@ -20,8 +20,11 @@ final class AccountJourneys: XCTestCase {
         super.tearDown()
     }
 
-    private func launch(_ scenario: String = "first", largeText: Bool = false) {
+    private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil) {
         app = XCUIApplication()
+        if let screenshotScene {
+            app.launchArguments = ["-MinitiScreenshotScene", screenshotScene]
+        }
         if largeText {
             app.launchEnvironment["MINITI_UI_TEST_LARGE_TEXT"] = "1"
         }
@@ -38,6 +41,56 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(iOS)
+    func testLiveMetricHelpAndCloseHaveNamedMinimumTargets() {
+        launch(screenshotScene: "recording-coaching")
+        assertMetricHelpTargets()
+    }
+
+    func testSavedMetricHelpAndCloseHaveNamedMinimumTargets() {
+        launch(screenshotScene: "meeting-coaching")
+        assertMetricHelpTargets()
+    }
+
+    private func assertMetricHelpTargets() {
+        let help = app.buttons["About fillers"].firstMatch
+        XCTAssertTrue(help.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertGreaterThanOrEqual(help.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(help.frame.height, 44)
+        help.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        let close = app.buttons["Close metric help"]
+        XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertGreaterThanOrEqual(close.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(close.frame.height, 44)
+        XCTAssertTrue(app.staticTexts["Fillers"].exists)
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Metric help with reachable named close action"
+        capture.lifetime = .keepAlways
+        add(capture)
+        close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(help.exists)
+    }
+
+    func testDocsAnswerCopyRespondsInItsExpandedTarget() {
+        launch("docsTargets")
+        let copy = app.buttons["Copy answer"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertTrue(app.buttons["Answer copied"].waitForExistence(timeout: 2))
+    }
+
+    func testQuestionCopyRespondsInItsExpandedTarget() {
+        launch(screenshotScene: "recording-questions")
+        let copy = app.buttons["Copy question"].firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertGreaterThanOrEqual(copy.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
+        copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertTrue(app.buttons["Question copied"].waitForExistence(timeout: 2))
+    }
+
     func testSharedTargetsHaveNonOverlappingFramesAndDispatchAtEdges() {
         launch("controlTargets")
         let left = app.buttons["target.left"], right = app.buttons["target.right"]
