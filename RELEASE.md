@@ -1,6 +1,6 @@
 # Release Process
 
-Build 164, 2026-11-09: final full validation passes: Mac 1,378 checks, iOS 1,298 and all 31 iPhone UI journeys, plus remote Apple CI. The signed/notarized DMG and distribution IPA verify successfully against 225 unchanged inputs. Ian completed Mac/mobile app QA, confirmed App Privacy and authorized release. Public Mac publication and iOS submission are being executed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
@@ -15,9 +15,9 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## Current release preparation: 3.8.0
+## Current release: 3.8.0
 
-Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for exact evidence. Build 164 passes full hosted suites, all 31 iPhone journeys, remote CI and signed-package verification. Owner Mac/mobile app QA and App Privacy are complete. Backend and Linux are already deployed; Mac publication and submission of the exact iOS build 164 are in progress. iOS latest remains 3.7.0 until actual App Store availability.
+Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for exact evidence. Build 164 passes full hosted suites, all 31 iPhone journeys, remote CI and signed-package verification. Owner Mac/mobile app QA and App Privacy are complete. Backend, Linux, Mac, website and docs are deployed. The exact iOS build 164 is waiting for review, with automatic release after approval. iOS latest remains 3.7.0 until actual App Store availability.
 
 - Hosted Apple suites use `Testing`; hardware/provider checks remain opt-in. Run Apple hosted/UI/wire/build jobs serially because they share DerivedDataLocal.
 - Apply additive backend migration `002_folders.sql`, deploy and verify v2 metering, folder sync, device labels and atomic links before distributing new Apple clients. Preserve installed Apple/Linux clients and production model settings. Production migration and deployment require release authorization.

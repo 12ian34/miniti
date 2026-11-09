@@ -1,6 +1,6 @@
 # Miniti
 
-Build 164, 2026-11-09: final full validation passes: Mac 1,378 checks, iOS 1,298 and all 31 iPhone UI journeys, plus remote Apple CI. The signed/notarized DMG and distribution IPA verify successfully against 225 unchanged inputs. Ian completed Mac/mobile app QA, confirmed App Privacy and authorized release. Public Mac publication and iOS submission are being executed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
+Released on Mac, 2026-11-09: 3.8.0 build 164 is public through the verified DMG and Sparkle feed. iOS build 164 is available in internal TestFlight and submitted as WAITING_FOR_REVIEW with automatic release after approval; 3.7.0 remains the App Store version. Full Mac/iOS suites, all 31 iPhone journeys, remote Apple CI and signed-package checks pass. Ian completed app QA and App Privacy. The backend, Linux 0.7.2, website and public docs are deployed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
 
 macOS + iOS meeting assistant app built with SwiftUI + SwiftData. Records mic + system audio (macOS) or mic-only (iOS), streams to Deepgram for live transcription with speaker diarization, generates AI insights via OpenAI. Three tiers: free managed (500 min/month), pro managed ($5/month, 5000 min/month), or BYOK (own API keys, unlimited). Pro purchase rail is platform-specific: Polar.sh on macOS and StoreKit auto-renewable subscription on iOS.
 
@@ -154,7 +154,7 @@ scripts/                           # build-dmg.sh, release-info.sh, dmg-backgrou
 
 ## 3.8.0 release, 2026-11-09
 
-Mac and iOS 3.7.0 build 149 are the previous public baseline. Build 164 is the final signed 3.8.0 candidate with the Home/folder/status refinements. Both full hosted suites, all 31 iPhone journeys, remote CI and package verification pass. Mac has no app-source compiler warnings; iOS retains two Watch upload concurrency warnings. Ian reports completed app QA and App Privacy and explicitly authorized release. Public Mac publication and iOS review submission are in progress; do not infer App Store availability from upload or submission.
+Mac 3.8.0 build 164 is released with the final Home/folder/status refinements. iOS 3.8.0 build 164 is available in TestFlight and waiting for App Review; iOS 3.7.0 build 149 remains public. Both full hosted suites, all 31 iPhone journeys, remote CI and package verification pass. Mac has no app-source compiler warnings; iOS retains two Watch upload concurrency warnings. Ian reports completed app QA and App Privacy and explicitly authorized release. The public DMG, redirects, Sparkle signature/length and Mac latest metadata verify. Do not advance iOS availability until Apple releases it.
 
 The compatible feature backend `ec6add1` is already deployed after migration 002; 848 backend tests, 43 disposable storage tests, remote wire-contract CI and 15 signed synthetic production checks pass. Linux 0.7.2 is already public. Read the [current checklist](docs/releases/3.8.0.md), [planning audit](docs/releases/3.8.0-planning-audit.md) and [development evidence](docs/releases/3.8.0-evidence.md) for exact artifacts, rollout status and remaining specialist evidence. Older private builds are historical testing artifacts.
 
