@@ -3461,7 +3461,7 @@ private struct TrainingStatHeader: View {
     }
 }
 
-private struct TrainingStatRow: View {
+struct TrainingStatRow: View {
     let label: String
     let allValue: String
     let avgValue: String
@@ -3519,15 +3519,16 @@ private struct TrainingStatRow: View {
                 Spacer(minLength: 4)
 
                 Text(allValue)
+                    .accessibilityIdentifier("coaching.stats.all.\(label)")
                     .font(.system(size: Self.fontSize, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "71717A"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .frame(width: Self.colWidth, alignment: .center)
 
                 Spacer(minLength: 8)
 
                 Text(avgValue)
                     .font(.system(size: Self.fontSize, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "A1A1AA"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                     .frame(width: Self.colWidth, alignment: .center)
 
                 Spacer(minLength: 8)

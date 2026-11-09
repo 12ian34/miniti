@@ -11,7 +11,7 @@
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
-- improvement: (macOS and iOS) clearer question context, Copy text and coaching details
+- improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
 - improvement: (macOS) clearer recording and ending text in the menu bar
 - fix: (macOS) notes stay editable when their pane is resized smaller
 - fix: (macOS) main, Settings and Debug Log windows stay dark when macOS uses Light appearance

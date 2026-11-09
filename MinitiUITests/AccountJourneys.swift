@@ -93,6 +93,29 @@ final class AccountJourneys: XCTestCase {
     }
     #endif
 
+    func testCoachingStatsShowsAllSixAggregateValues() {
+        launch(screenshotScene: "coaching")
+        let stats = app.buttons["coaching.tab.stats"]
+        XCTAssertTrue(stats.waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        stats.click()
+        #else
+        stats.tap()
+        #endif
+        let values = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "coaching.stats.all."))
+        XCTAssertTrue(values.firstMatch.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertEqual(values.count, 6, app.debugDescription)
+        for value in values.allElementsBoundByIndex {
+            #if os(macOS)
+            let text = value.value as? String ?? ""
+            #else
+            let text = value.label
+            #endif
+            XCTAssertFalse(text.isEmpty, "Aggregate values must remain exposed as readable native text")
+        }
+        captureAppScreen("Coaching stats aggregate values")
+    }
+
     func testCoachingHistorySortTargetsDoNotOverlap() {
         openCoachingHistory()
         #if os(macOS)

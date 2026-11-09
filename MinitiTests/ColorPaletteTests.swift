@@ -277,6 +277,8 @@ final class ColorPaletteTests: XCTestCase {
             ("question context", ColorPalette.Text.meta, ColorPalette.Background.primary),
             ("coaching units", ColorPalette.Text.meta, ColorPalette.Background.panel),
             ("coaching headers", ColorPalette.Text.dim, ColorPalette.Background.tertiary),
+            ("coaching all values", ColorPalette.Text.dim, ColorPalette.Background.panel),
+            ("copied hover", ColorPalette.Status.success, ColorPalette.Background.tertiary),
             ("copy", ColorPalette.Text.muted, ColorPalette.Background.panel),
             ("copied", ColorPalette.Status.success, ColorPalette.Background.panel),
             ("placeholder", ColorPalette.Text.placeholder, ColorPalette.Background.panel),
@@ -292,6 +294,7 @@ final class ColorPaletteTests: XCTestCase {
     func testContrastCheckRejectsTheSupersededLowContrastPairs() {
         XCTAssertLessThan(contrast(Color(hex: "484F58"), ColorPalette.Background.primary), 4.5)
         XCTAssertLessThan(contrast(Color(hex: "52525B"), ColorPalette.Border.primary), 4.5)
+        XCTAssertLessThan(contrast(Color(hex: "71717A"), ColorPalette.Background.panel), 4.5)
         XCTAssertLessThan(contrast(.white, ColorPalette.Status.recording), 4.5)
     }
 
@@ -318,6 +321,27 @@ final class ColorPaletteTests: XCTestCase {
         let copyRaster = try XCTUnwrap(raster.cropping(to: CGRect(
             x: raster.width - 224, y: 24, width: 200, height: targetHeight * 2)))
         XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.muted, in: copyRaster), 10, "Actual copy label must use the shared neutral role")
+    }
+
+    @MainActor
+    func testCoachingAllValueUsesReadableTextRole() throws {
+        // Exercise the production row, with other text empty so neither a
+        // heading nor the explanation can satisfy the value's colour check.
+        let row = TrainingStatRow(label: "", allValue: "88.8", avgValue: "", lastValue: "",
+                                  unit: "", trend: .same, comparisonTone: .neutral,
+                                  color: ColorPalette.Coaching.fillers,
+                                  info: TerminalSectionInfo(title: "", summary: "", guidance: []))
+        #if os(macOS)
+        let width: CGFloat = 720
+        #else
+        let width: CGFloat = 360
+        #endif
+        let renderer = ImageRenderer(content: row.frame(width: width)
+            .background(ColorPalette.Background.panel))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10,
+                             "The all-column value must use readable text, independently of its heading")
     }
 
     @MainActor

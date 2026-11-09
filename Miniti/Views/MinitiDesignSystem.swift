@@ -375,15 +375,8 @@ struct MinitiCopyLabel: View {
     let isCopied: Bool
 
     var body: some View {
-        MinitiControlLabel(role: .secondary, height: nil, horizontalPadding: 6) {
-            Group {
-                if isCopied {
-                    label.foregroundStyle(ColorPalette.Status.success)
-                } else {
-                    label
-                }
-            }
-            .padding(.vertical, 3)
+        MinitiControlLabel(role: .secondary, showsSuccessFeedback: isCopied, height: nil, horizontalPadding: 6) {
+            label.padding(.vertical, 3)
         }
     }
 
@@ -402,6 +395,7 @@ struct MinitiCopyLabel: View {
 struct MinitiControlLabel<Content: View>: View {
     let role: MinitiControlRole
     let isEmphasized: Bool
+    let showsSuccessFeedback: Bool
     let height: CGFloat?
     let horizontalPadding: CGFloat
     @ViewBuilder let content: () -> Content
@@ -412,12 +406,14 @@ struct MinitiControlLabel<Content: View>: View {
     init(
         role: MinitiControlRole = .secondary,
         isEmphasized: Bool = false,
+        showsSuccessFeedback: Bool = false,
         height: CGFloat? = MinitiDesignSystem.Control.compactHeight,
         horizontalPadding: CGFloat = MinitiDesignSystem.Control.horizontalPadding,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.role = role
         self.isEmphasized = isEmphasized
+        self.showsSuccessFeedback = showsSuccessFeedback
         self.height = height
         self.horizontalPadding = horizontalPadding
         self.content = content
@@ -449,6 +445,7 @@ struct MinitiControlLabel<Content: View>: View {
     }
 
     private var foregroundColor: Color {
+        if showsSuccessFeedback { return ColorPalette.Status.success }
         if role.usesNeutralChrome {
             return isEmphasized || isHovered ? ColorPalette.Text.primary : ColorPalette.Text.muted
         }

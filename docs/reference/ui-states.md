@@ -127,3 +127,5 @@ Sales sections (3.9.0 local): all five live/saved renderers use the ordered `Sal
 Insight Update labels (3.9.0 local): all four live/saved Mac/iOS buttons share neutral `MinitiInsightUpdateLabel` chrome. Each screen still owns its native Button action, update/regenerate/finishing title, optional mode suffix and disabled/opacity gates. Progress remains beside the control. The shared label does not initiate work or change finalization state.
 
 Copy labels (3.9.0 local): question/docs answers and all six Mac section Copy buttons share `MinitiCopyLabel`. Copy/Copied text, named accessibility feedback and the existing pasteboard content/actions remain screen-owned. The shared label uses neutral chrome and canonical success feedback, including saved Mac. It adds no clipboard read, timer or state transition.
+
+Coaching stats (3.9.0 local): the all-history values use readable dim text, matching the recent aggregate column. Calculations, formatting and layout are unchanged. Copy feedback keeps one content identity while changing its foreground style; screen-owned clipboard and feedback timing remain unchanged.
