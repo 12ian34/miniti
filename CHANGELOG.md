@@ -1,5 +1,10 @@
 # Changelog
 
+### Unreleased - v3.9.0
+
+- improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
+- improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
+
 ### 2026-11-09 - v3.8.0
 
 - new: (macOS and iOS) editable folders group meetings automatically, with a preview before organising history

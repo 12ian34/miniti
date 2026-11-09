@@ -4,6 +4,7 @@ import SwiftData
 import UIKit
 
 struct MeetingView_iOS: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     @EnvironmentObject var appState: AppState
     @State private var meetingTitle: String = ""
     @State private var activeSection: MeetingSection = ScreenshotMode.current?.wantsInsightsSection == true ? .insights : .transcript
@@ -607,7 +608,7 @@ struct MeetingView_iOS: View {
     private var notesEditor: some View {
         VStack(spacing: 0) {
             TextEditor(text: $appState.liveNotes)
-                .font(.system(size: 14, design: .default))
+                .font(.system(size: readingMetrics.notesBodySize, design: .default))
                 .scrollContentBackground(.hidden)
                 .background(ColorPalette.Background.primary)
                 .padding()

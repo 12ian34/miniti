@@ -1735,7 +1735,7 @@ struct MeetingDetailView: View {
     var onBackToCoaching: () -> Void = {}
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     @AppStorage("attioExportEnabled") private var attioExportEnabled: Bool = false
     @AppStorage("twentyExportEnabled") private var twentyExportEnabled: Bool = false
     @State private var showingAttioSheet = false
@@ -2205,9 +2205,9 @@ struct MeetingDetailView: View {
                 if let summary = meeting.summaryText {
                     DetailInsightBlock(title: "summary", color: Theme.accentBlue) {
                         Text(summary)
-                            .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
+                            .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                             .foregroundStyle(Theme.text)
-                            .lineSpacing(interfaceScale.insightLineSpacing)
+                            .lineSpacing(readingMetrics.insightLineSpacing)
                     }
                 }
                 
@@ -2222,7 +2222,7 @@ struct MeetingDetailView: View {
                                         .foregroundStyle(ColorPalette.Accent.yellow.opacity(0.7))
                                         .frame(width: 16, alignment: .trailing)
                                     Text(item)
-                                        .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                                        .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                                         .foregroundStyle(Theme.text)
                                 }
                             }
@@ -2241,7 +2241,7 @@ struct MeetingDetailView: View {
                                     Text(item)
                                         .foregroundStyle(Theme.text)
                                 }
-                                .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                                .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                             }
                         }
                     }
@@ -2499,6 +2499,7 @@ struct HistoricalInsightsModeSelector: View {
 // MARK: - Saved Notes View
 
 struct SavedNotesView: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     @Bindable var meeting: Meeting
     @FocusState private var isFocused: Bool
     
@@ -2507,7 +2508,7 @@ struct SavedNotesView: View {
             // Placeholder
             if meeting.notes.isEmpty && !isFocused {
                 Text("No notes for this meeting")
-                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Theme.textDim)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -2515,7 +2516,7 @@ struct SavedNotesView: View {
             
             // Editable text editor
             TextEditor(text: $meeting.notes)
-                .font(.system(size: 12, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Theme.text)
                 .scrollContentBackground(.hidden)
                 .focused($isFocused)
@@ -2576,7 +2577,7 @@ struct SavedTemplateBlocks: View {
         if let template = meeting.insightTemplate {
             InsightTemplateSectionList(template: template, sections: meeting.templateSections) { title, color, value in
                 DetailInsightBlock(title: title, color: color) {
-                    MEDDPICCBulletText(value, fontSize: 12, color: Theme.text)
+                    MEDDPICCBulletText(value, color: Theme.text)
                 }
             }
         }
@@ -2610,7 +2611,7 @@ struct SavedMEDDPICCBlocks: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             DetailInsightBlock(title: field.title, color: field.color) {
-                MEDDPICCBulletText(field.value!, fontSize: 12, color: Theme.text)
+                MEDDPICCBulletText(field.value!, color: Theme.text)
             }
         }
     }

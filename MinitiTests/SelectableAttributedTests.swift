@@ -1,5 +1,6 @@
 import XCTest
 import SwiftUI
+import SwiftData
 #if os(macOS)
 import AppKit
 #else
@@ -284,6 +285,149 @@ final class SelectableAttributedTests: XCTestCase {
             XCTAssertEqual(scale.insightSecondarySize, scale.transcriptBodySize)
             XCTAssertEqual(scale.insightLineSpacing, scale.transcriptLineSpacing)
         }
+    }
+
+    func testResolvedReadingMetricsPreserveBaselinesAndPlatformScaling() {
+        for scale in InterfaceScale.allCases {
+            let normal = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .large)
+            XCTAssertEqual(normal.transcriptBodySize, scale.transcriptBodySize)
+            XCTAssertEqual(normal.transcriptHeaderSize, scale.transcriptHeaderSize)
+            XCTAssertEqual(normal.transcriptLineSpacing, scale.transcriptLineSpacing)
+            for size in DynamicTypeSize.allCases {
+                let resolved = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: size)
+                XCTAssertEqual(resolved.insightBodySize, resolved.transcriptBodySize)
+                XCTAssertEqual(resolved.insightLineSpacing, resolved.transcriptLineSpacing)
+                #if os(macOS)
+                XCTAssertEqual(resolved, normal, "Mac has no system text-size multiplier")
+                #else
+                if size.isAccessibilitySize {
+                    XCTAssertGreaterThan(resolved.transcriptBodySize, normal.transcriptBodySize)
+                    XCTAssertGreaterThan(resolved.notesBodySize, normal.notesBodySize)
+                }
+                #endif
+            }
+        }
+        let compact = ReadingMetrics(interfaceScale: .compact, systemDynamicTypeSize: .large)
+        XCTAssertEqual(compact.transcriptBodySize, 13)
+        #if os(macOS)
+        XCTAssertEqual(compact.notesBodySize, 12)
+        #else
+        XCTAssertEqual(compact.notesBodySize, 14)
+        #endif
+    }
+
+    /// The production root modifier supplies the original system category, even
+    /// though semantic controls see InterfaceScale's shifted category. Inspect
+    /// actual native fonts, not just the values handed to a builder.
+    @MainActor
+    func testReadingMetricsReachSwiftUIAndAttributedRenderersExactlyOnce() async throws {
+        for scale in InterfaceScale.allCases {
+            for size in [DynamicTypeSize.large, .accessibility5] {
+                let root = ReadingRendererFixture()
+                    .minitiInterfaceScale(scale, systemSize: size)
+                #if os(macOS)
+                let host = NSHostingView(rootView: root)
+                let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 700),
+                                      styleMask: [.borderless], backing: .buffered, defer: false)
+                window.isReleasedWhenClosed = false
+                window.contentView = host
+                window.orderFront(nil)
+                defer { window.orderOut(nil); window.close() }
+                let expected = scale.transcriptBodySize
+                #else
+                let host = UIHostingController(rootView: root)
+                let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+                let previousWindow = scene.windows.first(where: \.isKeyWindow)
+                let window = UIWindow(windowScene: scene)
+                window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+                window.rootViewController = host
+                window.makeKeyAndVisible()
+                host.view.layoutIfNeeded()
+                defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+                let category: UIContentSizeCategory = size == .large ? .large : .accessibilityExtraExtraExtraLarge
+                let expected = UIFontMetrics(forTextStyle: .body).scaledValue(
+                    for: scale.transcriptBodySize,
+                    compatibleWith: UITraitCollection(preferredContentSizeCategory: category))
+                #endif
+                let markers = ["SwiftUI prose", "Sales prose", "Transcript prose"]
+                try await TestSupport.waitUntil {
+                    markers.allSatisfy { marker in
+                        Self.nativeReadingTextViews(in: host.viewForReadingTest).contains {
+                            Self.readingText($0).string.contains(marker)
+                        }
+                    }
+                }
+                for marker in markers {
+                    let view = try XCTUnwrap(Self.nativeReadingTextViews(in: host.viewForReadingTest).first {
+                        Self.readingText($0).string.contains(marker)
+                    })
+                    let text = Self.readingText(view)
+                    let range = (text.string as NSString).range(of: marker)
+                    let font = try XCTUnwrap(text.attribute(.font, at: range.location, effectiveRange: nil) as? ReadingNativeFont)
+                    XCTAssertEqual(font.pointSize, expected, accuracy: 0.01, "\(marker), \(scale), \(size)")
+                    #if os(iOS)
+                    if marker != "SwiftUI prose" {
+                        XCTAssertFalse(view.adjustsFontForContentSizeCategory)
+                    }
+                    #endif
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private static func nativeReadingTextViews(in view: ReadingNativeView) -> [ReadingNativeTextView] {
+        (view as? ReadingNativeTextView).map { [$0] } ?? view.subviews.flatMap { nativeReadingTextViews(in: $0) }
+    }
+
+    #if os(iOS)
+    @MainActor
+    func testOpenSavedTranscriptRespondsToSystemSizeWithoutChangingTextOrSelection() async throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let marker = "Saved transcript prose remains selectable."
+        let meeting = Meeting(segments: [.init(text: marker, speaker: 1, timestamp: 0, isFinal: true)])
+        container.mainContext.insert(meeting)
+        let state = AppState()
+        let preferences = ReadingFixturePreferences()
+        let host = UIHostingController(rootView: SavedReadingFixture(preferences: preferences, meeting: meeting)
+            .environmentObject(state).modelContainer(container))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+        host.view.layoutIfNeeded()
+        try await TestSupport.waitUntil {
+            Self.nativeReadingTextViews(in: host.view).contains { $0.text.contains(marker) }
+        }
+        let view = try XCTUnwrap(Self.nativeReadingTextViews(in: host.view).first { $0.text.contains(marker) })
+        let initial = view.attributedText!.copy() as! NSAttributedString
+        let range = (initial.string as NSString).range(of: "prose")
+        let initialFont = try XCTUnwrap(initial.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont)
+        XCTAssertEqual(initialFont.pointSize, 15)
+        view.selectedRange = range
+        preferences.systemSize = .accessibility5
+        let expected = UIFontMetrics(forTextStyle: .body).scaledValue(
+            for: 15, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge))
+        try await TestSupport.waitUntil {
+            (view.attributedText?.attribute(.font, at: range.location, effectiveRange: nil) as? UIFont)?.pointSize == expected
+        }
+        XCTAssertEqual(view.text, initial.string)
+        XCTAssertEqual(view.selectedRange, range)
+        XCTAssertEqual(meeting.segments.first?.text, marker)
+        XCTAssertEqual(meeting.transcriptRevision, 0)
+    }
+    #endif
+
+    @MainActor
+    private static func readingText(_ view: ReadingNativeTextView) -> NSAttributedString {
+        #if os(macOS)
+        view.attributedString()
+        #else
+        view.attributedText ?? NSAttributedString()
+        #endif
     }
 
     func testLiveAndSavedTranscriptBuildersUseMatchingTypographyMetrics() throws {
@@ -907,3 +1051,55 @@ final class SelectableAttributedTests: XCTestCase {
     }
     #endif
 }
+
+private struct ReadingRendererFixture: View {
+    @Environment(\.readingMetrics) private var metrics
+    @State private var text = "SwiftUI prose"
+
+    var body: some View {
+        VStack {
+            TextEditor(text: $text)
+                .font(.system(size: metrics.insightBodySize))
+                .frame(height: 120)
+            MEDDPICCBulletText("Sales prose")
+            SelectableTextView(SelectableAttributed.transcript(
+                turns: [.init(speaker: 1, timestamp: 0, text: "Transcript prose")],
+                speakerNames: nil,
+                bodyFontSize: metrics.transcriptBodySize,
+                headerFontSize: metrics.transcriptHeaderSize,
+                lineSpacing: metrics.transcriptLineSpacing))
+        }
+    }
+}
+
+#if os(iOS)
+private final class ReadingFixturePreferences: ObservableObject {
+    @Published var systemSize: DynamicTypeSize = .large
+}
+
+private struct SavedReadingFixture: View {
+    @ObservedObject var preferences: ReadingFixturePreferences
+    let meeting: Meeting
+
+    var body: some View {
+        TranscriptTrimView(meeting: meeting)
+            .minitiInterfaceScale(.standard, systemSize: preferences.systemSize)
+    }
+}
+#endif
+
+#if os(macOS)
+private typealias ReadingNativeView = NSView
+private typealias ReadingNativeTextView = NSTextView
+private typealias ReadingNativeFont = NSFont
+private extension NSHostingView {
+    var viewForReadingTest: NSView { self }
+}
+#else
+private typealias ReadingNativeView = UIView
+private typealias ReadingNativeTextView = UITextView
+private typealias ReadingNativeFont = UIFont
+private extension UIHostingController {
+    var viewForReadingTest: UIView { view }
+}
+#endif

@@ -114,8 +114,7 @@ struct MinitiMobileApp: App {
             }
             .environmentObject(appState)
             .modifier(AccountUITestReady())
-            .environment(\.interfaceScale, interfaceScale)
-            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: AccountUITestHarness.dynamicTypeSize(systemDynamicTypeSize)))
+            .minitiInterfaceScale(interfaceScale, systemSize: AccountUITestHarness.dynamicTypeSize(systemDynamicTypeSize))
             .minitiReduceMotionAware()
             .preferredColorScheme(.dark)
             .onAppear {

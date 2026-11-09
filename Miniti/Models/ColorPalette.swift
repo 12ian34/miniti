@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 // MARK: - Interface Scale
 
@@ -95,10 +98,76 @@ private struct InterfaceScaleEnvironmentKey: EnvironmentKey {
     static let defaultValue = InterfaceScale.compact
 }
 
+/// Final point sizes, shared by SwiftUI's fixed-size fonts and native attributed
+/// text. UIKit automatic scaling must remain off for text built with these sizes.
+struct ReadingMetrics: Equatable {
+    let transcriptBodySize: CGFloat
+    let transcriptHeaderSize: CGFloat
+    let transcriptLineSpacing: CGFloat
+    let notesBodySize: CGFloat
+
+    var insightBodySize: CGFloat { transcriptBodySize }
+    var insightSecondarySize: CGFloat { transcriptBodySize }
+    var insightLineSpacing: CGFloat { transcriptLineSpacing }
+
+    init(interfaceScale: InterfaceScale, systemDynamicTypeSize: DynamicTypeSize) {
+        #if os(iOS)
+        let category: UIContentSizeCategory
+        switch systemDynamicTypeSize {
+        case .xSmall: category = .extraSmall
+        case .small: category = .small
+        case .medium: category = .medium
+        case .large: category = .large
+        case .xLarge: category = .extraLarge
+        case .xxLarge: category = .extraExtraLarge
+        case .xxxLarge: category = .extraExtraExtraLarge
+        case .accessibility1: category = .accessibilityMedium
+        case .accessibility2: category = .accessibilityLarge
+        case .accessibility3: category = .accessibilityExtraLarge
+        case .accessibility4: category = .accessibilityExtraExtraLarge
+        case .accessibility5: category = .accessibilityExtraExtraExtraLarge
+        @unknown default: category = .large
+        }
+        let traits = UITraitCollection(preferredContentSizeCategory: category)
+        let metrics = UIFontMetrics(forTextStyle: .body)
+        func resolved(_ base: CGFloat) -> CGFloat {
+            // UIFontMetrics rounds fractional values to device pixels even at
+            // the default category. Keep the established normal-size baseline.
+            if systemDynamicTypeSize == .large { return base }
+            return metrics.scaledValue(for: base, compatibleWith: traits)
+        }
+        let notesBase: CGFloat = 14
+        #else
+        // No macOS system text-size source is part of this contract.
+        func resolved(_ base: CGFloat) -> CGFloat { base }
+        let notesBase: CGFloat = 12
+        #endif
+        transcriptBodySize = resolved(interfaceScale.transcriptBodySize)
+        transcriptHeaderSize = resolved(interfaceScale.transcriptHeaderSize)
+        transcriptLineSpacing = resolved(interfaceScale.transcriptLineSpacing)
+        notesBodySize = resolved(notesBase + interfaceScale.transcriptBodySize - InterfaceScale.compact.transcriptBodySize)
+    }
+}
+
+private struct SystemReadingSizeEnvironmentKey: EnvironmentKey {
+    // Standalone views/tests use their ordinary Dynamic Type environment.
+    static let defaultValue: DynamicTypeSize? = nil
+}
+
 extension EnvironmentValues {
     var interfaceScale: InterfaceScale {
         get { self[InterfaceScaleEnvironmentKey.self] }
         set { self[InterfaceScaleEnvironmentKey.self] = newValue }
+    }
+
+    var systemReadingSize: DynamicTypeSize? {
+        get { self[SystemReadingSizeEnvironmentKey.self] }
+        set { self[SystemReadingSizeEnvironmentKey.self] = newValue }
+    }
+
+    var readingMetrics: ReadingMetrics {
+        ReadingMetrics(interfaceScale: interfaceScale,
+                       systemDynamicTypeSize: systemReadingSize ?? dynamicTypeSize)
     }
 }
 
@@ -119,6 +188,14 @@ private struct ReduceMotionAwareModifier: ViewModifier {
 }
 
 extension View {
+    /// Preserve the unshifted system size for prose before applying the existing
+    /// InterfaceScale step to semantic controls. Prose combines the two once.
+    func minitiInterfaceScale(_ scale: InterfaceScale, systemSize: DynamicTypeSize) -> some View {
+        environment(\.interfaceScale, scale)
+            .environment(\.systemReadingSize, systemSize)
+            .dynamicTypeSize(scale.dynamicTypeSize(from: systemSize))
+    }
+
     func minitiReduceMotionAware() -> some View {
         modifier(ReduceMotionAwareModifier())
     }

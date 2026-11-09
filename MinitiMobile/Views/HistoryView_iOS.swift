@@ -350,7 +350,7 @@ struct MeetingDetail_iOS: View {
     var backLabel: String? = nil
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     @EnvironmentObject var appState: AppState
     @State private var activeSection: DetailSection = ScreenshotMode.current?.opensSavedMeeting == true ? .insights : .transcript
     @State private var renamingSpeaker: Int? = nil
@@ -694,9 +694,9 @@ struct MeetingDetail_iOS: View {
                     if let summary = meeting.summaryText, !summary.isEmpty {
                         HistoricalDetailBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
                             Text(summary)
-                                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
+                                .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                                 .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(interfaceScale.insightLineSpacing)
+                                .lineSpacing(readingMetrics.insightLineSpacing)
                         }
                     }
 
@@ -901,7 +901,7 @@ struct MeetingDetail_iOS: View {
     
     private var notesContent: some View {
         TextEditor(text: $meeting.notes)
-            .font(.system(size: 14, design: .default))
+            .font(.system(size: readingMetrics.notesBodySize, design: .default))
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
             .padding()
@@ -954,7 +954,7 @@ struct SavedTemplateContent: View {
         if let template = meeting.insightTemplate {
             InsightTemplateSectionList(template: template, sections: meeting.templateSections) { title, color, value in
                 HistoricalDetailBlock_iOS(title: title, color: color) {
-                    MEDDPICCBulletText(value, fontSize: 13)
+                    MEDDPICCBulletText(value)
                 }
             }
         }
@@ -988,7 +988,7 @@ struct SavedMEDDPICCContent: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             HistoricalDetailBlock_iOS(title: field.title, color: field.color) {
-                MEDDPICCBulletText(field.value!, fontSize: 13)
+                MEDDPICCBulletText(field.value!)
             }
         }
     }

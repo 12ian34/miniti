@@ -583,13 +583,15 @@ enum SelectableAttributed {
         prefix: String,
         prefixColor: Color,
         fontSize: CGFloat = 13,
-        textColor: Color = ColorPalette.Text.secondary
+        textColor: Color = ColorPalette.Text.secondary,
+        lineSpacing: CGFloat = 0
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let font = appFont(size: fontSize, weight: .regular)
         let prefixFont = appFont(size: fontSize, weight: .medium)
         let para = NSMutableParagraphStyle()
         para.paragraphSpacing = 6
+        para.lineSpacing = lineSpacing
         para.headIndent = (prefix.count == 3 ? 32 : 20) // crude indent for wrapped lines
         for (idx, item) in items.enumerated() {
             result.append(NSAttributedString(string: prefix + " ", attributes: [
@@ -831,7 +833,7 @@ enum SelectableAttributed {
 
 struct TranscriptTrimView: View {
     @EnvironmentObject private var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     @Environment(\.undoManager) private var undoManager
     @Bindable var meeting: Meeting
     @State private var selectedRange: NSRange?
@@ -973,7 +975,7 @@ struct TranscriptTrimView: View {
         .onChange(of: meeting.selfSpeakerID) { _, _ in
             scheduleRenderCacheRebuild()
         }
-        .onChange(of: interfaceScale) { _, _ in
+        .onChange(of: readingMetrics) { _, _ in
             scheduleRenderCacheRebuild()
         }
         .onDisappear {
@@ -1005,9 +1007,9 @@ struct TranscriptTrimView: View {
             },
             speakerNames: meeting.speakerNames,
             selfIDs: meeting.speakerLabelSelfIDs,
-            bodyFontSize: interfaceScale.transcriptBodySize,
-            headerFontSize: interfaceScale.transcriptHeaderSize,
-            lineSpacing: interfaceScale.transcriptLineSpacing
+            bodyFontSize: readingMetrics.transcriptBodySize,
+            headerFontSize: readingMetrics.transcriptHeaderSize,
+            lineSpacing: readingMetrics.transcriptLineSpacing
         )
 
         renderRevision &+= 1

@@ -248,7 +248,7 @@ struct PrivateModeInsightsNotice: View {
 
 struct LiveInsightsContent: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     
     var body: some View {
         #if os(iOS)
@@ -318,8 +318,8 @@ struct LiveInsightsContent: View {
                             SelectableTextView(
                                 SelectableAttributed.body(
                                     appState.liveSummary,
-                                    fontSize: interfaceScale.insightBodySize,
-                                    lineSpacing: interfaceScale.insightLineSpacing
+                                    fontSize: readingMetrics.insightBodySize,
+                                    lineSpacing: readingMetrics.insightLineSpacing
                                 )
                             )
                         }
@@ -333,7 +333,7 @@ struct LiveInsightsContent: View {
                                     items: appState.liveActionItems,
                                     prefix: "→",
                                     prefixColor: Color(hex: "3FB950"),
-                                    fontSize: interfaceScale.insightBodySize
+                                    fontSize: readingMetrics.insightBodySize
                                 )
                             )
                         }
@@ -372,7 +372,7 @@ struct LiveInsightsContent: View {
 #if os(iOS)
 private struct LiveInsightsContent_iOSPlain: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
 
     var body: some View {
         ScrollView(.vertical) {
@@ -435,8 +435,8 @@ private struct LiveInsightsContent_iOSPlain: View {
                             SelectableTextView(
                                 SelectableAttributed.body(
                                     appState.liveSummary,
-                                    fontSize: interfaceScale.insightBodySize,
-                                    lineSpacing: interfaceScale.insightLineSpacing
+                                    fontSize: readingMetrics.insightBodySize,
+                                    lineSpacing: readingMetrics.insightLineSpacing
                                 )
                             )
                         }
@@ -449,7 +449,7 @@ private struct LiveInsightsContent_iOSPlain: View {
                                     items: appState.liveDiscussionFlow,
                                     prefix: "->",
                                     prefixColor: Color(hex: "D29922"),
-                                    fontSize: interfaceScale.insightBodySize
+                                    fontSize: readingMetrics.insightBodySize
                                 )
                             )
                         }
@@ -462,7 +462,7 @@ private struct LiveInsightsContent_iOSPlain: View {
                                     items: appState.liveActionItems,
                                     prefix: "→",
                                     prefixColor: Color(hex: "3FB950"),
-                                    fontSize: interfaceScale.insightBodySize
+                                    fontSize: readingMetrics.insightBodySize
                                 )
                             )
                         }
@@ -503,7 +503,7 @@ private struct LiveMEDDPICCContent_iOSPlain: View {
     var body: some View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             InsightsPlainBlock_iOS(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!, fontSize: 13)
+                MEDDPICCBulletText(field.value!)
             }
         }
     }
@@ -515,7 +515,7 @@ private struct LiveTemplateContent_iOSPlain: View {
     var body: some View {
         InsightTemplateSectionList(template: appState.liveTemplate, sections: appState.liveTemplateSections) { title, color, value in
             InsightsPlainBlock_iOS(title: title, color: color) {
-                MEDDPICCBulletText(value, fontSize: 13)
+                MEDDPICCBulletText(value)
             }
         }
     }
@@ -678,7 +678,7 @@ private struct LiveTrainingContent_iOSPlain: View {
 }
 
 private struct TrainingMetricRow_iOS: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let speaker: TrainingMetrics.SpeakerStats
     let value: String
     var trailing: String? = nil
@@ -690,12 +690,12 @@ private struct TrainingMetricRow_iOS: View {
                 .foregroundStyle(speaker.isLocalMic ? Color(hex: "3FB950") : Color(hex: "8B949E"))
                 .frame(width: 62, alignment: .leading)
             Text(value)
-                .font(.system(size: interfaceScale.insightBodySize, weight: .medium, design: .default))
+                .font(.system(size: readingMetrics.insightBodySize, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             Spacer(minLength: 6)
             if let trailing {
                 Text(trailing)
-                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -815,7 +815,7 @@ struct QuestionsContent: View {
 }
 
 private struct QuestionCard: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let question: SuggestedQuestion
     let typeColor: Color
 
@@ -873,9 +873,9 @@ private struct QuestionCard: View {
             }
 
             Text(question.question)
-                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
-                .lineSpacing(interfaceScale.insightLineSpacing)
+                .lineSpacing(readingMetrics.insightLineSpacing)
                 .textSelection(.enabled)
                 .padding(.leading, 12)
 
@@ -885,9 +885,9 @@ private struct QuestionCard: View {
                 .padding(.leading, 12)
 
             Text(question.context)
-                .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
-                .lineSpacing(interfaceScale.insightLineSpacing)
+                .lineSpacing(readingMetrics.insightLineSpacing)
                 .padding(.leading, 12)
         }
     }
@@ -1227,7 +1227,7 @@ private struct DocTopicRow: View {
 /// The grounded answer + citations for a resolved topic (no topic header — the
 /// row already shows the label).
 private struct DocAnswerBody: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let card: DocPlaybookCard
     @State private var showCopied = false
 
@@ -1235,9 +1235,9 @@ private struct DocAnswerBody: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
                 Text(card.answer)
-                    .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
-                    .lineSpacing(interfaceScale.insightLineSpacing)
+                    .lineSpacing(readingMetrics.insightLineSpacing)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
@@ -1318,7 +1318,6 @@ private func docsCitationLinkURL(_ raw: String) -> URL? {
 
 struct MEDDPICCContent: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
     
     private var fields: [(title: String, color: String, value: String?)] {
         [
@@ -1336,7 +1335,7 @@ struct MEDDPICCContent: View {
     var body: some View {
         ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
             TerminalSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!, fontSize: interfaceScale.insightBodySize)
+                MEDDPICCBulletText(field.value!)
             }
         }
     }
@@ -1441,13 +1440,12 @@ private func hasMEDDPICCValue(_ value: String?) -> Bool {
 }
 
 struct MEDDPICCBulletText: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     let text: String
-    let fontSize: CGFloat
     let color: Color
     
-    init(_ text: String, fontSize: CGFloat = 12, color: Color = Color(hex: "E6EDF3")) {
+    init(_ text: String, color: Color = ColorPalette.Text.secondary) {
         self.text = text
-        self.fontSize = fontSize
         self.color = color
     }
     
@@ -1472,8 +1470,9 @@ struct MEDDPICCBulletText: View {
                 items: bullets,
                 prefix: "•",
                 prefixColor: color.opacity(0.5),
-                fontSize: fontSize,
-                textColor: color
+                fontSize: readingMetrics.insightBodySize,
+                textColor: color,
+                lineSpacing: readingMetrics.insightLineSpacing
             )
         )
     }
@@ -1584,7 +1583,7 @@ struct TrainingEmptyState: View {
 }
 
 private struct FillerWordsSection: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let speaker: TrainingMetrics.SpeakerStats
     let durationMinutes: Double
     
@@ -1597,7 +1596,7 @@ private struct FillerWordsSection: View {
         ) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("\(speaker.totalFillers) fillers (\(String(format: "%.1f", speaker.fillersPerMinute))/min)")
-                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "71717A"))
                 
                 if speaker.speakerLabel != "Others" && !speaker.fillers.isEmpty {
@@ -1605,12 +1604,12 @@ private struct FillerWordsSection: View {
                         ForEach(speaker.fillers) { entry in
                             HStack(spacing: 6) {
                                 Text(entry.word)
-                                    .font(.system(size: interfaceScale.insightBodySize, weight: .medium, design: .default))
+                                    .font(.system(size: readingMetrics.insightBodySize, weight: .medium, design: .default))
                                     .foregroundStyle(Color(hex: "D4D4D8"))
                                     .fixedSize()
                                 
                                 Text("\(entry.count)")
-                                    .font(.system(size: interfaceScale.insightBodySize, weight: .semibold, design: .default))
+                                    .font(.system(size: readingMetrics.insightBodySize, weight: .semibold, design: .default))
                                     .foregroundStyle(ColorPalette.Coaching.fillers)
                             }
                         }
@@ -1740,7 +1739,7 @@ private struct ClaritySection: View {
 }
 
 private struct TerminalTrainingMetricRow: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let speaker: TrainingMetrics.SpeakerStats
     let primary: String
     var secondary: String? = nil
@@ -1753,12 +1752,12 @@ private struct TerminalTrainingMetricRow: View {
                 .frame(width: 48, alignment: .leading)
             
             Text(primary)
-                .font(.system(size: interfaceScale.insightBodySize, weight: .semibold, design: .default))
+                .font(.system(size: readingMetrics.insightBodySize, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
             
             if let secondary {
                 Text(secondary)
-                    .font(.system(size: interfaceScale.insightSecondarySize, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
             }
         }
@@ -1788,7 +1787,7 @@ struct SavedTrainingContent: View {
 }
 
 struct TerminalInsightsContent: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let meeting: Meeting
 
     var body: some View {
@@ -1798,8 +1797,8 @@ struct TerminalInsightsContent: View {
                     TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
                         SelectableTextView(SelectableAttributed.body(
                             summary,
-                            fontSize: interfaceScale.insightBodySize,
-                            lineSpacing: interfaceScale.insightLineSpacing
+                            fontSize: readingMetrics.insightBodySize,
+                            lineSpacing: readingMetrics.insightLineSpacing
                         ))
                     }
                 }
@@ -1811,7 +1810,7 @@ struct TerminalInsightsContent: View {
                                 items: meeting.discussionFlow,
                                 prefix: "->",
                                 prefixColor: Color(hex: "D29922"),
-                                fontSize: interfaceScale.insightBodySize
+                                fontSize: readingMetrics.insightBodySize
                             )
                         )
                     }
@@ -1824,7 +1823,7 @@ struct TerminalInsightsContent: View {
                                 items: meeting.actionItems,
                                 prefix: "→",
                                 prefixColor: Color(hex: "3FB950"),
-                                fontSize: interfaceScale.insightBodySize
+                                fontSize: readingMetrics.insightBodySize
                             )
                         )
                     }
@@ -1837,7 +1836,7 @@ struct TerminalInsightsContent: View {
                                 items: meeting.keyDecisions,
                                 prefix: "->",
                                 prefixColor: Color(hex: "D29922"),
-                                fontSize: interfaceScale.insightBodySize
+                                fontSize: readingMetrics.insightBodySize
                             )
                         )
                     }
@@ -3729,7 +3728,7 @@ private struct CoachingMetricLineChart: View {
 }
 
 struct TerminalListItem: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let index: Int
     let text: String
     let style: ListStyle
@@ -3768,9 +3767,9 @@ struct TerminalListItem: View {
             }
             
             Text(text)
-                .font(.system(size: interfaceScale.insightBodySize, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                 .foregroundStyle(isCompleted ? Color(hex: "484F58") : Color(hex: "E6EDF3"))
-                .lineSpacing(interfaceScale.insightLineSpacing)
+                .lineSpacing(readingMetrics.insightLineSpacing)
                 .strikethrough(isCompleted)
         }
     }

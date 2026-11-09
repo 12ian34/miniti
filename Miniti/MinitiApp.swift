@@ -438,8 +438,7 @@ struct MinitiApp: App {
             }
             .environmentObject(appState)
             .modifier(AccountUITestReady())
-            .environment(\.interfaceScale, interfaceScale)
-            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+            .minitiInterfaceScale(interfaceScale, systemSize: systemDynamicTypeSize)
             .minitiReduceMotionAware()
             .onAppear {
                 appDelegate.appState = appState
@@ -531,16 +530,14 @@ struct MinitiApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
-                .environment(\.interfaceScale, interfaceScale)
-                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+                .minitiInterfaceScale(interfaceScale, systemSize: systemDynamicTypeSize)
                 .minitiReduceMotionAware()
                 .modifier(OptionalModelContainer(container: activeContainer))
         }
         
         Window("Debug Log", id: "debug-log") {
             DebugLogView()
-                .environment(\.interfaceScale, interfaceScale)
-                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+                .minitiInterfaceScale(interfaceScale, systemSize: systemDynamicTypeSize)
                 .minitiReduceMotionAware()
                 .frame(minWidth: 600, minHeight: 400)
         }
@@ -551,8 +548,7 @@ struct MinitiApp: App {
         MenuBarExtra(isInserted: menuBarInsertion) {
             MenuBarView()
                 .environmentObject(appState)
-                .environment(\.interfaceScale, interfaceScale)
-                .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+                .minitiInterfaceScale(interfaceScale, systemSize: systemDynamicTypeSize)
         } label: {
             MenuBarIcon(
                 isRecording: appState.isRecording,

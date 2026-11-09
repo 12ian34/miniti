@@ -82,7 +82,7 @@ struct TranscriptView: View {
     var cacheEventForTesting: ((String, Int, String) -> Void)?
     #endif
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
     @State private var isAutoScrollEnabled = true
     @State private var suppressAutoScrollLockUntil = Date.distantPast
@@ -143,9 +143,9 @@ struct TranscriptView: View {
             hasFinalizedContent: cachedTranscript.length > 0,
             speakerNames: appState.liveSpeakerNames,
             selfIDs: appState.liveSpeakerLabelSelfIDs,
-            bodyFontSize: interfaceScale.transcriptBodySize,
-            headerFontSize: interfaceScale.transcriptHeaderSize,
-            lineSpacing: interfaceScale.transcriptLineSpacing
+            bodyFontSize: readingMetrics.transcriptBodySize,
+            headerFontSize: readingMetrics.transcriptHeaderSize,
+            lineSpacing: readingMetrics.transcriptLineSpacing
         )
     }
     #endif
@@ -217,9 +217,9 @@ struct TranscriptView: View {
                     turns: Array(updatedTurns[tailStartIndex...]),
                     speakerNames: names,
                     selfIDs: selfIDs,
-                    bodyFontSize: interfaceScale.transcriptBodySize,
-                    headerFontSize: interfaceScale.transcriptHeaderSize,
-                    lineSpacing: interfaceScale.transcriptLineSpacing,
+                    bodyFontSize: readingMetrics.transcriptBodySize,
+                    headerFontSize: readingMetrics.transcriptHeaderSize,
+                    lineSpacing: readingMetrics.transcriptLineSpacing,
                     startsAtDocumentBeginning: tailStartIndex == 0
                 )
                 let oldTailRange = NSRange(
@@ -329,9 +329,9 @@ struct TranscriptView: View {
             turns: visibleTurns,
             speakerNames: names,
             selfIDs: selfIDs,
-            bodyFontSize: interfaceScale.transcriptBodySize,
-            headerFontSize: interfaceScale.transcriptHeaderSize,
-            lineSpacing: interfaceScale.transcriptLineSpacing
+            bodyFontSize: readingMetrics.transcriptBodySize,
+            headerFontSize: readingMetrics.transcriptHeaderSize,
+            lineSpacing: readingMetrics.transcriptLineSpacing
         )
         cachedTranscriptRevision &+= 1
         cachedTranscriptMutation = allowsLocalizedMutation
@@ -767,7 +767,7 @@ struct TranscriptView: View {
                 forceFullRebuild: true
             )
         }
-        .onChange(of: interfaceScale) { _, _ in
+        .onChange(of: readingMetrics) { _, _ in
             rebuildSegmentCaches(
                 liveSegments: appState.liveSegments,
                 detectedSpeakers: appState.detectedSpeakers,
@@ -1008,7 +1008,7 @@ func speakerDisplayName(for speaker: Int, names: [String: String]? = nil, selfID
 // MARK: - Terminal Style Components
 
 struct TerminalTranscriptTurnRow: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     let turn: SelectableAttributed.TranscriptTurn
     var isFirst: Bool = false
     var speakerNames: [String: String]? = nil
@@ -1020,13 +1020,13 @@ struct TerminalTranscriptTurnRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("\(speakerLabel(for: turn.speaker, names: speakerNames, selfIDs: selfIDs)) · \(formatTimestamp(turn.timestamp))")
-                .font(.system(size: interfaceScale.transcriptHeaderSize, weight: .semibold, design: .default))
+                .font(.system(size: readingMetrics.transcriptHeaderSize, weight: .semibold, design: .default))
                 .foregroundStyle(color)
 
             Text(turn.text)
-                .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.transcriptBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
-                .lineSpacing(interfaceScale.transcriptLineSpacing)
+                .lineSpacing(readingMetrics.transcriptLineSpacing)
         }
         .padding(.top, isFirst ? 0 : 10)
         .textSelection(.enabled)
@@ -1049,7 +1049,7 @@ struct TerminalTranscriptTurnRow: View {
 }
 
 struct TerminalInterimRow: View {
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let speaker: Int
@@ -1096,13 +1096,13 @@ struct TerminalInterimRow: View {
                 // Live text with cursor
                 HStack(spacing: 0) {
                     Text(text)
-                        .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
+                        .font(.system(size: readingMetrics.transcriptBodySize, weight: .regular, design: .default))
                         .foregroundStyle(ColorPalette.Text.dim)
-                        .lineSpacing(interfaceScale.transcriptLineSpacing)
+                        .lineSpacing(readingMetrics.transcriptLineSpacing)
                     
                     // Blinking cursor
                     Text("▊")
-                        .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
+                        .font(.system(size: readingMetrics.transcriptBodySize, weight: .regular, design: .default))
                         .foregroundStyle(color)
                         .opacity(cursorVisible ? 1 : 0)
                 }

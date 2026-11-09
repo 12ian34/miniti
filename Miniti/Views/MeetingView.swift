@@ -1819,6 +1819,7 @@ struct ResizableNotesLayout<Transcript: View, Notes: View>: View {
 // MARK: - Notes Editor
 
 struct NotesEditor: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     @EnvironmentObject var appState: AppState
     @FocusState private var isFocused: Bool
 
@@ -1827,7 +1828,7 @@ struct NotesEditor: View {
             // Placeholder
             if appState.liveNotes.isEmpty && !isFocused {
                 Text("relax and take notes...")
-                    .font(.system(size: 12, weight: .regular, design: .default))
+                    .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "3F3F46"))
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
@@ -1835,7 +1836,7 @@ struct NotesEditor: View {
 
             // Text editor
             TextEditor(text: $appState.liveNotes)
-                .font(.system(size: 12, weight: .regular, design: .default))
+                .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
                 .foregroundStyle(Color(hex: "E6EDF3"))
                 .scrollContentBackground(.hidden)
                 .focused($isFocused)
@@ -2005,7 +2006,7 @@ private struct InsightsPaneToggleButton: View {
 
 struct LiveInsightsPanel: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.readingMetrics) private var readingMetrics
 
     private var canUpdateInsights: Bool {
         appState.currentMeeting != nil && !appState.liveSegments.isEmpty
@@ -2154,9 +2155,9 @@ struct LiveInsightsPanel: View {
                             SelectableTextView(
                                 SelectableAttributed.body(
                                     appState.liveSummary,
-                                    fontSize: interfaceScale.insightBodySize,
+                                    fontSize: readingMetrics.insightBodySize,
                                     color: Color(hex: "E6EDF3"),
-                                    lineSpacing: interfaceScale.insightLineSpacing
+                                    lineSpacing: readingMetrics.insightLineSpacing
                                 )
                             )
                         }
@@ -2169,7 +2170,7 @@ struct LiveInsightsPanel: View {
                                     items: appState.liveDiscussionFlow.enumerated().map { "\($0.offset + 1). \($0.element)" },
                                     prefix: "",
                                     prefixColor: Color(hex: "F59E0B"),
-                                    fontSize: interfaceScale.insightSecondarySize,
+                                    fontSize: readingMetrics.insightSecondarySize,
                                     textColor: Color(hex: "D4D4D8")
                                 )
                             )
@@ -2183,7 +2184,7 @@ struct LiveInsightsPanel: View {
                                     items: appState.liveActionItems,
                                     prefix: "→",
                                     prefixColor: Color(hex: "3FB950"),
-                                    fontSize: interfaceScale.insightSecondarySize,
+                                    fontSize: readingMetrics.insightSecondarySize,
                                     textColor: Color(hex: "E6EDF3")
                                 )
                             )
@@ -2223,7 +2224,6 @@ struct LiveInsightsPanel: View {
 
 struct LiveMEDDPICCSections: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
 
     private var fields: [(title: String, color: String, value: String?)] {
         [
@@ -2241,7 +2241,7 @@ struct LiveMEDDPICCSections: View {
     var body: some View {
         ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
             LiveInsightSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!, fontSize: interfaceScale.insightBodySize)
+                MEDDPICCBulletText(field.value!)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -2256,12 +2256,11 @@ struct LiveMEDDPICCSections: View {
 
 struct LiveTemplateSections: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.interfaceScale) private var interfaceScale
 
     var body: some View {
         InsightTemplateSectionList(template: appState.liveTemplate, sections: appState.liveTemplateSections) { title, color, value in
             LiveInsightSection(title: title, color: color) {
-                MEDDPICCBulletText(value, fontSize: interfaceScale.insightBodySize)
+                MEDDPICCBulletText(value)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
