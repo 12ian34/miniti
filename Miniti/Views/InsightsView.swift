@@ -2589,7 +2589,7 @@ struct TrainingMainView: View {
         .accessibilityLabel("Sort by \(fullLabel)")
         .accessibilityValue(sortColumn == column ? (sortAscending ? "Ascending" : "Descending") : "Not sorted")
         .accessibilityAddTraits(sortColumn == column ? .isSelected : [])
-        .accessibilityHint("Touch and hold for metric help")
+        .accessibilityHint("Metric help is available in Actions")
         .accessibilityAction(named: "About \(fullLabel)") { infoPopupColumn = column }
         .simultaneousGesture(LongPressGesture(minimumDuration: 0.4).onEnded { _ in
             infoPopupColumn = column

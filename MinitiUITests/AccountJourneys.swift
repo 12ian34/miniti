@@ -152,7 +152,9 @@ final class AccountJourneys: XCTestCase {
 
     func testCoachingHistoryMetricHelpHasNamedCloseTarget() {
         openCoachingHistory()
-        app.buttons["coaching.sort.fillers"].press(forDuration: 0.6)
+        let fillers = app.buttons["coaching.sort.fillers"]
+        let originalSort = fillers.value as? String
+        fillers.press(forDuration: 0.6)
         let close = app.buttons["coaching.help.close"]
         XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
         captureCoachingHistory("Coaching history metric help")
@@ -164,6 +166,8 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(title.frame.midY, close.frame.midY, accuracy: 1)
         close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+        XCTAssertEqual(fillers.value as? String, originalSort,
+                       "Opening metric help must not also change the sort")
     }
     #endif
 
