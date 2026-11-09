@@ -239,6 +239,16 @@ struct MinitiFadingDivider: View {
     }
 }
 
+private extension View {
+    /// Allocate target space in normal layout. Never expand a hit shape beyond
+    /// its assigned frame, where it could steal a neighbouring control's input.
+    func minitiMinimumControlTarget() -> some View {
+        frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize,
+              minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+            .contentShape(Rectangle())
+    }
+}
+
 /// Shared compact control chrome. The enclosing Button or Menu retains
 /// ownership of actions, focus, disabled state, shortcuts, and accessibility.
 struct MinitiControlLabel<Content: View>: View {
@@ -278,7 +288,7 @@ struct MinitiControlLabel<Content: View>: View {
                 RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
                     .stroke(borderColor, lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control))
+            .minitiMinimumControlTarget()
             .onHover { hovering in
                 if reduceMotion {
                     isHovered = hovering
@@ -362,7 +372,7 @@ struct MinitiTabLabel: View {
                 RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
                     .stroke(isSelected ? ColorPalette.Border.light : Color.clear, lineWidth: 1)
             )
-            .contentShape(RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control))
+            .minitiMinimumControlTarget()
     }
 }
 
@@ -415,6 +425,7 @@ struct MinitiDisclosureStyle: DisclosureGroupStyle {
                 .frame(maxWidth: .infinity, minHeight: minimumHeight, alignment: .leading)
                 .contentShape(Rectangle())
                 .padding(.vertical, MinitiDesignSystem.Spacing.hairline)
+                .minitiMinimumControlTarget()
             }
             .buttonStyle(.plain)
             .accessibilityAddTraits(.isButton)

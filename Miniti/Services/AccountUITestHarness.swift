@@ -224,7 +224,18 @@ enum AccountUITestHarness {
 
 struct AccountUITestReady: ViewModifier {
     func body(content: Content) -> some View {
-        content.overlay(alignment: .bottomLeading) {
+        Group {
+            #if MINITI_TEST_HOST
+            if AccountUITestHarness.isActive,
+               ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "controlTargets" {
+                ControlTargetUITestFixture()
+            } else {
+                content
+            }
+            #else
+            content
+            #endif
+        }.overlay(alignment: .bottomLeading) {
             if AccountUITestHarness.isActive {
                 Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                     .accessibilityIdentifier("ui-test.ready").allowsHitTesting(false)
@@ -232,3 +243,66 @@ struct AccountUITestReady: ViewModifier {
         }
     }
 }
+
+#if MINITI_TEST_HOST
+/// The real shared labels inside native controls, with observable actions.
+/// No alternate hit-testing implementation exists in this fixture.
+private struct ControlTargetUITestFixture: View {
+    @State private var left = 0
+    @State private var right = 0
+    @State private var selected = "focus"
+    @State private var menuCount = 0
+    @State private var disabledCount = 0
+    @State private var expanded = false
+
+    var body: some View {
+        VStack(spacing: 20) {
+            HStack(spacing: 0) {
+                Button { left += 1 } label: {
+                    MinitiControlLabel { Image(systemName: "chevron.left").font(.system(size: 11)) }
+                }.accessibilityIdentifier("target.left")
+                Button { right += 1 } label: {
+                    MinitiControlLabel { Image(systemName: "chevron.right").font(.system(size: 11)) }
+                }.accessibilityIdentifier("target.right")
+            }.buttonStyle(.plain)
+            Text("left=\(left) right=\(right)").accessibilityIdentifier("target.counts")
+            MinitiTabStripSurface {
+                HStack(spacing: 0) {
+                    ForEach(["focus", "stats", "history"], id: \.self) { tab in
+                        Button { selected = tab } label: {
+                            MinitiTabLabel(title: tab, isSelected: selected == tab, fillsAvailableWidth: true)
+                        }
+                        .buttonStyle(.plain)
+                        .frame(maxWidth: .infinity)
+                        .accessibilityIdentifier("target.tab.\(tab)")
+                        .accessibilityAddTraits(selected == tab ? .isSelected : [])
+                    }
+                }
+            }
+            Text(selected).accessibilityIdentifier("target.selected")
+            HStack(spacing: 8) {
+                Menu {
+                    Button("Choose") { menuCount += 1 }
+                } label: {
+                    MinitiControlLabel { Text("menu").font(.system(size: 11)) }
+                }.accessibilityIdentifier("target.menu")
+                Button { disabledCount += 1 } label: {
+                    MinitiControlLabel { Text("disabled").font(.system(size: 11)) }
+                }.disabled(true).accessibilityIdentifier("target.disabled")
+            }.buttonStyle(.plain)
+            Text("menu=\(menuCount) disabled=\(disabledCount)").accessibilityIdentifier("target.menuCounts")
+            Form {
+                DisclosureGroup(isExpanded: $expanded) {
+                    Text("Disclosure content").accessibilityIdentifier("target.disclosed")
+                } label: {
+                    Text("details")
+                }.disclosureGroupStyle(MinitiDisclosureStyle())
+            }.frame(height: 160)
+        }
+        .frame(width: 300)
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ColorPalette.Background.primary)
+    }
+}
+#endif

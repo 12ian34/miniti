@@ -230,7 +230,7 @@ components:
     implementation: "MinitiControlLabel + MinitiControlRole"
     roles: "primary, secondary, positive, recording, destructive, warning"
     rounded: "{rounded.md}"
-    note: "Native Button and Menu own interaction semantics; the label owns shared chrome."
+    note: "Native Button and Menu own interaction semantics. Compact chrome keeps its visual height; the label reserves at least the platform minimum target in normal layout."
 
   terminal-header:
     backgroundColor: "{colors.surface-panel}"
@@ -788,6 +788,8 @@ Setup visibility (3.8.0 local): the fixed Home footer uses matching `MinitiHomeA
 
 Home refinement (2026-11-05): calendar sections precede the setup checklist. Completed task headings use muted text and strikethrough with checks; row hide/docs controls stay visible outside disclosures. Use the shared approximate local-model progress presentation in Home and Settings, plus the compact Models shortcut in Home's status controls. Today/tomorrow/later groups replace abbreviated day labels.
 
+
+Shared target contract (UI1, 3.9.0): `MinitiControlLabel`, `MinitiTabLabel` and default `MinitiDisclosureStyle` reserve at least 44 points on iOS and 24 on Mac in both dimensions, inside normal layout. Their existing visual chrome heights remain unchanged. The target uses its allocated rectangle, with no negative-padding overlay extending into neighbours. A parent's resulting layout footprint can grow; tight parent rows/toolbars must be checked and adjusted within their UI1 owner before release. Native grouped Forms can clip row corners; check actionable points inside that system surface instead of treating its rectangular accessibility frame as proof that every corner receives taps. Button/Menu remain responsible for actions, disabled state, selection, focus and accessibility.
 
 3.8.0 compact icon accessibility: setup hide controls and contextual documentation links use `MinitiDesignSystem.Control.minimumIconHitSize`, 44 points on iOS and 24 points on macOS. The symbol remains visually compact; its full rectangular surface accepts input.
 

@@ -38,6 +38,53 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(iOS)
+    func testSharedTargetsHaveNonOverlappingFramesAndDispatchAtEdges() {
+        launch("controlTargets")
+        let left = app.buttons["target.left"], right = app.buttons["target.right"]
+        XCTAssertTrue(left.waitForExistence(timeout: 5))
+        for element in [left, right, app.buttons["target.tab.focus"], app.buttons["target.tab.stats"], app.buttons["target.tab.history"]] {
+            XCTAssertGreaterThanOrEqual(element.frame.width, 44)
+            XCTAssertGreaterThanOrEqual(element.frame.height, 44)
+        }
+        XCTAssertEqual(left.frame.maxX, right.frame.minX, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(left.frame.maxX, right.frame.minX)
+        // The top two points are outside the unchanged 30-point visual chrome.
+        left.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertEqual(app.staticTexts["target.counts"].label, "left=1 right=0")
+        let edge = left.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: left.frame.width, dy: left.frame.height / 2))
+        edge.withOffset(CGVector(dx: -1, dy: 0)).tap()
+        XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=0")
+        edge.withOffset(CGVector(dx: 1, dy: 0)).tap()
+        XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=1")
+        edge.tap()
+        XCTAssertEqual(app.staticTexts["target.counts"].label, "left=2 right=2", "The trailing control owns the exact shared edge")
+
+        let focus = app.buttons["target.tab.focus"], stats = app.buttons["target.tab.stats"], history = app.buttons["target.tab.history"]
+        XCTAssertLessThanOrEqual(focus.frame.maxX, stats.frame.minX)
+        XCTAssertLessThanOrEqual(stats.frame.maxX, history.frame.minX)
+        stats.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        XCTAssertEqual(app.staticTexts["target.selected"].label, "stats")
+        XCTAssertTrue(stats.isSelected)
+
+        let menu = app.buttons["target.menu"]
+        XCTAssertGreaterThanOrEqual(menu.frame.height, 44)
+        menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
+        app.buttons["Choose"].tap()
+        XCTAssertEqual(app.staticTexts["target.menuCounts"].label, "menu=1 disabled=0")
+        XCTAssertFalse(app.buttons["target.disabled"].isEnabled)
+        let details = app.buttons["details"]
+        XCTAssertGreaterThanOrEqual(details.frame.height, 44)
+        // Native grouped Forms clip the row's rounded corners. Probe its top
+        // centre, inside that native surface and outside the compact label.
+        details.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: details.frame.width / 2, dy: 2)).tap()
+        XCTAssertTrue(app.staticTexts["target.disclosed"].waitForExistence(timeout: 3))
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        capture.name = "Shared controls, native target frames and actions"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
     func testExistingRecordingOffersCalendarAssociationWithoutEnding() {
         launch("association")
         let associate = app.buttons["Use for this meeting"]
