@@ -15,6 +15,14 @@ For _fastlane_ installation instructions, see [Installing _fastlane_](https://do
 
 ## iOS
 
+### ios ui_test
+
+```sh
+[bundle exec] fastlane ios ui_test
+```
+
+Run isolated account UI journeys on the selected iOS simulator
+
 ### ios test
 
 ```sh
@@ -38,6 +46,14 @@ Build the current iOS release archive locally
 ```
 
 Bump build/version if needed, build, and upload to TestFlight
+
+### ios upload_beta
+
+```sh
+[bundle exec] fastlane ios upload_beta
+```
+
+Upload an already verified IPA to internal TestFlight without rebuilding
 
 ### ios metadata
 
@@ -91,6 +107,14 @@ Attach an uploaded build and submit it for App Review with automatic release
 
 
 ## Mac
+
+### mac ui_test
+
+```sh
+[bundle exec] fastlane mac ui_test
+```
+
+Run isolated account UI journeys in the logged-in Mac session
 
 ### mac test
 

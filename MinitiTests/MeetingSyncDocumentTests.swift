@@ -20,6 +20,45 @@ final class MeetingSyncDocumentTests: XCTestCase {
         context = ModelContext(container)
     }
 
+    func testMarkdownIdentityTracksTemplateAndSpeakerContextButNotAccounting() {
+        let meeting = sampleMeeting()
+        let initial = MeetingSyncDocument.markdownFingerprint(of: meeting)
+        meeting.managedSessionId = "another-session"
+        meeting.insightsUpdatedAt = Date()
+        XCTAssertEqual(MeetingSyncDocument.markdownFingerprint(of: meeting), initial)
+        meeting.insightTemplateID = "different-built-in"
+        let changedTemplate = MeetingSyncDocument.markdownFingerprint(of: meeting)
+        XCTAssertNotEqual(changedTemplate, initial)
+        meeting.inferredEnvironmentRaw = "different-speaker-context"
+        XCTAssertNotEqual(MeetingSyncDocument.markdownFingerprint(of: meeting), changedTemplate)
+    }
+
+    func testUpgradeQueryExcludesNeverSyncedHistoryAndCurrentBaselines() throws {
+        for index in 0..<100 { context.insert(Meeting(title: "Local \(index)")) }
+        let legacy = Meeting(title: "Legacy synced"); legacy.cloudRevision = 1
+        let current = Meeting(title: "Current synced"); current.cloudRevision = 1; current.syncedFolderFingerprint = "baseline"
+        context.insert(legacy); context.insert(current); try context.save()
+        let fetched = try context.fetch(MeetingSyncDocument.legacyFolderMigrationDescriptor)
+        XCTAssertEqual(fetched.map(\.id), [legacy.id])
+        XCTAssertFalse(context.hasChanges)
+    }
+
+    func testUpgradePromotesFolderExtrasWithoutResurrectingExplicitUnfiled() throws {
+        let meeting = sampleMeeting()
+        let folder = UUID()
+        meeting.syncExtraJSON = "{\"folder_id\":\"\(folder.uuidString.lowercased())\",\"folder_manual\":true,\"future_field\":42}"
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        XCTAssertEqual(meeting.folderID, folder)
+        XCTAssertEqual(meeting.folderManual, true)
+        meeting.notes = "Edited after upgrade"
+        XCTAssertEqual(MeetingSyncDocument.encode(meeting, segments: []) ["folder_id"] as? String, folder.uuidString.lowercased())
+        meeting.folderID = nil; meeting.folderManual = true
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        let document = MeetingSyncDocument.encode(meeting, segments: [])
+        XCTAssertTrue(document["folder_id"] is NSNull)
+        XCTAssertEqual(document["future_field"] as? Int, 42)
+    }
+
     private func sampleMeeting() -> Meeting {
         let meeting = Meeting(
             id: UUID(uuidString: "0F1E2D3C-4B5A-4C6D-8E7F-9A0B1C2D3E4F")!,
@@ -167,6 +206,21 @@ final class MeetingSyncDocumentTests: XCTestCase {
         XCTAssertEqual(Set(meeting.segments.map(\.id)), before)
         MeetingSyncDocument.apply(decoded, to: meeting, in: context, replaceSegments: true)
         XCTAssertEqual(meeting.segments.count, 0)
+    }
+
+    func testFolderlessUpgradeKeepsThe370Fingerprint() {
+        let meeting = Meeting(title: "Baseline", startTime: Date(timeIntervalSince1970: 1000), endTime: Date(timeIntervalSince1970: 1060))
+        // Captured from the 3.7.0 fingerprint field sequence, including empty MEDDPICC separators.
+        let baseline = "2d94872f07316db0"
+        XCTAssertEqual(MeetingSyncDocument.fingerprint(of: meeting), baseline)
+        meeting.folderManual = false
+        XCTAssertEqual(MeetingSyncDocument.fingerprint(of: meeting), baseline)
+        meeting.folderID = UUID(); meeting.folderLocalOnly = true
+        XCTAssertEqual(MeetingSyncDocument.fingerprint(of: meeting), baseline)
+        meeting.folderLocalOnly = false
+        XCTAssertNotEqual(MeetingSyncDocument.fingerprint(of: meeting), baseline)
+        meeting.folderID = nil; meeting.folderManual = true
+        XCTAssertNotEqual(MeetingSyncDocument.fingerprint(of: meeting), baseline)
     }
 
     func testFingerprintMovesOnlyWithSyncedFields() {

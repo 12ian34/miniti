@@ -1,7 +1,13 @@
 import XCTest
+import LocalAuthentication
+import AVFoundation
 import CryptoTokenKit
 import CryptoKit
 import SwiftData
+import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 #if IOS_TEST_TARGET
 @testable import MinitiMobile
 #else
@@ -451,7 +457,7 @@ final class ClientAuthTests: XCTestCase {
         let events = EventCollector()
         manager.attachEventSink { events.append($0) }
 
-        _ = try await manager.createAccount()
+        _ = try await manager.createAccount(allowDeviceRotation: true)
         XCTAssertEqual(rotations, 1)
         XCTAssertEqual(createIDs, ["550e8400-e29b-41d4-a716-446655440000", "11111111-2222-4333-8444-555555555555"])
         XCTAssertTrue(manager.isEnrolled)
@@ -823,8 +829,9 @@ final class ClientAuthTests: XCTestCase {
         let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
         restoreStub()
         StubURLProtocol.delay = 0.3
+        let originalRequest = postRequest()
         let repairing = Task {
-            var request = self.postRequest()
+            var request = originalRequest
             try await manager.authorize(&request)
         }
         for _ in 0..<200 {
@@ -883,7 +890,7 @@ final class ClientAuthTests: XCTestCase {
         let manager = managerFor(stored, store: store, loader: unloadableLoader(for: stored.installationKey))
         restoreStub()
         let repairing = Task { try await manager.repairUnusableKey() }
-        let entered = await Task.detached { store.entered.wait(timeout: .now() + 3) == .success }.value
+        let entered = await TestSupport.waitForSignal(store.entered)
         XCTAssertTrue(entered)
         let clearing = Task.detached { manager.clearLocal(reason: "signout") }
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -924,7 +931,7 @@ final class ClientAuthTests: XCTestCase {
         let manager = managerFor(stored, store: store, loader: { InstallationKey.load(stored: $0) })
         StubURLProtocol.handler = { _ in Self.tokens("acct_same") }
         let refreshing = Task { try await manager.forceRefresh() }
-        let entered = await Task.detached { store.entered.wait(timeout: .now() + 3) == .success }.value
+        let entered = await TestSupport.waitForSignal(store.entered)
         XCTAssertTrue(entered)
         let clearing = Task.detached { manager.clearLocal(reason: "signout") }
         try await Task.sleep(nanoseconds: 100_000_000)
@@ -1031,7 +1038,7 @@ final class ClientAuthTests: XCTestCase {
             return restoreHandler(request)
         }
         StubURLProtocol.delay = 0.4
-        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let deleting = Task { _ = try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
         try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path.contains("/sync/meetings/") == true } }
         StubURLProtocol.delay = 0
         manager.clearLocal(reason: "signout")
@@ -1148,8 +1155,8 @@ final class ClientAuthTests: XCTestCase {
             if request.url?.path.contains("/sync/meetings/") == true { return Self.failure(401, "installation_revoked") }
             return restoreHandler(request)
         }
-        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
-        let signed = await Task.detached { gate.entered.wait(timeout: .now() + 3) == .success }.value
+        let deleting = Task { _ = try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let signed = await TestSupport.waitForSignal(gate.entered)
         XCTAssertTrue(signed)
         manager.clearLocal(reason: "signout")
         try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
@@ -1206,8 +1213,8 @@ final class ClientAuthTests: XCTestCase {
             return restoreHandler(request)
         }
         let api = MinitiAPIService(session: stubbedSession(), auth: manager)
-        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
-        let failed = await Task.detached { entered.wait(timeout: .now() + 3) == .success }.value
+        let deleting = Task { _ = try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let failed = await TestSupport.waitForSignal(entered)
         XCTAssertTrue(failed)
         manager.clearLocal(reason: "signout")
         try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
@@ -1242,8 +1249,8 @@ final class ClientAuthTests: XCTestCase {
             return restoreHandler(request)
         }
         let api = MinitiAPIService(session: stubbedSession(), auth: manager)
-        let deleting = Task { try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
-        let repaired = await Task.detached { entered.wait(timeout: .now() + 3) == .success }.value
+        let deleting = Task { _ = try await api.deleteMeeting(id: UUID(), baseRevision: 1) }
+        let repaired = await TestSupport.waitForSignal(entered)
         XCTAssertTrue(repaired)
         XCTAssertEqual(store.load()?.accountID, stored.accountID)
         manager.clearLocal(reason: "signout")
@@ -1527,6 +1534,7 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertNotEqual(secondStore.load()?.installationKey, second.installationKey)
     }
 
+    @MainActor
     func testSignOutClearsLocallyAfterTheUnusableStateIsEstablished() async throws {
         // The reviewer's sequence: email-joined, signing fails, then sign out.
         let (stored, _) = repairableCredentials(recoveryKey: "")
@@ -1538,7 +1546,13 @@ final class ClientAuthTests: XCTestCase {
         _ = try? await manager.authorize(&request)
         XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.keyUnusable)
         StubURLProtocol.lastRequest = nil
-        try await manager.signOut()
+        let app = AppState()
+        app.clientAuthManager = manager
+        app.minitiAPIService = MinitiAPIService(session: stubbedSession(), auth: manager)
+        _ = await app.managedSessionJournal.enqueue(.init(deviceId: "device", sessionId: "owed-before-signout", durationMinutes: 2, accountID: stored.accountID))
+        let signedOut = await app.signOutManagedDevice()
+        XCTAssertTrue(signedOut, app.managedDevicesError ?? "")
+        XCTAssertEqual(app.managedSessionJournal.pending.first?.accountID, stored.accountID)
         XCTAssertNil(store.load(), "the credential is gone")
         XCTAssertNil(StubURLProtocol.lastRequest, "nothing could be proved, nothing was sent")
         XCTAssertEqual(manager.credentialState, ClientAuthManager.CredentialState.notEnrolled)
@@ -1638,12 +1652,33 @@ final class ClientAuthTests: XCTestCase {
     }
 
     @MainActor
+    func testTemporaryKeychainFailureCannotSignOutPastPendingUsage() async throws {
+        let (stored, _) = repairableCredentials()
+        let store = InMemoryClientAuthStore(stored)
+        let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
+        let app = AppState()
+        app.clientAuthManager = manager
+        app.minitiAPIService = MinitiAPIService(session: stubbedSession(), auth: manager)
+        _ = await app.managedSessionJournal.enqueue(.init(deviceId: "device", sessionId: "pending", durationMinutes: 2, accountID: stored.accountID))
+        var request = postRequest()
+        _ = try? await manager.authorize(&request)
+        XCTAssertTrue(manager.status.keyTemporarilyUnavailable)
+        let signedOut = await app.signOutManagedDevice()
+        XCTAssertFalse(signedOut)
+        XCTAssertEqual(store.load(), stored)
+        XCTAssertEqual(app.managedSessionJournal.pending.first?.accountID, stored.accountID)
+        XCTAssertFalse(app.accountTransitionInFlight)
+    }
+
+    @MainActor
     func testTheRestoreAndEmailActionsReauthenticateThroughAppStateAfterAKeyFailure() async throws {
         let (stored, _) = repairableCredentials()
         let store = InMemoryClientAuthStore(stored)
         let manager = managerFor(stored, store: store, loader: signingFaultLoader(for: stored.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
         let app = AppState()
         app.clientAuthManager = manager
+        app.minitiAPIService = MinitiAPIService(session: stubbedSession(), auth: manager)
+        _ = await app.managedSessionJournal.enqueue(.init(deviceId: "device", sessionId: "owed-before-key-failure", durationMinutes: 2, accountID: stored.accountID))
         var r = postRequest()
         _ = try? await manager.authorize(&r)
         restoreStub()
@@ -1654,11 +1689,13 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertEqual(Restore.hits, 1)
         XCTAssertFalse(Paths.hits.contains("/api/auth/revoke"), "no sign-out, the credential was kept until the server accepted the new key")
         XCTAssertEqual(store.load()?.recoveryKey, typed)
+        XCTAssertEqual(app.managedSessionJournal.pending.first?.accountID, stored.accountID, "Repair must retain pending usage under its original owner")
 
         let (second, _) = repairableCredentials()
         let secondStore = InMemoryClientAuthStore(second)
         let viaEmail = managerFor(second, store: secondStore, loader: signingFaultLoader(for: second.installationKey, domain: NSOSStatusErrorDomain, code: -25308))
         app.clientAuthManager = viaEmail
+        app.minitiAPIService = MinitiAPIService(session: stubbedSession(), auth: viaEmail)
         var r2 = postRequest()
         _ = try? await viaEmail.authorize(&r2)
         restoreStub()
@@ -1956,10 +1993,11 @@ final class ClientAuthTests: XCTestCase {
         /// Make every read of one store answer this status (a locked or denied keychain,
         /// or a build whose data protection reads answer -34018 rather than "not found").
         private var readFailures: [Bool: OSStatus] = [:]
+        private(set) var readAllowsInteraction: [Bool] = []
 
         init(dataProtectionAvailable: Bool) { self.dataProtectionAvailable = dataProtectionAvailable }
 
-        func failReads(dataProtection: Bool, with status: OSStatus) {
+        func failReads(dataProtection: Bool, with status: OSStatus?) {
             lock.lock(); defer { lock.unlock() }
             readFailures[dataProtection] = status
         }
@@ -1985,6 +2023,8 @@ final class ClientAuthTests: XCTestCase {
 
         func copyMatching(_ query: [String: Any]) -> (OSStatus, Data?) {
             lock.lock(); defer { lock.unlock() }
+            let context = query[kSecUseAuthenticationContext as String] as? LAContext
+            readAllowsInteraction.append(!(context?.interactionNotAllowed ?? false))
             if let status = readFailures[isDP(query)] { return (status, nil) }
             if isDP(query), !dataProtectionAvailable { return (errSecItemNotFound, nil) }
             guard let data = items[key(query)] else { return (errSecItemNotFound, nil) }
@@ -2013,6 +2053,33 @@ final class ClientAuthTests: XCTestCase {
             return items.removeValue(forKey: key(query)) == nil ? errSecItemNotFound : errSecSuccess
         }
     }
+
+    func testBackgroundCredentialReadsNeverPromptAndExplicitRetryReadsOnce() throws {
+        let fake = FakeKeychain(dataProtectionAvailable: true)
+        fake.failReads(dataProtection: true, with: errSecInteractionNotAllowed)
+        let store = KeychainClientAuthStore(backend: fake)
+        XCTAssertNil(store.loadResult().value)
+        XCTAssertEqual(fake.readAllowsInteraction, [false])
+        XCTAssertNil(store.retryLoadResult().value)
+        XCTAssertEqual(fake.readAllowsInteraction, [false, true], "A locked primary store never triggers a second login-keychain prompt")
+        fake.failReads(dataProtection: true, with: nil)
+        fake.set(try JSONEncoder().encode(credentials()), service: "com.miniti.device-auth", account: "credentials", dataProtection: true)
+        XCTAssertNotNil(store.loadResult().value)
+        XCTAssertEqual(fake.readAllowsInteraction, [false, true, false])
+    }
+
+    #if os(macOS)
+    func testBackgroundCredentialFallbackAlsoForbidsInteraction() {
+        let fake = FakeKeychain(dataProtectionAvailable: false)
+        fake.failReads(dataProtection: false, with: errSecInteractionNotAllowed)
+        let store = KeychainClientAuthStore(backend: fake)
+        XCTAssertNil(store.loadResult().value)
+        XCTAssertEqual(fake.readAllowsInteraction, [false, false])
+        XCTAssertEqual(store.lastLoadDiagnostic, .unreadable(status: errSecInteractionNotAllowed))
+        XCTAssertNil(store.retryLoadResult().value)
+        XCTAssertEqual(fake.readAllowsInteraction, [false, false, true, true])
+    }
+    #endif
 
     private let deviceService = "com.miniti.device-id"
     private let deviceAccount = "device-uuid"
@@ -2182,9 +2249,6 @@ final class ClientAuthTests: XCTestCase {
                     XCTAssertEqual(result, .missing, "\(label): -34018 means this build cannot use the primary store; the login answer is the real one")
                 case (.unreadable(KeychainSlot.missingEntitlement), .unreadable(let status)):
                     XCTAssertEqual(result, .unreadable(status), label)
-                case (.unreadable(let status), .found):
-                    XCTAssertEqual(result, .found(loginData), label)
-                    _ = status
                 case (.unreadable(let status), _):
                     XCTAssertEqual(result, .unreadable(status), "\(label): the primary store's own refusal is reported")
                 case (.missing, .found):
@@ -2267,6 +2331,9 @@ final class ClientAuthTests: XCTestCase {
     @MainActor
     private func coordinatorFixture(
         enrolled: Bool = false,
+        explicitChoice: Bool = true,
+        precreatedDevice: Bool = false,
+        legacyOnboarding: Bool = false,
         storedCredentials: ClientAuthCredentials? = nil,
         rotator: (@Sendable () -> String)? = nil,
         keyLoader: @escaping @Sendable (InstallationKey.Stored) -> Result<InstallationKey, Error> = { InstallationKey.load(stored: $0) },
@@ -2275,12 +2342,15 @@ final class ClientAuthTests: XCTestCase {
         let store = InMemoryClientAuthStore(storedCredentials ?? (enrolled ? credentials() : nil))
         // The provider follows the rotator, as DeviceIdentifier does for the real manager.
         nonisolated(unsafe) var currentID = "550e8400-e29b-41d4-a716-446655440000"
+        let enrollmentDefaults = UserDefaults(suiteName: "test_auth_\(UUID().uuidString)")!
+        enrollmentDefaults.set(legacyOnboarding, forKey: "hasCompletedOnboarding")
         let manager = ClientAuthManager(
             store: store, baseURL: "https://api.test/api", session: stubbedSession(),
             deviceIDProvider: { currentID },
             deviceIDRotator: rotator.map { rotate in { currentID = rotate(); return currentID } },
+            deviceIDIsNewThisLaunch: { !precreatedDevice },
             keyLoader: keyLoader,
-            defaults: UserDefaults(suiteName: "test_auth_\(UUID().uuidString)")!
+            defaults: enrollmentDefaults
         )
         Paths.hits = []
         StubURLProtocol.handler = { [self] request in
@@ -2290,8 +2360,61 @@ final class ClientAuthTests: XCTestCase {
             return answers(path, requestBody(request))
         }
         let host = CoordinatorHost()
+        if explicitChoice { manager.chooseAnonymousAccess() } // Enrollment tests run after a choice.
         let coordinator = ManagedEnrollmentCoordinator(manager: manager, hooks: host.hooks())
         return (coordinator, host, manager)
+    }
+
+    @MainActor
+    func testPrecreatedUUIDDoesNotCountAsPriorEnrollment() async {
+        let (coordinator, _, manager) = coordinatorFixture(explicitChoice: false, precreatedDevice: true) { _, _ in Self.failure(500, "unexpected") }
+        let result = await coordinator.ensure(trigger: "launch")
+        XCTAssertFalse(result)
+        XCTAssertTrue(manager.accessChoiceRequired)
+        XCTAssertTrue(Paths.hits.isEmpty)
+    }
+
+    @MainActor
+    func testLegacyMigrationEligibilityDoesNotAuthorizeFreshAccountAfter404() async {
+        let (coordinator, _, manager) = coordinatorFixture(explicitChoice: false, precreatedDevice: true, legacyOnboarding: true) { _, _ in Self.failure(404, "device_not_eligible") }
+        let result = await coordinator.ensure(trigger: "launch")
+        XCTAssertFalse(result)
+        XCTAssertTrue(manager.accessChoiceRequired)
+        XCTAssertTrue(Paths.hits.contains("/api/auth/migrate"))
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"))
+    }
+
+    @MainActor
+    func testExplicitContinueRetriesOldBackendMigrationRejectionBeforeCreatingAccount() async {
+        let (coordinator, _, manager) = coordinatorFixture(explicitChoice: false, precreatedDevice: true, legacyOnboarding: true) { _, _ in Self.failure(404, "device_not_eligible") }
+        let first = await coordinator.ensure(trigger: "launch")
+        XCTAssertFalse(first)
+        XCTAssertTrue(manager.accessChoiceRequired)
+        manager.chooseAnonymousAccess()
+        Paths.hits = []
+        StubURLProtocol.handler = { request in
+            let path = request.url?.path ?? ""
+            Paths.hits.append(path)
+            if path == "/api/auth/challenge" { return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8)) }
+            return path == "/api/auth/migrate" ? Self.tokens("acct_legacy") : Self.failure(500, "must_not_create")
+        }
+        let retry = await coordinator.ensure(trigger: "explicit choice")
+        XCTAssertTrue(retry)
+        XCTAssertEqual(manager.status.accountID, "acct_legacy")
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"))
+    }
+
+    @MainActor
+    func testConfirmedSetUpAgainSkipsLegacyMigration() async {
+        let (coordinator, _, manager) = coordinatorFixture { path, _ in
+            path == "/api/auth/account/create" ? Self.tokens("acct_new") : Self.failure(500, "must_not_migrate")
+        }
+        manager.requireAccessChoice(reason: "deviceAlreadyEnrolled")
+        manager.resetUnreadableCredentialByChoice()
+        let result = await coordinator.ensure(trigger: "explicit reset")
+        XCTAssertTrue(result)
+        XCTAssertFalse(Paths.hits.contains("/api/auth/migrate"))
+        XCTAssertEqual(manager.status.accountID, "acct_new")
     }
 
     private static func tokens(_ account: String, device: String = "550e8400-e29b-41d4-a716-446655440000") -> (Int, Data) {
@@ -2340,7 +2463,7 @@ final class ClientAuthTests: XCTestCase {
     }
 
     @MainActor
-    func testCoordinatorFallsBackToCreateWhenMigrateSaysAlreadyEnrolled() async {
+    func testCoordinatorRequestsAChoiceWhenMigrateSaysAlreadyEnrolled() async {
         let (coordinator, _, manager) = coordinatorFixture { path, _ in
             switch path {
             case "/api/auth/migrate": return Self.failure(409, "device_already_enrolled")
@@ -2350,9 +2473,10 @@ final class ClientAuthTests: XCTestCase {
         }
         defer { StubURLProtocol.handler = nil }
         let outcome2 = await coordinator.ensure(trigger: "start")
-        XCTAssertTrue(outcome2)
-        XCTAssertEqual(manager.status.accountID, "acct_new")
-        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/create" }.count, 1)
+        XCTAssertFalse(outcome2)
+        XCTAssertNil(manager.status.accountID)
+        XCTAssertTrue(manager.accessChoiceRequired)
+        XCTAssertEqual(Paths.hits.filter { $0 == "/api/auth/account/create" }.count, 0)
     }
 
     @MainActor
@@ -2368,11 +2492,16 @@ final class ClientAuthTests: XCTestCase {
             }
         }
         defer { StubURLProtocol.handler = nil }
-        let outcome3 = await coordinator.ensure(trigger: "start")
+        let blocked = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(blocked)
+        XCTAssertEqual(rotations, 0)
+        XCTAssertEqual(manager.accessChoiceReason, "deviceAlreadyEnrolled")
+        manager.resetUnreadableCredentialByChoice()
+        let outcome3 = await coordinator.ensure(trigger: "explicit reset")
         XCTAssertTrue(outcome3)
         XCTAssertEqual(rotations, 1, "the rotator is counted once")
         XCTAssertEqual(manager.status.accountID, "acct_rotated")
-        XCTAssertEqual(host.events.map(\.0), ["client_auth_created"])
+        XCTAssertTrue(host.events.map(\.0).contains("client_auth_created"))
     }
 
     @MainActor
@@ -2386,6 +2515,8 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(manager.isEnrolled)
         XCTAssertEqual(host.enrolling, [])
         XCTAssertTrue(host.logs.contains { $0.hasPrefix("enrollment_deferred_session_only_device_id trigger=usage") })
+        XCTAssertTrue(host.errors.last??.contains("temporarily unavailable") == true)
+        XCTAssertEqual(host.refreshes, 1)
     }
 
     @MainActor
@@ -2462,6 +2593,103 @@ final class ClientAuthTests: XCTestCase {
         XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"), "a 503 on migrate is not a reason to create")
         XCTAssertEqual(host.events.last?.0, "client_auth_enrollment_failed")
         XCTAssertEqual(host.events.last?.1, ["path": "migrate"])
+    }
+
+    @MainActor
+    func testFirstUseAndSignOutWaitForAnExplicitChoice() async {
+        let (coordinator, _, manager) = coordinatorFixture(explicitChoice: false) { _, _ in Self.failure(500, "unexpected") }
+        defer { StubURLProtocol.handler = nil }
+        XCTAssertTrue(manager.accessChoiceRequired)
+        let first = await coordinator.ensure(trigger: "usage")
+        XCTAssertFalse(first)
+        XCTAssertTrue(Paths.hits.isEmpty)
+        manager.chooseAnonymousAccess()
+        XCTAssertFalse(manager.accessChoiceRequired)
+        manager.clearLocal(reason: "signout")
+        let afterSignOut = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(afterSignOut)
+        XCTAssertTrue(manager.accessChoiceRequired)
+        XCTAssertTrue(Paths.hits.isEmpty)
+    }
+
+    @MainActor
+    func testThrottledMigrationPersistsDeferralAndNeverCreates() async {
+        let (coordinator, host, manager) = coordinatorFixture { _, _ in Self.failure(429, "rate_limited") }
+        defer { StubURLProtocol.handler = nil }
+        let result = await coordinator.ensure(trigger: "usage")
+        XCTAssertFalse(result)
+        let requests = Paths.hits.count
+        let again = await coordinator.ensure(trigger: "start")
+        XCTAssertFalse(again)
+        XCTAssertEqual(Paths.hits.count, requests)
+        XCTAssertFalse(Paths.hits.contains("/api/auth/account/create"))
+        XCTAssertNotNil(manager.enrollmentDefaults.object(forKey: "managedEnrollmentNotBefore"))
+        XCTAssertEqual(host.events.filter { $0.0 == "client_auth_enrollment_deferred" }.count, 1)
+    }
+
+    func testRetryAfterHonorsShortWindowsAndRejectsZeroAndPast() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        XCTAssertEqual(ClientAuthManager.retryDate("5", now: now), now.addingTimeInterval(5))
+        for invalid in [nil, "0", "-1", "bad", "Wed, 01 Jan 2020 00:00:00 GMT"] {
+            XCTAssertEqual(ClientAuthManager.retryDate(invalid, now: now), now.addingTimeInterval(60))
+        }
+    }
+
+    func testEmailRestoreCannotReplaceATemporarilyLockedCredential() async throws {
+        let store = DiagnosticClientAuthStore(diagnostic: .unreadable(status: -25308))
+        let manager = ClientAuthManager(store: store, session: TestSupport.stubbedSession(), deviceIDProvider: { "d" }, defaults: UserDefaults(suiteName: "locked-email-\(UUID())")!)
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        do {
+            try await manager.restoreAccount(loginLinkID: "approved-link")
+            XCTFail("A temporarily locked credential must be unlocked before restoring")
+        } catch ClientAuthError.keyUnavailable { }
+        XCTAssertTrue(StubURLProtocol.requests.isEmpty)
+        XCTAssertEqual(manager.credentialState, .unreadable(.unreadable(status: -25308)))
+    }
+
+    func testRecoveryKeyCanRepairAnUndecodableCredential() async throws {
+        let store = DiagnosticClientAuthStore(diagnostic: .undecodable(bytes: 42))
+        let manager = ClientAuthManager(store: store, session: TestSupport.stubbedSession(), deviceIDProvider: { "d" }, defaults: UserDefaults(suiteName: "damaged-recovery-\(UUID())")!)
+        restoreStub(account: "acct_repaired")
+        try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+        XCTAssertTrue(manager.isEnrolled)
+        XCTAssertEqual(manager.status.accountID, "acct_repaired")
+    }
+
+    func testRecoveryKeyRestoreCannotReplaceATemporarilyLockedCredential() async throws {
+        let store = DiagnosticClientAuthStore(diagnostic: .unreadable(status: -25308))
+        let manager = ClientAuthManager(store: store, session: TestSupport.stubbedSession(), deviceIDProvider: { "d" }, defaults: UserDefaults(suiteName: "locked-recovery-\(UUID())")!)
+        StubURLProtocol.reset()
+        defer { StubURLProtocol.reset() }
+        do {
+            try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.formatRecoveryKey(ClientAuthCrypto.generateRecoveryKey()))
+            XCTFail("Unlock before replacing the server credential")
+        } catch ClientAuthError.keyUnavailable { }
+        XCTAssertTrue(StubURLProtocol.requests.isEmpty)
+        XCTAssertEqual(manager.credentialState, .unreadable(.unreadable(status: -25308)))
+    }
+
+    func testUnreadableCredentialsRecoverInProcessWithoutRotation() async throws {
+        for status in [OSStatus(-25308), OSStatus(-25293)] {
+            let fake = FakeKeychain(dataProtectionAvailable: true)
+            fake.failReads(dataProtection: false, with: status)
+            fake.failReads(dataProtection: true, with: status)
+            let store = KeychainClientAuthStore(backend: fake)
+            let manager = ClientAuthManager(store: store, deviceIDProvider: { "d" }, defaults: UserDefaults(suiteName: "read-test-\(UUID())")!)
+            XCTAssertEqual(manager.credentialState, .unreadable(.unreadable(status: status)))
+            XCTAssertFalse(manager.isEnrolled)
+            // The same manager re-reads the restored Keychain on the next trigger.
+            fake.failReads(dataProtection: false, with: nil)
+            fake.failReads(dataProtection: true, with: nil)
+            fake.set(try JSONEncoder().encode(credentials()), service: "com.miniti.device-auth", account: "credentials", dataProtection: false)
+            fake.set(try JSONEncoder().encode(credentials()), service: "com.miniti.device-auth", account: "credentials", dataProtection: true)
+            do {
+                try await manager.restoreAccount(recoveryKeyInput: ClientAuthCrypto.generateRecoveryKey())
+                XCTFail("Unlock revealed a healthy enrollment; restore must not replace it")
+            } catch ClientAuthError.alreadyEnrolled { }
+            XCTAssertTrue(manager.isEnrolled)
+        }
     }
 
 }
@@ -3202,5 +3430,627 @@ final class SigningDefaultsGate: UserDefaults, @unchecked Sendable {
             _ = release.wait(timeout: .now() + 5)
         }
         return super.object(forKey: defaultName)
+    }
+}
+
+final class HomeSetupPolicyTests: XCTestCase {
+    @MainActor func testHomeCalendarAndSetupAreExclusiveWithoutChangingAutomation() {
+        let state = AppState()
+        let original = (state.hasCompletedOnboarding, state.appMode, state.homeSetupHidden,
+                        state.homeSetupDismissed, state.homeSetupState.calendarHidden)
+        defer {
+            state.hasCompletedOnboarding = original.0; state.appMode = original.1
+            state.homeSetupHidden = original.2; state.homeSetupDismissed = original.3
+            state.homeSetupState.calendarHidden = original.4
+        }
+        state.hasCompletedOnboarding = true
+        state.appMode = .byok
+        let preferences = [state.googleCalendarEnabled, state.autoStartFromCalendar]
+        state.setHomeSetupDismissed(false)
+        XCTAssertTrue(state.isHomeSetupExpanded)
+        XCTAssertFalse(state.isHomeCalendarVisible)
+        state.toggleHomeCalendar()
+        XCTAssertFalse(state.isHomeSetupExpanded)
+        XCTAssertTrue(state.isHomeCalendarVisible)
+        state.toggleHomeCalendar()
+        XCTAssertFalse(state.isHomeCalendarVisible)
+        XCTAssertFalse(state.isHomeSetupExpanded)
+        XCTAssertTrue(AppState().homeSetupState.calendarHidden, "Explicit calendar hiding survives relaunch")
+        state.setHomeSetupCollapsed(false)
+        XCTAssertTrue(state.isHomeSetupExpanded)
+        XCTAssertFalse(state.isHomeCalendarVisible)
+        state.setHomeSetupCollapsed(true)
+        XCTAssertTrue(state.isHomeCalendarVisible, "Collapsing setup returns to the calendar")
+        state.setHomeSetupCollapsed(false)
+        state.setHomeSetupDismissed(true)
+        XCTAssertTrue(state.isHomeCalendarVisible, "Removing setup also returns to the calendar")
+        XCTAssertEqual([state.googleCalendarEnabled, state.autoStartFromCalendar], preferences)
+    }
+
+    #if os(macOS)
+    @MainActor func testMacHomeRendersSetupAndCalendarSeparately() async throws {
+        let state = AppState()
+        let original = (state.hasCompletedOnboarding, state.appMode, state.googleCalendarEnabled,
+                        state.homeSetupSkippedSteps, state.homeSetupHidden, state.homeSetupDismissed,
+                        state.homeSetupState.calendarHidden)
+        defer {
+            state.hasCompletedOnboarding = original.0; state.appMode = original.1
+            state.googleCalendarEnabled = original.2; state.homeSetupSkippedSteps = original.3
+            state.homeSetupHidden = original.4; state.homeSetupDismissed = original.5
+            state.homeSetupState.calendarHidden = original.6
+        }
+        state.hasCompletedOnboarding = true
+        state.appMode = .managed
+        state.clientAuthStatus = ClientAuthStatus(isEnrolled: true, accountID: "acct_home_render", deviceCap: 5,
+            enrolledAt: "2026-11-08T00:00:00Z", enrollmentPath: "migrate", recoveryKeyAcknowledged: false, isHardwareBacked: false)
+        state.accountEmailState = .loaded(AccountEmail())
+        state.usageInfo = try JSONDecoder().decode(MinitiAPIService.UsageInfo.self,
+            from: Data(#"{"minutes_used":12,"minutes_limit":500,"resets_at":"2026-12-01T00:00:00Z","tier":"free"}"#.utf8))
+        state.googleCalendarEnabled = true; state.isGoogleCalendarConnected = true
+        state.hasResolvedCalendarConnection = true
+        state.homeSetupMicrophonePermission = .authorized
+        state.homeSetupSkippedSteps = ""; state.setHomeSetupDismissed(false)
+        for presentation in ["setup", "calendar", "account"] {
+            let collapsed = presentation != "setup"
+            state.setHomeSetupCollapsed(collapsed)
+            if presentation == "account" {
+                state.clientAuthStatus = .notEnrolled
+                state.isGoogleCalendarConnected = false
+                state.usageInfo = nil
+            }
+            let size = NSSize(width: 800, height: 680)
+            let root = ReadyStateView().environmentObject(state)
+                .environmentObject(KeyboardShortcutsService.shared)
+                .environment(\.colorScheme, .dark)
+                .frame(width: size.width, height: size.height)
+                .background(ColorPalette.Background.primary)
+            let host = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false; window.contentView = host
+            host.frame = NSRect(origin: .zero, size: size); window.orderFront(nil)
+            defer { window.orderOut(nil); window.close() }
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            try await Task.sleep(for: .milliseconds(100))
+            host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+            let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+            host.cacheDisplay(in: host.bounds, to: bitmap)
+            let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+            capture.name = "Mac Home \(presentation)"
+            capture.lifetime = .keepAlways; add(capture)
+            XCTAssertEqual(state.isHomeSetupExpanded, !collapsed)
+            XCTAssertEqual(state.isHomeCalendarVisible, collapsed)
+        }
+    }
+
+    @MainActor func testSetupLayoutPerformanceAcrossSteps() {
+        let state = AppState()
+        let oldOnboarding = state.hasCompletedOnboarding
+        let oldHidden = state.homeSetupHidden, oldDismissed = state.homeSetupDismissed
+        let oldSkipped = state.homeSetupSkippedSteps
+        let oldMode = state.appMode
+        defer {
+            state.hasCompletedOnboarding = oldOnboarding
+            state.homeSetupHidden = oldHidden; state.homeSetupDismissed = oldDismissed
+            state.homeSetupSkippedSteps = oldSkipped; state.appMode = oldMode
+        }
+        state.appMode = .byok
+        state.hasCompletedOnboarding = true
+        state.homeSetupHidden = false; state.homeSetupDismissed = false
+        state.homeSetupSkippedSteps = ""
+        state.homeSetupMicrophonePermission = .authorized
+        for step in HomeSetupStep.allCases {
+            let start = CFAbsoluteTimeGetCurrent()
+            let host = NSHostingView(rootView: HomeSetupGuide(initialStep: step).environmentObject(state)
+                .frame(width: MinitiDesignSystem.HomeSetup.maximumWidth))
+            let size = host.fittingSize
+            host.frame = NSRect(origin: .zero, size: size)
+            host.layoutSubtreeIfNeeded()
+            print("SETUP_LAYOUT_PERF: \(step.rawValue) \(CFAbsoluteTimeGetCurrent() - start)s, height \(size.height)")
+            XCTAssertGreaterThan(size.height, 0)
+        }
+    }
+    #endif
+
+    @MainActor func testSetupVisibilityDoesNotInvalidateUnrelatedAppObservers() {
+        let state = AppState()
+        var invalidations = 0
+        let observation = state.objectWillChange.sink { invalidations += 1 }
+        let start = Date()
+        state.setHomeSetupCollapsed(true)
+        state.toggleHomeCalendar()
+        state.skipHomeSetup(.transcription)
+        state.restoreHomeSetup(.transcription)
+        state.confirmHomeSetupAudioReview()
+        print("SETUP_OBSERVATION_PROFILE: \(invalidations) unrelated AppState invalidations, \(Date().timeIntervalSince(start))s")
+        observation.cancel()
+        XCTAssertEqual(invalidations, 0, "Setup-only actions must not invalidate history and recording observers")
+    }
+
+    @MainActor func testSlowPermissionReadLeavesHomeUsableAndCoalescesRefreshes() async throws {
+        let state = AppState()
+        state.captureMicrophone = true
+        let entered = expectation(description: "Permission query started off the main thread")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        state.refreshHomeSetupMicrophonePermission {
+            XCTAssertFalse(Thread.isMainThread)
+            entered.fulfill()
+            release.wait()
+            return .authorized
+        }
+        let task = try XCTUnwrap(state.homeSetupMicrophonePermissionTask)
+        await fulfillment(of: [entered], timeout: 2)
+        state.refreshHomeSetupMicrophonePermission {
+            XCTFail("Only the latest queued read should run")
+            return .authorized
+        }
+        state.refreshHomeSetupMicrophonePermission {
+            XCTAssertFalse(Thread.isMainThread)
+            return .denied
+        }
+        XCTAssertNil(state.homeSetupMicrophonePermission)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .readiness }?.status, .waiting,
+                       "Unknown permission stays pending without claiming access is missing")
+        state.setHomeSetupCollapsed(true)
+        XCTAssertTrue(state.homeSetupHidden, "Home actions remain available while permission IPC waits")
+        release.signal()
+        await task.value
+        XCTAssertEqual(state.homeSetupMicrophonePermission, .denied, "The newest request must not be dropped")
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .readiness }?.status, .todo)
+        XCTAssertNil(state.homeSetupMicrophonePermissionTask)
+        state.refreshHomeSetupMicrophonePermission { .authorized }
+        await state.homeSetupMicrophonePermissionTask?.value
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .readiness }?.status, .complete,
+                       "A later system permission change updates the check")
+    }
+
+    @MainActor func testPermissionTimeoutDoesNotOverrideExplicitGrantOrBlockHome() async throws {
+        let state = AppState()
+        state.homeSetupState.readTimeout = .milliseconds(25)
+        let entered = expectation(description: "Blocking permission read entered")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        state.refreshHomeSetupMicrophonePermission {
+            entered.fulfill()
+            release.wait()
+            return .denied
+        }
+        let task = try XCTUnwrap(state.homeSetupMicrophonePermissionTask)
+        await fulfillment(of: [entered], timeout: 2)
+        try await Task.sleep(for: .milliseconds(60))
+        XCTAssertTrue(state.homeSetupState.permissionCheckUnavailable)
+        state.setHomeSetupCollapsed(true)
+        XCTAssertTrue(state.homeSetupHidden)
+        state.homeSetupState.receivedPermissionRequest(granted: true)
+        XCTAssertEqual(state.homeSetupMicrophonePermission, .authorized)
+        release.signal()
+        await task.value
+        XCTAssertEqual(state.homeSetupMicrophonePermission, .authorized, "Old cached reads must not undo the requestAccess callback")
+        XCTAssertFalse(state.homeSetupState.permissionCheckUnavailable)
+    }
+
+    @MainActor func testSystemPermissionReadTimingOffMainThread() async {
+        let start = Date()
+        _ = await Task.detached {
+            XCTAssertFalse(Thread.isMainThread)
+            return AVCaptureDevice.authorizationStatus(for: .audio)
+        }.value
+        print("PERMISSION_READ_PROFILE: \(Date().timeIntervalSince(start))s off-main")
+    }
+
+    @MainActor func testEveryTaskCanBeHiddenAndRestoredWithoutChangingProgressOrPreferences() {
+        let state = AppState()
+        state.hasCompletedOnboarding = true; state.appMode = .managed
+        state.clientAuthStatus = ClientAuthStatus(isEnrolled: true, accountID: "acct_setup_visibility", deviceCap: 5,
+            enrolledAt: "2026-11-05T00:00:00Z", enrollmentPath: "migrate", recoveryKeyAcknowledged: false, isHardwareBacked: false)
+        state.accountEmailState = .loaded(AccountEmail())
+        state.hasResolvedCalendarConnection = true
+        state.calendarNudgeDismissedUntil = 0; state.homeSetupSkippedSteps = ""
+        state.restoreHomeSetup(.account)
+        let progress = state.homeSetupProgress
+        let preferences = [state.googleCalendarEnabled, state.autoStartFromCalendar, state.cloudSyncEnabled,
+                           state.onDeviceTranscriptionEnabled, state.onDeviceSpeakerSeparationEnabled]
+        for step in HomeSetupStep.allCases {
+            state.skipHomeSetup(step)
+            XCTAssertTrue(state.isHomeSetupStepHidden(step), step.rawValue)
+            XCTAssertEqual(state.homeSetupProgress, progress, "Hiding is not completion")
+        }
+        state.setHomeSetupDismissed(true)
+        let reopened = AppState()
+        reopened.clientAuthStatus = state.clientAuthStatus
+        XCTAssertTrue(reopened.homeSetupDismissed)
+        for step in HomeSetupStep.allCases {
+            XCTAssertTrue(reopened.isHomeSetupStepHidden(step), "Hidden task must persist")
+            reopened.restoreHomeSetup(step)
+            XCTAssertFalse(reopened.isHomeSetupStepHidden(step))
+        }
+        XCTAssertFalse(reopened.homeSetupDismissed)
+        XCTAssertFalse(reopened.homeSetupHidden)
+        XCTAssertEqual([reopened.googleCalendarEnabled, reopened.autoStartFromCalendar, reopened.cloudSyncEnabled,
+                        reopened.onDeviceTranscriptionEnabled, reopened.onDeviceSpeakerSeparationEnabled], preferences)
+    }
+
+    @MainActor func testCollapseAndPermanentDismissalAreIndependentAndLegacyDeferralsRestore() {
+        let state = AppState()
+        state.setHomeSetupDismissed(false)
+        state.setHomeSetupCollapsed(true)
+        XCTAssertTrue(state.homeSetupHidden)
+        XCTAssertFalse(state.homeSetupDismissed, "Collapsing leaves the footer button available")
+        state.calendarNudgeDismissedUntil = Date().addingTimeInterval(1000).timeIntervalSince1970
+        XCTAssertTrue(state.isHomeSetupStepHidden(.calendar))
+        state.setHomeSetupDismissed(true)
+        state.restoreHomeSetup(.calendar)
+        XCTAssertEqual(state.calendarNudgeDismissedUntil, 0)
+        XCTAssertFalse(state.homeSetupDismissed)
+        XCTAssertFalse(state.homeSetupHidden)
+    }
+
+    @MainActor func testAudioStartsUnreviewedWithoutEnablingOptionalFeatures() {
+        let state = AppState()
+        state.homeSetupAudioReviewed = false
+        state.onDeviceTranscriptionEnabled = false
+        state.onDeviceSpeakerSeparationEnabled = false
+        #if os(macOS)
+        state.autoExportMarkdown = false
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .files }?.status, .complete)
+        #if arch(arm64)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .transcription }?.status, .todo)
+        #endif
+        XCTAssertFalse(state.autoExportMarkdown)
+        #endif
+        XCTAssertFalse(state.onDeviceTranscriptionEnabled)
+        XCTAssertFalse(state.onDeviceSpeakerSeparationEnabled)
+        state.captureMicrophone = false
+        XCTAssertFalse(state.homeSetupItems.contains { $0.step == .readiness })
+    }
+    @MainActor func testPendingAndUnavailableMicrophoneCheckStayOnHomeWithStableProgressTotal() async throws {
+        let state = AppState()
+        state.captureMicrophone = true
+        state.homeSetupState.microphonePermission = nil
+        let pending = state.homeSetupItems
+        XCTAssertEqual(pending.first { $0.step == .readiness }?.status, .waiting)
+        XCTAssertTrue(pending.first { $0.step == .readiness }?.isRelevantOnHome == true)
+        state.homeSetupState.readTimeout = .milliseconds(10)
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        state.refreshHomeSetupMicrophonePermission { release.wait(); return .denied }
+        try await TestSupport.waitUntil { state.homeSetupState.permissionCheckUnavailable }
+        XCTAssertEqual(state.homeSetupItems.count, pending.count)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .readiness }?.status, .waiting)
+        state.homeSetupState.receivedPermissionRequest(granted: true)
+        XCTAssertEqual(state.homeSetupItems.count, pending.count)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .readiness }?.status, .complete)
+        XCTAssertFalse(state.homeSetupItems.first { $0.step == .readiness }?.isRelevantOnHome ?? true)
+    }
+    func testMicrophonePermissionControlsOnlyTheRecordingAccessCheck() {
+        for granted in [true, false] {
+            let items = HomeSetupPolicy.items(managed: false, enrolled: false, email: .loading,
+                recoverySaved: false, accountDismissed: false, calendarConnected: false,
+                calendarDeferred: false, calendarKnown: false, localAvailable: false,
+                localChosen: false, localReviewed: false, skipped: [], microphoneGranted: granted)
+            XCTAssertEqual(items.map(\.step), [.readiness])
+            XCTAssertEqual(items.first?.status, granted ? .complete : .todo)
+        }
+    }
+    #if os(macOS)
+    @MainActor func testMacFolderOverviewRendersWithoutChangingHistoryOrPreferences() async throws {
+        let state = AppState()
+        let before = (state.automaticFolderFiling, state.automaticFolderCreation, state.meetingFolders.active.count)
+        let size = NSSize(width: 620, height: 680)
+        let root = MeetingFolderManager(meetings: [])
+            .environmentObject(state).environment(\.colorScheme, .dark)
+            .frame(width: size.width, height: size.height)
+        let host = NSHostingView(rootView: root)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size); window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(100))
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        capture.name = "Mac folder journey overview"; capture.lifetime = .keepAlways; add(capture)
+        XCTAssertEqual(state.automaticFolderFiling, before.0)
+        XCTAssertEqual(state.automaticFolderCreation, before.1)
+        XCTAssertEqual(state.meetingFolders.active.count, before.2)
+    }
+
+    @MainActor func testConfiguredGuideStaysExpandedAndFooterShowsProgress() async throws {
+        let state = AppState()
+        state.hasCompletedOnboarding = true; state.appMode = .byok
+        state.homeSetupAudioReviewed = true
+        state.homeSetupState.foldersReviewed = true
+        state.captureMicrophone = false
+        state.homeSetupSkippedSteps = ""
+        state.calendarNudgeDismissedUntil = Date().addingTimeInterval(1000).timeIntervalSince1970
+        state.googleCalendarEnabled = false
+        state.setHomeSetupDismissed(false)
+        XCTAssertTrue(state.homeSetupItems.allSatisfy(\.reviewed))
+        let root = VStack {
+            HomeSetupGuide()
+            HStack { HomeSetupButton(); Spacer(); HomeFeedbackButton() }
+        }.environmentObject(state).environment(\.colorScheme, .dark)
+            .frame(width: 600).padding(16).background(ColorPalette.Background.primary)
+        let host = NSHostingView(rootView: root)
+        let size = host.fittingSize
+        XCTAssertGreaterThan(size.height, 200, "Configured tasks must not automatically collapse the guide")
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size); window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        let expandedSize = host.fittingSize
+        window.setContentSize(expandedSize)
+        host.frame = NSRect(origin: .zero, size: expandedSize)
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        capture.name = "Configured setup and footer progress"; capture.lifetime = .keepAlways; add(capture)
+    }
+
+    @MainActor func testMacSetupGuideRendersChecklistWithOneExpandedStep() async throws {
+        let state = AppState()
+        state.hasCompletedOnboarding = true
+        state.homeSetupHidden = false
+        state.appMode = .managed
+        state.clientAuthStatus = ClientAuthStatus(isEnrolled: true, accountID: "acct_setup_render", deviceCap: 5,
+            enrolledAt: "2026-11-04T00:00:00Z", enrollmentPath: "migrate", recoveryKeyAcknowledged: false, isHardwareBacked: false)
+        state.accountEmailState = .loaded(AccountEmail())
+        let root = HomeSetupGuide().environmentObject(state).environment(\.colorScheme, .dark)
+            .frame(width: MinitiDesignSystem.HomeSetup.maximumWidth).padding(16)
+            .background(ColorPalette.Background.primary)
+        let host = NSHostingView(rootView: root)
+        let fitting = host.fittingSize
+        XCTAssertGreaterThan(fitting.height, 100)
+        XCTAssertLessThan(fitting.height, 650)
+        let previousWindow = NSApp.keyWindow
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: fitting), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        host.frame = NSRect(origin: .zero, size: fitting)
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close(); previousWindow?.makeKey() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Mac Home setup guide"; attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+    @MainActor func testMacChecklistAudioChoicesRenderAtReadingWidthWithoutChangingPreferences() throws {
+        let state = AppState()
+        state.hasCompletedOnboarding = true; state.homeSetupHidden = false; state.appMode = .byok
+        state.hasResolvedCalendarConnection = true
+        state.onDeviceTranscriptionEnabled = false; state.onDeviceSpeakerSeparationEnabled = false
+        let host = NSHostingView(rootView: HomeSetupGuide(initialStep: .transcription).environmentObject(state)
+            .environment(\.colorScheme, .dark).frame(width: 480).padding(16)
+            .background(ColorPalette.Background.primary))
+        let size = host.fittingSize
+        XCTAssertLessThan(size.height, 850)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = NSRect(origin: .zero, size: size); window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let capture = XCTAttachment(data: try XCTUnwrap(bitmap.representation(using: .png, properties: [:])), uniformTypeIdentifier: "public.png")
+        capture.name = "Mac checklist separate audio choices"; capture.lifetime = .keepAlways; add(capture)
+        XCTAssertFalse(state.onDeviceTranscriptionEnabled); XCTAssertFalse(state.onDeviceSpeakerSeparationEnabled)
+    }
+
+    @MainActor func testMacFilesSetupRendersDestinationWithoutEnablingExports() async throws {
+        let state = AppState()
+        state.autoExportMarkdown = false; state.generateAgentsMd = false
+        state.markdownExportFolderPath = "/Users/fixture/Documents/Meeting notes"
+        let before = (state.markdownExportFolderPath, state.markdownExportBookmarkData)
+        let host = NSHostingView(rootView: HomeMeetingFilesSetup().environmentObject(state)
+            .environment(\.colorScheme, .dark).frame(width: 480).padding(16)
+            .background(ColorPalette.Background.primary))
+        let fitting = host.fittingSize
+        XCTAssertGreaterThan(fitting.height, 120)
+        XCTAssertLessThan(fitting.height, 380)
+        let window = NSWindow(contentRect: NSRect(origin: .zero, size: fitting), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host
+        host.frame = NSRect(origin: .zero, size: fitting); window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let image = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let capture = XCTAttachment(data: image, uniformTypeIdentifier: "public.png")
+        capture.name = "Mac setup file destination and index options"; capture.lifetime = .keepAlways; add(capture)
+        XCTAssertFalse(state.autoExportMarkdown); XCTAssertFalse(state.generateAgentsMd)
+        XCTAssertEqual(state.markdownExportFolderPath, before.0)
+        XCTAssertEqual(state.markdownExportBookmarkData, before.1)
+    }
+
+    @MainActor func testSelectedFolderExportsPersistAndPreserveExistingAgentInstructions() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertTrue(state.saveExportFolderBookmark(for: folder))
+        state.autoExportMarkdown = true; state.generateAgentsMd = true
+        let original = "# Project instructions\n\nKeep this team's working agreements.\n"
+        let indexURL = folder.appendingPathComponent("AGENTS.md")
+        try original.write(to: indexURL, atomically: true, encoding: .utf8)
+        let meeting = Meeting(title: "Customer review", endTime: Date())
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        XCTAssertTrue(state.exportMeetingAsMarkdownFile(markdown: "# Saved meeting\n", meeting: meeting))
+        let file = folder.appendingPathComponent(try XCTUnwrap(meeting.lastExportedMarkdownFilename))
+        XCTAssertEqual(try String(contentsOf: file, encoding: .utf8), "# Saved meeting\n")
+        let index = try String(contentsOf: indexURL, encoding: .utf8)
+        XCTAssertTrue(index.hasPrefix(original)); XCTAssertTrue(index.contains(file.lastPathComponent))
+        let withFooter = index + "\n## Extra instructions\nThese must survive updates too.\n"
+        try withFooter.write(to: indexURL, atomically: true, encoding: .utf8)
+        state.updateAgentsMdIndex()
+        let updated = try String(contentsOf: indexURL, encoding: .utf8)
+        XCTAssertTrue(updated.hasPrefix(original)); XCTAssertTrue(updated.hasSuffix("These must survive updates too.\n"))
+        XCTAssertEqual(updated.components(separatedBy: "<!-- miniti:meetings:start -->").count, 2)
+        let reopened = AppState()
+        XCTAssertEqual(reopened.markdownExportFolderPath, folder.path)
+        XCTAssertTrue(reopened.autoExportMarkdown); XCTAssertTrue(reopened.generateAgentsMd)
+        let bookmark = state.markdownExportBookmarkData
+        XCTAssertFalse(state.saveExportFolderBookmark(for: folder.appendingPathComponent("missing/child")))
+        XCTAssertEqual(state.markdownExportFolderPath, folder.path)
+        XCTAssertEqual(state.markdownExportBookmarkData, bookmark)
+        XCTAssertNotNil(state.markdownExportIssue)
+    }
+
+    func testOldGeneratedAgentsIndexIsReplacedWithoutKeepingAStaleList() throws {
+        let old = AppState.legacyAgentsIndexHeader + "- [2026-11-04-0900-old.md](2026-11-04-0900-old.md), 2026-11-04, old\n"
+        let result = try XCTUnwrap(AppState.agentsIndexDocument(existing: old + "\n# Team instructions\nKeep this.\n", generatedIndex: "New index"))
+        XCTAssertFalse(result.contains("0900-old.md"))
+        XCTAssertTrue(result.contains("# Team instructions\nKeep this."))
+        let duplicated = old + "\n<!-- miniti:meetings:start -->\nPrevious index\n<!-- miniti:meetings:end -->\n"
+        let repaired = try XCTUnwrap(AppState.agentsIndexDocument(existing: duplicated, generatedIndex: "New index"))
+        XCTAssertFalse(repaired.contains("0900-old.md"))
+        XCTAssertFalse(repaired.contains("Previous index"))
+        XCTAssertEqual(repaired.components(separatedBy: "miniti:meetings:start").count, 2)
+    }
+
+    func testIncompleteAgentsIndexIsKeptAndNewIndexesAreIdempotent() throws {
+        XCTAssertNil(AppState.agentsIndexDocument(existing: "Project notes\n<!-- miniti:meetings:start -->\nunfinished", generatedIndex: "new"))
+        XCTAssertNil(AppState.agentsIndexDocument(existing: "<!-- miniti:meetings:end --><!-- miniti:meetings:start -->", generatedIndex: "new"))
+        let first = try XCTUnwrap(AppState.agentsIndexDocument(existing: nil, generatedIndex: "Meeting index"))
+        XCTAssertEqual(AppState.agentsIndexDocument(existing: first, generatedIndex: "Meeting index"), first)
+    }
+    #endif
+    private func items(email: AccountEmailState = .loaded(AccountEmail()), recovery: Bool = false,
+                       dismissed: Bool = false, connected: Bool = false, deferred: Bool = false,
+                       local: Bool = true, chosen: Bool = false, reviewed: Bool = false,
+                       managed: Bool = true, enrolled: Bool = true, skipped: Set<String> = []) -> [HomeSetupItem] {
+        HomeSetupPolicy.items(managed: managed, enrolled: enrolled, email: email, recoverySaved: recovery,
+            accountDismissed: dismissed, calendarConnected: connected, calendarDeferred: deferred,
+            localAvailable: local, localChosen: chosen, localReviewed: reviewed, skipped: skipped)
+    }
+    func testUpgradeGetsOneOrderedChecklistWithoutChangingExistingChoices() {
+        XCTAssertEqual(items().map(\.step), [.account, .calendar, .transcription])
+        XCTAssertEqual(items().filter(\.reviewed).count, 0)
+        let existing = items(email: .loaded(AccountEmail(verified: "fixture@example.invalid")), connected: true, chosen: true)
+        XCTAssertEqual(existing.first { $0.step == .account }?.status, .complete)
+        XCTAssertEqual(existing.first { $0.step == .transcription }?.status, .todo, "Existing local settings do not dismiss the review nudge")
+        XCTAssertEqual(items(recovery: true).first?.status, .todo, "A recovery key does not replace the email nudge")
+    }
+    func testCompletedPrerequisitesStayInProgressButLeaveHome() {
+        let configured = HomeSetupPolicy.items(managed: false, enrolled: false, email: .loading,
+            recoverySaved: false, accountDismissed: false, calendarConnected: true, calendarDeferred: false,
+            localAvailable: false, localChosen: false, localReviewed: false, skipped: [], microphoneGranted: true)
+        XCTAssertEqual(configured.map(\.step), [.readiness, .calendar])
+        XCTAssertTrue(configured.allSatisfy { $0.status == .complete })
+        XCTAssertTrue(configured.filter(\.isRelevantOnHome).isEmpty)
+        let needed = HomeSetupPolicy.items(managed: false, enrolled: false, email: .loading,
+            recoverySaved: false, accountDismissed: false, calendarConnected: false, calendarDeferred: false,
+            localAvailable: false, localChosen: false, localReviewed: false, skipped: [], microphoneGranted: false)
+        XCTAssertEqual(needed.filter(\.isRelevantOnHome).map(\.step), [.readiness, .calendar])
+        XCTAssertTrue(needed.allSatisfy { $0.status == .todo })
+    }
+
+    @MainActor func testFolderReviewIsExplicitPersistentAndDoesNotChangeFilingChoices() {
+        let state = AppState()
+        let original = (state.homeSetupState.foldersReviewed, state.homeSetupSkippedSteps,
+                        state.automaticFolderFiling, state.automaticFolderCreation)
+        defer {
+            state.homeSetupState.foldersReviewed = original.0; state.homeSetupSkippedSteps = original.1
+            state.automaticFolderFiling = original.2; state.automaticFolderCreation = original.3
+        }
+        state.homeSetupState.foldersReviewed = false; state.homeSetupSkippedSteps = ""
+        state.automaticFolderFiling = false; state.automaticFolderCreation = true
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .folders }?.status, .todo)
+        state.skipHomeSetup(.folders)
+        XCTAssertTrue(state.isHomeSetupStepHidden(.folders))
+        XCTAssertFalse(state.homeSetupState.foldersReviewed)
+        state.restoreHomeSetup(.folders)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .folders }?.status, .todo)
+        var published = false
+        let observation = state.homeSetupState.objectWillChange.sink { published = true }
+        state.confirmHomeSetupFoldersReview()
+        observation.cancel()
+        XCTAssertTrue(published)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .folders }?.status, .complete)
+        let reopened = HomeSetupState()
+        XCTAssertTrue(reopened.foldersReviewed)
+        XCTAssertFalse(state.automaticFolderFiling)
+        XCTAssertTrue(state.automaticFolderCreation)
+    }
+
+    @MainActor func testExplicitAudioReviewPersistsWithoutChangingAudioChoices() {
+        let state = AppState()
+        state.homeSetupAudioReviewed = false
+        state.onDeviceTranscriptionEnabled = true
+        state.onDeviceSpeakerSeparationEnabled = false
+        #if os(macOS) && arch(arm64)
+        XCTAssertEqual(state.homeSetupItems.first { $0.step == .transcription }?.status, .todo)
+        #endif
+        var publishedReview = false
+        let observation = state.homeSetupState.objectWillChange.sink { publishedReview = true }
+        state.confirmHomeSetupAudioReview()
+        XCTAssertTrue(publishedReview, "Confirmation must update the visible check and footer immediately")
+        observation.cancel()
+        let reopened = AppState()
+        XCTAssertTrue(reopened.homeSetupAudioReviewed)
+        XCTAssertTrue(reopened.onDeviceTranscriptionEnabled)
+        XCTAssertFalse(reopened.onDeviceSpeakerSeparationEnabled)
+        #if os(macOS) && arch(arm64)
+        XCTAssertEqual(reopened.homeSetupItems.first { $0.step == .transcription }?.status, .complete)
+        #endif
+    }
+
+    func testFilesStepUsesPlatformSupportAndExistingConfiguration() {
+        func fileItems(available: Bool, configured: Bool) -> [HomeSetupItem] {
+            HomeSetupPolicy.items(managed: false, enrolled: false, email: .loading, recoverySaved: false,
+                accountDismissed: false, calendarConnected: false, calendarDeferred: false, calendarKnown: false,
+                localAvailable: false, localChosen: false, localReviewed: false, skipped: [],
+                filesAvailable: available, filesConfigured: configured)
+        }
+        XCTAssertTrue(fileItems(available: false, configured: true).isEmpty)
+        XCTAssertEqual(fileItems(available: true, configured: false).map(\.step), [.files])
+        XCTAssertEqual(fileItems(available: true, configured: false).first?.status, .todo)
+        XCTAssertEqual(fileItems(available: true, configured: true).first?.status, .complete)
+    }
+
+    func testPendingAndUnavailableEmailAreNeverCountedAsVerified() {
+        XCTAssertEqual(items(email: .loaded(AccountEmail(pending: "fixture@example.invalid"))).first?.status, .waiting)
+        XCTAssertEqual(items(email: .loading).first?.status, .todo)
+        XCTAssertEqual(items(email: .unavailable("Offline")).filter(\.reviewed).count, 0)
+    }
+    func testUncheckedCalendarDoesNotFlashAsDisconnected() {
+        let pending = HomeSetupPolicy.items(managed: false, enrolled: false, email: .loading,
+            recoverySaved: false, accountDismissed: false, calendarConnected: false,
+            calendarDeferred: false, calendarKnown: false, localAvailable: false,
+            localChosen: false, localReviewed: false, skipped: [])
+        XCTAssertTrue(pending.isEmpty)
+    }
+
+    func testLegacyDismissalsAndPlatformScopeAreRespected() {
+        XCTAssertEqual(items(dismissed: true, deferred: true, local: false).map(\.status), [.skipped, .skipped])
+        XCTAssertEqual(items(local: false, managed: false).map(\.step), [.calendar])
+        XCTAssertEqual(items(local: false, enrolled: false).map(\.step), [.calendar])
+        XCTAssertEqual(items(skipped: ["calendar", "transcription"]).filter(\.reviewed).count, 2)
+        XCTAssertEqual(items(reviewed: true).last?.status, .complete)
+    }
+    @MainActor func testSkippingReviewPersistsWithoutChangingRecordingOrCloudSettings() {
+        let state = AppState()
+        let oldLocal = state.onDeviceTranscriptionEnabled
+        let oldCalendar = state.googleCalendarEnabled
+        let oldCloud = state.cloudSyncEnabled
+        state.skipHomeSetup(.calendar); state.skipHomeSetup(.transcription)
+        state.homeSetupHidden = true
+        let reopened = AppState()
+        XCTAssertTrue(reopened.homeSetupHidden)
+        XCTAssertEqual(reopened.homeSetupSkippedSteps, "calendar,transcription")
+        XCTAssertEqual(reopened.onDeviceTranscriptionEnabled, oldLocal)
+        XCTAssertEqual(reopened.googleCalendarEnabled, oldCalendar)
+        XCTAssertEqual(reopened.cloudSyncEnabled, oldCloud)
     }
 }

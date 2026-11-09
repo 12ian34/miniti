@@ -287,11 +287,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let actionIdentifier = response.actionIdentifier
         let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let eventID = response.notification.request.content.userInfo["eventID"] as? String
+        let promptToken = response.notification.request.content.userInfo["promptToken"] as? String
+        let recordingID = response.notification.request.content.userInfo["recordingID"] as? String
         Task { @MainActor [weak self] in
             self?.appState?.handleNotificationResponse(
                 actionIdentifier: actionIdentifier,
                 categoryIdentifier: categoryIdentifier,
-                eventID: eventID
+                eventID: eventID, promptToken: promptToken, recordingID: recordingID
             )
             self?.openOrRestoreMainWindow()
         }
@@ -414,7 +416,10 @@ struct MinitiApp: App {
     var body: some Scene {
         WindowGroup("Miniti", id: "main") {
             Group {
-                if case .failed(let failure, let readOnly) = storeState {
+                if AppState.isRunningUnderXCTest && !AccountUITestHarness.isActive {
+                    // Hosted logic tests need a quiet app host. UI journeys use the real root.
+                    Text("Test host")
+                } else if case .failed(let failure, let readOnly) = storeState {
                     StoreRecoveryView(failure: failure, readOnlyContainer: readOnly, retry: retryStoreOpen)
                 } else if appState.requiresForceUpdate {
                     ForceUpdateView()
@@ -432,6 +437,7 @@ struct MinitiApp: App {
                 }
             }
             .environmentObject(appState)
+            .modifier(AccountUITestReady())
             .environment(\.interfaceScale, interfaceScale)
             .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
             .minitiReduceMotionAware()
@@ -485,7 +491,7 @@ struct MinitiApp: App {
                     toggleRecording()
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
-                .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
+                .disabled(appState.requiresForceUpdate || (!appState.isRecording && (appState.recordingUnavailableReason != nil || !appState.hasAcceptedTerms)))
 
                 Button("Generate Insights") {
                     generateInsights()
@@ -542,7 +548,7 @@ struct MinitiApp: App {
         .windowResizability(.contentMinSize)
         
         // Menu Bar
-        MenuBarExtra(isInserted: $showInMenuBar) {
+        MenuBarExtra(isInserted: menuBarInsertion) {
             MenuBarView()
                 .environmentObject(appState)
                 .environment(\.interfaceScale, interfaceScale)
@@ -561,6 +567,18 @@ struct MinitiApp: App {
         }
     }
     
+    // AppKit can echo the current visibility during scene reconciliation. Writing
+    // that identical value through AppStorage invalidates every scene again.
+    private var menuBarInsertion: Binding<Bool> {
+        Binding(get: {
+            AppState.isRunningUnderXCTest && !AccountUITestHarness.isActive ? false : showInMenuBar
+        }, set: { visible in
+            guard !AppState.isRunningUnderXCTest || AccountUITestHarness.isActive,
+                  visible != showInMenuBar else { return }
+            showInMenuBar = visible
+        })
+    }
+
     private func setupKeyboardShortcuts() {
         keyboardService.onToggleRecording = { [weak appState] in
             guard let appState else { return }
@@ -759,7 +777,7 @@ struct MenuBarView: View {
                 Divider()
             }
 
-            if let prompt = appState.smartMeetingPrompt {
+            if let prompt = appState.floatingMeetingPrompt {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(prompt.title)
                         .font(.system(size: 11, weight: .semibold))
@@ -807,6 +825,9 @@ struct MenuBarView: View {
                             Button("Keep") {
                                 appState.keepRecordingFromSmartMeetingPrompt()
                             }
+                        case .association:
+                            Button("Use for this meeting") { appState.associateCurrentMeetingFromPrompt() }
+                            Button("Keep recording") { appState.keepRecordingFromSmartMeetingPrompt() }
                         case .calendarNoShow:
                             Button("Record anyway") {
                                 appState.recordFromNoShowPrompt()
@@ -896,7 +917,7 @@ struct MenuBarView: View {
                 )
             }
             .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(appState.requiresForceUpdate || (!appState.hasAcceptedTerms && !appState.isRecording))
+            .disabled(appState.requiresForceUpdate || (!appState.isRecording && (appState.recordingUnavailableReason != nil || !appState.hasAcceptedTerms)))
 
             if appState.currentMeeting != nil {
                 Button {

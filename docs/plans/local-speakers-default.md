@@ -1,6 +1,6 @@
 # Mac local speaker reliability and device diagnostics, 3.7.0
 
-Scope revised by Ian on 2026-11-03: **local speaker separation stays off by default in 3.7.0.** Failure-handling fixes and device diagnostics remain selected. Default-on is deferred until testing on an M1, with no later release assigned. Failure handling and hardware snapshots are implemented locally on 2026-11-03; physical validation remains pending. Nothing is deployed. The [roadmap](../roadmap.md#selected-next-release-370) owns order. Preserve existing choices, iOS speaker defaults and voice-recognition settings. Ian has no M1 available; the evidence and validation alternatives below support the deferred default decision, not a claim of tested hardware.
+Status updated 2026-11-04: 3.7.0 backend deployed and Mac build 149 released; iOS build 149 submitted, availability unconfirmed. [Publication evidence](../releases/3.7.0.md#publication-2026-11-04) supersedes dated local-only status below and retains test/device limitations. [Roadmap](../roadmap.md) owns priority. Local separation stays off by default; Your voice stays opt-in. Default-on awaits M1 testing with no version assigned. Mid-session restoration is implemented locally for 3.8.0 below; the [3.8.0 record](../releases/3.8.0-evidence.md#local-implementation-evidence) owns validation and remaining device evidence.
 
 ## Selected behavior
 
@@ -36,11 +36,25 @@ Persist only a bounded latest snapshot/last-seen timestamp as needed for admin d
 
 ## Mid-session restoration: next release after 3.7.0
 
-Selected by Ian on 2026-11-03 for the release following 3.7.0; version number unassigned. The [roadmap](../roadmap.md#next-release-after-370) owns priority. This is separate from making local separation default-on, which still awaits M1 testing and has no release assigned.
+Selected by Ian on 2026-11-03 for the release following 3.7.0; assigned to 3.8.0 on 2026-11-04. The [roadmap](../roadmap.md#next-release-after-370) owns priority. This is separate from making local separation default-on, which still awaits M1 testing and has no release assigned.
 
 Define and test a safe transition back to provider speaker separation during a cloud-transcribed session after local separation fails. A socket opened without provider diarization cannot supply restored separation merely by discarding the local timeline. Use the recording reliability plan's one connection owner, preserve transcript timestamps, source identity, names/manual overrides and saved-meeting authority, and disclose unresolved gaps. Preserve the 3.7.0 degraded state when restoration is unsafe or fails. Local-only sessions stay local; no audio replay/buffering project is added by this follow-up.
 
 Acceptance requires controlled mid-session failure, slow/failed reconnect, stop during restoration, late callbacks, dual-source identity continuity and safe voice learning. Verify actual speaker output before claiming separation recovered, bounded attempts/resources, and no duplicate transcript or finalization. Validate the transition on a physical Mac using known spoken content before release.
+
+### Next-candidate transition contract, 2026-11-04
+
+SR1 also owns its rows in the [3.8.0 planning audit](../releases/3.8.0-planning-audit.md): measured capture/Stop comparisons, shared design/status components, rendered transition states and affected public docs/screenshots. These checks supplement the state-machine tests; no performance or visual pass is claimed during planning.
+
+The [combined checklist](../releases/3.8.0.md) schedules this after [reconnect metering](managed-reconnect-metering.md), so restoring separation cannot reset billed duration. This is a Mac cloud-transcription transition; preserve existing iOS/Watch separation behavior and all local-only sessions.
+
+Use explicit states: local active, provider restoration pending, provider separation observed, and unavailable. At local failure, invalidate only the affected local session's timeline/evidence. Preserve loaded models after lag; real inference/load failures retain the retry requirement. Restore the next recording using the normal preference/readiness decision rather than persisting a temporary fallback as a new preference.
+
+Request one automatic diarization-enabled transition per recording through the existing connection owner. Coalesce with an in-flight recovery, keep its generation/timeout ownership, and use existing bounded transport retry policy rather than a second reconnect loop. For 3.8.0 use one 45-second absolute transition budget, including credential refresh, coalesced handshake waits and backoff, and at most the existing three transport attempts. The current ladder is 1/2/5 seconds with 12-second connect attempts; the absolute budget wins and never restarts per attempt. A handshake already owned by recovery is not replaced. If the budget expires, retain unavailable status and allow ordinary transport recovery without scheduling another speaker-specific reconnect. Test these as behavioral bounds with controlled time, not source-string assertions. Stop cancels transition ownership and follows the existing bounded final drain. Late callbacks cannot restart capture or apply old labels to the next recording.
+
+Allocate provider speaker IDs in an epoch/source-safe namespace; numeric IDs reused by a new socket must not inherit old identities by accident. Preserve already confirmed/manual names and historical segments, but do not assign them to new speaker clusters without evidence. Quarantine voice learning from the invalidated interval and uncertain new mappings. Do not relabel all earlier reliable text as Unknown. Socket-open alone is insufficient: use actual provider speaker evidence before clearing unavailable status. A connected socket with no speech enters provider-unconfirmed without another reconnect or idle timer. Silence is not a failure. Later usable labels from that same valid generation may establish recovery; late labels from an obsolete generation cannot.
+
+Test simultaneous local lag and token expiry, restoration during reconnect, no provider labels, repeated failures, Stop/cancel, next-recording start and stale callbacks. Check mic/system source IDs, timestamp continuity, manual names, no duplicate words and no duplicate usage. Record a physical Mac test with known speech; this is separate from M1/default-on research.
 
 ## M1 research, checked 2026-11-03
 
@@ -96,3 +110,5 @@ Watch compatibility review (2026-11-03): the new bounded live worker exposed a p
 
 
 Real-model follow-through on M5 Pro (2026-11-03): all three opt-in tests passed using public AMI files. The diarizer processed 60 seconds at capture pace in 60.9 seconds with two detected speakers and lookup coverage 17/29; local ASR produced five finals, 13 interims and 52 words from that clip; voice recognition matched four speakers confidently across two eight-minute sections processed with bounded prerecorded feeding. This is functional fixture evidence on M5 Pro, not base-M1 performance, acoustic live capture, or a default-on approval. The full Apple suites subsequently passed on the combined tree.
+
+3.8.0 review correction (2026-11-04): when the 45-second asynchronous deadline expires, pending restoration becomes unavailable regardless of system-uptime advancement. Mac sleep cannot leave the restoration owner pending indefinitely and suppress ordinary reconnects. Physical sleep/wake remains a release gate.

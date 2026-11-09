@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Planning"
+  short_description: "Audit release scope, risks and publication readiness"
+  default_prompt: "Use $release-planning to plan or audit the next release across code, compatibility, UX, performance, security, docs and publication assets."

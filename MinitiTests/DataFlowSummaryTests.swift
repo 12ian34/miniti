@@ -180,7 +180,7 @@ final class DataFlowSummaryTests: XCTestCase {
         var i = macDefaults
         i.cloudPause = nil
         XCTAssertEqual(row(DataFlowSummary.build(i), "cloud").status, .automaticExport)
-        XCTAssertEqual(row(DataFlowSummary.build(i), "cloud").summary, "Finished meetings, so your other devices see them.")
+        XCTAssertEqual(row(DataFlowSummary.build(i), "cloud").summary, "Finished meetings and shared folders, so your other devices see them.")
         i.cloudPause = "Off"
         XCTAssertEqual(row(DataFlowSummary.build(i), "cloud").status, .off)
         XCTAssertTrue(DataFlowSummary.build(i).notInUse.contains { $0.id == "cloud" })

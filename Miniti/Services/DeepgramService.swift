@@ -459,6 +459,39 @@ enum TranscriptSource: String, Codable, Sendable, Equatable, Hashable {
 ///   socket maps back to `1000` — preserving the shipped single-user "You"
 ///   contract. Once several microphone speakers exist, a reconnect cannot
 ///   tell who is who, so every mic speaker gets a fresh identity.
+struct SpeakerRestoration: Equatable {
+    enum Phase: Equatable { case idle, pending, unconfirmed, observed, unavailable }
+    private(set) var phase: Phase = .idle
+    private(set) var deadline: TimeInterval?
+    private(set) var connection: UInt64?
+    private(set) var attempts = 0
+    mutating func begin(now: TimeInterval) -> Bool {
+        guard phase == .idle else { return false }
+        phase = .pending; deadline = now + 45
+        return true
+    }
+    mutating func attempt(now: TimeInterval) -> Bool {
+        guard phase == .pending, let deadline, now < deadline, attempts < 3 else { return false }
+        attempts += 1; return true
+    }
+    mutating func connected(_ generation: UInt64, now: TimeInterval) {
+        switch phase {
+        case .pending: guard let deadline, now < deadline else { return }
+        case .unconfirmed, .observed: break
+        case .idle, .unavailable: return
+        }
+        phase = .unconfirmed; connection = generation; self.deadline = nil
+    }
+    mutating func observe(_ generation: UInt64) -> Bool {
+        guard phase == .unconfirmed, generation == connection else { return false }
+        phase = .observed; return true
+    }
+    mutating func expire(now: TimeInterval) {
+        if phase == .pending, let deadline, now >= deadline { phase = .unavailable; self.deadline = nil }
+    }
+    mutating func cancel() { phase = .unavailable; deadline = nil; connection = nil }
+}
+
 struct SpeakerIdentityState: Sendable, Equatable {
     private var assignments: [String: Int] = [:]
     private var nextSystemAppID: Int = 0
@@ -481,8 +514,8 @@ struct SpeakerIdentityState: Sendable, Equatable {
             return
         }
         generation &+= 1
-        micContinuityAvailable = allocatedMicAppIDs.isEmpty
-            || allocatedMicAppIDs == [DeepgramService.micSpeakerID]
+        micContinuityAvailable = stableProviderSources.isEmpty && (allocatedMicAppIDs.isEmpty
+            || allocatedMicAppIDs == [DeepgramService.micSpeakerID])
     }
 
     /// Register app speaker IDs restored from a persisted meeting (resume after
@@ -640,6 +673,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
     /// True while the current session transcribes on this device.
     @Published private(set) var isTranscribingOnDevice = false
     
+    var onProviderSpeakerEvidence: ((UInt64) -> Void)?
+    private(set) var lastProviderSpeakerEvidenceGeneration: UInt64?
+    var requiresProviderSpeakerLabels = false
+    var usesProviderDiarization: Bool { _localSession == nil && _onDeviceTimeline == nil }
     @Published var transcriptUpdate: TranscriptUpdate?
     /// Wall-clock time of the last `SpeechStarted` event from Deepgram's own voice
     /// activity detection (`vad_events=true`). Speech-specific, unlike the raw capture
@@ -1278,6 +1315,7 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                         let mono = self.monoSource
                         let identity = self.speakerIdentityState
                         let timeline = self._onDeviceTimeline
+                        let requireLabels = self.requiresProviderSpeakerLabels
                         let parsed = await Task.detached(priority: .userInitiated) {
                             Self.processTranscriptJSON(
                                 json,
@@ -1285,7 +1323,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
                                 monoSource: mono,
                                 segmentationState: state,
                                 identityState: identity,
-                                speakerTimeline: timeline
+                                speakerTimeline: timeline,
+                                requiresProviderSpeakerLabels: requireLabels
                             )
                         }.value
                         guard generation == self.connectionGeneration,
@@ -1354,7 +1393,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         monoSource: TranscriptSource,
         segmentationState: SegmentationState,
         identityState: SpeakerIdentityState,
-        speakerTimeline: OnDeviceSpeakerTimeline? = nil
+        speakerTimeline: OnDeviceSpeakerTimeline? = nil,
+        requiresProviderSpeakerLabels: Bool = false
     ) -> BackgroundParseResult {
         guard let data = json.data(using: .utf8) else { return .ignored }
         if isSpeechStartedMessage(json) { return .speechStarted }
@@ -1374,7 +1414,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
             monoSource: monoSource,
             segmentationState: segmentationState,
             identityState: identityState,
-            speakerTimeline: speakerTimeline
+            speakerTimeline: speakerTimeline,
+            requiresProviderSpeakerLabels: requiresProviderSpeakerLabels
         )
     }
 
@@ -1401,7 +1442,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         monoSource: TranscriptSource,
         segmentationState: SegmentationState,
         identityState: SpeakerIdentityState,
-        speakerTimeline: OnDeviceSpeakerTimeline? = nil
+        speakerTimeline: OnDeviceSpeakerTimeline? = nil,
+        requiresProviderSpeakerLabels: Bool = false
     ) -> BackgroundParseResult {
         guard let alternative = response.channel?.alternatives.first else { return .ignored }
         let deepgramIsFinal = response.isFinal ?? false
@@ -1422,7 +1464,8 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         var onDeviceSlotCounts: [Int: Int] = [:]
         var onDeviceBorrowed = 0
         let onDeviceCovers = speakerTimeline?.covers(source) ?? false
-        let separationUnavailable = onDeviceCovers && speakerTimeline?.isReliable == false
+        let separationUnavailable = (onDeviceCovers && speakerTimeline?.isReliable == false)
+            || (requiresProviderSpeakerLabels && alternative.words.contains { $0.speaker == nil })
         var providers = alternative.words.map { word in
             providerSpeaker(
                 wordStart: word.start,
@@ -1588,6 +1631,10 @@ final class DeepgramService: NSObject, ObservableObject, URLSessionWebSocketDele
         case .warning(let message):
             DebugLogger.shared.log(.deepgram, "Parse warning: \(message)")
         case .transcript(let parsed):
+            if usesProviderDiarization, parsed.update.isFinal, !parsed.originalSpeakerIDs.isEmpty {
+                lastProviderSpeakerEvidenceGeneration = connectionGeneration
+                onProviderSpeakerEvidence?(connectionGeneration)
+            }
             transcriptMessageCount += 1
             if parsed.originalWordCount == 0 && !parsed.hasTranscriptText {
                 emptyTranscriptCount += 1

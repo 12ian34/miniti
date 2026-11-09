@@ -325,11 +325,11 @@ struct MeetingView_iOS: View {
                     if appState.isFinalizingMeeting {
                         flexFinalizingStatus
                     } else if appState.isCurrentMeetingGeneratingFinalInsights {
-                        flexButton(icon: "checkmark", label: "done", role: .primary) {
-                            appState.goHome()
+                        flexButton(icon: "checkmark", label: "history", role: .primary) {
+                            appState.saveAndOpenCurrentMeeting()
                         }
                     } else {
-                        flexButton(icon: "checkmark", label: "done", role: .primary) {
+                        flexButton(icon: "checkmark", label: "history", role: .primary) {
                             appState.saveAndOpenCurrentMeeting()
                         }
                     }
@@ -675,7 +675,7 @@ private struct SmartMeetingBanner_iOS: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
-                Image(systemName: prompt.kind == .calendar ? "calendar.badge.clock" : "moon.zzz.fill")
+                Image(systemName: prompt.kind == .association ? "calendar.badge.checkmark" : prompt.kind == .calendar ? "calendar.badge.clock" : "moon.zzz.fill")
                     .foregroundStyle(ColorPalette.Accent.amber)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(prompt.title)
@@ -687,7 +687,15 @@ private struct SmartMeetingBanner_iOS: View {
                 }
             }
 
-            if prompt.kind == .calendar, let eventID = prompt.eventID {
+            if prompt.kind == .association {
+                VStack(alignment: .leading, spacing: 8) {
+                    Button("Use for this meeting") { appState.associateCurrentMeetingFromPrompt() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(ColorPalette.Accent.green)
+                    Button("Keep recording") { appState.keepRecordingFromSmartMeetingPrompt() }
+                        .buttonStyle(.bordered)
+                }
+            } else if prompt.kind == .calendar, let eventID = prompt.eventID {
                 let nextEvent = appState.upcomingEvents.first(where: { $0.id == eventID })
                 if nextEvent?.joinURL != nil {
                     Button("Join next") {
@@ -764,6 +772,8 @@ struct ReadyStateView_iOS: View {
     @State private var prepEvent: MinitiAPIService.CalendarEvent?
 
     var body: some View {
+        GeometryReader { geometry in
+        ScrollView {
         VStack(spacing: 0) {
             if isMicTesting && appState.isMonitoring {
                 ObservedSourceWaveform_iOS(
@@ -778,40 +788,15 @@ struct ReadyStateView_iOS: View {
                 .animation(.easeInOut(duration: 0.2), value: isMicTesting && appState.isMonitoring)
             }
 
-            // Two spacers push the main block lower (2/3 of free space above)
-            Spacer()
-            Spacer()
-
-            // Logo + tagline + start button grouped together
-            VStack(spacing: 28) {
-                VStack(spacing: 12) {
-                    Text("⬢")
-                        .font(.system(size: 48, weight: .bold, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Accent.green)
-
-                    Text("miniti")
-                        .font(.system(size: 28, weight: .bold, design: .monospaced))
-                        .foregroundStyle(ColorPalette.Text.primary)
-
-                    FlashingTagline_iOS(
-                        text: "multi-dimensional meetings",
-                        isIdle: !(isMicTesting && appState.isMonitoring)
-                    )
-                }
-
+            VStack(spacing: MinitiDesignSystem.Spacing.section) {
                 if appState.appMode == .byok {
                     BYOKStatusPills()
                 }
 
-                // Keep access to your account (B6a): after the first saved meeting, never while recording
-                if appState.appMode == .managed && appState.showAccessCard && !appState.isRecording {
-                    AccountAccessCard()
-                }
-
-                // Calendar integration nudge
-                if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
-                    CalendarNudgeCard_iOS()
-                }
+                if appState.appMode == .managed && !appState.isRecording,
+               !appState.clientAuthStatus.isEnrolled {
+                ManagedAccessChoiceCard()
+            }
 
                 // Auto-start banner
                 if let event = appState.pendingAutoStartEvent {
@@ -868,7 +853,7 @@ struct ReadyStateView_iOS: View {
                         .disabled(isPurchasingPro)
 
                         VStack(spacing: 4) {
-                            Text("Miniti Pro Monthly · $4.99/month · auto-renewable")
+                            Text("miniti Pro Monthly · $4.99/month · auto-renewable")
                                 .font(.system(size: 10, weight: .semibold, design: .default))
                                 .foregroundStyle(ColorPalette.Text.muted)
                                 .multilineTextAlignment(.center)
@@ -920,8 +905,9 @@ struct ReadyStateView_iOS: View {
                         .foregroundStyle(.black)
                         .padding(.horizontal, 32)
                         .padding(.vertical, 14)
+                        .frame(maxWidth: .infinity)
                         .background(
-                            Capsule()
+                            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
                                 .fill(appState.isStartingMeeting
                                       ? ColorPalette.Text.muted
                                       : appState.canStartRecording
@@ -929,30 +915,38 @@ struct ReadyStateView_iOS: View {
                                           : ColorPalette.Text.disabled)
                         )
                     }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
                     .disabled(!appState.canStartRecording || appState.isStartingMeeting)
 
                     MeetingLanguagePicker_iOS(language: $appState.meetingLanguage)
 
                 }
 
-                // Upcoming calendar events
-                if appState.pendingAutoStartEvent == nil,
-                   appState.googleCalendarEnabled,
-                   appState.isGoogleCalendarConnected,
-                   !appState.upcomingMeetingEvents.isEmpty {
-                    UpcomingEventsPanel_iOS { event in
-                        prepEvent = event
+                HomeSetupOrCalendar {
+                    if appState.pendingAutoStartEvent == nil,
+                       appState.googleCalendarEnabled, appState.isGoogleCalendarConnected {
+                        if appState.upcomingMeetingEvents.isEmpty {
+                            Text("No upcoming meetings").font(.callout).foregroundStyle(ColorPalette.Text.muted)
+                        } else {
+                            UpcomingEventsPanel_iOS { event in prepEvent = event }
+                                .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth)
+                        }
                     }
-                        .frame(maxWidth: 380)
                 }
             }
 
             Spacer()
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.top, MinitiDesignSystem.Spacing.page + MinitiDesignSystem.Spacing.section)
+        .padding(.bottom, MinitiDesignSystem.Spacing.section)
+        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
+        }
+        }
         .safeAreaInset(edge: .bottom) {
-            HStack { Spacer(); HomeFeedbackButton() }.padding(.horizontal).padding(.vertical, 8)
+            HomeUtilityBar().padding(.horizontal).padding(.vertical, MinitiDesignSystem.Spacing.standard)
+                .background(ColorPalette.Background.primary)
         }
         .onDisappear {
             if isMicTesting {
@@ -968,7 +962,8 @@ struct ReadyStateView_iOS: View {
             }
         }
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarBackground(ColorPalette.Background.primary, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -1262,12 +1257,12 @@ private struct PostMeetingReviewCard_iOS: View {
 
     private var statusDetail: String {
         if appState.isFinalizingMeeting {
-            return "You can keep reviewing while Miniti finishes and saves automatically."
+            return "You can keep reviewing while miniti finishes and saves automatically."
         }
         if appState.isCurrentMeetingGeneratingFinalInsights {
-            return "You can return to meetings now; insights will finish in History."
+            return "Saved in History. Final insights are finishing here. You can leave at any time."
         }
-        return "Review, resume, or choose Done to open this meeting in History."
+        return "Saved in History. You can review here or resume recording."
     }
 }
 
@@ -1484,110 +1479,6 @@ struct StatusPill: View {
                         .strokeBorder(ColorPalette.Border.subtle, lineWidth: 1)
                 )
         )
-    }
-}
-
-// MARK: - Calendar Nudge Card (iOS)
-
-struct CalendarNudgeCard_iOS: View {
-    @EnvironmentObject var appState: AppState
-    @State private var isConnecting = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ColorPalette.Accent.green)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("see your meetings here")
-                        .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Text.primary)
-
-                    Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
-                        .font(.system(size: 11, weight: .regular, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                Button {
-                    appState.dismissCalendarNudgeForever()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(6)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    guard !isConnecting else { return }
-                    isConnecting = true
-                    appState.startCalendarConnectFromNudge()
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        isConnecting = false
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isConnecting {
-                            ProgressView()
-                                .tint(.black)
-                                .scaleEffect(0.7)
-                        } else {
-                            Image(systemName: "link")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        Text(isConnecting ? "opening..." : "connect calendar")
-                            .font(.system(size: 12, weight: .semibold, design: .default))
-                    }
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(
-                        Capsule()
-                            .fill(ColorPalette.Accent.green)
-                    )
-                }
-                .buttonStyle(.plain)
-                .disabled(isConnecting)
-
-                Button {
-                    appState.snoozeCalendarNudge()
-                } label: {
-                    Text("not now")
-                        .font(.system(size: 12, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(
-                            Capsule()
-                                .fill(ColorPalette.Background.tertiary)
-                        )
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(.leading, 28)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 360, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.Accent.green.opacity(0.07))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
-                )
-        )
-        .minitiAdaptiveUtilitySurface(tint: ColorPalette.Accent.green.opacity(0.12))
     }
 }
 
@@ -1853,25 +1744,32 @@ private struct UpcomingEventsPanel_iOS: View {
     @EnvironmentObject var appState: AppState
     let onSelect: (MinitiAPIService.CalendarEvent) -> Void
 
-    private var displayEvents: [MinitiAPIService.CalendarEvent] {
-        Array(appState.upcomingMeetingEvents.prefix(5))
-    }
+    @State private var collapsed: Set<UpcomingCalendarDay> = [.later]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("coming up")
-                .font(.system(size: 10, weight: .semibold, design: .default))
-                .foregroundStyle(ColorPalette.Text.dim)
-                .padding(.horizontal, 8)
-
-            VStack(spacing: 2) {
-                ForEach(displayEvents) { event in
-                    Button {
-                        onSelect(event)
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control) {
+            ForEach(UpcomingCalendarDay.allCases) { day in
+                let events = appState.upcomingMeetingEvents.filter { day.contains($0.startDate, end: $0.endDate) }
+                if !events.isEmpty {
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { !collapsed.contains(day) },
+                        set: { if $0 { collapsed.remove(day) } else { collapsed.insert(day) } }
+                    )) {
+                        ForEach(events) { event in
+                            Button { onSelect(event) } label: {
+                                CompactEventRow_iOS(event: event)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     } label: {
-                        CompactEventRow_iOS(event: event)
+                        HStack {
+                            Text(day.rawValue)
+                            Text("\(events.count)").monospacedDigit().foregroundStyle(ColorPalette.Text.muted)
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(ColorPalette.Text.secondary)
                     }
-                    .buttonStyle(.plain)
+                    .disclosureGroupStyle(UpcomingCalendarDisclosureStyle(day: day, count: events.count))
                 }
             }
         }
@@ -2037,7 +1935,7 @@ private struct CompactEventRow_iOS: View {
         if Calendar.current.isDateInToday(start) {
             fmt.dateFormat = "HH:mm"
         } else if Calendar.current.isDateInTomorrow(start) {
-            fmt.dateFormat = "'tom' HH:mm"
+            fmt.dateFormat = "HH:mm"
         } else {
             fmt.dateFormat = "EEE HH:mm"
         }
@@ -2282,7 +2180,7 @@ struct ZonedOutSheet_iOS: View {
                     Button {
                         appState.dismissZonedOutCatchUp()
                     } label: {
-                        Text("done")
+                        Text("close")
                             .font(.system(size: 14, weight: .semibold, design: .default))
                             .foregroundStyle(ColorPalette.Text.muted)
                     }

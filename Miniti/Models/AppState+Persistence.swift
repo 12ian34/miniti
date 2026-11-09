@@ -4,6 +4,7 @@ import SwiftData
 
 /// One user-visible action that writes to or reads from the meeting store.
 enum PersistenceOperation: String, CaseIterable {
+    case folder
     case pin
     case delete
     case discard
@@ -31,6 +32,7 @@ enum PersistenceOperation: String, CaseIterable {
     /// Lowercase noun for the banner: "<label> didn't save".
     var userLabel: String {
         switch self {
+        case .folder: return "folder change"
         case .pin: return "pin"
         case .delete: return "delete"
         case .discard: return "discard"

@@ -1,8 +1,35 @@
 # Changelog
 
+### Unreleased - v3.8.0
+
+- new: (macOS and iOS) editable folders group meetings automatically, with a preview before organising history
+- new: (macOS and iOS) an optional home setup checklist helps configure miniti and organise meetings, with progress and tasks you can hide and restore in settings
+- new: (macOS) setup explains local and online audio choices, Markdown copies and the AI assistant meeting list
+- new: (macOS and iOS) choose to sign in or continue without signing in when setting up miniti
+- new: (macOS and iOS) rename devices in settings, account
+- improvement: (macOS and iOS) a simpler home screen keeps recording up front, with calendar and setup controls at the bottom
+- improvement: (macOS and iOS) upcoming meetings are grouped into today, tomorrow and later, with sections you can collapse
+- improvement: (macOS) local models show preparation progress, with a status shortcut to Models settings
+- improvement: (macOS and iOS) info buttons explain calendar automation and audio settings, with links to the docs
+- improvement: (macOS and iOS) smoother handoff from live words to the finished transcript
+- improvement: (macOS) long speaking turns use shorter paragraphs in the transcript
+- improvement: (macOS and iOS) stopping completes the meeting without a done action, with final insights finishing in place
+- improvement: (macOS) automatic Attio and Twenty sync runs once at the first completed recording, even if the calendar is disconnected. Send later edits manually
+- improvement: (macOS and iOS) clearer recovery choices and retry times when sign-in is unavailable
+- improvement: (macOS) cloud transcription can restore speaker separation after a local speaker failure
+- fix: (macOS and iOS) putting a meeting back on cloud before its removal syncs no longer deletes it
+- fix: (macOS and iOS) calendar events can link to your recording without automatically splitting a continuing call
+- fix: (macOS and iOS) discarding while a recording is resuming cancels the pending start
+- fix: (macOS) audio device changes recover without blocking the app, with a clear restart message if audio hardware stops responding
+- fix: (macOS) clearer call-detection status and manual recording options when a call isn’t detected
+- fix: (macOS) the meeting index keeps existing AGENTS.md instructions
+- fix: (iOS) interrupted Watch imports keep their audio and completed transcriptions for retry
+- fix: (macOS and iOS) older installs are recognised correctly during account migration
+- fix: (macOS and iOS) signing out keeps miniti signed out until you choose how to continue
+
 ### 2026-11-04 - v3.7.0
 
-Available on Mac since 4 November 2026. iPhone and iPad are waiting for App Review.
+Available on Mac, iPhone and iPad.
 
 - improvement: (macOS and iOS) BYOK uses GPT-6 Luna for summaries and helpers, and GPT-5.4 mini for specialist insights. Missing model access shows a clear message
 - improvement: (macOS) Settings, Privacy explains recording-duration reports and optional device diagnostics. Local recording still does not use your Deepgram allowance

@@ -68,10 +68,12 @@ protocol CloudSyncHost: AnyObject {
     /// lists the ones still present so macOS can refresh their markdown export.
     func cloudDidChangeMeetings(_ updated: [Meeting])
     /// The server said the account is not Pro (or is again).
+    func cloudSyncFolders() async
     func cloudTierChanged(isPro: Bool)
 }
 
 extension CloudSyncHost {
+    func cloudSyncFolders() async {}
     var cloudUploadProtectedMeetingID: UUID? { liveMeetingID }
     func cloudProtectsIncoming(_ id: UUID) -> Bool { id == liveMeetingID }
 }
@@ -105,6 +107,22 @@ final class CloudSyncEngine: ObservableObject {
     @Published private(set) var pendingUploadCount = 0
     @Published private(set) var pendingRemovalCount = 0
     @Published private(set) var protectedMeetingCount = 0
+    @Published private(set) var pendingFolderRefreshCount = 0
+    private struct FolderRefreshRetry {
+        var attempts: Int
+        var nextAttempt: Date
+    }
+    private var folderRefreshRetries: [UUID: FolderRefreshRetry] = [:]
+    @Published private(set) var folderRefreshIssueTitles: [String] = []
+
+    private func mayRefreshFolder(_ id: UUID) -> Bool {
+        folderRefreshRetries[id].map { $0.nextAttempt <= now() } ?? true
+    }
+
+    private func deferFolderRefresh(_ id: UUID) {
+        let attempts = (folderRefreshRetries[id]?.attempts ?? 0) + 1
+        folderRefreshRetries[id] = .init(attempts: attempts, nextAttempt: attempts >= 3 ? .distantFuture : now().addingTimeInterval(300))
+    }
     @Published private(set) var scanFailed = false
     @Published private(set) var waitingForLocalEdits = false
 
@@ -115,6 +133,7 @@ final class CloudSyncEngine: ObservableObject {
     var idleLabel: String {
         if scanFailed { return "Could not check local meetings" }
         if waitingForLocalEdits { return "Waiting for local edits to save" }
+        if pendingFolderRefreshCount > 0 { return "Checking existing cloud folders" }
         if pendingUploadCount > 0 || pendingRemovalCount > 0 { return "Changes waiting to sync" }
         if protectedMeetingCount > 0 { return "Recording or edits are still in progress" }
         if !skippedMeetingIDs.isEmpty { return "Some meetings could not upload" }
@@ -230,6 +249,7 @@ final class CloudSyncEngine: ObservableObject {
     /// host on account or credential changes.
     func invalidatePasses(reason: String) {
         generation += 1
+        folderRefreshRetries = [:]; folderRefreshIssueTitles = []
         status = nil
         statusFetchedAt = nil
         statusRefreshFailed = false
@@ -266,6 +286,7 @@ final class CloudSyncEngine: ObservableObject {
         guard isCurrent(context), let account = context.accountID else { return }
         defaults.set(value, forKey: Self.cursorKey(account))
     }
+    private var busyRetryAfter: TimeInterval?
     private var debounceTask: Task<Void, Never>?
     private var pollTimer: Timer?
     private var deviceRemoved = false
@@ -371,6 +392,9 @@ final class CloudSyncEngine: ObservableObject {
             for meeting in meetings {
                 meeting.cloudRevision = 0
                 meeting.syncFingerprint = nil
+                meeting.syncedContentFingerprint = nil
+                meeting.syncedFolderFingerprint = nil
+                meeting.folderEditContentFingerprint = nil
                 meeting.syncedAt = nil
                 meeting.syncStateRaw = nil
             }
@@ -379,6 +403,8 @@ final class CloudSyncEngine: ObservableObject {
         if let account = host.cloudAccountID { defaults.removeObject(forKey: Self.cursorKey(account)) }
         deviceRemoved = false
         skippedMeetingIDs = []
+        pendingFolderRefreshCount = 0
+        folderRefreshRetries = [:]; folderRefreshIssueTitles = []
         status = nil
         lastSyncedAt = nil
         needsReconcile = true
@@ -422,12 +448,22 @@ final class CloudSyncEngine: ObservableObject {
         running = true
         attemptedCursorRecovery = false
         var passes = 0
+        var busyRetries = 0
+        busyRetryAfter = nil
         repeat {
             rerunRequested = false
             passes += 1
             let refresh = requestedStatusRefresh
             requestedStatusRefresh = false
             await pass(reason: passes == 1 ? reason : "rerun", refreshStatus: refresh)
+            if let delay = busyRetryAfter {
+                busyRetryAfter = nil
+                // Two bounded early retries, then the normal poll. Never spin on contention.
+                guard busyRetries < 2 else { rerunRequested = false; break }
+                busyRetries += 1
+                do { try await sleep(delay) } catch { rerunRequested = false; break }
+                rerunRequested = true
+            }
         } while rerunRequested && passes < 5 && !Task.isCancelled
         running = false
         // Yield after a bounded run without losing a commit or a batch beyond the cap.
@@ -446,11 +482,14 @@ final class CloudSyncEngine: ObservableObject {
         // Background polls/autosaves can repeat all meeting long. Their useful uploads,
         // removals and failures are recorded separately, without an empty-pass heartbeat.
         let explicitPass = !["poll", "change", "rerun"].contains(reason)
+        // Only the user's Sync now action overrides per-meeting backoff. Activation
+        // still syncs unrelated work without re-downloading blocked upgrade rows.
+        if reason == "manual" { folderRefreshRetries = [:] }
         if explicitPass { DiagnosticTimeline.shared.record(.cloudStarted, fields: ["attempt_id": diagnosticID]) }
         do {
             // Stamp local edits before anything compares timestamps with the cloud. The poll
             // skips the scan when nothing committed since the last one.
-            let shouldScan = pendingScan || reason != "poll" || pollsSinceScan + 1 >= Self.fullScanEveryPolls || cursor == 0 || needsReconcile
+            let shouldScan = folderRefreshRetries.values.contains { $0.nextAttempt <= now() } || pendingScan || reason != "poll" || pollsSinceScan + 1 >= Self.fullScanEveryPolls || cursor == 0 || needsReconcile
             if shouldScan {
                 pendingScan = false
                 _ = try scan(host: host)
@@ -476,6 +515,8 @@ final class CloudSyncEngine: ObservableObject {
             guard stillAllowed else { refreshPause(); return }
             phase = .pulling
             try await pull(host: host, transport: transport, context: context)
+            try check(context)
+            await host.cloudSyncFolders()
             try check(context)
             guard stillAllowed else { refreshPause(); return }
             if shouldScan || pendingScan || statusDirty { _ = try scan(host: host) }
@@ -533,7 +574,9 @@ final class CloudSyncEngine: ObservableObject {
                 rerunRequested = true
                 return
             }
-            DiagnosticTimeline.shared.record(.cloudFailed, fields: DiagnosticTimeline.errorFields(error))
+            if case .busy = error {} else {
+                DiagnosticTimeline.shared.record(.cloudFailed, fields: DiagnosticTimeline.errorFields(error))
+            }
             handle(error)
         } catch {
             guard isCurrent(context) else { rerunRequested = true; return }
@@ -576,6 +619,12 @@ final class CloudSyncEngine: ObservableObject {
         case .revoked:
             deviceRemoved = true
             phase = .paused(.deviceRemoved)
+        case .busy(let retryAfter):
+            busyRetryAfter = retryAfter
+            pendingScan = true
+            phase = .idle
+            lastError = nil
+            return
         case .rateLimited:
             phase = .failed("Too many requests, trying again later")
         case .server(let code, _):
@@ -615,15 +664,23 @@ final class CloudSyncEngine: ObservableObject {
         var changed: [(Meeting, String)] = []
         var dirty: [Meeting] = []
         var skipped: Set<UUID> = []
+        var pendingFolders: Set<UUID> = []
+        var folderIssues: [String] = []
         protectedMeetingCount = meetings.filter { !$0.syncExcluded && !host.isMeetingDeleted($0.id) && ($0.id == protected || $0.endTime == nil) }.count
         pendingRemovalCount = tombstones.count
         for meeting in meetings where meeting.endTime != nil && !meeting.syncExcluded && meeting.id != protected && !host.isMeetingDeleted(meeting.id) {
             let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
+            if meeting.syncStateRaw == "pending_folder_refresh" {
+                pendingFolders.insert(meeting.id)
+                if mayRefreshFolder(meeting.id) { needsReconcile = true }
+                if folderRefreshRetries[meeting.id] != nil { folderIssues.append(meeting.title) }
+            }
             if fingerprint != meeting.localFingerprint { changed.append((meeting, fingerprint)) }
+            if meeting.syncStateRaw == "pending_folder_refresh" { continue }
             if meeting.cloudRestoreRequested || (fingerprint != meeting.syncFingerprint && meeting.syncStateRaw == nil) { dirty.append(meeting) }
             else if fingerprint != meeting.syncFingerprint && meeting.syncStateRaw != nil && fingerprint != meeting.localFingerprint {
                 dirty.append(meeting)
-            } else if meeting.syncStateRaw != nil { skipped.insert(meeting.id) }
+            } else if meeting.syncStateRaw != nil && meeting.syncStateRaw != "pending_folder_refresh" { skipped.insert(meeting.id) }
         }
         if !changed.isEmpty {
             let stamp = Self.stamp(now())
@@ -631,7 +688,7 @@ final class CloudSyncEngine: ObservableObject {
                 for (meeting, fingerprint) in changed {
                     meeting.updatedAt = meeting.localFingerprint == nil && meeting.updatedAt == nil ? MeetingSyncDocument.fallbackUpdatedAt(meeting) : stamp
                     meeting.localFingerprint = fingerprint
-                    if meeting.syncStateRaw != nil { meeting.syncStateRaw = nil }
+                    if meeting.syncStateRaw != "pending_folder_refresh" { meeting.syncStateRaw = nil }
                 }
             }) else {
                 scanFailed = true
@@ -640,6 +697,9 @@ final class CloudSyncEngine: ObservableObject {
             }
         }
         pendingUploadCount = dirty.count
+        pendingFolderRefreshCount = pendingFolders.count
+        folderRefreshRetries = folderRefreshRetries.filter { pendingFolders.contains($0.key) }
+        folderRefreshIssueTitles = folderIssues.sorted()
         skippedMeetingIDs = skipped
         scanFailed = false
         return dirty.sorted { $0.startTime < $1.startTime }
@@ -669,8 +729,11 @@ final class CloudSyncEngine: ObservableObject {
 
     private func push(_ meeting: Meeting, id: UUID, host: CloudSyncHost, transport: CloudSyncTransport, retrying: Bool, context pass: PassContext) async throws {
         guard !meeting.syncExcluded, id != host.cloudUploadProtectedMeetingID, meeting.endTime != nil else { return }
+        // Restore authorizes content, but cannot erase a folder this client never read.
+        guard meeting.syncStateRaw != "pending_folder_refresh" else { return }
         let fingerprint = MeetingSyncDocument.fingerprint(of: meeting)
         let document = try MeetingSyncDocument.encodeData(meeting, segments: meeting.segments)
+        let uploadedDocument = try JSONSerialization.jsonObject(with: document) as! [String: Any]
         let base = meeting.cloudRevision
         let localUpdatedAt = meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting)
         let localTranscriptRevision = meeting.transcriptRevision
@@ -712,6 +775,7 @@ final class CloudSyncEngine: ObservableObject {
                 guard host.cloudCommit({
                     meeting.cloudRevision = revision
                     meeting.syncFingerprint = fingerprint
+                    MeetingSyncDocument.recordSyncBaseline(meeting, document: uploadedDocument)
                     meeting.syncedAt = self.now()
                 }) else { scanFailed = true; pendingScan = true; throw CloudSyncError.server(code: "local_save_failed", status: 0) }
             }
@@ -725,8 +789,10 @@ final class CloudSyncEngine: ObservableObject {
             guard host.cloudCommit({
                 meeting.cloudRevision = revision
                 meeting.syncFingerprint = fingerprint
+                MeetingSyncDocument.recordSyncBaseline(meeting, document: uploadedDocument)
                 meeting.syncedAt = self.now()
                 meeting.syncStateRaw = nil
+                meeting.folderEditContentFingerprint = nil
                 if restoring { meeting.cloudRestoreRequested = false }
             }) else { scanFailed = true; pendingScan = true; throw CloudSyncError.server(code: "local_save_failed", status: 0) }
             skippedMeetingIDs.remove(id)
@@ -775,6 +841,25 @@ final class CloudSyncEngine: ObservableObject {
                 try deleteLocal(meeting, host: host)
                 return
             }
+            if let document = state.document, let decoded = MeetingSyncDocument.decode(document),
+               meeting.syncedContentFingerprint != nil, meeting.syncedFolderFingerprint != nil {
+                let before = MeetingSyncDocument.markdownFingerprint(of: meeting)
+                guard mergeComponents(decoded, revision: state.revision, into: meeting, host: host) else {
+                    throw CloudSyncError.server(code: "local_save_failed", status: 0)
+                }
+                host.cloudDidChangeMeetings(before == MeetingSyncDocument.markdownFingerprint(of: meeting) ? [] : [meeting])
+                if !retrying && meeting.syncFingerprint != MeetingSyncDocument.fingerprint(of: meeting) { try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass) }
+                return
+            }
+            if MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting),
+               let document = state.document, let decoded = MeetingSyncDocument.decode(document) {
+                guard applyRemote(decoded, revision: state.revision, to: meeting, host: host) else {
+                    throw CloudSyncError.server(code: "local_save_failed", status: 0)
+                }
+                if !retrying { try await push(meeting, id: id, host: host, transport: transport, retrying: true, context: pass) }
+                else { pendingScan = true; rerunRequested = true }
+                return
+            }
             let remoteStamp = state.updatedAt ?? .distantPast
             let localNewer = Self.isNewer(localUpdatedAt, than: remoteStamp)
             if !retrying {
@@ -818,6 +903,11 @@ final class CloudSyncEngine: ObservableObject {
         if !pending.isEmpty { DiagnosticTimeline.shared.record(.cloudRemoval, fields: ["outcome": "pending", "pending_removals": String(pending.count)]) }
         for (id, base, tombstone) in pending {
             guard stillAllowed else { return }
+            if let local = localMeeting(id: id, host: host), !local.syncExcluded {
+                // A restored local row supersedes a queued cloud-only removal.
+                try save(host: host) { context.delete(tombstone) }
+                continue
+            }
             let result = try await transport.deleteMeeting(id: id, baseRevision: base)
             try check(pass)
             guard tombstone.modelContext != nil else { continue }
@@ -885,13 +975,19 @@ final class CloudSyncEngine: ObservableObject {
                     if !change.deleted { self.retainExcludedMeeting(local, remoteRevision: change.revision, host: host) }
                     continue
                 }
-                if let local, local.cloudRestoreRequested {
+                if let local, local.cloudRestoreRequested, local.syncStateRaw != "pending_folder_refresh" {
                     local.cloudRevision = max(local.cloudRevision, change.revision)
                     local.syncFingerprint = nil
                     self.rerunRequested = true
                     continue
                 }
                 if change.deleted {
+                    if let local, local.cloudRestoreRequested {
+                        local.cloudRevision = change.revision
+                        local.syncFingerprint = nil; local.syncStateRaw = nil
+                        self.pendingScan = true; self.rerunRequested = true
+                        continue
+                    }
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
                         self.note(.deletedLocally, local.title, "deleted on another device")
                         host.cloudRemoveLocally(local)
@@ -901,9 +997,17 @@ final class CloudSyncEngine: ObservableObject {
                 }
                 guard let document = change.document, let decoded = MeetingSyncDocument.decode(document) else { continue }
                 if let local {
-                    guard local.cloudRevision < change.revision else { continue }
+                    guard local.cloudRevision < change.revision || local.syncStateRaw == "pending_folder_refresh" else { continue }
+                    if local.syncedContentFingerprint != nil, local.syncedFolderFingerprint != nil {
+                        let before = MeetingSyncDocument.markdownFingerprint(of: local)
+                        self.mergeComponents(decoded, revision: change.revision, into: local, host: host, commit: false)
+                        if before != MeetingSyncDocument.markdownFingerprint(of: local) { updated.append(local) }
+                        changed = true
+                        continue
+                    }
                     let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
-                    if dirty, let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
+                    if dirty, !MeetingSyncDocument.hasOnlyPendingFolderEdit(local),
+                       let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
                         // Local edit is newer: keep it and push against the new revision.
                         local.cloudRevision = change.revision
                         self.note(.conflict, local.title, "kept this device's newer edit")
@@ -963,12 +1067,17 @@ final class CloudSyncEngine: ObservableObject {
                     if !entry.deleted { self.retainExcludedMeeting(local, remoteRevision: entry.revision, host: host) }
                     continue
                 }
-                if let local, local.cloudRestoreRequested {
+                if let local, local.cloudRestoreRequested, local.syncStateRaw != "pending_folder_refresh" {
                     local.cloudRevision = max(local.cloudRevision, entry.revision)
                     local.syncFingerprint = nil
                     continue
                 }
                 if entry.deleted {
+                    if let local, local.cloudRestoreRequested {
+                        local.cloudRevision = entry.revision
+                        local.syncFingerprint = nil; local.syncStateRaw = nil
+                        continue
+                    }
                     if let local, local.cloudRevision > 0 || local.syncFingerprint != nil {
                         self.note(.deletedLocally, local.title, "deleted on another device")
                         host.cloudRemoveLocally(local)
@@ -976,7 +1085,9 @@ final class CloudSyncEngine: ObservableObject {
                     continue
                 }
                 if let local {
-                    if local.cloudRevision < entry.revision { toFetch.append(entry.id) }
+                    if local.syncStateRaw == "pending_folder_refresh" {
+                        if self.mayRefreshFolder(entry.id) { toFetch.append(entry.id) }
+                    } else if local.cloudRevision < entry.revision { toFetch.append(entry.id) }
                     else if local.cloudRevision > entry.revision {
                         // The cloud copy was replaced (purged and re-created); push ours against it.
                         local.cloudRevision = entry.revision
@@ -987,9 +1098,10 @@ final class CloudSyncEngine: ObservableObject {
                 }
             }
             // Meetings the cloud no longer lists are re-uploaded, never deleted.
-            for (id, local) in byID where !seen.contains(id) && !host.cloudProtectsIncoming(id) && local.cloudRevision > 0 {
+            for (id, local) in byID where !seen.contains(id) && !host.cloudProtectsIncoming(id) && (local.cloudRevision > 0 || local.syncStateRaw == "pending_folder_refresh") {
                 local.cloudRevision = 0
                 local.syncFingerprint = nil
+                if local.syncStateRaw == "pending_folder_refresh" { local.syncStateRaw = nil }
             }
         }
         var inserted: [Meeting] = []
@@ -1021,6 +1133,16 @@ final class CloudSyncEngine: ObservableObject {
                 rerunRequested = true
                 throw PassDeferral.committedEdits
             }
+            // A bad row holds only its own edits. Other downloads and uploads proceed.
+            for id in batch {
+                guard let local = self.localMeeting(id: id, host: host),
+                      local.syncStateRaw == "pending_folder_refresh", !local.syncExcluded,
+                      !host.cloudProtectsIncoming(id), !host.isMeetingDeleted(id) else { continue }
+                if let state = states.first(where: { $0.id == id }), !state.deleted,
+                   let document = state.document, MeetingSyncDocument.decode(document) != nil {
+                    folderRefreshRetries.removeValue(forKey: id)
+                } else { deferFolderRefresh(id) }
+            }
             for state in states { rememberProtectedIncoming(id: state.id, revision: state.revision, deleted: state.deleted, host: host) }
             try save(host: host) {
                 for state in states where !state.deleted && !host.isMeetingDeleted(state.id) && !host.cloudProtectsIncoming(state.id) {
@@ -1030,13 +1152,21 @@ final class CloudSyncEngine: ObservableObject {
                             self.retainExcludedMeeting(local, remoteRevision: state.revision, host: host)
                             continue
                         }
-                        if local.cloudRestoreRequested {
+                        if local.cloudRestoreRequested, local.syncStateRaw != "pending_folder_refresh" {
                             local.cloudRevision = max(local.cloudRevision, state.revision)
                             local.syncFingerprint = nil
                             continue
                         }
+                        if local.syncedContentFingerprint != nil, local.syncedFolderFingerprint != nil {
+                            let before = MeetingSyncDocument.markdownFingerprint(of: local)
+                            self.mergeComponents(decoded, revision: state.revision, into: local, host: host, commit: false)
+                            if before != MeetingSyncDocument.markdownFingerprint(of: local) { updated.append(local) }
+                            changed = true
+                            continue
+                        }
                         let dirty = local.syncFingerprint != MeetingSyncDocument.fingerprint(of: local)
-                        if dirty, let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
+                        if dirty, !MeetingSyncDocument.hasOnlyPendingFolderEdit(local),
+                       let localUpdated = local.updatedAt, Self.isNewer(localUpdated, than: decoded.updatedAt) {
                             local.cloudRevision = state.revision
                             self.note(.conflict, local.title, "kept this device's newer edit")
                             continue
@@ -1077,7 +1207,9 @@ final class CloudSyncEngine: ObservableObject {
     }
 
     private func localMeeting(id: UUID, host: CloudSyncHost) -> Meeting? {
-        host.cloudFetchMeetings(FetchDescriptor<Meeting>())?.first { $0.id == id }
+        var descriptor = FetchDescriptor<Meeting>(predicate: #Predicate { $0.id == id })
+        descriptor.fetchLimit = 1
+        return host.cloudFetchMeetings(descriptor)?.first
     }
 
     private func markSynced(_ meeting: Meeting, revision: Int) {
@@ -1085,17 +1217,75 @@ final class CloudSyncEngine: ObservableObject {
         meeting.cloudRevision = revision
         meeting.syncFingerprint = fingerprint
         meeting.localFingerprint = fingerprint
+        MeetingSyncDocument.recordSyncBaseline(meeting)
+        meeting.folderEditContentFingerprint = nil
         meeting.syncedAt = now()
         meeting.syncStateRaw = nil
+    }
+
+    /// Three-way merge of independent content and folder components. Timestamp ordering
+    /// applies only when both devices changed the same component.
+    @discardableResult
+    private func mergeComponents(_ remote: MeetingSyncDocument.Decoded, revision: Int, into meeting: Meeting,
+                                 host: CloudSyncHost, commit: Bool = true) -> Bool {
+        guard let context = host.cloudModelContext,
+              let baseContent = meeting.syncedContentFingerprint,
+              let baseFolder = meeting.syncedFolderFingerprint else { return false }
+        let local = MeetingSyncDocument.encode(meeting, segments: [])
+        let localContent = MeetingSyncDocument.contentFingerprint(document: local)
+        let remoteContent = MeetingSyncDocument.contentFingerprint(document: remote.document)
+        let localFolder = MeetingSyncDocument.folderFingerprint(document: local)
+        let remoteFolder = MeetingSyncDocument.folderFingerprint(document: remote.document)
+        let newer = Self.isNewer(meeting.updatedAt ?? MeetingSyncDocument.fallbackUpdatedAt(meeting), than: remote.updatedAt)
+        let keepContent = meeting.cloudRestoreRequested || (localContent != baseContent && (remoteContent == baseContent || newer))
+        let keepFolder = meeting.folderLocalOnly == true || (localFolder != baseFolder && (remoteFolder == baseFolder || newer))
+        let folder = (meeting.folderID, meeting.folderManual, meeting.folderLocalOnly)
+        let work = {
+            if keepContent {
+                if remote.transcriptRevision > meeting.transcriptRevision {
+                    MeetingSyncDocument.applyTranscript(remote, to: meeting, in: context)
+                }
+                meeting.cloudRevision = revision
+                // The accepted remote base differs from this local content; it still needs upload.
+                meeting.syncFingerprint = nil
+                if !keepFolder {
+                    meeting.folderID = (remote.document["folder_id"] as? String).flatMap(UUID.init(uuidString:))
+                    meeting.folderManual = remote.document["folder_manual"] as? Bool
+                }
+            } else {
+                let replace = meeting.transcriptRevision != remote.transcriptRevision || meeting.segments.count != remote.segments.count
+                MeetingSyncDocument.apply(remote, to: meeting, in: context, replaceSegments: replace)
+                self.markSynced(meeting, revision: revision)
+                if keepFolder {
+                    meeting.folderID = folder.0; meeting.folderManual = folder.1; meeting.folderLocalOnly = folder.2
+                }
+            }
+            MeetingSyncDocument.recordSyncBaseline(meeting, document: remote.document)
+            if meeting.syncStateRaw == "pending_folder_refresh" { meeting.syncStateRaw = nil }
+            meeting.folderEditContentFingerprint = nil
+            if meeting.syncFingerprint != MeetingSyncDocument.fingerprint(of: meeting) {
+                self.pendingScan = true; self.rerunRequested = true
+            }
+        }
+        if commit { return host.cloudCommit(work) }
+        work()
+        return true
     }
 
     @discardableResult
     private func applyRemote(_ decoded: MeetingSyncDocument.Decoded, revision: Int, to meeting: Meeting, host: CloudSyncHost, commit: Bool = true) -> Bool {
         guard let context = host.cloudModelContext else { return false }
         let replaceSegments = meeting.transcriptRevision != decoded.transcriptRevision || meeting.segments.count != decoded.segments.count
+        let preserveFolder = MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting)
+        let folder = (meeting.folderID, meeting.folderManual, meeting.folderLocalOnly)
         let work = {
             MeetingSyncDocument.apply(decoded, to: meeting, in: context, replaceSegments: replaceSegments)
             self.markSynced(meeting, revision: revision)
+            if preserveFolder {
+                meeting.folderEditContentFingerprint = MeetingSyncDocument.fingerprint(of: meeting, includingFolder: false)
+                meeting.folderID = folder.0; meeting.folderManual = folder.1; meeting.folderLocalOnly = folder.2
+                self.pendingScan = true; self.rerunRequested = true
+            }
         }
         if commit { return host.cloudCommit(work) }
         work()

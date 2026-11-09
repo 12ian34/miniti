@@ -27,11 +27,13 @@ private final class MobileAppDelegate: NSObject, UIApplicationDelegate, UNUserNo
         let actionIdentifier = response.actionIdentifier
         let categoryIdentifier = response.notification.request.content.categoryIdentifier
         let eventID = response.notification.request.content.userInfo["eventID"] as? String
+        let promptToken = response.notification.request.content.userInfo["promptToken"] as? String
+        let recordingID = response.notification.request.content.userInfo["recordingID"] as? String
         Task { @MainActor [weak self] in
             self?.appState?.handleNotificationResponse(
                 actionIdentifier: actionIdentifier,
                 categoryIdentifier: categoryIdentifier,
-                eventID: eventID
+                eventID: eventID, promptToken: promptToken, recordingID: recordingID
             )
         }
         completionHandler()
@@ -111,8 +113,9 @@ struct MinitiMobileApp: App {
                 }
             }
             .environmentObject(appState)
+            .modifier(AccountUITestReady())
             .environment(\.interfaceScale, interfaceScale)
-            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: systemDynamicTypeSize))
+            .dynamicTypeSize(interfaceScale.dynamicTypeSize(from: AccountUITestHarness.dynamicTypeSize(systemDynamicTypeSize)))
             .minitiReduceMotionAware()
             .preferredColorScheme(.dark)
             .onAppear {
@@ -120,7 +123,9 @@ struct MinitiMobileApp: App {
                 appState.notePersistentStore(storeState)
                 guard !AppState.isRunningUnderXCTest else { return }
                 WatchImportService.shared.appState = appState
-                WatchImportService.shared.kick()
+                if UIApplication.shared.applicationState == .active {
+                    WatchImportService.shared.sessionActivated()
+                }
                 #if DEBUG
                 ScreenshotMode.scheduleIOSReadyMarker()
                 #endif
@@ -143,6 +148,7 @@ struct MinitiMobileApp: App {
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .background {
+                WatchImportService.shared.sessionDeactivated()
                 let saveLease = MeetingBackgroundSaveLease.begin()
                 Task { @MainActor in
                     let didSave = await appState.saveCurrentMeetingAndWait()
@@ -154,7 +160,7 @@ struct MinitiMobileApp: App {
             } else if newPhase == .active {
                 appState.deliveryOutbox.kick()
                 appState.kickCloudSync(reason: "activate")
-                WatchImportService.shared.kick()
+                WatchImportService.shared.sessionActivated()
                 appState.recheckGoogleCalendarStatusIfNeeded(trigger: "activate")
                 if appState.appMode == .managed {
                     Task {

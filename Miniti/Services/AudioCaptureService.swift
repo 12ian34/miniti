@@ -5,9 +5,24 @@ import Accelerate
 
 @MainActor
 final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable {
-    private var audioEngine: AVAudioEngine?
-    private var engineConfigObserver: Any?
-    
+    // Hardware objects below are confined to hardware.queue, never the main actor.
+    nonisolated(unsafe) private var audioEngine: AVAudioEngine?
+    nonisolated(unsafe) private var engineConfigObserver: Any?
+    private let hardware: AudioHardwareExecutor
+    private let microphoneRouteProbe: (@Sendable () -> MicRoute?)?
+    private var captureGeneration = UUID()
+    private var micGate: AudioCaptureDeliveryGate?
+    private var systemGate: AudioCaptureDeliveryGate?
+    nonisolated(unsafe) private var hardwareMicGate: AudioCaptureDeliveryGate?
+    nonisolated(unsafe) private var hardwareSystemGate: AudioCaptureDeliveryGate?
+    private var micRestartGeneration = UUID()
+    private var micRouteChangePending = false
+    private var inputRefreshTask: Task<Void, Never>?
+    private var inputRefreshRequested = false
+    var onHardwareFailure: (() -> Void)?
+    var requiresRestart: Bool { hardware.isQuarantined }
+    var routeChangeSleep: @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(1)) }
+
     // System audio via Core Audio Process Tap (macOS 14.2+)
     // Uses AudioHardwareCreateProcessTap instead of ScreenCaptureKit to land
     // in "System Audio Recording Only" permission category (not Screen Recording).
@@ -372,19 +387,38 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
 
     /// Hardware boundary for deterministic startup/recovery tests without opening devices.
-    init(microphoneStart: (() async throws -> Void)?, systemAudioStart: (() throws -> Void)?) {
+    init(microphoneStart: (() async throws -> Void)?, systemAudioStart: (() throws -> Void)?,
+         hardware: AudioHardwareExecutor = AudioHardwareExecutor(),
+         microphoneRouteProbe: (@Sendable () -> MicRoute?)? = nil) {
         self.microphoneStart = microphoneStart
         self.systemAudioStart = systemAudioStart
+        self.hardware = hardware
+        self.microphoneRouteProbe = microphoneRouteProbe
         sourceLog = SourceSampleRing(capacity: Self.sourceLogCapacity)
         super.init()
+        hardware.onTimeout = { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.micGate?.close()
+                self.systemGate?.close()
+                self.microphoneCaptureIssue = AudioHardwareExecutor.Failure.unresponsive.localizedDescription
+                self.onHardwareFailure?()
+            }
+        }
         ringBuffer = .allocate(capacity: ringCapacity)
         ringBuffer.initialize(repeating: 0, count: ringCapacity)
-        if microphoneStart == nil, systemAudioStart == nil { monitorAudioDeviceChanges() }
+        if microphoneStart == nil, systemAudioStart == nil {
+            Task { [weak self] in
+                guard let self else { return }
+                try? await hardware.run { self.monitorAudioDeviceChanges() }
+                self.refreshInputDevices()
+            }
+        }
     }
     
     // MARK: - Audio Device Monitoring
     
-    private func monitorAudioDeviceChanges() {
+    nonisolated private func monitorAudioDeviceChanges() {
         var inputAddr = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDefaultInputDevice,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -393,7 +427,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &inputAddr, DispatchQueue.main
         ) { [weak self] _, _ in
-            DebugLogger.shared.log(.audio, "Default INPUT device changed → \(Self.detailedInputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Default input device changed")
             Task { @MainActor in
                 self?.handleEngineConfigurationChange()
             }
@@ -407,7 +441,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject), &outputAddr, DispatchQueue.main
         ) { [weak self] _, _ in
-            DebugLogger.shared.log(.audio, "Default OUTPUT device changed → \(Self.detailedOutputDeviceInfo())")
+            DebugLogger.shared.log(.audio, "Default output device changed")
             Task { @MainActor in
                 self?.handleDefaultOutputDeviceChange()
             }
@@ -427,21 +461,31 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         ) { [weak self] _, _ in
             DebugLogger.shared.log(
                 .audio,
-                "Audio device list changed — output=\(Self.detailedOutputDeviceInfo()), input=\(Self.detailedInputDeviceInfo())"
+                "Audio device list changed"
             )
             Task { @MainActor in
                 self?.refreshInputDevices()
                 self?.preferredInputDeviceChanged()
             }
         }
-        refreshInputDevices()
     }
 
     // MARK: - Microphone selection
 
     func refreshInputDevices() {
-        let devices = Self.availableInputDevices()
-        if devices != inputDevices { inputDevices = devices }
+        guard !hardware.isQuarantined else { return }
+        inputRefreshRequested = true
+        guard inputRefreshTask == nil else { return }
+        inputRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.inputRefreshTask = nil }
+            repeat {
+                self.inputRefreshRequested = false
+                if let devices = try? await self.hardware.run({ Self.availableInputDevices() }), devices != self.inputDevices {
+                    self.inputDevices = devices
+                }
+            } while self.inputRefreshRequested && !self.hardware.isQuarantined
+        }
     }
 
     /// Enumerate input-capable devices. Aggregates are skipped: the app's own system-audio
@@ -494,18 +538,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         return (systemDefault, true)
     }
 
-    /// The device id the mic engine should currently be reading, after preference and fallback.
-    private func resolvedMicInputDeviceID() -> (deviceID: AudioDeviceID?, usedFallback: Bool) {
-        Self.resolveInputDevice(preferredUID: preferredInputDeviceUID, devices: Self.availableInputDevices(), systemDefault: Self.defaultInputDeviceID())
-    }
-
     /// The preference changed, or the device list did: if the mic engine is reading a
     /// different device from the one now resolved, restart it through the same coalesced
     /// path a hardware reconfiguration uses.
     private func preferredInputDeviceChanged() {
-        guard isCapturing, isMicActive else { return }
-        let resolved = resolvedMicInputDeviceID().deviceID
-        guard resolved != activeMicInputDeviceID else { return }
+        guard isCapturing, expectsMicAudio else { return }
         DebugLogger.shared.log(.audio, "Microphone selection changed — restarting mic tap (preferred=\(preferredInputDeviceUID ?? "default"))")
         handleEngineConfigurationChange()
     }
@@ -833,7 +870,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         postRecoveryBaselineNonSilent = sysNonSilentCallbacks
         DebugLogger.shared.log(
             .audio,
-            "Post-recovery health check armed (reason=\(reason), output=\(Self.detailedOutputDeviceInfo()))"
+            "Post-recovery health check armed (reason=\(reason))"
         )
     }
     
@@ -855,13 +892,16 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
-        await stopCaptureAsync()
+        #if MINITI_TEST_HOST
+        if AccountUITestHarness.isActive { isCapturing = true; return }
+        #endif
+        stopCapture()
+        let generation = captureGeneration
+        try await hardware.run { }
+        guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone), sys=\(systemAudio))")
-        DebugLogger.shared.log(
-            .audio,
-            "Audio environment: input=\(Self.detailedInputDeviceInfo()), output=\(Self.detailedOutputDeviceInfo())"
-        )
+
         resetRuntimeDiagnostics()
         pendingMicRetryTask?.cancel()
         pendingMicRetryTask = nil
@@ -878,9 +918,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         if microphone {
             do {
                 try await startMicrophoneCapture()
+                guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
                 capturedAny = true
                 setMicActive(true)
             } catch {
+                guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
+                if error is AudioHardwareExecutor.Failure { throw error }
                 DebugLogger.shared.log(.audio, "Mic capture FAILED: \(error.localizedDescription)")
                 setMicActive(false)
                 stopMicrophoneCapture()
@@ -896,10 +939,13 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         
         if systemAudio {
             do {
-                try startSystemAudioCapture()
+                try await startSystemAudioCapture()
+                guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
                 capturedAny = true
                 setSystemAudioActive(true)
             } catch {
+                guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
+                if error is AudioHardwareExecutor.Failure { throw error }
                 DebugLogger.shared.log(.audio, "System audio FAILED: \(error.localizedDescription)")
                 setSystemAudioActive(false)
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -922,38 +968,15 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     func stopCapture() {
-        if isCapturing {
-            let ringNow = currentRingSampleCount()
-            DebugLogger.shared.log(
-                .audio,
-                "Capture stop summary: micBuf=\(micBufferCount), sysCb=\(sysCallbackCount), sysNonSilent=\(sysNonSilentCallbacks), interleave(sys=\(interleaveWithSystemCount), micPad=\(interleaveMicPadCount)), ring(appended=\(ringSamplesAppended), drained=\(ringSamplesDrained), left=\(ringNow))"
-            )
-        }
-        stopMicrophoneCapture()
-        stopSystemAudioCapture()
-        pendingMicRestartTask?.cancel()
-        pendingMicRestartTask = nil
-        pendingMicRetryTask?.cancel()
-        pendingMicRetryTask = nil
-        micRetryAttempt = 0
-        pendingSystemRetryTask?.cancel()
-        pendingSystemRetryTask = nil
-        systemCallbackWatchdogTask?.cancel()
-        systemCallbackWatchdogTask = nil
-        micLivenessWatchdogTask?.cancel()
-        micLivenessWatchdogTask = nil
-        systemRetryAttempt = 0
-        expectsMicAudio = false
-        expectsSystemAudio = false
-        isCapturing = false
-        isSendSuspended = false
-        setMicActive(false)
-        setSystemAudioActive(false)
-        microphoneCaptureIssue = nil
-        resetDelivery()
-    }
-    
-    private func stopCaptureAsync() async {
+        captureGeneration = UUID()
+        micRestartGeneration = UUID()
+        micRouteChangePending = false
+        isEscalatingFullRestart = false
+        isRestartingMicAfterConfigChange = false
+        isRestartingSystemAfterOutputChange = false
+        #if MINITI_TEST_HOST
+        if AccountUITestHarness.isActive { isCapturing = false; return }
+        #endif
         if isCapturing {
             let ringNow = currentRingSampleCount()
             DebugLogger.shared.log(
@@ -993,7 +1016,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     nonisolated(unsafe) private var lastMicHeartbeat: CFAbsoluteTime = 0
     
     private func startMicrophoneCapture(skipPermissionCheck: Bool = false) async throws {
-        if let microphoneStart { return try await microphoneStart() }
+        let generation = captureGeneration
+        if let microphoneStart {
+            try await microphoneStart()
+            guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
+            return
+        }
         if !skipPermissionCheck {
             let granted = await requestMicrophonePermission()
             guard granted else {
@@ -1002,18 +1030,56 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
         }
         
+        guard generation == captureGeneration, !Task.isCancelled else { throw CancellationError() }
+        let gate = AudioCaptureDeliveryGate()
+        micGate?.close()
+        micGate = gate
+        let preferred = preferredInputDeviceUID
+        do {
+            let snapshot = try await hardware.run { try self.startMicrophoneHardware(preferredUID: preferred, gate: gate) }
+            guard generation == captureGeneration, gate.isOpen, !Task.isCancelled else { throw CancellationError() }
+            activeMicInputDeviceID = snapshot.deviceID
+            activeMicInputSampleRate = snapshot.sampleRate
+            activeMicInputChannels = snapshot.channels
+            activeInputDeviceName = snapshot.name
+            isUsingFallbackInputDevice = snapshot.usedFallback
+        } catch {
+            gate.close()
+            hardware.cleanup { self.stopMicrophoneHardware(expected: gate) }
+            if error is AudioHardwareExecutor.Failure { microphoneCaptureIssue = error.localizedDescription }
+            throw error
+        }
+    }
+
+    private struct MicHardwareSnapshot: Sendable {
+        let deviceID: AudioDeviceID
+        let sampleRate: Double
+        let channels: AVAudioChannelCount
+        let name: String?
+        let usedFallback: Bool
+    }
+
+    nonisolated private func startMicrophoneHardware(preferredUID: String?, gate: AudioCaptureDeliveryGate) throws -> MicHardwareSnapshot {
         DebugLogger.shared.log(.audio, "Default input device: \(Self.detailedInputDeviceInfo())")
         
+        guard gate.isOpen else { throw CancellationError() }
+        let devices = Self.availableInputDevices()
+        let resolved = Self.resolveInputDevice(preferredUID: preferredUID, devices: devices, systemDefault: Self.defaultInputDeviceID())
+        guard let inputID = resolved.deviceID, devices.contains(where: { $0.id == inputID }) else {
+            throw AudioCaptureError.inputDeviceUnavailable
+        }
+        hardwareMicGate = gate
         audioEngine = AVAudioEngine()
-        guard let audioEngine else { return }
+        guard let audioEngine else { throw AudioCaptureError.formatCreationFailed }
+        var started = false
+        defer { if !started { stopMicrophoneHardware(expected: gate) } }
         
         let inputNode = audioEngine.inputNode
         // Point the input unit at the chosen microphone before reading its format. Without
         // this the engine follows the system default, which macOS moves to earphones the
         // moment they connect.
-        let resolved = resolvedMicInputDeviceID()
         var chosenDeviceID: AudioDeviceID? = nil
-        if let preferred = preferredInputDeviceUID, !preferred.isEmpty {
+        if let preferred = preferredUID, !preferred.isEmpty {
             if resolved.usedFallback {
                 DebugLogger.shared.log(.audio, "Preferred microphone not available (uid=\(preferred)); using the system default")
             } else if let deviceID = resolved.deviceID, let unit = inputNode.audioUnit {
@@ -1027,7 +1093,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 }
             }
         }
-        isUsingFallbackInputDevice = resolved.usedFallback || (preferredInputDeviceUID.map { !$0.isEmpty } == true && chosenDeviceID == nil)
+        let usedFallback = resolved.usedFallback || (preferredUID.map { !$0.isEmpty } == true && chosenDeviceID == nil)
         let nodeFormat = inputNode.outputFormat(forBus: 0)
         
         DebugLogger.shared.log(.audio, "Mic input format: \(nodeFormat.sampleRate)Hz, \(nodeFormat.channelCount)ch, \(nodeFormat.commonFormat.rawValue)fmt")
@@ -1037,10 +1103,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             throw AudioCaptureError.formatCreationFailed
         }
 
-        activeMicInputDeviceID = chosenDeviceID ?? Self.defaultInputDeviceID()
-        activeMicInputSampleRate = nodeFormat.sampleRate
-        activeMicInputChannels = nodeFormat.channelCount
-        activeInputDeviceName = activeMicInputDeviceID.flatMap { Self.deviceName($0) }
+        let actualDevice = chosenDeviceID ?? inputID
         
         guard let outputFormat = AVAudioFormat(
             commonFormat: .pcmFormatInt16,
@@ -1066,26 +1129,29 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var activeInputChannels: AVAudioChannelCount = 0
         inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { [weak self] buffer, _ in
             guard let self else { return }
-            
-            let inFormat = buffer.format
-            if activeConverter == nil ||
-                abs(activeInputSampleRate - inFormat.sampleRate) > 0.001 ||
-                activeInputChannels != inFormat.channelCount {
-                guard let newConverter = AVAudioConverter(from: inFormat, to: outputFormat) else {
-                    DebugLogger.shared.log(.audio, "FAILED to create mic converter in callback: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetSampleRate)Hz")
-                    return
+            gate.perform {
+                let inFormat = buffer.format
+                if activeConverter == nil ||
+                    abs(activeInputSampleRate - inFormat.sampleRate) > 0.001 ||
+                    activeInputChannels != inFormat.channelCount {
+                    guard let newConverter = AVAudioConverter(from: inFormat, to: outputFormat) else {
+                        DebugLogger.shared.log(.audio, "FAILED to create mic converter in callback: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetRate)Hz")
+                        return
+                    }
+                    activeConverter = newConverter
+                    activeInputSampleRate = inFormat.sampleRate
+                    activeInputChannels = inFormat.channelCount
+                    DebugLogger.shared.log(.audio, "Mic converter ready: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetRate)Hz")
                 }
-                activeConverter = newConverter
-                activeInputSampleRate = inFormat.sampleRate
-                activeInputChannels = inFormat.channelCount
-                DebugLogger.shared.log(.audio, "Mic converter ready: \(inFormat.sampleRate)Hz, \(inFormat.channelCount)ch → \(targetSampleRate)Hz")
-            }
             
-            guard let converter = activeConverter else { return }
-            self.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer)
+                guard let converter = activeConverter else { return }
+                self.processAudioBuffer(buffer, converter: converter, outputFormat: outputFormat, targetRate: targetRate, callback: onBuffer, gate: gate)
+            }
         }
         
+        guard gate.isOpen else { throw CancellationError() }
         try audioEngine.start()
+        guard gate.isOpen else { throw CancellationError() }
         DebugLogger.shared.log(.audio, "Mic AVAudioEngine started")
         
         // Handle audio device changes (e.g. AirPods switching to HFP when Zoom grabs the mic).
@@ -1099,82 +1165,99 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in
+                guard gate.isOpen else { return }
                 self?.handleEngineConfigurationChange()
             }
         }
+        started = true
+        return MicHardwareSnapshot(deviceID: actualDevice, sampleRate: nodeFormat.sampleRate,
+                                   channels: nodeFormat.channelCount, name: Self.deviceName(actualDevice), usedFallback: usedFallback)
     }
     
     /// Restart mic capture after audio hardware changes (Bluetooth codec switch, device unplug, etc.).
     /// Rebuilding the engine avoids format-mismatch crashes during route transitions.
-    private func handleEngineConfigurationChange() {
-        guard isCapturing, isMicActive else { return }
-        
-        // Coalesce event bursts that happen during Bluetooth route/profile transitions.
+    func handleEngineConfigurationChange() {
+        guard isCapturing, expectsMicAudio, !hardware.isQuarantined else { return }
+        // Do not cancel an in-flight start. Check the settled route once it finishes.
+        guard !isRestartingMicAfterConfigChange else {
+            micRouteChangePending = true
+            return
+        }
         pendingMicRestartTask?.cancel()
+        let request = UUID()
+        micRestartGeneration = request
+        let generation = captureGeneration
         pendingMicRestartTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { self.pendingMicRestartTask = nil }
-            
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard self.isCapturing, self.isMicActive else { return }
-            
-            let currentInputID = self.resolvedMicInputDeviceID().deviceID
-            let currentFormat = self.audioEngine?.inputNode.outputFormat(forBus: 0)
-            let hasMeaningfulInputChange: Bool
-            if let currentFormat {
-                let deviceChanged = currentInputID != self.activeMicInputDeviceID
-                let rateChanged = abs(currentFormat.sampleRate - self.activeMicInputSampleRate) > 0.1
-                let channelChanged = currentFormat.channelCount != self.activeMicInputChannels
-                hasMeaningfulInputChange = deviceChanged || rateChanged || channelChanged
-            } else {
-                hasMeaningfulInputChange = true
-            }
-            // The notification means the engine stopped itself (Apple: restart after a
-            // configuration change). An output-device switch (AirPods, a call app changing
-            // profile) does this with the input device and format unchanged, so the format
-            // comparison alone said "skip" and the mic stayed dead until stop/resume.
-            let engineRunning = self.audioEngine?.isRunning ?? false
-            guard Self.shouldRestartMicAfterConfigChange(
-                hasMeaningfulInputChange: hasMeaningfulInputChange,
-                engineRunning: engineRunning
-            ) else {
-                DebugLogger.shared.log(.audio, "Engine config changed but mic input format/device is unchanged and the engine is still running — skipping mic restart")
-                return
-            }
-            if !hasMeaningfulInputChange {
-                DebugLogger.shared.log(.audio, "Engine config changed with mic input unchanged, but the engine stopped — restarting mic tap")
-            }
-            
-            guard !self.isRestartingMicAfterConfigChange else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            guard now - self.lastMicRestartAt > 0.5 else {
-                DebugLogger.shared.log(.audio, "Engine config changed — mic restart coalesced")
-                return
-            }
-            
-            self.lastMicRestartAt = now
+            defer { if self.micRestartGeneration == request { self.pendingMicRestartTask = nil } }
+            do { try await self.routeChangeSleep() } catch { return }
+            guard !Task.isCancelled, generation == self.captureGeneration,
+                  self.micRestartGeneration == request, self.isCapturing, self.expectsMicAudio else { return }
+            guard !self.isRestartingMicAfterConfigChange else { self.micRouteChangePending = true; return }
             self.isRestartingMicAfterConfigChange = true
-            defer { self.isRestartingMicAfterConfigChange = false }
-            
-            DebugLogger.shared.log(.audio, "Engine config changed — restarting mic tap. New input device: \(Self.detailedInputDeviceInfo())")
-            
-            self.stopMicrophoneCapture()
+            defer { self.finishMicRestart(generation: generation) }
             do {
-                try await self.startMicrophoneCapture(skipPermissionCheck: true)
-                if let newFormat = self.audioEngine?.inputNode.outputFormat(forBus: 0) {
-                    DebugLogger.shared.log(.audio, "Mic restart complete after config change: \(newFormat.sampleRate)Hz, \(newFormat.channelCount)ch")
-                } else {
-                    DebugLogger.shared.log(.audio, "Mic restart complete after config change")
+                let preferred = self.preferredInputDeviceUID
+                let route = try await self.hardware.run { self.microphoneRoute(preferredUID: preferred) }
+                guard !Task.isCancelled, generation == self.captureGeneration,
+                      self.micRestartGeneration == request else { return }
+                guard let route else {
+                    self.stopMicrophoneCapture()
+                    self.setMicActive(false)
+                    self.scheduleMicRestartRetry(reason: "input route is temporarily unavailable")
+                    return
                 }
+                let changed = route.deviceID != self.activeMicInputDeviceID
+                    || abs(route.sampleRate - self.activeMicInputSampleRate) > 0.1
+                    || route.channels != self.activeMicInputChannels
+                guard Self.shouldRestartMicAfterConfigChange(hasMeaningfulInputChange: changed,
+                                                            engineRunning: route.running) else { return }
+                self.lastMicRestartAt = CFAbsoluteTimeGetCurrent()
+                self.stopMicrophoneCapture()
+                try await self.startMicrophoneCapture(skipPermissionCheck: true)
+                guard generation == self.captureGeneration, !Task.isCancelled else { return }
+                self.setMicActive(true)
+                self.micRetryAttempt = 0
+                DebugLogger.shared.log(.audio, "Mic restarted after settled route change")
             } catch {
+                guard generation == self.captureGeneration, !Task.isCancelled else { return }
                 self.setMicActive(false)
-                DebugLogger.shared.log(.audio, "Mic restart FAILED after config change: \(error.localizedDescription)")
-                self.scheduleMicRestartRetry(reason: "config change restart failed")
+                DebugLogger.shared.log(.audio, "Mic route recovery failed: \(error.localizedDescription)")
+                self.scheduleMicRestartRetry(reason: "route change restart failed")
             }
         }
     }
-    
+
+    private func finishMicRestart(generation: UUID) {
+        guard generation == captureGeneration else { return }
+        isRestartingMicAfterConfigChange = false
+        if micRouteChangePending {
+            micRouteChangePending = false
+            handleEngineConfigurationChange()
+        }
+    }
+
+    struct MicRoute: Sendable {
+        let deviceID: AudioDeviceID
+        let sampleRate: Double
+        let channels: AVAudioChannelCount
+        let running: Bool
+    }
+
+    nonisolated private func microphoneRoute(preferredUID: String?) -> MicRoute? {
+        if let microphoneRouteProbe { return microphoneRouteProbe() }
+        let devices = Self.availableInputDevices()
+        let selected = Self.resolveInputDevice(preferredUID: preferredUID, devices: devices,
+                                               systemDefault: Self.defaultInputDeviceID())
+        guard let id = selected.deviceID, devices.contains(where: { $0.id == id }) else { return nil }
+        let rate = Self.deviceNominalSampleRate(id)
+        let channels = Self.streamChannelCount(id, scope: kAudioDevicePropertyScopeInput)
+        guard rate.isFinite, rate > 0, channels > 0 else { return nil }
+        return MicRoute(deviceID: id, sampleRate: rate, channels: channels, running: audioEngine?.isRunning ?? false)
+    }
+
     private func handleDefaultOutputDeviceChange() {
+        let generation = captureGeneration
         guard isCapturing, isSystemAudioActive else { return }
         guard !isRestartingSystemAfterOutputChange else { return }
         
@@ -1186,18 +1269,18 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         DebugLogger.shared.log(.audio, "Output device changed during capture — scheduling system tap restart")
         
         Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer { self.isRestartingSystemAfterOutputChange = false }
+            guard let self, generation == self.captureGeneration else { return }
+            defer { if generation == self.captureGeneration { self.isRestartingSystemAfterOutputChange = false } }
             
             // Allow CoreAudio route change to settle before rebuilding aggregate device.
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard self.isCapturing else { return }
+            do { try await self.routeChangeSleep() } catch { return }
+            guard self.isCapturing, generation == self.captureGeneration, !Task.isCancelled else { return }
             
             let mixWithMic = self.isMicActive
             do {
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
-                try self.startSystemAudioCapture()
+                try await self.startSystemAudioCapture()
                 self.setSystemAudioActive(true)
                 let restartedAt = CFAbsoluteTimeGetCurrent()
                 self.lastSystemNonSilentAt = restartedAt
@@ -1206,6 +1289,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.beginPostRecoveryHealthCheck(reason: "output-change restart")
                 DebugLogger.shared.log(.audio, "System tap restart complete after output change")
             } catch {
+                guard generation == self.captureGeneration, !Task.isCancelled else { return }
                 self.setSystemAudioActive(false)
                 DebugLogger.shared.log(.audio, "System tap restart FAILED after output change: \(error.localizedDescription)")
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -1221,7 +1305,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
 
     private func scheduleMicRestartRetry(reason: String) {
-        guard isCapturing, expectsMicAudio else { return }
+        let generation = captureGeneration
+        guard isCapturing, expectsMicAudio, !hardware.isQuarantined else { return }
         guard pendingMicRetryTask == nil else { return }
         guard micRetryAttempt < maxMicRetryAttempts else {
             microphoneCaptureIssue = "Your microphone is unavailable. Stop and choose the built-in microphone in Settings, Recording, then try again."
@@ -1242,12 +1327,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         
         pendingMicRetryTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.captureGeneration else { return }
             try? await Task.sleep(nanoseconds: delayNanos)
-            guard !Task.isCancelled else {
-                self.pendingMicRetryTask = nil
-                return
-            }
+            guard !Task.isCancelled, generation == self.captureGeneration else { return }
             self.pendingMicRetryTask = nil
             guard self.isCapturing, self.expectsMicAudio else { return }
             guard !self.isMicActive else {
@@ -1255,21 +1337,21 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 return
             }
             
-            DebugLogger.shared.log(.audio, "Mic restart retry \(attempt)/\(self.maxMicRetryAttempts) — attempting. Input: \(Self.detailedInputDeviceInfo())")
+            guard !self.isRestartingMicAfterConfigChange else { self.micRouteChangePending = true; return }
+            self.isRestartingMicAfterConfigChange = true
+            defer { self.finishMicRestart(generation: generation) }
+            DebugLogger.shared.log(.audio, "Mic restart retry \(attempt)/\(self.maxMicRetryAttempts): attempting")
             
             self.stopMicrophoneCapture()
             do {
                 try await self.startMicrophoneCapture(skipPermissionCheck: true)
                 self.setMicActive(true)
                 self.micRetryAttempt = 0
-                if let fmt = self.audioEngine?.inputNode.outputFormat(forBus: 0) {
-                    DebugLogger.shared.log(.audio, "Mic restart retry succeeded: \(fmt.sampleRate)Hz, \(fmt.channelCount)ch")
-                } else {
-                    DebugLogger.shared.log(.audio, "Mic restart retry succeeded")
-                }
+                DebugLogger.shared.log(.audio, "Mic restart retry succeeded")
                 // PCM routing resumes mic-driven stereo on the first real mic buffer.
                 // The healthy system tap does not need to be rebuilt for this handover.
             } catch {
+                guard generation == self.captureGeneration, !Task.isCancelled else { return }
                 self.setMicActive(false)
                 self.stopMicrophoneCapture()
                 DebugLogger.shared.log(.audio, "Mic restart retry FAILED: \(error.localizedDescription)")
@@ -1368,6 +1450,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
 
     private func checkMicLivenessWatchdog() async {
+        let generation = captureGeneration
         let now = CFAbsoluteTimeGetCurrent()
         let bufferGap = now - lastMicBufferAt
         let recoveryInProgress = isRestartingMicAfterConfigChange
@@ -1383,19 +1466,19 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         ) else { return }
 
         lastMicStallRecoveryAt = now
-        let running = audioEngine?.isRunning ?? false
         DebugLogger.shared.log(
             .audio,
-            "Mic engine silent for \(String(format: "%.1f", bufferGap))s (isRunning=\(running), buffers=\(micBufferCount)) — restarting mic tap. Input: \(Self.detailedInputDeviceInfo())"
+            "Mic engine silent for \(String(format: "%.1f", bufferGap))s (buffers=\(micBufferCount)): restarting mic tap"
         )
         isRestartingMicAfterConfigChange = true
-        defer { isRestartingMicAfterConfigChange = false }
+        defer { finishMicRestart(generation: generation) }
         stopMicrophoneCapture()
         do {
             try await startMicrophoneCapture(skipPermissionCheck: true)
             setMicActive(true)
             DebugLogger.shared.log(.audio, "Mic stall recovery complete")
         } catch {
+            guard generation == captureGeneration, !Task.isCancelled else { return }
             setMicActive(false)
             DebugLogger.shared.log(.audio, "Mic stall recovery FAILED: \(error.localizedDescription)")
             scheduleMicRestartRetry(reason: "mic stall recovery failed")
@@ -1444,7 +1527,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         lastSystemAutoRestartAt = now
         DebugLogger.shared.log(
             .audio,
-            "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks) — scheduling restart"
+            "System tap appears callback-stalled (\(String(format: "%.1f", callbackGap))s without callbacks), scheduling restart"
         )
         await recoverSystemTapAfterCallbackStall(
             mixWithMic: isMicActiveForWatchdog,
@@ -1461,10 +1544,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         silenceDuration: CFAbsoluteTime,
         isSilentFromBirthRebuild: Bool = false
     ) async {
+        let generation = captureGeneration
         guard isCapturing, isSystemAudioActive, expectsSystemAudio else { return }
         guard !isRestartingSystemAfterOutputChange else { return }
         isRestartingSystemAfterOutputChange = true
-        defer { isRestartingSystemAfterOutputChange = false }
+        defer { if generation == captureGeneration { isRestartingSystemAfterOutputChange = false } }
 
         DebugLogger.shared.log(
             .audio,
@@ -1472,7 +1556,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
 
         try? await Task.sleep(nanoseconds: 250_000_000)
-        guard isCapturing else { return }
+        guard isCapturing, generation == captureGeneration, !Task.isCancelled else { return }
         if isSilentFromBirthRebuild, sysNonSilentCallbacks > 0 {
             // The call started while this was queued; a rebuild now would only drop audio.
             DebugLogger.shared.log(.audio, "System tap started carrying audio before the rebuild, leaving it alone")
@@ -1482,7 +1566,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         do {
             resetRingBuffer()
             stopSystemAudioCapture()
-            try startSystemAudioCapture()
+            try await startSystemAudioCapture()
             setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
@@ -1493,6 +1577,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             }
             DebugLogger.shared.log(.audio, "System tap recovery complete")
         } catch {
+            guard generation == captureGeneration, !Task.isCancelled else { return }
             setSystemAudioActive(false)
             DebugLogger.shared.log(.audio, "System tap recovery FAILED: \(error.localizedDescription)")
             if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -1516,7 +1601,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         systemAudio: Bool,
         reason: String
     ) async {
-        guard isCapturing else { return }
+        guard isCapturing, !Task.isCancelled else { return }
         guard !isEscalatingFullRestart else { return }
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastFullRestartAt > 60.0 else {
@@ -1528,17 +1613,18 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
         isEscalatingFullRestart = true
         lastFullRestartAt = now
-        defer { isEscalatingFullRestart = false }
+        // startCapture resets this flag with the retired capture generation.
 
         DebugLogger.shared.log(
             .audio,
-            "Full capture restart starting (reason=\(reason), input=\(Self.detailedInputDeviceInfo()), output=\(Self.detailedOutputDeviceInfo()))"
+            "Full capture restart starting (reason=\(reason))"
         )
 
         do {
             try await startCapture(microphone: microphone, systemAudio: systemAudio)
             DebugLogger.shared.log(.audio, "Full capture restart complete")
         } catch {
+            guard !Task.isCancelled else { return }
             DebugLogger.shared.log(.audio, "Full capture restart FAILED: \(error.localizedDescription)")
         }
     }
@@ -1547,10 +1633,11 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         mixWithMic: Bool,
         callbackGap: CFAbsoluteTime
     ) async {
+        let generation = captureGeneration
         guard isCapturing, isSystemAudioActive, expectsSystemAudio else { return }
         guard !isRestartingSystemAfterOutputChange else { return }
         isRestartingSystemAfterOutputChange = true
-        defer { isRestartingSystemAfterOutputChange = false }
+        defer { if generation == captureGeneration { isRestartingSystemAfterOutputChange = false } }
         
         DebugLogger.shared.log(
             .audio,
@@ -1558,12 +1645,12 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         
         try? await Task.sleep(nanoseconds: 250_000_000)
-        guard isCapturing else { return }
+        guard isCapturing, generation == captureGeneration, !Task.isCancelled else { return }
         
         do {
             resetRingBuffer()
             stopSystemAudioCapture()
-            try startSystemAudioCapture()
+            try await startSystemAudioCapture()
             setSystemAudioActive(true)
             let restartedAt = CFAbsoluteTimeGetCurrent()
             lastSystemNonSilentAt = restartedAt
@@ -1572,6 +1659,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             beginPostRecoveryHealthCheck(reason: "callback-stall recovery")
             DebugLogger.shared.log(.audio, "System tap callback-stall recovery complete")
         } catch {
+            guard generation == captureGeneration, !Task.isCancelled else { return }
             setSystemAudioActive(false)
             DebugLogger.shared.log(.audio, "System tap callback-stall recovery FAILED: \(error.localizedDescription)")
             if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -1586,7 +1674,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func scheduleSystemTapRetry(reason: String, mixWithMic: Bool) {
-        guard isCapturing, expectsSystemAudio else { return }
+        let generation = captureGeneration
+        guard isCapturing, expectsSystemAudio, !hardware.isQuarantined else { return }
         guard pendingSystemRetryTask == nil else { return }
         guard systemRetryAttempt < maxSystemRetryAttempts else {
             DebugLogger.shared.log(
@@ -1605,12 +1694,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         )
         
         pendingSystemRetryTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+            guard let self, generation == self.captureGeneration else { return }
             try? await Task.sleep(nanoseconds: UInt64(delaySeconds) * 1_000_000_000)
-            guard !Task.isCancelled else {
-                self.pendingSystemRetryTask = nil
-                return
-            }
+            guard !Task.isCancelled, generation == self.captureGeneration else { return }
             self.pendingSystemRetryTask = nil
             guard self.isCapturing, self.expectsSystemAudio else { return }
             guard !self.isSystemAudioActive else {
@@ -1628,7 +1714,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             do {
                 self.resetRingBuffer()
                 self.stopSystemAudioCapture()
-                try self.startSystemAudioCapture()
+                try await self.startSystemAudioCapture()
                 self.setSystemAudioActive(true)
                 self.systemRetryAttempt = 0
                 // The fresh tap starts its own silence clock, so the silent-from-birth
@@ -1636,6 +1722,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 self.lastSystemNonSilentAt = CFAbsoluteTimeGetCurrent()
                 DebugLogger.shared.log(.audio, "System tap auto-retry succeeded")
             } catch {
+                guard generation == self.captureGeneration, !Task.isCancelled else { return }
                 self.setSystemAudioActive(false)
                 DebugLogger.shared.log(.audio, "System tap auto-retry FAILED: \(error.localizedDescription)")
                 if case AudioCaptureError.systemAudioPermissionDenied = error {
@@ -1647,17 +1734,24 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     private func stopMicrophoneCapture() {
+        guard let gate = micGate else { return }
+        gate.close()
+        micGate = nil
+        hardware.cleanup { self.stopMicrophoneHardware(expected: gate) }
+    }
+
+    nonisolated private func stopMicrophoneHardware(expected gate: AudioCaptureDeliveryGate) {
+        guard hardwareMicGate === gate else { return }
         if let observer = engineConfigObserver {
             NotificationCenter.default.removeObserver(observer)
             engineConfigObserver = nil
         }
-        pendingMicRestartTask?.cancel()
-        pendingMicRestartTask = nil
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine?.stop()
         audioEngine = nil
+        hardwareMicGate = nil
     }
-    
+
     private func requestMicrophonePermission() async -> Bool {
         await withCheckedContinuation { continuation in
             AVCaptureDevice.requestAccess(for: .audio) { granted in
@@ -1672,12 +1766,33 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // in macOS 15+ (like Granola), avoiding the invasive Screen Recording
     // permission and per-window Gatekeeper popups.
     
-    private func startSystemAudioCapture() throws {
+    private func startSystemAudioCapture() async throws {
         if let systemAudioStart { return try systemAudioStart() }
+        let generation = captureGeneration
+        let gate = AudioCaptureDeliveryGate()
+        systemGate?.close()
+        systemGate = gate
+        let multichannel = expectsMicAudio && expectsSystemAudio
+        do {
+            try await hardware.run { try self.startSystemAudioHardware(gate: gate, multichannel: multichannel) }
+            guard generation == captureGeneration, gate.isOpen, !Task.isCancelled else { throw CancellationError() }
+            pendingSystemRetryTask?.cancel()
+            pendingSystemRetryTask = nil
+            systemRetryAttempt = 0
+        } catch {
+            gate.close()
+            hardware.cleanup { self.stopSystemAudioHardware(expected: gate) }
+            throw error
+        }
+    }
+
+    nonisolated private func startSystemAudioHardware(gate: AudioCaptureDeliveryGate, multichannel: Bool) throws {
+        guard gate.isOpen else { throw CancellationError() }
+        hardwareSystemGate = gate
         var started = false
         defer {
             if !started {
-                stopSystemAudioCapture()
+                stopSystemAudioHardware(expected: gate)
             }
         }
         
@@ -1796,7 +1911,6 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             throw AudioCaptureError.formatCreationFailed
         }
         
-        let multichannel = expectsMicAudio && expectsSystemAudio
         let directCallback = onAudioBuffer
         let targetRate = targetSampleRate
         lastSystemHeartbeat = CFAbsoluteTimeGetCurrent()
@@ -1811,13 +1925,16 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         var procID: AudioDeviceIOProcID?
         err = AudioDeviceCreateIOProcIDWithBlock(&procID, aggDeviceID, queue) { [weak self] _, inInputData, _, _, _ in
             guard let self else { return }
-            self.processSystemAudioCallback(
-                inInputData: inInputData,
-                inputFormat: inputFormat,
-                targetRate: targetRate,
-                mixWithMic: multichannel,
-                directCallback: directCallback
-            )
+            gate.perform {
+                self.processSystemAudioCallback(
+                    inInputData: inInputData,
+                    inputFormat: inputFormat,
+                    targetRate: targetRate,
+                    mixWithMic: multichannel,
+                    directCallback: directCallback,
+                    gate: gate
+                )
+            }
         }
         guard err == noErr else {
             DebugLogger.shared.log(.audio, "Create IO proc FAILED: osstatus=\(err)")
@@ -1826,6 +1943,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         tapDeviceProcID = procID
         
         // 7. Start the aggregate device
+        guard gate.isOpen else { throw CancellationError() }
         err = AudioDeviceStart(aggDeviceID, procID)
         guard err == noErr else {
             DebugLogger.shared.log(.audio, "Start aggregate device FAILED: osstatus=\(err)")
@@ -1833,21 +1951,19 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         }
 
         DebugLogger.shared.log(.audio, "System audio tap started. Output device: \(Self.detailedOutputDeviceInfo())")
-        pendingSystemRetryTask?.cancel()
-        pendingSystemRetryTask = nil
-        systemRetryAttempt = 0
+        guard gate.isOpen else { throw CancellationError() }
         started = true
     }
     
     private func stopSystemAudioCapture() {
-        if isSystemAudioActive || sysCallbackCount > 0 {
-            let ringNow = currentRingSampleCount()
-            DebugLogger.shared.log(
-                .audio,
-                "System tap stopping: callbacks=\(sysCallbackCount), inFrames=\(sysInputFrameCount), outFrames=\(sysOutputFrameCount), nonSilent=\(sysNonSilentCallbacks), silent=\(sysSilentCallbacks), ring=\(ringNow)/\(ringCapacity)"
-            )
-        }
-        
+        guard let gate = systemGate else { return }
+        gate.close()
+        systemGate = nil
+        hardware.cleanup { self.stopSystemAudioHardware(expected: gate) }
+    }
+
+    nonisolated private func stopSystemAudioHardware(expected gate: AudioCaptureDeliveryGate) {
+        guard hardwareSystemGate === gate else { return }
         // 1. Stop and destroy IO proc
         if aggregateDeviceID != kAudioObjectUnknown {
             if let procID = tapDeviceProcID {
@@ -1865,6 +1981,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             AudioHardwareDestroyProcessTap(processTapID)
             processTapID = kAudioObjectUnknown
         }
+        hardwareSystemGate = nil
     }
     
     // MARK: - System Audio IO Callback
@@ -1895,7 +2012,8 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         inputFormat: AVAudioFormat,
         targetRate: Double,
         mixWithMic: Bool,
-        directCallback: (@Sendable (Data) -> Void)?
+        directCallback: (@Sendable (Data) -> Void)?,
+        gate: AudioCaptureDeliveryGate
     ) {
         let bufferList = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: inInputData))
         guard let firstBuffer = bufferList.first else { return }
@@ -2015,6 +2133,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         if now - lastSystemLevelUpdate > 0.05 {
             lastSystemLevelUpdate = now
             Task { @MainActor [weak self] in
+                    guard gate.isOpen else { return }
                 self?.systemAudioLevel = min(1.0, normalizedInputRMS)
             }
             runningSysRMS = runningSysRMS * (1 - rmsAlpha) + normalizedInputRMS * rmsAlpha
@@ -2075,9 +2194,10 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                 lastSystemAutoRestartAt = now
                 DebugLogger.shared.log(
                     .audio,
-                    "System tap appears stalled (silent \(String(format: "%.1f", silenceDuration))s after prior signal, output=\(Self.detailedOutputDeviceInfo())) — scheduling restart"
+                    "System tap appears stalled (silent \(String(format: "%.1f", silenceDuration))s after prior signal), scheduling restart"
                 )
                 Task { @MainActor [weak self] in
+                    guard gate.isOpen else { return }
                     await self?.recoverSystemTapAfterSilentStall(
                         mixWithMic: mixWithMic,
                         silenceDuration: silenceDuration
@@ -2101,6 +2221,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                     "System tap has never carried audio (silent \(String(format: "%.1f", silenceDuration))s since start, callbacks=\(sysCallbackCount), rebuild \(silentFromBirthRebuilds)/\(Self.maxSilentFromBirthRebuilds)), rebuilding in case it was created during the permission prompt"
                 )
                 Task { @MainActor [weak self] in
+                    guard gate.isOpen else { return }
                     await self?.recoverSystemTapAfterSilentStall(
                         mixWithMic: mixWithMic,
                         silenceDuration: silenceDuration,
@@ -2153,6 +2274,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
                     let micWanted = expectsMicAudio
                     let sysWanted = expectsSystemAudio
                     Task { @MainActor [weak self] in
+                        guard gate.isOpen else { return }
                         await self?.escalateFullCaptureRestart(
                             microphone: micWanted,
                             systemAudio: sysWanted,
@@ -2277,7 +2399,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
         return ptr
     }()
     
-    nonisolated private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, outputFormat: AVAudioFormat, targetRate: Double, callback: (@Sendable (Data) -> Void)?) {
+    nonisolated private func processAudioBuffer(_ buffer: AVAudioPCMBuffer, converter: AVAudioConverter, outputFormat: AVAudioFormat, targetRate: Double, callback: (@Sendable (Data) -> Void)?, gate: AudioCaptureDeliveryGate) {
         let frameCount = AVAudioFrameCount(targetRate * Double(buffer.frameLength) / buffer.format.sampleRate)
         
         guard let outputBuffer = AVAudioPCMBuffer(pcmFormat: outputFormat, frameCapacity: frameCount) else { return }
@@ -2301,6 +2423,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
             let level = calculateLevelVDSP(buffer)
             runningMicRMS = runningMicRMS * (1 - rmsAlpha) + level * rmsAlpha
             Task { @MainActor [weak self] in
+                guard gate.isOpen else { return }
                 self?.microphoneLevel = level
             }
         }
@@ -2416,6 +2539,7 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
 
 enum AudioCaptureError: LocalizedError {
     case microphonePermissionDenied
+    case inputDeviceUnavailable
     case systemAudioPermissionDenied
     case systemAudioSetupFailed
     case formatCreationFailed
@@ -2423,6 +2547,8 @@ enum AudioCaptureError: LocalizedError {
     
     var errorDescription: String? {
         switch self {
+        case .inputDeviceUnavailable:
+            return "The microphone is changing or unavailable. Wait a moment or choose another input."
         case .microphonePermissionDenied:
             return "Microphone permission was denied. Please enable in System Settings."
         case .systemAudioPermissionDenied:
@@ -2434,5 +2560,112 @@ enum AudioCaptureError: LocalizedError {
         case .converterCreationFailed:
             return "Failed to create audio converter."
         }
+    }
+}
+
+/// Serial ownership of blocking HAL/engine calls. A timeout cannot cancel an OS call;
+/// quarantine the worker instead of racing another engine against it. Cleanup remains
+/// queued and runs if the blocked call eventually returns. No main-thread waits.
+final class AudioHardwareExecutor: @unchecked Sendable {
+    enum Failure: LocalizedError {
+        case unresponsive
+        var errorDescription: String? {
+            "Audio hardware is not responding. Quit and reopen miniti before recording again. macOS may show audio capture until miniti quits."
+        }
+    }
+    private let queue = DispatchQueue(label: "com.miniti.capture.hardware", qos: .userInitiated)
+    private let lock = NSLock()
+    private var quarantined = false
+    var isQuarantined: Bool { lock.lock(); defer { lock.unlock() }; return quarantined }
+    let timeout: TimeInterval
+    var onTimeout: (@Sendable () -> Void)?
+    private var pending: [UUID: @Sendable () -> Void] = [:]
+
+    init(timeout: TimeInterval = 15) { self.timeout = timeout }
+
+    private func quarantine() {
+        lock.lock()
+        let first = !quarantined
+        quarantined = true
+        let waiting = Array(pending.values)
+        pending.removeAll()
+        lock.unlock()
+        waiting.forEach { $0() }
+        if first {
+            DebugLogger.shared.log(.audio, "Capture hardware operation timed out; worker quarantined until relaunch")
+            onTimeout?()
+        }
+    }
+
+    func run<T: Sendable>(_ operation: @escaping @Sendable () throws -> T) async throws -> T {
+        guard !isQuarantined else { throw Failure.unresponsive }
+        return try await withCheckedThrowingContinuation { continuation in
+            submit({
+                guard !self.isQuarantined else { throw Failure.unresponsive }
+                return try operation()
+            }, continuation: continuation)
+        }
+    }
+
+    func cleanup(_ operation: @escaping @Sendable () -> Void) {
+        // Cleanup must still run after a timeout; never replace the worker with a competing one.
+        submit({ operation() }, continuation: nil)
+    }
+
+    private func submit<T: Sendable>(_ operation: @escaping @Sendable () throws -> T,
+                                     continuation: CheckedContinuation<T, Error>?) {
+        let result = AudioHardwareCompletion(continuation)
+        let id = UUID()
+        lock.lock()
+        if continuation != nil, quarantined {
+            lock.unlock()
+            result.finish(.failure(Failure.unresponsive))
+            return
+        }
+        if continuation != nil { pending[id] = { result.finish(.failure(Failure.unresponsive)) } }
+        lock.unlock()
+        queue.async {
+            // Queue delay is not hardware execution time. A timed-out running operation
+            // fails all queued callers through quarantine, so none can wait indefinitely.
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + self.timeout) {
+                result.finish(.failure(Failure.unresponsive), beforeResume: { self.quarantine() })
+            }
+            do { result.finish(.success(try operation())) }
+            catch { result.finish(.failure(error)) }
+            self.lock.lock()
+            self.pending.removeValue(forKey: id)
+            self.lock.unlock()
+        }
+    }
+}
+
+private final class AudioHardwareCompletion<T: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var finished = false
+    private var continuation: CheckedContinuation<T, Error>?
+    init(_ continuation: CheckedContinuation<T, Error>?) { self.continuation = continuation }
+    func finish(_ result: Result<T, Error>, beforeResume: () -> Void = {}) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        beforeResume()
+        continuation?.resume(with: result)
+    }
+}
+
+/// A short DSP-only critical section. Closing it waits for an existing buffer, never
+/// for engine start/stop or HAL teardown, and rejects every subsequent stale callback.
+final class AudioCaptureDeliveryGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var open = true
+    var isOpen: Bool { lock.lock(); defer { lock.unlock() }; return open }
+    func close() { lock.lock(); open = false; lock.unlock() }
+    func perform(_ body: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard open else { return }
+        body()
     }
 }

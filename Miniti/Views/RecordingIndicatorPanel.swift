@@ -47,7 +47,8 @@ extension AppState {
                     ? "\(associated.displayName) call active"
                     : "\(associated.displayName) call not detected"
             } else {
-                lifecycle = "No supported call detected"
+                lifecycle = latestCallSnapshot?.isReliable == true && latestCallSnapshot?.isFresh(at: Date()) == true
+                    ? "Call not detected" : "Call detection is uncertain"
             }
         }
         return RecordingPresence(
@@ -77,7 +78,14 @@ extension AppState {
     /// Every meeting decision belongs in the floating surface. Strong call lifecycle
     /// evidence, quiet fallback, and calendar handoffs differ in policy, but none should
     /// remain visible only inside a covered main window.
-    var floatingMeetingPrompt: SmartMeetingPrompt? { smartMeetingPrompt }
+    var floatingMeetingPrompt: SmartMeetingPrompt? {
+        if let smartMeetingPrompt { return smartMeetingPrompt }
+        guard !isRecording, !isStartingMeeting, currentMeeting == nil,
+              let event = pendingAutoStartEvent, autoStartIsWaitingForCall else { return nil }
+        return .init(id: "waiting-call-" + event.id, kind: .calendarNoShow,
+                     title: "Waiting for your call", message: "\(event.title). Start now if your call is already connected.",
+                     eventID: event.id, countdown: nil)
+    }
 }
 
 private extension DeepgramService.ConnectionState {
@@ -625,7 +633,7 @@ private struct RecordingIndicatorView: View {
             case .calendar: return "calendar.badge.clock"
             case .callStart: return "phone.fill"
             case .callEnd: return "phone.down.fill"
-            case .callTransition: return "phone.fill"
+            case .callTransition, .association: return "phone.fill"
             case .calendarNoShow: return "calendar.badge.exclamationmark"
             }
         }
@@ -801,6 +809,11 @@ private struct RecordingIndicatorView: View {
                     role: .secondary,
                     action: appState.keepRecordingFromSmartMeetingPrompt
                 )
+            case .association:
+                indicatorActionButton("use for this meeting", systemImage: "link", role: .secondary,
+                    action: appState.associateCurrentMeetingFromPrompt)
+                indicatorActionButton("keep recording", systemImage: "record.circle", role: .secondary,
+                    action: appState.keepRecordingFromSmartMeetingPrompt)
             case .calendarNoShow:
                 indicatorActionButton(
                     "record anyway",

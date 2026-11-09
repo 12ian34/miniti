@@ -18,12 +18,12 @@ struct HistoryView_iOS: View {
 
     var filteredMeetings: [Meeting] {
         if searchText.isEmpty {
-            return meetings.sorted {
+            return meetings.filter { appState.folderIncludes($0) }.sorted {
                 if $0.isPinned != $1.isPinned { return $0.isPinned }
                 return $0.startTime > $1.startTime
             }
         }
-        return searchResults.map(\.meeting)
+        return searchResults.map(\.meeting).filter { appState.folderIncludes($0) }
     }
 
     private var meetingSections: [(title: String, meetings: [Meeting])] {
@@ -94,6 +94,7 @@ struct HistoryView_iOS: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(ColorPalette.Background.primary)
+            .safeAreaInset(edge: .top) { MeetingFolderControls(meetings: meetings).padding(.horizontal).padding(.vertical, 8).background(ColorPalette.Background.secondary) }
             .navigationTitle("History")
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, prompt: "Search meetings...")
@@ -177,6 +178,7 @@ struct HistoryView_iOS: View {
                             .tint(ColorPalette.Accent.amber)
                         }
                         .contextMenu {
+                            MeetingFolderMoveMenu(meeting: meeting)
                             Button {
                                 togglePin(meeting)
                             } label: {

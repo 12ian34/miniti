@@ -527,5 +527,151 @@ final class CaptureFailureTests: XCTestCase {
         XCTAssertEqual(deniedAttempts, 1)
         XCTAssertTrue(denied.microphoneCaptureIssue?.contains("Microphone access is off") == true)
     }
+
+    func testHardwareTimeoutKeepsMainActorResponsiveAndRejectsCompetingStarts() async throws {
+        let worker = AudioHardwareExecutor(timeout: 0.1)
+        let entered = expectation(description: "hardware call entered")
+        let cleaned = expectation(description: "late hardware cleanup ran")
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let task = Task {
+            try await worker.run {
+                XCTAssertFalse(Thread.isMainThread)
+                entered.fulfill()
+                release.wait()
+                return 7
+            }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        // This test is on MainActor while the HAL stand-in is still blocked.
+        XCTAssertTrue(Thread.isMainThread)
+        do { _ = try await task.value; XCTFail("expected bounded timeout") }
+        catch AudioHardwareExecutor.Failure.unresponsive { }
+        XCTAssertTrue(worker.isQuarantined)
+        do { try await worker.run { XCTFail("must not run a competing engine") } }
+        catch AudioHardwareExecutor.Failure.unresponsive { }
+        worker.cleanup { XCTAssertFalse(Thread.isMainThread); cleaned.fulfill() }
+        release.signal()
+        await fulfillment(of: [cleaned], timeout: 2)
+        XCTAssertTrue(worker.isQuarantined, "A late OS return cannot silently re-enable capture")
+    }
+
+    func testHardwareDeadlineExcludesHealthyQueueDelay() async throws {
+        let worker = AudioHardwareExecutor(timeout: 2)
+        async let first: Int = worker.run { Thread.sleep(forTimeInterval: 1.1); return 1 }
+        async let second: Int = worker.run { Thread.sleep(forTimeInterval: 1.1); return 2 }
+        let values = try await [first, second]
+        XCTAssertEqual(values, [1, 2])
+        XCTAssertFalse(worker.isQuarantined, "Both calls were within their individual execution deadline")
+    }
+
+    func testRunningHardwareTimeoutAlsoFailsQueuedWaiters() async throws {
+        let worker = AudioHardwareExecutor(timeout: 0.1)
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let entered = expectation(description: "blocked worker")
+        let first = Task { try await worker.run { entered.fulfill(); release.wait() } }
+        await fulfillment(of: [entered], timeout: 2)
+        let second = Task { try await worker.run { XCTFail("queued work must not run after quarantine") } }
+        do { try await first.value; XCTFail("expected timeout") } catch AudioHardwareExecutor.Failure.unresponsive { }
+        do { try await second.value; XCTFail("queued waiter must be released") } catch AudioHardwareExecutor.Failure.unresponsive { }
+    }
+
+    func testClosedCaptureGateRejectsLateBuffers() {
+        let gate = AudioCaptureDeliveryGate()
+        var deliveries = 0
+        gate.perform { deliveries += 1 }
+        gate.close()
+        gate.perform { deliveries += 1 }
+        XCTAssertEqual(deliveries, 1)
+    }
+
+    func testStopWhileMicrophoneStartIsPendingCannotReviveCapture() async throws {
+        var resume: CheckedContinuation<Void, Never>?
+        var systemStarts = 0
+        let service = AudioCaptureService(microphoneStart: {
+            await withCheckedContinuation { resume = $0 }
+        }, systemAudioStart: { systemStarts += 1 })
+        let start = Task { try await service.startCapture(microphone: true, systemAudio: true) }
+        try await TestSupport.waitUntil { resume != nil }
+        service.stopCapture()
+        resume?.resume()
+        do { try await start.value; XCTFail("the stopped capture must stay stopped") }
+        catch is CancellationError { }
+        XCTAssertFalse(service.isCapturing)
+        XCTAssertFalse(service.isMicActive)
+        XCTAssertFalse(service.isSystemAudioActive)
+        XCTAssertEqual(systemStarts, 0)
+    }
+
+    @MainActor private final class RouteSleeps {
+        var pending: [CheckedContinuation<Void, Never>] = []
+        func wait() async { await withCheckedContinuation { pending.append($0) } }
+        func releaseAll() { let ready = pending; pending.removeAll(); ready.forEach { $0.resume() } }
+    }
+
+    func testRouteBurstOnlyRestartsOnceAfterSettlingAndStopCancelsTheNextOne() async throws {
+        var starts = 0
+        let sleeps = RouteSleeps()
+        let service = AudioCaptureService(microphoneStart: { starts += 1 }, systemAudioStart: {},
+            microphoneRouteProbe: { .init(deviceID: 1, sampleRate: 16000, channels: 1, running: false) })
+        service.routeChangeSleep = { await sleeps.wait() }
+        try await service.startCapture(microphone: true, systemAudio: true)
+        for count in 1...3 {
+            service.handleEngineConfigurationChange()
+            try await TestSupport.waitUntil { sleeps.pending.count == count }
+        }
+        XCTAssertEqual(starts, 1, "No restart while route-change notifications are arriving")
+        sleeps.releaseAll()
+        try await TestSupport.waitUntil { starts == 2 && service.isMicActive }
+        service.handleEngineConfigurationChange()
+        try await TestSupport.waitUntil { sleeps.pending.count == 1 }
+        service.stopCapture()
+        sleeps.releaseAll()
+        await Task.yield()
+        XCTAssertEqual(starts, 2)
+        XCTAssertFalse(service.isCapturing)
+    }
+
+    func testRouteNotificationDuringStartWaitsForTheInFlightRestart() async throws {
+        var starts = 0
+        var resume: CheckedContinuation<Void, Never>?
+        let sleeps = RouteSleeps()
+        let service = AudioCaptureService(microphoneStart: {
+            starts += 1
+            if starts == 2 {
+                await withCheckedContinuation { resume = $0 }
+                XCTAssertFalse(Task.isCancelled, "A route event must not cancel an engine already starting")
+            }
+        }, systemAudioStart: {}, microphoneRouteProbe: {
+            .init(deviceID: 1, sampleRate: 16000, channels: 1, running: false)
+        })
+        service.routeChangeSleep = { await sleeps.wait() }
+        defer { service.stopCapture(); sleeps.releaseAll(); resume?.resume(); resume = nil }
+        try await service.startCapture(microphone: true, systemAudio: true)
+        service.handleEngineConfigurationChange()
+        try await TestSupport.waitUntil { !sleeps.pending.isEmpty }
+        sleeps.releaseAll()
+        try await TestSupport.waitUntil { resume != nil }
+        for _ in 0..<3 { service.handleEngineConfigurationChange() }
+        XCTAssertTrue(sleeps.pending.isEmpty, "Only one mic restart can own capture")
+        resume?.resume(); resume = nil
+        try await TestSupport.waitUntil { service.isMicActive && sleeps.pending.count == 1 }
+        XCTAssertEqual(starts, 2)
+    }
+
+    func testMissingInputDuringRouteChangeDoesNotStartAnEngine() async throws {
+        var starts = 0
+        let service = AudioCaptureService(microphoneStart: { starts += 1 }, systemAudioStart: {},
+                                          microphoneRouteProbe: { nil })
+        service.routeChangeSleep = { }
+        try await service.startCapture(microphone: true, systemAudio: true)
+        service.handleEngineConfigurationChange()
+        try await TestSupport.waitUntil { !service.isMicActive }
+        XCTAssertEqual(starts, 1)
+        XCTAssertTrue(service.isSystemAudioActive, "A missing mic does not tear down working system audio")
+        service.stopCapture()
+    }
+
 }
 #endif

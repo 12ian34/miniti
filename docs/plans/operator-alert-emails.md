@@ -1,6 +1,6 @@
 # Clearer operator alert emails, 3.7.0
 
-Selected by Ian on 2026-11-03 after an OpenAI alert was difficult to understand and overstated its evidence. Implemented locally in the backend; automated verification has passed; broader mail-client preview checks and the first deployed scheduled run remain open. No deployment or production mail. The [roadmap](../roadmap.md#selected-next-release-370) owns priority. Ian reconfirmed that this complete plan remains in 3.7.0 alongside model retirement. Backend deployment may precede the apps once validated; that sequencing does not defer the wider email fixes beyond 3.7.0. No app payload or Linux binary change is needed for this work.
+Status updated 2026-11-04: backend changes deployed with 3.7.0. [Publication evidence](../releases/3.7.0.md#publication-2026-11-04) supersedes dated local-only status below; mail/device observations remain only those actually recorded. This backend-only plan needs no Apple or Linux binary. [Roadmap](../roadmap.md) owns priority.
 
 ## Confirmed problems
 

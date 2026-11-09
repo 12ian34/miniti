@@ -36,6 +36,39 @@ final class MinitiAPIServiceTransportTests: XCTestCase {
         request.url?.path ?? ""
     }
 
+    func testV2StartRenewAndFinishUseTheSharedWireFixture() async throws {
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let recording = UUID(uuidString: "550e8400-e29b-41d4-a716-446655440000")!
+        let startData = try JSONSerialization.data(withJSONObject: fixture["start_response"]!)
+        let finishData = try JSONSerialization.data(withJSONObject: fixture["finish_response"]!)
+        StubURLProtocol.handler = { request in
+            (200, request.url?.path.hasSuffix("/session/end") == true ? finishData : startData)
+        }
+        let start = try await api.requestSession(deviceId: deviceID, model: "nova-3", recordingID: recording)
+        XCTAssertEqual(start.accountingVersion, 2)
+        XCTAssertNotNil(start.sessionStartedAt)
+        let renewed = try await api.requestSession(deviceId: deviceID, model: "nova-3", recordingID: recording, renewalSessionID: start.sessionId)
+        XCTAssertEqual(renewed.sessionId, start.sessionId)
+        let finish = try await api.endSession(deviceId: deviceID, sessionId: start.sessionId, durationMinutes: 74, recordingID: recording, durationMS: 4_440_000)
+        XCTAssertEqual(finish.minutesUsed, 74)
+        for (request, key) in zip(StubURLProtocol.requests, ["start", "renew", "finish"]) {
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(with: TestSupport.bodyData(of: request)) as? NSDictionary)
+            XCTAssertEqual(body, fixture[key] as? NSDictionary)
+        }
+    }
+
+    func testCloudBusy503IsRetryableRatherThanAConflictOrFailure() async throws {
+        StubURLProtocol.script = { _ in
+            StubURLProtocol.json(503, #"{"error":"busy"}"#)
+        }
+        do {
+            _ = try await api.manifest()
+            XCTFail("expected transient contention")
+        } catch let error as CloudSyncError {
+            XCTAssertEqual(error, .busy(retryAfter: 2))
+        }
+    }
+
     // MARK: Happy path and auth headers
 
     func testUsageDecodesAndCarriesBearerAndIdentityHeaders() async throws {

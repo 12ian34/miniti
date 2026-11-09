@@ -1,12 +1,14 @@
 # Accounts, credentials and billing identity
 
+3.8.0 local candidate: missing credentials on a new install require Sign in or Continue without signing in. A pre-created UUID alone is not prior-account evidence. Supported legacy installs may migrate, but an ineligible migration cannot silently create an account without a choice. Sign-out/revoke/delete retain the choice marker. `loadResult()` distinguishes found, missing and unreadable without breaking existing optional `load()` callers. Locked/corrupt reads offer recovery or an explicit destructive-local reset confirmation. Background credential reads use a fresh `LAContext` with `interactionNotAllowed = true` through `kSecUseAuthenticationContext`; explicit Retry can request it once, outside the auth-state lock. A registered-device conflict never rotates identity from Continue alone. Retry-After persists per installation; migration-negative results cache per installation and clear on successful enrollment. Real Keychain prompts in hosted/UI tests are isolation failures. Device labels are account metadata: PATCH requires actor and target still active on the same account, manual labels survive metadata refresh, null restores the platform fallback. Existing accounts and local meetings are retained. See [3.8.0 evidence](../releases/3.8.0-evidence.md#local-implementation-evidence).
+
 Current baseline: Apple 3.4.0, reconciled 2026-10-27. [Roadmap](../roadmap.md) owns future work. Backend route/storage contracts live in [miniti-api](../../../miniti-api/docs/agents/04-api-reference.md). Do not implement historical proposals as current behavior.
 
 ## Identity and access
 
 A managed account may be anonymous. Each installation has a P-256 key, short-lived bearer and refresh credentials; its stored recovery key is another way to regain access. Optional verified email works on free and Pro accounts with cloud off. A billing license key restores a purchase; it is not the account’s authentication key. Do not require email on either platform, merge accounts by email, or reintroduce a shared app API secret.
 
-`ClientAuthManager` owns credentials. The coordinator still silently creates on ordinary first use in 3.4.0. Remaining unreadable/damaged classification, persisted retry delays and explicit first-use/signed-out/revoked choices are in [account access](../plans/account-access.md); they are not shipped promises.
+`ClientAuthManager` owns credentials. The released 3.7.0 coordinator silently creates on ordinary first use. The local 3.8.0 behavior above replaces that path; [account access](../plans/account-access.md) retains the complete acceptance contract.
 
 An ordinary attach changes the installation’s account in place. The app keeps local meetings and resets sync bookkeeping on a successful account change before refreshing status. Same-account repair preserves bookkeeping. R3 prevents old in-flight sync work applying to a new account; it does not establish meeting provenance or stop a future pass uploading the local library. That remains [meeting ownership](../plans/meeting-ownership.md).
 
@@ -44,3 +46,19 @@ Usage is presented per account but summed from device counters; subscriptions re
 Existing sponsorship eligibility is Polar across platforms and Apple on iOS; purchase rails remain Polar on Mac and StoreKit on iOS. Deleting an account does not cancel upstream billing. The five-device cap stays. [Account ownership](../plans/account-ownership.md) owns subscription attribution, atomic usage, non-destructive source accounts and migration decisions. Do not infer production auth-enforcement flags from source defaults.
 
 Integration tokens are still device-keyed. Read legacy lower/uppercase forms; do not silently choose another device’s connection. [Integration ownership](../plans/integration-ownership.md) owns the future migration. Linux uses the shared backend and auth vectors on its own release line.
+
+3.8.0 local SG1: [Home setup guide](../plans/home-setup-guide.md) supersedes the independent Home account/calendar cards. It is optional, staged and resumable, preserves existing configuration/dismissals, and presents Add email directly. The approved vertical checklist keeps calendar and separate Mac transcription/speaker controls inline, bound to the real settings; one task expands at a time. Pending verification is not completion. The release record owns automated and remaining manual evidence.
+
+3.8.0 second review: background device-ID reads also forbid keychain interaction. Temporary locked/denied keychain state never offers or permits destructive credential reset. Explicit Retry refreshes the same identity and enrollment/status; Continue advances only on success. Signed locked-keychain checks remain required.
+
+## Legacy migration and pending-usage repair (3.8.0 local, 2026-11-06)
+
+Accounts first shipped in 2.6.0. A supported earlier install may establish its first anonymous account while retaining its device identity and usage. Already enrolled accounts must be retained or explicitly recovered. Backend migration preflight and final eligibility both check lowercase and uppercase legacy device records; a newer lowercase usage row must not mask an eligible older uppercase row. Existing proof, installation binding and replay checks remain mandatory. No historical account merge or entitlement repair is implied.
+
+Temporary unreadability of a signing key does not permit Sign out to bypass unsent managed usage. Explicit authenticated recovery/email repair remains reachable, with pending reports bound to their original owner. A permanently unusable key retains the deliberate local escape path. Live capture/finalization and a running Watch import still guard account transitions.
+
+3.8.0 migration retry: upgrading clears the previous negative migration-probe cache once; explicit Continue reprobes legacy eligibility before creating a new account. Explicit sign-out/revocation choices remain authoritative. This repairs retry eligibility after a backend fix without resetting credentials or merging accounts. Pending usage that cannot be signed names keychain unlock/sign-in recovery instead of only asking to go online.
+
+Confirmed Set up again skips the legacy migration probe and proceeds through the explicitly authorized account-creation/reset path. Recovery copy says unlock your device on iOS and unlock your keychain on macOS.
+
+Anonymous Continue selects managed mode before enrollment, shows progress immediately and advances onboarding as soon as enrollment succeeds. The optional usage refresh runs after navigation. A temporarily unreadable device identity reports why setup cannot continue and never creates an account under a session-only ID.

@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 struct PurchaseReturnStatusView: View {
     @ObservedObject var controller: PurchaseReturnController
@@ -378,164 +379,943 @@ extension AppState {
         return inputs
     }
 
-    /// Open Settings, Account on the email row (both platforms).
-    func openAccountEmailSettings() {
-        jumpToSetting("account.email")
-        showSettings = true
-    }
 }
 
 // MARK: Home card
 
-/// "Keep access to your account" (B6a): shown on Home after the first saved meeting while the
-/// account has no verified email and the recovery key is not acknowledged. Not now dismisses
-/// it for this account on this installation.
-struct AccountAccessCard: View {
+/// Explicit first-use and signed-out choices shared by onboarding, Home and Account.
+/// Cancellation never enrolls; onboarding advances only after a deliberate choice.
+struct ManagedAccessChoiceCard: View {
+    var onContinued: (() -> Void)? = nil
     @EnvironmentObject var appState: AppState
-    @State private var isPresentingKey = false
-    @State private var isHovering = false
-    @State private var resendNotice: String?
-
-    private var pendingAddress: String? { appState.accountEmailState.email?.pending }
+    @State private var signIn = false
+    @State private var recovery = false
+    @State private var confirmReset = false
+    @State private var isContinuing = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: pendingAddress == nil ? "envelope" : "envelope.badge.clock")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ColorPalette.Accent.green)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(pendingAddress == nil ? "keep access to your account" : "check your email to finish")
-                        .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Text.primary)
-
-                    Text(pendingAddress.map { "a link went to \($0). open it to make that address a way to sign in." }
-                         ?? "add an email so you can sign in on another device or recover access if this one stops working. this won't turn on cloud sync.")
-                        .font(.system(size: 11, weight: .regular, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                Button {
-                    appState.dismissAccessCard()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                #if os(macOS)
-                .focusable(false)
-                .help("not now")
-                #endif
-                .accessibilityLabel("Not now")
+        VStack(spacing: MinitiDesignSystem.Spacing.section) {
+            VStack(spacing: MinitiDesignSystem.Spacing.small) {
+                Text("your account")
+                    .font(.headline)
+                    .foregroundStyle(ColorPalette.Text.primary)
+                Text(appState.managedAccessIssue ?? appState.managedEnrollmentError ?? "Keep your plan across devices. Email is optional.")
+                .font(.callout)
+                .foregroundStyle(ColorPalette.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("account.setupMessage")
             }
-
-            HStack(spacing: 10) {
-                if let pendingAddress {
-                    Button {
-                        Task { @MainActor in
-                            let outcome = await appState.addAccountEmail(pendingAddress)
-                            switch outcome {
-                            case .sent: resendNotice = "sent again"
-                            case .staleAccount: resendNotice = nil
-                            default: resendNotice = "could not send; try again in a minute"
-                            }
-                        }
-                    } label: {
-                        primaryLabel("resend", systemImage: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    #if os(macOS)
-                    .focusable(false)
-                    #endif
-                    if let resendNotice {
-                        Text(resendNotice)
-                            .font(.system(size: 11))
-                            .foregroundStyle(ColorPalette.Text.muted)
-                    }
-                } else {
-                    Button {
-                        appState.openAccountEmailSettings()
-                    } label: {
-                        primaryLabel("add email", systemImage: "envelope")
-                    }
-                    .buttonStyle(.plain)
-                    #if os(macOS)
-                    .focusable(false)
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: MinitiDesignSystem.Motion.hoverDuration)) { isHovering = hovering }
-                    }
-                    #endif
-
-                    if !appState.managedDeviceHasNoRecoveryKey {
-                        Button {
-                            isPresentingKey = true
-                        } label: {
-                            Text("use a recovery key instead")
-                                .font(.system(size: 11, weight: .medium, design: .default))
-                                .foregroundStyle(ColorPalette.Text.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        #if os(macOS)
-                        .focusable(false)
-                        #endif
-                    }
+            VStack(spacing: MinitiDesignSystem.Spacing.standard) { choices }
+            .disabled(isContinuing || appState.isEnrollingManagedDevice)
+            if isContinuing || appState.isEnrollingManagedDevice {
+                HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                    ProgressView().controlSize(.small)
+                    Text("Setting up your account...")
+                        .font(.callout)
+                        .foregroundStyle(ColorPalette.Text.secondary)
                 }
-
-                Button {
-                    appState.dismissAccessCard()
-                } label: {
-                    Text("not now")
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                }
-                .buttonStyle(.plain)
-                #if os(macOS)
-                .focusable(false)
-                #endif
+                .accessibilityIdentifier("account.setupProgress")
+            }
+            if onContinued != nil, appState.canContinueSetupOffline {
+                Button { onContinued?() } label: { accountAction("continue setup offline") }
+                    .accessibilityLabel("Continue setup offline")
+                    .accessibilityIdentifier("account.continueOffline")
+                Text("You can finish setup now. Managed recording needs a connection.")
+                    .font(.caption)
+                    .foregroundStyle(ColorPalette.Text.muted)
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 380, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
-                .fill(ColorPalette.Background.card)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
-                .stroke(ColorPalette.Border.primary, lineWidth: 1)
-        )
-        .sheet(isPresented: $isPresentingKey) {
-            if let key = appState.revealRecoveryKey() {
-                RecoveryKeySheet(recoveryKey: key)
-                    .environmentObject(appState)
-                    .preferredColorScheme(.dark)
+        .buttonStyle(.plain)
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
+        .padding(.bottom, MinitiDesignSystem.Spacing.page)
+        .sheet(isPresented: $signIn) {
+            VStack {
+                if recovery { RestoreRecoveryKeySheet(onRestored: onContinued) }
+                else {
+                    EmailSignInSheet(onJoined: onContinued)
+                    Button("Use a recovery key") { recovery = true }
+                        .padding(.bottom)
+                }
+            }
+            .environmentObject(appState)
+            .preferredColorScheme(.dark)
+        }
+        .alert("Set up this device again?", isPresented: $confirmReset) {
+            Button("Set up this device again", role: .destructive) {
+                continueAnonymously(resetUnreadable: true)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the saved sign-in on this device. Your local meetings stay here. Sign in with your email or recovery key to keep your existing account.")
+        }
+    }
+
+    @ViewBuilder private var choices: some View {
+        Button { recovery = false; signIn = true } label: { accountAction("sign in") }
+            .accessibilityLabel("Sign in")
+            .accessibilityIdentifier("account.signIn")
+        if appState.enrollmentRetryAt != nil && !appState.needsManagedAccessChoice {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Button { Task { await appState.ensureManagedEnrollment(trigger: "settings") } } label: { accountAction("retry setup") }
+                    .accessibilityLabel("Retry setup")
+                    .disabled(appState.isEnrollingManagedDevice || (appState.enrollmentRetryAt ?? .distantPast) > context.date)
+                    .accessibilityIdentifier("account.retrySetup")
+            }
+        } else if appState.managedAccessIssue != nil {
+            Button { Task { await appState.retryManagedAccess() } } label: { accountAction("try again") }
+                .accessibilityLabel("Try again")
+            if appState.clientAuthManager.canResetUnreadableCredentialByChoice {
+                Button { confirmReset = true } label: { accountAction("set up this device again") }
+                    .accessibilityLabel("Set up this device again")
+            }
+        } else {
+            Button { continueAnonymously() } label: { accountAction("continue without signing in") }
+                .accessibilityLabel("Continue without signing in")
+                .accessibilityIdentifier("account.continueAnonymous")
+                .disabled(appState.isEnrollingManagedDevice)
+        }
+    }
+
+    private func accountAction(_ title: String) -> some View {
+        MinitiControlLabel(role: .secondary, height: nil, horizontalPadding: MinitiDesignSystem.Spacing.section) {
+            Text(title)
+                .font(.callout.weight(.medium))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.vertical, MinitiDesignSystem.Spacing.comfortable)
+                .frame(maxWidth: .infinity, minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+        }
+    }
+
+    private func continueAnonymously(resetUnreadable: Bool = false) {
+        guard !isContinuing else { return }
+        isContinuing = true
+        Task {
+            defer { isContinuing = false }
+            guard await appState.continueWithoutSigningIn(resetUnreadable: resetUnreadable) else { return }
+            if let onContinued { onContinued() }
+            else { await appState.refreshUsage() }
+        }
+    }
+}
+
+// MARK: Optional Home setup
+
+enum HomeSetupStep: String, CaseIterable, Identifiable {
+    case readiness, account, calendar, transcription, files, folders
+    var id: String { rawValue }
+    var documentation: MinitiDocumentationTopic {
+        switch self {
+        case .readiness: return .permissions
+        case .account: return .account
+        case .calendar: return .calendar
+        case .transcription: return .transcription
+        case .files: return .exports
+        case .folders: return .folders
+        }
+    }
+    var title: String {
+        switch self {
+        case .readiness: return "recording access"
+        case .account: return "claim your account"
+        case .calendar: return "calendar"
+        case .transcription: return "audio processing"
+        case .files: return "meeting files"
+        case .folders: return "organise your meetings"
+        }
+    }
+}
+
+struct HomeSetupItem: Identifiable {
+    enum Status { case todo, waiting, complete, skipped }
+    let step: HomeSetupStep
+    let status: Status
+    var id: HomeSetupStep { step }
+    var reviewed: Bool { status == .complete || status == .skipped }
+    // Completed prerequisites still count toward progress, but do not occupy Home.
+    var isRelevantOnHome: Bool {
+        !((step == .readiness || step == .calendar) && status == .complete)
+    }
+    var statusLabel: String {
+        switch status {
+        case .todo: return "optional"
+        case .waiting: return step == .readiness ? "checking access" : "check email"
+        case .complete: return "configured"
+        case .skipped: return "not now"
+        }
+    }
+}
+
+enum HomeSetupPolicy {
+    static func items(managed: Bool, enrolled: Bool, email: AccountEmailState, recoverySaved: Bool,
+                      accountDismissed: Bool, calendarConnected: Bool, calendarDeferred: Bool, calendarKnown: Bool = true,
+                      localAvailable: Bool, localChosen: Bool, localReviewed: Bool, skipped: Set<String>,
+                      filesAvailable: Bool = false, filesConfigured: Bool = false, microphoneGranted: Bool? = nil,
+                      microphoneRequired: Bool = false, foldersAvailable: Bool = false, foldersReviewed: Bool = false) -> [HomeSetupItem] {
+        var items: [HomeSetupItem] = []
+        if microphoneRequired || microphoneGranted != nil {
+            items.append(.init(step: .readiness, status: microphoneGranted.map { $0 ? .complete : .todo } ?? .waiting))
+        }
+        if managed && enrolled {
+            let status: HomeSetupItem.Status
+            if email.email?.verified != nil { status = .complete }
+            else if accountDismissed { status = .skipped }
+            else if email.email?.pending != nil { status = .waiting }
+            else { status = .todo }
+            items.append(.init(step: .account, status: status))
+        }
+        if calendarKnown {
+            items.append(.init(step: .calendar, status: calendarConnected ? .complete :
+                (calendarDeferred || skipped.contains("calendar") ? .skipped : .todo)))
+        }
+        if localAvailable {
+            items.append(.init(step: .transcription, status: localReviewed ? .complete :
+                (skipped.contains("transcription") ? .skipped : .todo)))
+        }
+        if filesAvailable {
+            items.append(.init(step: .files, status: filesConfigured ? .complete : .todo))
+        }
+        if foldersAvailable {
+            items.append(.init(step: .folders, status: foldersReviewed ? .complete :
+                (skipped.contains("folders") ? .skipped : .todo)))
+        }
+        return items
+    }
+}
+
+extension AppState {
+    var homeSetupItems: [HomeSetupItem] {
+        #if os(macOS) && arch(arm64)
+        let localAvailable = true
+        #else
+        let localAvailable = false
+        #endif
+        #if os(macOS)
+        let filesAvailable = true
+        // Local app history is already configured; Markdown copies are optional.
+        let filesConfigured = true
+        #else
+        let filesAvailable = false
+        let filesConfigured = false
+        #endif
+        return HomeSetupPolicy.items(managed: appMode == .managed, enrolled: clientAuthStatus.isEnrolled,
+            email: accountEmailState, recoverySaved: clientAuthStatus.recoveryKeyAcknowledged,
+            accountDismissed: clientAuthStatus.accountID.map { UserDefaults.standard.bool(forKey: Self.accessCardDismissedKey(accountID: $0)) } ?? false,
+            calendarConnected: isGoogleCalendarConnected, calendarDeferred: calendarNudgeDismissedUntil > Date().timeIntervalSince1970,
+            calendarKnown: hasResolvedCalendarConnection || isGoogleCalendarConnected || !googleCalendarEnabled,
+            localAvailable: localAvailable, localChosen: onDeviceTranscriptionEnabled,
+            // Existing preferences are preserved, but everyone receives the review nudge.
+            localReviewed: homeSetupAudioReviewed, skipped: Set(homeSetupSkippedSteps.split(separator: ",").map(String.init)),
+            filesAvailable: filesAvailable, filesConfigured: filesConfigured,
+            microphoneGranted: captureMicrophone ? homeSetupMicrophonePermission.map { $0 == .authorized } : nil,
+            microphoneRequired: captureMicrophone, foldersAvailable: true, foldersReviewed: homeSetupState.foldersReviewed)
+    }
+
+    /// Coalesce refreshes from the guide/footer. A slow system permission read must not
+    /// block disclosure, layout or another Home interaction, nor spawn repeated reads.
+    func refreshHomeSetupMicrophonePermission(
+        read: @escaping @Sendable () -> AVAuthorizationStatus = { AVCaptureDevice.authorizationStatus(for: .audio) }
+    ) {
+        homeSetupState.refresh(read: read)
+    }
+
+    var canShowHomeSetup: Bool {
+        hasCompletedOnboarding && !isRecording && !isStartingMeeting && !isResumingRecording && !isFinalizingMeeting &&
+        pendingAutoStartEvent == nil && (appMode == .byok || clientAuthStatus.isEnrolled)
+    }
+
+    var isHomeSetupExpanded: Bool {
+        canShowHomeSetup && !homeSetupHidden && !homeSetupDismissed
+    }
+
+    var isHomeCalendarVisible: Bool {
+        !isHomeSetupExpanded && !homeSetupState.calendarHidden
+    }
+
+    func toggleHomeCalendar() {
+        let wasVisible = isHomeCalendarVisible
+        homeSetupHidden = true
+        homeSetupState.calendarHidden = wasVisible
+        homeSetupState.revision += 1
+    }
+
+    var homeSetupProgress: String {
+        let items = homeSetupItems
+        return "\(items.filter { $0.status == .complete }.count)/\(items.count)"
+    }
+
+    func isHomeSetupStepHidden(_ step: HomeSetupStep) -> Bool {
+        if homeSetupSkippedSteps.split(separator: ",").contains(Substring(step.rawValue)) { return true }
+        if step == .account, let accountID = clientAuthStatus.accountID {
+            return UserDefaults.standard.bool(forKey: Self.accessCardDismissedKey(accountID: accountID))
+        }
+        return step == .calendar && calendarNudgeDismissedUntil > Date().timeIntervalSince1970
+    }
+
+    func setHomeSetupCollapsed(_ collapsed: Bool) {
+        homeSetupHidden = collapsed
+        if collapsed { homeSetupState.calendarHidden = false }
+        homeSetupState.revision += 1
+    }
+
+    func confirmHomeSetupAudioReview() {
+        homeSetupAudioReviewed = true
+        // Notify only the guide and its controls, not the whole application.
+        homeSetupState.revision += 1
+    }
+
+    func confirmHomeSetupFoldersReview() {
+        homeSetupState.foldersReviewed = true
+        homeSetupState.revision += 1
+    }
+
+    func setHomeSetupDismissed(_ dismissed: Bool) {
+        homeSetupDismissed = dismissed
+        if dismissed { homeSetupState.calendarHidden = false }
+        if !dismissed { homeSetupHidden = false }
+        homeSetupState.revision += 1
+    }
+
+    func skipHomeSetup(_ step: HomeSetupStep) {
+        if step == .account { dismissAccessCard() }
+        else {
+            var skipped = Set(homeSetupSkippedSteps.split(separator: ",").map(String.init))
+            skipped.insert(step.rawValue)
+            homeSetupSkippedSteps = skipped.sorted().joined(separator: ",")
+        }
+        homeSetupState.revision += 1
+    }
+
+    func restoreHomeSetup(_ step: HomeSetupStep) {
+        var skipped = Set(homeSetupSkippedSteps.split(separator: ",").map(String.init))
+        skipped.remove(step.rawValue)
+        homeSetupSkippedSteps = skipped.sorted().joined(separator: ",")
+        if step == .account, let accountID = clientAuthStatus.accountID {
+            UserDefaults.standard.removeObject(forKey: Self.accessCardDismissedKey(accountID: accountID))
+            refreshAccessCard()
+        }
+        if step == .calendar { calendarNudgeDismissedUntil = 0 }
+        setHomeSetupDismissed(false)
+    }
+
+}
+
+/// Subscribe only the setup subtree to its presentation and permission changes.
+struct HomeSetupStateObserver<Content: View>: View {
+    @ObservedObject var state: HomeSetupState
+    @ViewBuilder var content: () -> Content
+    var body: some View { content() }
+}
+
+/// Fixed Home utility control, paired with Feedback outside the scrolling content.
+struct HomeSetupButton: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            Group {
+                if appState.canShowHomeSetup, !appState.homeSetupDismissed, !appState.homeSetupItems.isEmpty {
+                    Button {
+                        let update = { appState.setHomeSetupCollapsed(!appState.homeSetupHidden) }
+                        if reduceMotion { update() }
+                        else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
+                    } label: {
+                        MinitiHomeActionLabel(icon: "checklist", label: "set up miniti \(appState.homeSetupProgress)", isEmphasized: appState.isHomeSetupExpanded)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("setup.reopen")
+                    .accessibilityLabel("Set up miniti")
+                    .accessibilityValue("\(appState.homeSetupItems.filter { $0.status == .complete }.count) of \(appState.homeSetupItems.count) tasks configured")
+                    .accessibilityHint(appState.homeSetupHidden ? "Show setup guide" : "Collapse setup guide")
+                }
+            }
+                .task { appState.refreshHomeSetupMicrophonePermission() }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { appState.refreshHomeSetupMicrophonePermission() }
+                }
+                .onChange(of: appState.captureMicrophone) { _, _ in appState.refreshHomeSetupMicrophonePermission() }
+        }
+    }
+}
+
+/// Setup and upcoming meetings share one Home content area.
+struct HomeSetupOrCalendar<CalendarContent: View>: View {
+    @EnvironmentObject private var appState: AppState
+    @ViewBuilder var calendar: () -> CalendarContent
+
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            if appState.isHomeSetupExpanded {
+                HomeSetupGuide()
+            } else if appState.isHomeCalendarVisible {
+                calendar()
+            }
+        }
+    }
+}
+
+struct HomeCalendarButton: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            if appState.googleCalendarEnabled && appState.isGoogleCalendarConnected {
+                Button {
+                    let update = { appState.toggleHomeCalendar() }
+                    if reduceMotion { update() }
+                    else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
+                } label: {
+                    MinitiHomeActionLabel(
+                        icon: appState.isHomeCalendarVisible ? "calendar" : "calendar.badge.minus",
+                        label: "calendar", isEmphasized: appState.isHomeCalendarVisible)
+                }
+                .buttonStyle(.plain)
+                .disabled(appState.pendingAutoStartEvent != nil)
+                .accessibilityIdentifier("home.calendar.toggle")
+                .accessibilityLabel("Calendar")
+                .accessibilityValue(appState.isHomeCalendarVisible ? "shown" : "hidden")
+                .accessibilityHint(appState.isHomeCalendarVisible ? "Hide upcoming meetings" : "Show upcoming meetings and collapse setup")
+                .help("Show or hide upcoming meetings. Calendar connection and automatic recording stay unchanged.")
+            }
+        }
+    }
+}
+
+/// Keep setup and calendar together, with a second row for Feedback when needed.
+struct HomeUtilityBar: View {
+    private var presentationControls: some View {
+        HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+            HomeSetupButton()
+            HomeCalendarButton()
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    var body: some View {
+        #if os(iOS)
+        VStack(spacing: MinitiDesignSystem.Spacing.standard) {
+            presentationControls
+            HomeFeedbackButton()
+        }
+        .frame(maxWidth: .infinity)
+        #else
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: MinitiDesignSystem.Spacing.standard) {
+                presentationControls
+                Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                HomeFeedbackButton().fixedSize()
+            }
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                presentationControls
+                HStack { Spacer(); HomeFeedbackButton() }
+            }
+        }
+        #endif
+    }
+}
+
+/// Shared restoration controls in Settings, General on both platforms.
+struct HomeSetupSettingsSection: View {
+    @EnvironmentObject private var appState: AppState
+    private var hidden: [HomeSetupStep] { HomeSetupStep.allCases.filter { appState.isHomeSetupStepHidden($0) } }
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            Section("Setup guide") {
+                Toggle("Show setup guide on Home", isOn: Binding(
+                    get: { !appState.homeSetupDismissed },
+                    set: { appState.setHomeSetupDismissed(!$0) }))
+                    .accessibilityIdentifier("setup.settings.visible")
+                Button("Expand guide on Home") { appState.setHomeSetupDismissed(false) }
+                    .accessibilityIdentifier("setup.settings.open")
+                Text("\(appState.homeSetupProgress) tasks configured. Hiding a task does not complete it. Restoring a task does not change its settings.")
+                    .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                ForEach(hidden) { step in
+                    HStack {
+                        Text(step.title).fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                        Button("Restore") { appState.restoreHomeSetup(step) }
+                            .accessibilityIdentifier("setup.restore.\(step.rawValue)")
+                            .accessibilityLabel("Restore \(step.title)")
+                    }
+                }
+            }
+            .id("general.setup")
+        }
+    }
+}
+
+/// One presentation owner replaces the independent account and calendar nudges.
+struct HomeSetupGuide: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var selected: HomeSetupStep?
+    @State private var emailPresented = false
+    @State private var recoveryPresented = false
+    @State private var foldersPresented = false
+    @State private var recoveryKey = ""
+    init(initialStep: HomeSetupStep? = nil) { _selected = State(initialValue: initialStep) }
+
+    private var items: [HomeSetupItem] {
+        let order: [HomeSetupStep] = [.readiness, .calendar, .files, .account, .transcription, .folders]
+        return appState.homeSetupItems.filter { $0.isRelevantOnHome && !appState.isHomeSetupStepHidden($0.step) }.sorted { order.firstIndex(of: $0.step)! < order.firstIndex(of: $1.step)! }
+    }
+    private var current: HomeSetupItem? {
+        if let selected, let item = items.first(where: { $0.step == selected }) { return item }
+        return items.first { $0.status != .complete && !$0.reviewed }
+    }
+
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            if appState.isHomeSetupExpanded {
+                let visibleItems = items
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                    HStack {
+                        Text("make it yours").font(.headline)
+                        Spacer()
+                        Button("collapse guide") { setHidden(true) }
+                            .font(.caption)
+                            .accessibilityIdentifier("setup.collapse")
+                            .help("Keep the setup button on Home so you can reopen the guide.")
+                    }
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(visibleItems) { item in
+                            checklistRow(item)
+                            if item.id != visibleItems.last?.id { MinitiFadingDivider(accent: ColorPalette.Border.subtle) }
+                        }
+                    }
+                    if visibleItems.isEmpty {
+                        Text("No tasks need attention here. Manage hidden tasks in Settings, General.")
+                            .font(.callout).foregroundStyle(ColorPalette.Text.secondary)
+                    }
+                    MinitiFadingDivider(accent: ColorPalette.Border.subtle)
+                        .padding(.vertical, MinitiDesignSystem.Spacing.small)
+                    Button("remove guide from home") {
+                        let update = { appState.setHomeSetupDismissed(true) }
+                        if reduceMotion { update() }
+                        else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
+                    }
+                    .font(.caption)
+                    .accessibilityIdentifier("setup.dismiss")
+                    Text("Removes the guide and its button. Restore in Settings, General.")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.muted)
+                }
+                .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth, alignment: .leading)
+                .transition(.opacity)
+                .sheet(isPresented: $emailPresented) {
+                    HomeSetupEmailSheet().environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
+                }
+                .sheet(isPresented: $recoveryPresented) {
+                    RecoveryKeySheet(recoveryKey: recoveryKey).environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
+                }
+                .sheet(isPresented: $foldersPresented) {
+                    MeetingFolderManager(onConfirmSetup: { appState.confirmHomeSetupFoldersReview() })
+                        .environmentObject(appState).dynamicTypeSize(dynamicTypeSize)
+                }
+                .onChange(of: appState.clientAuthStatus.accountID) { _, _ in
+                    foldersPresented = false
+                    selected = nil; emailPresented = false; recoveryPresented = false; recoveryKey = ""
+                }
+                .onAppear { if selected == nil { selected = current?.step } }
+                .task { appState.refreshHomeSetupMicrophonePermission() }
             }
         }
     }
 
-    private func primaryLabel(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: systemImage)
-                .font(.system(size: 10, weight: .semibold))
-            Text(title)
-                .font(.system(size: 11, weight: .semibold, design: .default))
+    private func checklistRow(_ item: HomeSetupItem) -> some View {
+        let expanded = selected == item.step
+        let headerLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 0))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: MinitiDesignSystem.Spacing.control))
+        return VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+            headerLayout {
+            Button {
+                let change = { selected = expanded ? nil : item.step }
+                if reduceMotion { change() }
+                else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), change) }
+            } label: {
+                HStack(alignment: .center, spacing: MinitiDesignSystem.Spacing.control) {
+                    Image(systemName: item.status == .complete ? "checkmark.circle.fill" :
+                        item.status == .waiting ? "clock" : item.status == .skipped ? "minus.circle" : "circle")
+                        .foregroundStyle(ColorPalette.Text.muted)
+                        .font(.body).accessibilityHidden(true)
+                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                        Text(item.step.title).font(.callout.weight(.medium))
+                            .strikethrough(item.status == .complete)
+                            .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.primary)
+                        Text(summary(item)).font(.caption)
+                            .foregroundStyle(item.status == .complete ? ColorPalette.Text.muted : ColorPalette.Text.secondary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: MinitiDesignSystem.Spacing.compact)
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.callout).foregroundStyle(ColorPalette.Text.muted).accessibilityHidden(true)
+                        .frame(width: MinitiDesignSystem.Control.minimumIconHitSize, height: MinitiDesignSystem.Control.minimumIconHitSize)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+                .padding(.vertical, MinitiDesignSystem.Spacing.standard)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("setup.step.\(item.step.rawValue)")
+            .accessibilityValue("\(item.statusLabel), \(expanded ? "expanded" : "collapsed")")
+            .accessibilityHint(expanded ? "Collapse choices" : "Show choices")
+                HStack(spacing: MinitiDesignSystem.Spacing.control) {
+                MinitiDocumentationLink(topic: item.step.documentation)
+                Button {
+                    let update = { appState.skipHomeSetup(item.step); selected = nil }
+                    if reduceMotion { update() }
+                    else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
+                } label: {
+                    Image(systemName: "xmark").font(.callout).foregroundStyle(ColorPalette.Text.muted)
+                        .padding(MinitiDesignSystem.Spacing.compact)
+                        .frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize, minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Hide \(item.step.title)")
+                .accessibilityIdentifier("setup.skip.\(item.step.rawValue)")
+                .accessibilityHint("Hidden until restored in Settings, General. Does not mark the task complete.")
+                .help("Hide this task until restored in Settings, General.")
+                }
+                .frame(maxWidth: dynamicTypeSize.isAccessibilitySize ? .infinity : nil, alignment: .trailing)
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                    choices(item.step)
+
+                }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, MinitiDesignSystem.Spacing.comfortable)
+                    .transition(.opacity)
+            }
         }
-        .foregroundStyle(Color(hex: "09090B"))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
-                .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
-        )
+    }
+
+    private func summary(_ item: HomeSetupItem) -> String {
+        switch item.step {
+        case .readiness:
+            if appState.homeSetupMicrophonePermission == nil {
+                return appState.homeSetupState.permissionCheckUnavailable ? "Access check unavailable" : "Checking microphone access"
+            }
+            return item.status == .complete ? "Microphone access allowed" : "Capture your voice in meetings"
+        case .calendar:
+            if appState.isGoogleCalendarConnected {
+                return appState.autoStartFromCalendar && appState.googleCalendarEnabled ? "Connected, automatic recording on" : "Connected, automatic recording off"
+            }
+            return item.status == .skipped ? "Not connected, set up whenever you like" : "Meeting titles, attendees and automatic recording"
+        case .account:
+            if let email = appState.accountEmailState.email?.verified { return email }
+            if appState.accountEmailState.email?.pending != nil { return "Check your email to finish" }
+            return "Recover your account, plus optional Pro cloud storage and sync."
+        case .files:
+            #if os(macOS)
+            return appState.autoExportMarkdown ? appState.displayedExportFolderPath : "Keep searchable Markdown copies on your Mac"
+            #else
+            return "Saved in miniti on this device"
+            #endif
+        case .folders:
+            return "Find past conversations faster with folders that group related meetings."
+        case .transcription:
+            return "Transcription: \(appState.onDeviceTranscriptionEnabled ? "This Mac" : "Deepgram"). Speaker separation: \(appState.onDeviceSpeakerSeparationEnabled ? "This Mac" : "Deepgram")."
+        }
+    }
+
+    private func setHidden(_ hidden: Bool) {
+        let update = {
+            appState.setHomeSetupCollapsed(hidden)
+        }
+        if reduceMotion { update() }
+        else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), update) }
+    }
+
+    @ViewBuilder private func choices(_ step: HomeSetupStep) -> some View {
+        switch step {
+        case .readiness:
+            HomeSetupRecordingAccess()
+        case .account:
+            if let verified = appState.accountEmailState.email?.verified {
+                Text(verified).font(.callout).textSelection(.enabled)
+            } else if let pending = appState.accountEmailState.email?.pending {
+                Text("Open the link sent to \(pending) to finish.").font(.callout)
+            } else {
+                Text("Email recovery is free. Cloud storage and sync are optional with Pro.")
+                    .font(.callout).foregroundStyle(ColorPalette.Text.secondary)
+            }
+            ViewThatFits(in: .horizontal) {
+                HStack { accountChoices }
+                VStack(alignment: .leading) { accountChoices }
+            }
+        case .calendar:
+            if appState.isGoogleCalendarConnected {
+                Text(appState.googleCalendarEmail ?? "Google Calendar connected").font(.callout)
+                Toggle("use Google Calendar", isOn: $appState.googleCalendarEnabled)
+                Toggle("start calendar meetings automatically", isOn: Binding(
+                    get: { appState.autoStartFromCalendar },
+                    set: { appState.autoStartFromCalendar = $0; selected = .calendar }))
+                    .disabled(!appState.googleCalendarEnabled)
+                    .accessibilityIdentifier("setup.calendar.autoStart")
+                Text("Recommended: start when your scheduled call is detected.")
+                    .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("stop after the calendar end when quiet", isOn: $appState.autoStopFromCalendar)
+                    .disabled(!appState.googleCalendarEnabled)
+            } else {
+                Text("See upcoming meetings and choose when recording starts.")
+                    .font(.callout).foregroundStyle(ColorPalette.Text.secondary)
+                Button("connect Google Calendar") {
+                    selected = .calendar
+                        appState.startCalendarConnectFromNudge()
+                }
+                    .accessibilityIdentifier("setup.action.calendar")
+            }
+        case .transcription:
+            #if os(macOS) && arch(arm64)
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                HStack { Text("transcription").font(.callout.weight(.semibold)); MinitiDocumentationLink(topic: .transcription) }
+                AudioProcessingComparison(options: AudioProcessingChoiceCopy.transcription)
+                if OnDeviceTranscriptionSupport.tier(forCode: appState.meetingLanguage) != .tested {
+                    Text("Deepgram is recommended for your selected language.")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                }
+                Picker("transcription", selection: Binding(
+                    get: { appState.onDeviceTranscriptionEnabled },
+                    set: { local in
+                        appState.onDeviceTranscriptionEnabled = local
+                        selected = .transcription
+                        appState.refreshOnDeviceTranscriptionAvailability()
+                    }
+                )) {
+                    Text("Deepgram").tag(false)
+                    Text("This Mac").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(appState.privateModeEnabled || !OnDeviceTranscriptionService.isHardwareSupported)
+                .accessibilityIdentifier("setup.transcription.choice")
+                if appState.onDeviceTranscriptionEnabled {
+                    if OnDeviceTranscriptionSupport.tier(forCode: appState.meetingLanguage) == .cloudOnly {
+                        Text("Your selected language uses Deepgram. Choose a supported language to transcribe locally.")
+                            .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                    } else {
+                        HomeSetupTranscriptionStatus(service: appState.onDeviceTranscription)
+                    }
+                    Toggle("use Deepgram if the model is not ready", isOn: $appState.onDeviceTranscriptionCloudFallback)
+                        .disabled(appState.privateModeEnabled)
+                }
+            }
+            MinitiFadingDivider(accent: ColorPalette.Border.subtle)
+                .padding(.vertical, MinitiDesignSystem.Spacing.small)
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                HStack { Text("speaker separation").font(.callout.weight(.semibold)); MinitiDocumentationLink(topic: .speakers) }
+                AudioProcessingComparison(options: AudioProcessingChoiceCopy.speakers)
+                Picker("speaker separation", selection: Binding(
+                    get: { appState.onDeviceSpeakerSeparationEnabled },
+                    set: { appState.onDeviceSpeakerSeparationEnabled = $0; selected = .transcription; appState.refreshOnDeviceDiarizationAvailability() }
+                )) {
+                    Text("Deepgram").tag(false)
+                    Text("This Mac").tag(true)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .disabled(appState.privateModeEnabled || !OnDeviceDiarizationService.isHardwareSupported)
+                .accessibilityIdentifier("setup.speakers.choice")
+                if appState.onDeviceSpeakerSeparationEnabled {
+                    HomeSetupSpeakerStatus(service: appState.onDeviceDiarization)
+                } else if appState.onDeviceTranscriptionEnabled {
+                    Text("For speaker labels with local transcription, choose This Mac here too.")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                }
+            }
+            Text(appState.privateModeEnabled ? "Private mode uses This Mac. Change private mode under Privacy." : "For your next recording. AI insights are separate.")
+                .font(.caption).foregroundStyle(ColorPalette.Text.muted)
+            if !appState.homeSetupAudioReviewed {
+                Button("confirm audio choices") {
+                    appState.confirmHomeSetupAudioReview()
+                }
+                .accessibilityIdentifier("setup.audio.reviewed")
+                .help("Marks this task reviewed. Your selected settings already apply.")
+            }
+            #endif
+        case .folders:
+            Button("set up folders") { foldersPresented = true }
+                .accessibilityIdentifier("setup.action.folders")
+            Text("Preview existing meetings, create your own folders or review automatic filing.")
+                .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+        case .files:
+            #if os(macOS)
+            HomeMeetingFilesSetup {
+                selected = .files
+            }
+            #endif
+        }
+    }
+
+    @ViewBuilder private var accountChoices: some View {
+        Button(appState.accountEmailState.email?.verified == nil ? "add email" : "change email") { emailPresented = true }
+            .accessibilityIdentifier("setup.action.account")
+        if !appState.managedDeviceHasNoRecoveryKey {
+            Button("save recovery key") {
+                if let key = appState.revealRecoveryKey() { recoveryKey = key; recoveryPresented = true }
+            }.accessibilityIdentifier("setup.account.recovery")
+        }
+    }
+}
+
+private struct HomeSetupRecordingAccess: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var requesting = false
+    private var permission: AVAuthorizationStatus? { appState.homeSetupMicrophonePermission }
+    var body: some View {
+        HomeSetupStateObserver(state: appState.homeSetupState) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                Text(permission == nil ? (appState.homeSetupState.permissionCheckUnavailable
+                     ? "Access check unavailable. You can check microphone access in System Settings."
+                     : "Checking microphone access. You can keep using miniti.") :
+                     permission == .authorized ? "Ready to capture your voice." : "Let miniti capture your voice when you record.")
+                    .font(.callout).foregroundStyle(ColorPalette.Text.secondary)
+                if permission == .notDetermined {
+                    Button(requesting ? "waiting for permission…" : "allow microphone") {
+                        requesting = true
+                        Task {
+                            // The system call itself may do IPC before invoking its callback.
+                            let granted = await Task.detached { await AVCaptureDevice.requestAccess(for: .audio) }.value
+                            appState.homeSetupState.receivedPermissionRequest(granted: granted)
+                            requesting = false
+                        }
+                    }
+                    .disabled(requesting)
+                } else if permission != .authorized {
+                    Button("open microphone settings") {
+                        #if os(macOS)
+                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") { NSWorkspace.shared.open(url) }
+                        #else
+                        if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        #endif
+                    }
+                }
+            }
+            .accessibilityIdentifier("setup.recordingAccess.choices")
+            .task { appState.refreshHomeSetupMicrophonePermission() }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { appState.refreshHomeSetupMicrophonePermission() } }
+        }
+    }
+}
+
+#if os(macOS)
+/// The same persisted destination and export preferences used by Settings, Data.
+struct HomeMeetingFilesSetup: View {
+    @EnvironmentObject private var appState: AppState
+    var onInteraction: () -> Void = {}
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+            Text("Meetings stay in miniti. Save Markdown copies for your notes and AI tools.")
+                .font(.callout).foregroundStyle(ColorPalette.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("save completed meetings as Markdown files", isOn: Binding(
+                get: { appState.autoExportMarkdown },
+                set: { onInteraction(); appState.autoExportMarkdown = $0 }))
+                .accessibilityIdentifier("setup.files.autoExport")
+            Text(appState.displayedExportFolderPath)
+                .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("setup.files.path")
+            Button("choose folder…") { onInteraction(); appState.presentExportFolderChooser() }
+                .accessibilityIdentifier("setup.files.chooseFolder")
+            Toggle("help AI assistants find your meetings", isOn: Binding(
+                get: { appState.generateAgentsMd },
+                set: { onInteraction(); appState.generateAgentsMd = $0 }))
+                .disabled(!appState.autoExportMarkdown)
+                .accessibilityIdentifier("setup.files.agents")
+            Text("Keeps a list of saved notes for AI tools that can read this folder. Skip this if you don’t use one.")
+                .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if let issue = appState.markdownExportIssue {
+                Text(issue).font(.caption).foregroundStyle(ColorPalette.Status.error)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+#endif
+
+#if os(macOS) && arch(arm64)
+private struct HomeSetupSpeakerStatus: View {
+    @ObservedObject var service: OnDeviceDiarizationService
+    var body: some View { LocalModelProgress(status: service.status) }
+}
+private struct HomeSetupTranscriptionStatus: View {
+    @ObservedObject var service: OnDeviceTranscriptionService
+    var body: some View { LocalModelProgress(status: service.status) }
+}
+#endif
+
+/// Direct email presentation works even when the Mac Settings window has never opened.
+private struct HomeSetupEmailSheet: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var busy = false
+    @State private var notice: String?
+    @FocusState private var focused: Bool
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Keep access to your account") {
+                    if case .loaded = appState.accountEmailState {
+                        TextField("Email", text: $address).focused($focused)
+                            #if os(iOS)
+                            .keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+                            #endif
+                            .accessibilityIdentifier("setup.email")
+                        if let pending = appState.accountEmailState.email?.pending {
+                            Text("Check \(pending) and open the newest link to finish.")
+                        }
+                    } else {
+                        Text("Account details are not available yet. Try again before adding an email.")
+                        Button("Retry") { Task { await appState.refreshAccountEmail(reason: "setup retry", force: true) } }
+                    }
+                    Text("Add an email to sign in again on this or another device. Cloud sync stays unchanged. Your recovery key is also available in Settings, Account.")
+                    if busy { ProgressView("Sending link") }
+                    if let notice { Text(notice).accessibilityIdentifier("setup.emailNotice") }
+                }
+            }.formStyle(.grouped)
+                .navigationTitle("Add email")
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button("Send link") { send() }
+                            .disabled(busy || !address.contains("@") || appState.accountEmailState.email == nil)
+                            .accessibilityIdentifier("setup.sendEmail")
+                    }
+                }
+        }
+        #if os(macOS)
+        .frame(minWidth: 420, idealWidth: MinitiDesignSystem.HomeSetup.maximumWidth, minHeight: 320)
+        #endif
+        .task {
+            await appState.refreshAccountEmail(reason: "setup email")
+            if address.isEmpty { address = appState.accountEmailState.email?.pending ?? "" }
+            focused = true
+        }
+        .onChange(of: appState.clientAuthStatus.accountID) { _, _ in dismiss() }
+    }
+    private func send() {
+        guard !busy else { return }
+        busy = true; notice = nil
+        Task { @MainActor in
+            let outcome = await appState.addAccountEmail(address)
+            busy = false
+            switch outcome {
+            case .sent(let address): notice = "Link sent to \(address). Open it in your email to finish."
+            case .alreadyVerified: notice = "That email is already verified."
+            case .inUse: notice = "That email belongs to another account. Use Switch account in Settings, Account."
+            case .failed(let message): notice = message
+            case .staleAccount: dismiss()
+            }
+        }
     }
 }
 
@@ -544,6 +1324,8 @@ struct AccountAccessCard: View {
 /// Settings, Account: Your account, Ways to sign in, Devices, then the destructive actions
 /// (B6a). Plan and billing follows it in each platform's Settings view.
 struct ManagedAccountSettingsSection: View {
+    // Reuse the parser across row redraws, including recording timer updates.
+    private static let lastSeenDateParser = ISO8601DateFormatter()
     @EnvironmentObject var appState: AppState
     @State private var revealedKey: String?
     @State private var copied = false
@@ -555,6 +1337,10 @@ struct ManagedAccountSettingsSection: View {
     @State private var isConfirmingReplace = false
     @State private var isConfirmingRemoveEmail = false
     @State private var pendingRemoval: ClientAuthDevice?
+    @State private var isRenamingDevice = false
+    @State private var isConfirmingDeviceRemoval = false
+    @State private var renamingDevice: ClientAuthDevice?
+    @State private var deviceName = ""
     @State private var isBusy = false
     @State private var notice: String?
     @State private var isEditingEmail = false
@@ -580,6 +1366,18 @@ struct ManagedAccountSettingsSection: View {
                 }
                 .id("account.recoveryKey")
             }
+        }
+        .alert("Device name", isPresented: $isRenamingDevice, presenting: renamingDevice) { device in
+            TextField("Device name", text: $deviceName)
+            Button("Save") {
+                let label = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
+                Task { _ = await appState.renameManagedDevice(device, label: label) }
+            }
+            .disabled(deviceName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || deviceName.unicodeScalars.count > 80)
+            Button("Use default name") {
+                Task { _ = await appState.renameManagedDevice(device, label: nil) }
+            }
+            Button("Cancel", role: .cancel) {}
         }
         .task(id: status.accountID) {
             if status.isEnrolled {
@@ -631,17 +1429,15 @@ struct ManagedAccountSettingsSection: View {
         } message: {
             Text(removeEmailMessage)
         }
-        .confirmationDialog(
+        .alert(
             pendingRemoval?.current == true ? "Sign this device out?" : "Remove this device?",
-            isPresented: Binding(get: { pendingRemoval != nil }, set: { if !$0 { pendingRemoval = nil } }),
-            titleVisibility: .visible
-        ) {
-            Button(pendingRemoval?.current == true ? "Sign out" : "Remove", role: .destructive) {
-                if let device = pendingRemoval { remove(device) }
-            }
+            isPresented: $isConfirmingDeviceRemoval,
+            presenting: pendingRemoval
+        ) { device in
+            Button(device.current ? "Sign out" : "Remove", role: .destructive) { remove(device) }
             Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(pendingRemoval?.current == true ? model.signOutMessage : model.deviceRemovalMessage)
+        } message: { device in
+            Text(device.current ? model.signOutMessage : model.deviceRemovalMessage)
         }
     }
 
@@ -813,12 +1609,21 @@ struct ManagedAccountSettingsSection: View {
                         Text(deviceSubtitle(device))
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        DisclosureGroup("Device ID") {
+                            Text(device.installationID).font(.caption).textSelection(.enabled)
+                        }
+                        .font(.caption)
                     }
                     Spacer()
+                    Button("Rename") { deviceName = device.label ?? ""; renamingDevice = device; isRenamingDevice = true }
+                        .buttonStyle(.borderless)
+                        .disabled(isBusy || model.signedActionsDisabled)
+                        .accessibilityIdentifier("account.rename.\(device.installationID)")
                     if model.accountActions.contains(.deleteAccount) || device.current {
                         // Removal is a signed request; a device whose key cannot sign only offers
                         // its own sign-out (which clears locally).
-                        Button(device.current ? "Sign out" : "Remove") { pendingRemoval = device }
+                        Button(device.current ? "Sign out" : "Remove") { pendingRemoval = device; isConfirmingDeviceRemoval = true }
+                            .buttonStyle(.borderless)
                             .disabled(isBusy || (model.signedActionsDisabled && !device.current))
                             .foregroundStyle(ColorPalette.Status.error)
                     }
@@ -938,7 +1743,9 @@ struct ManagedAccountSettingsSection: View {
 
     @ViewBuilder
     private var unenrolledRows: some View {
-        if appState.isEnrollingManagedDevice {
+        if appState.needsManagedAccessChoice || appState.managedAccessIssue != nil {
+            ManagedAccessChoiceCard()
+        } else if appState.isEnrollingManagedDevice {
             HStack(spacing: 8) {
                 ProgressView()
                     #if os(macOS)
@@ -948,13 +1755,14 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         } else {
-            Text(appState.managedEnrollmentError ?? "Managed mode needs an account on this device. miniti creates one automatically; if that failed, retry, or sign in to an account you already have with its email or recovery key.")
+            Text(appState.managedEnrollmentError ?? "Choose how to continue, or retry setting up this device. You can sign in with your email or recovery key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack {
-                Button("Retry setup") {
-                    Task { await appState.ensureManagedEnrollment(trigger: "settings") }
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    Button("Retry setup") { Task { await appState.ensureManagedEnrollment(trigger: "settings") } }
+                        .disabled((appState.enrollmentRetryAt ?? .distantPast) > context.date)
                 }
                 Button("Sign in with email…") { isPresentingEmailRestore = true }
                 Button("Sign in with recovery key…") { isPresentingRestore = true }
@@ -963,15 +1771,18 @@ struct ManagedAccountSettingsSection: View {
     }
 
     private func deviceTitle(_ device: ClientAuthDevice) -> String {
-        let name = device.label ?? String(device.installationID.prefix(8))
+        let name = device.label ?? (device.platform == "macos" ? "Mac" : device.platform == "ios" ? "iPhone or iPad" : "Device")
         return device.current ? "\(name) · this device" : name
     }
 
     private func deviceSubtitle(_ device: ClientAuthDevice) -> String {
         var parts: [String] = []
+        if appState.managedDevices.filter({ $0.label == device.label }).count > 1 {
+            parts.append(String(device.installationID.suffix(8)))
+        }
         if let platform = device.platform { parts.append(platform) }
         if let version = device.appVersion { parts.append(version) }
-        if let seen = device.lastAuthAt, let date = ISO8601DateFormatter().date(from: seen) {
+        if let seen = device.lastAuthAt, let date = Self.lastSeenDateParser.date(from: seen) {
             parts.append("seen \(date.formatted(date: .abbreviated, time: .omitted))")
         }
         return parts.joined(separator: " · ")
@@ -1275,6 +2086,7 @@ struct EmailSignInSheet: View {
     @State private var isWorking = false
     @State private var error: String?
     @State private var pollTask: Task<Void, Never>?
+    @State private var canRetryLink = false
     var mode: Mode = .restore
     var onJoined: (() -> Void)? = nil
 
@@ -1298,7 +2110,7 @@ struct EmailSignInSheet: View {
                 .keyboardType(.emailAddress)
                 .textInputAutocapitalization(.never)
                 #endif
-            if linkID != nil {
+            if linkID != nil && !canRetryLink {
                 HStack(spacing: 8) {
                     ProgressView()
                         #if os(macOS)
@@ -1319,14 +2131,26 @@ struct EmailSignInSheet: View {
                 Spacer()
                 Button("Cancel") { pollTask?.cancel(); dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Send link") { send() }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSend)
+                if canRetryLink, let linkID {
+                    Button("Try again") { canRetryLink = false; error = nil; poll(linkID) }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isWorking)
+                    Button("New link") { self.linkID = nil; canRetryLink = false; send() }
+                        .disabled(isWorking)
+                } else {
+                    Button("Send link") { send() }
+                        .keyboardShortcut(.defaultAction)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canSend)
+                }
             }
         }
         .padding(24)
+        #if os(macOS)
         .frame(minWidth: 380, idealWidth: 440)
+        #else
+        .frame(maxWidth: .infinity)
+        #endif
         .onDisappear { pollTask?.cancel() }
     }
 
@@ -1372,14 +2196,14 @@ struct EmailSignInSheet: View {
                         dismiss()
                     } else {
                         error = appState.managedEnrollmentError ?? "Could not join the account."
-                        linkID = nil
+                        canRetryLink = true
                     }
                     isWorking = false
                     return
                 }
             }
-            error = lastCheckFailed ? "miniti's servers could not be reached. Send a new link when you are back online." : "The link expired. Send a new one."
-            linkID = nil
+            error = "Could not finish checking this link. Try again, or request a new link."
+            canRetryLink = true
         }
     }
 }
@@ -1410,3 +2234,137 @@ struct APIModeOptions: View {
         .accessibilityAddTraits(appState.appMode == mode ? .isSelected : [])
     }
 }
+
+/// Calendar headings replace ambiguous per-row abbreviations on both platforms.
+enum UpcomingCalendarDay: String, CaseIterable, Identifiable {
+    case today, tomorrow, later
+    var id: String { rawValue }
+    func contains(_ date: Date?, end: Date? = nil, now: Date = Date(), calendar: Calendar = .current) -> Bool {
+        guard let date else { return self == .later }
+        let isToday = calendar.isDate(date, inSameDayAs: now) || (date < now && (end ?? .distantPast) > now)
+        let isTomorrow = calendar.date(byAdding: .day, value: 1, to: now).map { calendar.isDate(date, inSameDayAs: $0) } ?? false
+        switch self {
+        case .today: return isToday
+        case .tomorrow: return isTomorrow
+        case .later: return !isToday && !isTomorrow
+        }
+    }
+}
+
+/// A native button owns the entire calendar heading, including its empty space.
+struct UpcomingCalendarDisclosureStyle: DisclosureGroupStyle {
+    let day: UpcomingCalendarDay
+    let count: Int
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control) {
+            Button {
+                let toggle = { configuration.isExpanded.toggle() }
+                if reduceMotion { toggle() }
+                else { withAnimation(.easeInOut(duration: MinitiDesignSystem.Motion.disclosureDuration), toggle) }
+            } label: {
+                HStack {
+                    configuration.label
+                    Spacer(minLength: MinitiDesignSystem.Spacing.standard)
+                    Image(systemName: configuration.isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.caption).foregroundStyle(ColorPalette.Text.muted)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: MinitiDesignSystem.Control.minimumIconHitSize, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("calendar.section.\(day.rawValue)")
+            .accessibilityLabel("\(day.rawValue), \(count) \(count == 1 ? "meeting" : "meetings")")
+            .accessibilityValue(configuration.isExpanded ? "expanded" : "collapsed")
+            .accessibilityHint(configuration.isExpanded ? "Collapse meetings" : "Show meetings")
+            if configuration.isExpanded { configuration.content }
+        }
+    }
+}
+
+#if os(macOS)
+/// The providers report approximate preparation progress, not a byte-accurate ETA.
+struct LocalModelProgress: View {
+    private let label: String
+    private let progress: Double?
+    private let detail: String?
+    init(status: OnDeviceTranscriptionService.Status) {
+        switch status {
+        case .unsupported: (label, progress, detail) = ("Requires Apple silicon", nil, nil)
+        case .idle: (label, progress, detail) = ("Not loaded", nil, nil)
+        case .preparing(let fraction): (label, progress, detail) = ("Preparing model", fraction, nil)
+        case .ready: (label, progress, detail) = ("Ready on this Mac", nil, nil)
+        case .failed(let message): (label, progress, detail) = ("Model unavailable. Retry in Models settings.", nil, message)
+        }
+    }
+    init(status: OnDeviceDiarizationService.Status) {
+        switch status {
+        case .unsupported: (label, progress, detail) = ("Requires Apple silicon", nil, nil)
+        case .idle: (label, progress, detail) = ("Not loaded", nil, nil)
+        case .preparing(let fraction): (label, progress, detail) = ("Preparing model", fraction, nil)
+        case .ready: (label, progress, detail) = ("Ready on this Mac", nil, nil)
+        case .failed(let message): (label, progress, detail) = ("Model unavailable. Retry in Models settings.", nil, message)
+        }
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+            HStack(spacing: MinitiDesignSystem.Spacing.compact) {
+                Text(label)
+                if let progress, progress > 0, progress < 1 {
+                    Text("about \(Int(progress * 10) * 10)%").monospacedDigit()
+                }
+            }
+            if let progress {
+                if progress > 0, progress < 1 { ProgressView(value: progress).progressViewStyle(.linear).tint(ColorPalette.Text.muted) }
+                else { ProgressView().controlSize(.mini) }
+            }
+        }
+        .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+        .help(detail ?? label)
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct LocalModelsStatusButton: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.openSettings) private var openSettings
+    @ObservedObject var transcription: OnDeviceTranscriptionService
+    @ObservedObject var speakers: OnDeviceDiarizationService
+    private var states: [String] {
+        var result: [String] = []
+        if appState.onDeviceTranscriptionEnabled { switch transcription.status {
+            case .ready: result.append("ready")
+            case .failed, .unsupported: result.append("failed")
+            case .idle: result.append("idle")
+            case .preparing: result.append("preparing")
+            } }
+        if appState.onDeviceSpeakerSeparationEnabled { result.append(speakers.preparationState) }
+        return result
+    }
+    private var description: String {
+        if states.isEmpty { return "Local models off" }
+        if states.contains("failed") { return "A local model needs attention" }
+        if states.allSatisfy({ $0 == "ready" }) { return "Local models ready" }
+        return states.contains("preparing") ? "Local models preparing" : "Local models not loaded"
+    }
+    var body: some View {
+        Button {
+            appState.selectedSettingsTab = SettingsDestination.models.rawValue
+            openSettings()
+        } label: {
+            Image(systemName: states.contains("failed") ? "exclamationmark.circle" :
+                    states.isEmpty ? "cpu" : states.allSatisfy({ $0 == "ready" }) ? "checkmark.circle" : "arrow.down.circle")
+                .font(.callout)
+                .foregroundStyle(states.contains("failed") ? ColorPalette.Status.warning : ColorPalette.Text.muted)
+                .padding(MinitiDesignSystem.Spacing.control)
+        }
+        .buttonStyle(.plain)
+        .help(description + ". Open Models settings.")
+        .accessibilityLabel(description)
+        .accessibilityHint("Open Models settings")
+        .accessibilityIdentifier("models.status")
+    }
+}
+#endif

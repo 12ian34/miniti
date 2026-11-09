@@ -1,6 +1,6 @@
 # Trustworthy test infrastructure and service contracts
 
-Status: bounded implementation and local automated validation complete (2026-11-03); remote CI/publication and separately named evidence checks remain open. Not released. Version: 3.7.0, assigned by Ian on 2026-11-02. Scope reconciled 2026-10-27. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status updated 2026-11-04: 3.7.0 backend deployed and Mac build 149 released; iOS build 149 submitted, availability unconfirmed. [Publication evidence](../releases/3.7.0.md#publication-2026-11-04) supersedes dated local-only status below and retains test/device limitations. [Roadmap](../roadmap.md) owns priority. The bounded foundation is implemented; later feature regressions stay with their owning plans.
 
 **Priority confirmed 2026-10-31:** complete this bounded plan next after 3.6.0, at roadmap order 1a, before account-access and ownership work. Individual prerequisites needed by the current release may land earlier. The [test audit follow-through](../roadmap.md#test-audit-follow-through) assigns the other T01–T17 findings to their feature work; this plan does not absorb those implementations. Version 3.7.0 includes this bounded foundation; the remaining audit work retains its feature-owned order.
 

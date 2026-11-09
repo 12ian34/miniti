@@ -71,7 +71,7 @@ final class WatchSessionBridge: NSObject, ObservableObject, WCSessionDelegate {
         let activated = activationState == .activated
         Task { @MainActor in
             refreshFlags(paired: paired, installed: installed, activated: activated)
-            WatchImportService.shared.sessionActivated()
+            WatchImportService.shared.connectionActivated()
         }
     }
 

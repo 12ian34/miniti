@@ -1,0 +1,20 @@
+NEW
+- Editable folders group meetings automatically, with a preview before organising history.
+- A Home setup checklist focuses on remaining choices, with progress and tasks you can hide and restore in Settings.
+- Choose to sign in or continue without signing in when setting up miniti.
+- Rename devices in Settings, Account.
+
+IMPROVED
+- Upcoming meetings are grouped into Today, Tomorrow and Later, with sections you can collapse.
+- Info buttons explain calendar automation and audio settings, with links to the docs.
+- Live words stay visible as they move into the finished transcript.
+- Stopping completes the meeting without a Done action. Final insights finish in place.
+- Clearer recovery choices and retry times when sign-in is unavailable.
+
+FIXED
+- Putting a meeting back on cloud before its removal syncs no longer deletes it.
+- Calendar events can link to your recording without automatically splitting a continuing call.
+- Discarding while a recording is resuming cancels the pending start.
+- Interrupted Watch imports keep their audio and completed transcriptions for retry.
+- Older installs are recognised correctly during account migration.
+- Signing out keeps miniti signed out until you choose how to continue.

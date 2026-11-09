@@ -116,6 +116,8 @@ enum CloudSyncError: Error, Equatable {
     case notAvailableYet
     /// `403 cloud_requires_managed`.
     case requiresManaged
+    /// Account contention; retain local edits and retry without a failure banner.
+    case busy(retryAfter: TimeInterval)
     /// `429`.
     case rateLimited
     /// No account on this device yet.
@@ -180,6 +182,9 @@ extension MinitiAPIService: CloudSyncTransport {
             throw CloudSyncError.cursorExpired
         case 402:
             throw CloudSyncError.proRequired
+        case 503 where code == "busy":
+            let delay = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 2
+            throw CloudSyncError.busy(retryAfter: delay.isFinite ? min(30, max(1, delay)) : 2)
         case 503 where code == "cloud_unavailable":
             throw CloudSyncError.unavailable
         case 403 where code == "cloud_not_available_yet":

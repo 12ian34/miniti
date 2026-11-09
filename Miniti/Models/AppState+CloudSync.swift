@@ -326,7 +326,13 @@ extension AppState: CloudSyncHost {
                 meeting.syncFingerprint = nil
                 meeting.syncedAt = nil
             }
-            if !excluded { meeting.syncFingerprint = nil }
+            if !excluded {
+                // Undo a queued removal atomically with restoring upload eligibility.
+                for pending in self.cloudFetchTombstones() ?? [] where pending.id == meeting.id {
+                    modelContext.delete(pending)
+                }
+                meeting.syncFingerprint = nil
+            }
         })
         DiagnosticTimeline.shared.record(.cloudChoice, fields: ["excluded": String(excluded), "reason": "manual", "outcome": saved ? "success" : "failed"])
         cloudSync.noteLocalChange()
@@ -460,6 +466,8 @@ extension AppState {
     /// its meetings, usage and integrations); an unenrolled one restores into it.
     func joinAccount(approvedLinkID: String) async -> Bool {
         guard !ScreenshotMode.isActive else { return true }
+        guard await beginManagedAccountTransition(allowCredentialRepair: true) else { return false }
+        defer { accountTransitionInFlight = false }
         managedEnrollmentError = nil
         let manager = clientAuthManager
         let keyWasUnusable = manager.credentialState == .keyUnusable

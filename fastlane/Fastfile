@@ -163,6 +163,14 @@ private_lane :load_app_store_connect_api_key do
 end
 
 platform :ios do
+  desc "Run isolated account UI journeys on the selected iOS simulator"
+  lane :ui_test do
+    run_tests(configuration: "Testing", project: PROJECT_PATH, scheme: "MinitiMobileUI",
+      destination: ios_unit_test_destination, derived_data_path: IOS_DERIVED_DATA_PATH,
+      only_testing: ["MinitiMobileUITests"], result_bundle: true, clean: false,
+      xcargs: "-test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 90")
+  end
+
   desc "Run MinitiMobileTests unit tests on iOS Simulator"
   lane :test do
     run_tests(
@@ -193,6 +201,22 @@ platform :ios do
       ipa: ipa_path,
       changelog: options[:changelog],
       skip_waiting_for_build_processing: true
+    )
+  end
+
+  desc "Upload an already verified IPA to internal TestFlight without rebuilding"
+  lane :upload_beta do |options|
+    UI.user_error!("Pass ipa: with the verified IPA path") if options[:ipa].to_s.empty?
+    ipa_path = File.expand_path(options[:ipa])
+    UI.user_error!("IPA not found: #{ipa_path}") unless File.file?(ipa_path)
+    upload_to_testflight(
+      api_key: load_app_store_connect_api_key,
+      ipa: ipa_path,
+      changelog: options[:changelog],
+      skip_waiting_for_build_processing: true,
+      skip_submission: true,
+      distribute_external: false,
+      notify_external_testers: false
     )
   end
 
@@ -361,6 +385,14 @@ platform :ios do
 end
 
 platform :mac do
+  desc "Run isolated account UI journeys in the logged-in Mac session"
+  lane :ui_test do
+    run_tests(configuration: "Testing", project: PROJECT_PATH, scheme: "MinitiUI",
+      destination: "platform=macOS", derived_data_path: MAC_DERIVED_DATA_PATH,
+      only_testing: ["MinitiUITests"], result_bundle: true, clean: false,
+      xcargs: "-test-timeouts-enabled YES -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 90")
+  end
+
   desc "Run MinitiTests unit tests"
   lane :test do
     run_tests(

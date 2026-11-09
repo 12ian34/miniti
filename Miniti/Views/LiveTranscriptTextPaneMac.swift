@@ -206,6 +206,10 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
         private var cursorVisible = true
         private var cursorRange: NSRange?
         private var cursorColor: NSColor?
+        private var commitFadeTimer: Timer?
+        private var commitFadeRanges: [NSRange] = []
+        private var commitFadeStartedAt: TimeInterval = 0
+        private var pendingSelection: NSRange?
 
         private struct InterimKey: Equatable {
             let runtimeRevision: UInt64
@@ -249,6 +253,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
         }
 
         func detach() {
+            finishCommitFade()
             textView?.delegate = nil
             NotificationCenter.default.removeObserver(self)
             cursorTimer?.invalidate()
@@ -318,8 +323,26 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             self.parent = parent
             guard let textView, let storage = textView.textStorage else { return }
             consumeDeselectRequestIfNeeded(textView: textView)
+            // TextKit sees one replacement, never a document with the live tail
+            // removed before its final words have been inserted.
+            storage.beginEditing()
+            pendingSelection = textView.selectedRange()
+            defer {
+                storage.endEditing()
+                // TextKit must finish processing the whole mutation before selection
+                // restoration can ask it for layout inside an edited paragraph.
+                if let selection = pendingSelection, selection != textView.selectedRange() {
+                    textView.setSelectedRange(selection)
+                }
+                pendingSelection = nil
+            }
+            let oldFinalizedLength = finalizedLength
+            let hadInterim = storage.length > finalizedLength
+            let finalChanged = lastFinalizedRevision != parent.finalizedRevision
+            let shouldFade = finalChanged && lastFinalizedRevision != nil && hadInterim && !parent.reduceMotion
+            if finalChanged || parent.reduceMotion { finishCommitFade() }
 
-            if lastFinalizedRevision != parent.finalizedRevision {
+            if finalChanged {
                 removeInterimIfNeeded(storage: storage, textView: textView)
                 applyFinalizedContent(storage: storage, textView: textView)
                 lastFinalizedRevision = parent.finalizedRevision
@@ -337,10 +360,54 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
                 lastInterimKey = interimKey
             }
 
+            if shouldFade, finalizedLength > oldFinalizedLength,
+               oldFinalizedLength == 0 || (parent.finalizedMutation?.range.location == oldFinalizedLength && parent.finalizedMutation?.range.length == 0) {
+                beginCommitFade(range: NSRange(location: oldFinalizedLength, length: finalizedLength - oldFinalizedLength))
+            }
             if parent.isAutoScrollEnabled && !lastAutoScrollEnabled {
                 scheduleScrollToEnd()
             }
             lastAutoScrollEnabled = parent.isAutoScrollEnabled
+        }
+
+        private func beginCommitFade(range: NSRange) {
+            guard let storage = textView?.textStorage else { return }
+            let bodyColor = NSColor(ColorPalette.Text.secondary)
+            storage.enumerateAttribute(.foregroundColor, in: range) { color, range, _ in
+                if (color as? NSColor) == bodyColor { commitFadeRanges.append(range) }
+            }
+            guard !commitFadeRanges.isEmpty else { return }
+            commitFadeStartedAt = Date.timeIntervalSinceReferenceDate
+            updateCommitFade()
+            let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.updateCommitFade() }
+            }
+            commitFadeTimer = timer
+            RunLoop.main.add(timer, forMode: .common)
+        }
+
+        private func updateCommitFade() {
+            let progress = min(1, (Date.timeIntervalSinceReferenceDate - commitFadeStartedAt) / MinitiDesignSystem.Motion.transcriptCommitDuration)
+            guard progress < 1, let storage = textView?.textStorage else { finishCommitFade(); return }
+            let color = NSColor(ColorPalette.Text.dim).blended(withFraction: progress, of: NSColor(ColorPalette.Text.secondary)) ?? NSColor(ColorPalette.Text.secondary)
+            storage.beginEditing()
+            for range in commitFadeRanges where NSMaxRange(range) <= storage.length {
+                storage.addAttribute(.foregroundColor, value: color, range: range)
+            }
+            storage.endEditing()
+        }
+
+        private func finishCommitFade() {
+            commitFadeTimer?.invalidate()
+            commitFadeTimer = nil
+            if let storage = textView?.textStorage, !commitFadeRanges.isEmpty {
+                storage.beginEditing()
+                for range in commitFadeRanges where NSMaxRange(range) <= storage.length {
+                    storage.addAttribute(.foregroundColor, value: NSColor(ColorPalette.Text.secondary), range: range)
+                }
+                storage.endEditing()
+            }
+            commitFadeRanges.removeAll(keepingCapacity: true)
         }
 
         private func applyFinalizedContent(storage: NSTextStorage, textView: NSTextView) {
@@ -417,7 +484,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             textView: NSTextView
         ) {
             guard NSMaxRange(range) <= storage.length else { return }
-            let oldSelection = textView.selectedRange()
+            let oldSelection = pendingSelection ?? textView.selectedRange()
             let resultingLength = storage.length - range.length + replacement.length
             let adjustedSelection = LiveTranscriptSelectionPolicy.adjustedRange(
                 oldSelection,
@@ -430,9 +497,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             storage.replaceCharacters(in: range, with: replacement)
             storage.endEditing()
 
-            if adjustedSelection != oldSelection {
-                textView.setSelectedRange(adjustedSelection)
-            }
+            pendingSelection = adjustedSelection
         }
 
         private struct RenderedInterim {
@@ -448,7 +513,7 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
             let headerFont = NSFont.systemFont(ofSize: interim.headerFontSize, weight: .semibold)
             let bodyParagraph = NSMutableParagraphStyle()
             bodyParagraph.lineSpacing = interim.lineSpacing
-            bodyParagraph.paragraphSpacingBefore = interim.hasFinalizedContent && !interim.startsNewTurn ? 6 : 0
+            bodyParagraph.paragraphSpacing = 6
             let headerParagraph = NSMutableParagraphStyle()
             headerParagraph.paragraphSpacingBefore = interim.hasFinalizedContent ? 10 : 0
             headerParagraph.paragraphSpacing = 2
@@ -465,16 +530,20 @@ struct LiveTranscriptTextPaneMac: NSViewRepresentable {
                     .foregroundColor: speakerNSColor.withAlphaComponent(0.72),
                     .paragraphStyle: headerParagraph,
                 ]))
-            } else if interim.hasFinalizedContent {
-                result.append(NSAttributedString(string: "\n", attributes: [
-                    .font: bodyFont,
-                    .paragraphStyle: bodyParagraph,
-                ]))
             }
 
-            result.append(NSAttributedString(string: interim.text, attributes: [
+            let continuesParagraph = !interim.startsNewTurn && interim.hasFinalizedContent
+            let finalized = textView?.textStorage?.string as NSString?
+            // Inspect the final display paragraph, not the whole speaker turn.
+            let paragraphStart = finalized?.paragraphRange(for: NSRange(location: finalizedLength, length: 0)).location ?? finalizedLength
+            let paragraphLength = finalizedLength - paragraphStart
+            let body = SelectableAttributed.paragraphWrappedTranscript(
+                (continuesParagraph ? " " : "") + interim.text,
+                initialParagraphLength: continuesParagraph ? paragraphLength : 0
+            )
+            result.append(NSAttributedString(string: body, attributes: [
                 .font: bodyFont,
-                .foregroundColor: NSColor(ColorPalette.Text.muted),
+                .foregroundColor: NSColor(ColorPalette.Text.dim),
                 .paragraphStyle: bodyParagraph,
             ]))
             let cursorLocation = result.length

@@ -202,7 +202,7 @@ struct CloudSettingsSections: View {
                 }
             ))
             .disabled(!appState.isPro || appState.privateModeEnabled)
-            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Off by default. One switch for your account: every device follows it.")
+            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Shared folder names, descriptions and assignments also sync; folders kept on this device do not. Off by default. One switch for your account: every device follows it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if !appState.isPro {
@@ -262,6 +262,13 @@ struct CloudSettingsSections: View {
             }
             if let caption = engine.pendingChangesCaption {
                 Text(caption)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            if !engine.folderRefreshIssueTitles.isEmpty {
+                Text("Could not check folders for: " + engine.folderRefreshIssueTitles.prefix(3).joined(separator: ", ") + ". Other meetings still sync. Use Sync now to retry.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if engine.pendingFolderRefreshCount > 0 {
+                Text("Checking folders for \(engine.pendingFolderRefreshCount) existing cloud meetings. Local edits are saved while this finishes.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             if !engine.skippedMeetingIDs.isEmpty {
@@ -389,7 +396,7 @@ struct CloudSettingsSections: View {
         Section("Delete") {
             Button("Delete cloud copy", role: .destructive) { isConfirmingDelete = true }
                 .disabled(isBusy)
-            Text("Removes every meeting, token and connected app from miniti's servers. Meetings on your devices stay. With the switch on they upload again on the next sync.")
+            Text("Removes every meeting, shared folder, token and connected app from miniti's servers. Meetings on your devices stay. With the switch on they upload again on the next sync.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -694,7 +701,7 @@ struct CloudEnableSheet: View {
             Text("Keep your meetings in the cloud")
                 .font(.title3.weight(.semibold))
             Text(meetingCount.map { "\($0) finished meeting\($0 == 1 ? "" : "s") on this device will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account." } ?? "Your finished meetings will upload, and everything your other devices hold will come here. Cloud turns on for every device on your account.")
-            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. A meeting recorded in private mode stays off the cloud unless you put it on.")
+            Text("miniti keeps a copy and can read it, so your other devices, your tools and you on the web can too. Shared folder names, descriptions and assignments also sync; folders kept on this device do not. A meeting recorded in private mode stays off the cloud unless you put it on.")
                 .foregroundStyle(.secondary)
             if !hasEmail {
                 Text("Web sign-in and tools like Claude need an email on the account. You can add one in Settings, Account now or later.")

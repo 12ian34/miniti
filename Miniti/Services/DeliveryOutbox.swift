@@ -190,6 +190,27 @@ final class DeliveryOutbox: ObservableObject {
         return commit(next)
     }
 
+    /// Completion stages CRM work before acknowledging its durable meeting checkpoint.
+    @discardableResult
+    func stageCRM(_ kind: Kind, meetingID: UUID, id: UUID) -> Bool {
+        guard kind != .webhook else { return false }
+        if let old = item(id: id) { return old.kind == kind && old.meetingID == meetingID && !invalidatedIDs.contains(id) }
+        var next = items
+        next.append(Item(id: id, kind: kind, meetingID: meetingID, event: "auto-sync", createdAt: now(),
+            attempts: 0, nextAttemptAt: now(), state: .pending, lastError: nil, body: nil, destination: nil, held: true))
+        return commit(next)
+    }
+
+    @discardableResult
+    func releaseCRM(id: UUID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id && $0.kind != .webhook }), !invalidatedIDs.contains(id) else { return false }
+        guard items[index].state == .pending else { return false }
+        if items[index].held != true { return true }
+        var next = items; next[index].held = false
+        guard commit(next) else { return false }
+        kick(); return true
+    }
+
     /// CRM bodies still rebuild from saved state at dispatch; its retry policy is unchanged.
     @discardableResult
     func enqueueCRM(_ kind: Kind, meetingID: UUID) -> Bool {

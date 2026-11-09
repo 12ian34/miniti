@@ -303,6 +303,7 @@ private extension View {
 }
 
 private struct SettingsDetailView_iOS: View {
+    @Environment(\.scenePhase) private var scenePhase
     let category: SettingsDestination
     var initialSearchTarget: String? = nil
     @EnvironmentObject var appState: AppState
@@ -324,6 +325,7 @@ private struct SettingsDetailView_iOS: View {
     var body: some View {
             Form {
                 if category == .general {
+                HomeSetupSettingsSection()
                 Section("Appearance") {
                     InterfaceScaleSlider()
                         .id("general.interfaceScale")
@@ -331,7 +333,7 @@ private struct SettingsDetailView_iOS: View {
                 }
 
                 if category == .transcription {
-                Section("Models") {
+                Section {
                     Picker("Speakers", selection: Binding(
                         get: { appState.onDeviceSpeakerSeparationEnabled },
                         set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }
@@ -348,6 +350,8 @@ private struct SettingsDetailView_iOS: View {
                     Text("Who spoke when. This device runs NVIDIA's Nemotron speaker model, which ships inside miniti. Audio still goes to Deepgram for the words. Applies to new recordings.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                } header: {
+                    HStack { Text("Models"); MinitiDocumentationLink(topic: .speakers) }
                 }
 
                 VoicePrintSettingsSection(store: appState.voicePrints, embedder: appState.voicePrintEmbedder)
@@ -604,7 +608,14 @@ private struct SettingsDetailView_iOS: View {
                     HStack {
                         Text("Microphone")
                         Spacer()
-                        PermissionBadge_iOS(granted: checkMicPermission())
+                        HomeSetupStateObserver(state: appState.homeSetupState) {
+                            if let permission = appState.homeSetupMicrophonePermission {
+                                PermissionBadge_iOS(granted: permission == .authorized)
+                            } else {
+                                Text(appState.homeSetupState.permissionCheckUnavailable ? "Access check unavailable" : "Checking access")
+                                    .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                            }
+                        }
                     }
                     
                     Button("Open Settings") {
@@ -820,15 +831,19 @@ private struct SettingsDetailView_iOS: View {
 
                 if category == .calendar {
                 Section("Calendar & Meeting Automation") {
-                    Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                    HStack {
+                        Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                        MinitiDocumentationLink(topic: .smartMeetings)
+                    }
                         .id("integrations.smartMeetings")
                     Text("Notices when a meeting may have ended or another meeting is approaching, then helps you finish, save, and start the right recording. Works with or without Google Calendar.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
-                        .font(.caption)
 
-                    Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                    HStack {
+                        Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                        MinitiDocumentationLink(topic: .calendar)
+                    }
                         .id("integrations.googleCalendar")
                     Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
                         .font(.caption)
@@ -1070,6 +1085,12 @@ private struct SettingsDetailView_iOS: View {
                 }
             }
             .settingsSearchScrolling_iOS(for: category)
+            .task {
+                if category == .recording { appState.refreshHomeSetupMicrophonePermission() }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active, category == .recording { appState.refreshHomeSetupMicrophonePermission() }
+            }
             .navigationTitle(category.title)
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
@@ -1145,9 +1166,6 @@ private struct SettingsDetailView_iOS: View {
         }
     }
     
-    private func checkMicPermission() -> Bool {
-        AVAudioApplication.shared.recordPermission == .granted
-    }
 }
 
 struct FillerSettingsDetail_iOS: View {

@@ -1,10 +1,21 @@
+NEW
+- Editable folders group meetings automatically, with a preview before organizing history.
+- An optional Home setup checklist helps configure miniti and organize meetings, with progress and tasks you can hide and restore in Settings.
+- Choose to sign in or continue without signing in when setting up miniti.
+- Rename devices in Settings, Account.
+
 IMPROVED
-- With your own API keys, summaries and helpers use GPT-6 Luna and specialist insights use GPT-5.4 mini. Missing model access shows a clear message.
-- The Cloud button uses the standard toolbar.
-- The home screen and language names are lowercase, like the rest of the app.
-- After you stop, the button says done while the final insights finish.
-- Settings, Transcription says whether the speaker model failed to load or stopped, with a load model again button.
+- A simpler Home screen keeps recording up front. Switch between setup and your calendar using the controls at the bottom.
+- Upcoming meetings are grouped into Today, Tomorrow and Later, with sections you can collapse.
+- Info buttons explain calendar automation and audio settings, with links to the docs.
+- Live words stay visible as they move into the finished transcript.
+- Stopping completes the meeting without a Done action. Final insights finish in place.
+- Clearer recovery choices and retry times when sign-in is unavailable.
 
 FIXED
-- Stopping waits for pending transcript before saving, even if no words have appeared yet.
-- A slow transcription connection is no longer replaced before its timeout.
+- Putting a meeting back on cloud before its removal syncs no longer deletes it.
+- Calendar events can link to your recording without automatically splitting a continuing call.
+- Discarding while a recording is resuming cancels the pending start.
+- Interrupted Watch imports keep their audio and completed transcriptions for retry.
+- Older installs are recognized correctly during account migration.
+- Signing out keeps miniti signed out until you choose how to continue.

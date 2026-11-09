@@ -1,0 +1,234 @@
+import Foundation
+import SwiftUI
+import SwiftData
+
+/// Only the Testing build contains fixture credentials or transport. UI runners
+/// do not execute the hosted bundle's TestRunSetup, so isolation starts here.
+enum AccountUITestHarness {
+    #if MINITI_TEST_HOST
+    @MainActor static func seedFolderHistory(in context: ModelContext) {
+        guard isActive, ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "folders",
+              (try? context.fetchCount(FetchDescriptor<Meeting>())) == 0 else { return }
+        for (index, title) in ["Acme customer review", "Borealis sales demo", "Monday standup", "Friday team sync"].enumerated() {
+            context.insert(Meeting(title: title, startTime: Date().addingTimeInterval(Double(-index * 3600 - 120)), endTime: Date()))
+        }
+        try? context.save()
+    }
+    #endif
+    static var isActive: Bool {
+        #if MINITI_TEST_HOST
+        ProcessInfo.processInfo.environment["MINITI_UI_TEST_ID"] != nil
+        #else
+        false
+        #endif
+    }
+
+    /// Inject the effective environment size for rendered tests. Launch arguments
+    /// alone do not reliably change SwiftUI's App-level environment on this runner.
+    static func dynamicTypeSize(_ systemSize: DynamicTypeSize) -> DynamicTypeSize {
+        #if MINITI_TEST_HOST
+        if isActive && ProcessInfo.processInfo.environment["MINITI_UI_TEST_LARGE_TEXT"] == "1" {
+            return .accessibility5
+        }
+        #endif
+        return systemSize
+    }
+
+    @MainActor static func configure(_ state: AppState) {
+        #if MINITI_TEST_HOST
+        guard isActive else { return }
+        precondition(["com.miniti.app.testhost", "com.miniti.mobile.testhost"].contains(Bundle.main.bundleIdentifier ?? ""))
+        let identifier = ProcessInfo.processInfo.environment["MINITI_UI_TEST_ID"]!
+        precondition(UUID(uuidString: identifier) != nil)
+        var defaults = UserDefaults(suiteName: "miniti.ui.\(identifier)")!
+        if ProcessInfo.processInfo.arguments.contains("-MinitiUITestCleanup") {
+            defaults.removePersistentDomain(forName: "miniti.ui.\(identifier)")
+            defaults = UserDefaults(suiteName: "miniti.ui.cleanup")!
+            defaults.removePersistentDomain(forName: "miniti.ui.cleanup")
+        }
+        let scenario = ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "first"
+        if scenario == "folders" { state.automaticFolderCreation = true }
+        if !defaults.bool(forKey: "setupFixtureInitialized") {
+            UserDefaults.standard.removeObject(forKey: AppState.accessCardDismissedKey(accountID: "acct_ui_fixture"))
+            state.homeSetupHidden = scenario != "setup"
+            state.homeSetupState.calendarHidden = false
+            state.homeSetupDismissed = false
+            state.homeSetupSkippedSteps = ""
+            state.homeSetupState.foldersReviewed = false
+            state.calendarNudgeDismissedUntil = 0
+            defaults.set(true, forKey: "setupFixtureInitialized")
+        }
+        if scenario == "revoked" && defaults.data(forKey: "fixtureCredential") == nil {
+            defaults.set("revoke", forKey: "managedAccessChoice")
+        }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [FixtureProtocol.self]
+        let session = URLSession(configuration: config)
+        let store = FixtureCredentials(defaults: defaults, scenario: scenario)
+        let manager = ClientAuthManager(store: store, baseURL: "https://miniti-fixture.invalid/api", session: session,
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, defaults: defaults)
+        state.appMode = scenario == "onboardingBYOK" ? .byok : .managed
+        state.hasAcceptedTerms = scenario != "setupUpgrade"
+        state.hasCompletedOnboarding = !scenario.hasPrefix("onboarding")
+        state.clientAuthManager = manager
+        state.minitiAPIService = MinitiAPIService(session: session, auth: manager)
+        state.insightsService = nil
+        state.autoInferSpeakerNames = false
+        state.privateModeEnabled = false
+        state.onDeviceSpeakerSeparationEnabled = false
+        state.refreshClientAuthStatus()
+        // Test-host preferences outlive a process. Keep the calendar fixture from
+        // making later setup scenarios wait for an unhandled connection check.
+        state.googleCalendarEnabled = scenario == "calendar"
+        if scenario == "calendar" {
+            state.isGoogleCalendarConnected = true
+            state.hasResolvedCalendarConnection = true
+            state.upcomingEvents = [try! JSONDecoder().decode(MinitiAPIService.CalendarEvent.self,
+                from: JSONSerialization.data(withJSONObject: tomorrowCalendarEvent()))]
+        }
+        if scenario == "association" {
+            let formatter = ISO8601DateFormatter()
+            let event: [String: Any] = ["id": "fixture-current", "title": "Fixture calendar call",
+                "start": formatter.string(from: Date().addingTimeInterval(-30)),
+                "end": formatter.string(from: Date().addingTimeInterval(1800)),
+                "isAllDay": false, "status": "confirmed", "attendees": []]
+            state.currentMeeting = Meeting(title: "My existing recording")
+            state.isRecording = true
+            state.smartMeetingsEnabled = true
+            state.upcomingEvents = [try! JSONDecoder().decode(MinitiAPIService.CalendarEvent.self,
+                from: JSONSerialization.data(withJSONObject: event))]
+            state.checkSmartCalendarTransition()
+        }
+        if let service = state.deepgramService {
+            service.socketStarter = { [weak service] _ in
+                Task { @MainActor in
+                    service?.connectionState = .connected
+                    service?.speakerSegments = [.init(id: UUID(), speaker: 0, text: "Fixture recording begins", startTime: 0, endTime: 1,
+                        isFinal: true, confidence: 1, channelIndex: nil, source: .microphone)]
+                }
+            }
+            service.finalDrainOperation = { [weak service] in
+                service?.speakerSegments = [.init(id: UUID(), speaker: 0, text: "Fixture final words", startTime: 1, endTime: 2,
+                    isFinal: true, confidence: 1, channelIndex: nil, source: .microphone)]
+            }
+        }
+        #endif
+    }
+
+    #if MINITI_TEST_HOST
+    private static func tomorrowCalendarEvent() -> [String: Any] {
+        let formatter = ISO8601DateFormatter()
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: Date()))!
+        let start = tomorrow.addingTimeInterval(12 * 3600)
+        return ["id": "fixture-tomorrow", "title": "Fixture tomorrow call",
+            "start": formatter.string(from: start), "end": formatter.string(from: start.addingTimeInterval(1800)),
+            "isAllDay": false, "status": "confirmed", "attendees": []]
+    }
+
+    private final class FixtureCredentials: ClientAuthCredentialStore, @unchecked Sendable {
+        let defaults: UserDefaults
+        let scenario: String
+        init(defaults: UserDefaults, scenario: String) { self.defaults = defaults; self.scenario = scenario }
+        var lastLoadDiagnostic: ClientAuthStoreDiagnostic? {
+            if scenario == "locked" { return .unreadable(status: -25308) }
+            if scenario == "corrupt" { return .undecodable(bytes: 4) }
+            return nil
+        }
+        func load() -> ClientAuthCredentials? {
+            guard lastLoadDiagnostic == nil, let data = defaults.data(forKey: "fixtureCredential") else { return nil }
+            return try? JSONDecoder().decode(ClientAuthCredentials.self, from: data)
+        }
+        func save(_ value: ClientAuthCredentials) -> Bool {
+            guard let data = try? JSONEncoder().encode(value) else { return false }
+            defaults.set(data, forKey: "fixtureCredential"); return true
+        }
+        func clear() { defaults.removeObject(forKey: "fixtureCredential") }
+    }
+
+    private final class FixtureProtocol: URLProtocol, @unchecked Sendable {
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            let path = request.url?.path ?? ""
+            let scenario = ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"]
+            // Hold these responses until the test terminates the app. This models a
+            // stalled request without sleeping the protocol queue or contacting a server.
+            if ["onboardingPending", "homePending"].contains(scenario ?? ""), path == "/api/auth/account/create" { return }
+            if scenario == "onboardingSlowUsage", path == "/api/usage" { return }
+            var status = 200
+            var body: [String: Any] = [:]
+            var headers = ["Content-Type": "application/json"]
+            switch path {
+            case "/api/google/status" where ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "calendar":
+                body = ["connected": true, "email": "calendar@example.invalid"]
+            case "/api/google/events" where ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "calendar":
+                body = ["events": [AccountUITestHarness.tomorrowCalendarEvent()]]
+            case "/api/account/email":
+                let identifier = ProcessInfo.processInfo.environment["MINITI_UI_TEST_ID"] ?? "cleanup"
+                let defaults = UserDefaults(suiteName: "miniti.ui.\(identifier)")!
+                if request.httpMethod == "POST" {
+                    let data: Data
+                    if let body = request.httpBody { data = body }
+                    else if let stream = request.httpBodyStream {
+                        stream.open(); defer { stream.close() }
+                        var bytes = [UInt8](repeating: 0, count: 4096)
+                        let count = stream.read(&bytes, maxLength: bytes.count)
+                        data = count > 0 ? Data(bytes.prefix(count)) : Data()
+                    } else { data = Data() }
+                    if let payload = try? JSONSerialization.jsonObject(with: data) as? [String: String] {
+                        defaults.set(payload["email"], forKey: "pendingEmail")
+                    }
+                }
+                body = ["email": NSNull(), "pending": defaults.string(forKey: "pendingEmail") as Any? ?? NSNull()]
+            case "/api/auth/challenge": body = ["challenge_id": "fixture", "nonce": "fixture-nonce"]
+            case "/api/auth/migrate":
+                status = 404; body = ["error": "device_not_eligible"]
+            case "/api/auth/account/create", "/api/auth/account/restore":
+                if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "throttled" {
+                    status = 429; body = ["error": "rate_limited"]; headers["Retry-After"] = "120"
+                } else if ["onboardingOffline", "homeOffline"].contains(scenario ?? "") {
+                    status = 503; body = ["error": "temporarily_unavailable"]
+                } else {
+                    body = ["access_token": "fixture-token", "expires_in": 3600, "account_id": "acct_ui_fixture", "device_cap": 5]
+                }
+            case "/api/auth/email/start": body = ["link_id": "lnk_fixturefixture01"]
+            case "/api/auth/email/status": body = ["status": "approved"]
+            case "/api/auth/revoke": body = ["revoked": true]
+            case "/api/session": body = ["access_token": "fixture-token", "token_type": "Bearer", "expires_in": 3600,
+                "expires_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)),
+                "session_id": "sess_v2_fixturefixture01", "accounting_version": 2,
+                "session_started_at": ISO8601DateFormatter().string(from: Date())]
+            case "/api/session/end": body = ["accounting_version": 2, "accepted_duration_ms": 0, "minutes_used": 0,
+                "minutes_remaining": 500, "minutes_limit": 500, "tier": "free"]
+            case "/api/usage": body = ["minutes_used": 0, "minutes_limit": 500, "resets_at": "2026-12-01T00:00:00Z", "tier": "free"]
+            case "/api/auth/account/devices/550e8400-e29b-41d4-a716-446655440000":
+                body = ["installation_id": "550e8400-e29b-41d4-a716-446655440000", "label": "Studio device"]
+            case "/api/auth/account/devices":
+                body = ["account_id": "acct_ui_fixture", "device_cap": 5, "devices": [[
+                    "installation_id": "550e8400-e29b-41d4-a716-446655440000", "platform": "ios", "label": "Studio device",
+                    "enrolled_at": "2026-11-04T00:00:00Z", "current": true]]]
+            default:
+                // No unhandled request is forwarded to a real endpoint.
+                status = 503; body = ["error": "fixture_route_unavailable"]
+            }
+            let data = try! JSONSerialization.data(withJSONObject: body)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        override func stopLoading() {}
+    }
+    #endif
+}
+
+struct AccountUITestReady: ViewModifier {
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .bottomLeading) {
+            if AccountUITestHarness.isActive {
+                Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
+                    .accessibilityIdentifier("ui-test.ready").allowsHitTesting(false)
+            }
+        }
+    }
+}

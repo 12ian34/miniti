@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "start": {
+    "model": "nova-3",
+    "accounting_version": 2,
+    "recording_id": "550e8400-e29b-41d4-a716-446655440000"
+  },
+  "renew": {
+    "model": "nova-3",
+    "accounting_version": 2,
+    "recording_id": "550e8400-e29b-41d4-a716-446655440000",
+    "renew_session_id": "sess_v2_abcdefghijklmnop"
+  },
+  "finish": {
+    "session_id": "sess_v2_abcdefghijklmnop",
+    "accounting_version": 2,
+    "recording_id": "550e8400-e29b-41d4-a716-446655440000",
+    "duration_ms": 4440000
+  },
+  "start_response": {
+    "access_token": "synthetic-token",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "expires_at": "2026-11-04T11:00:00Z",
+    "session_id": "sess_v2_abcdefghijklmnop",
+    "accounting_version": 2,
+    "session_started_at": "2026-11-04T10:00:00Z"
+  },
+  "legacy_response": {
+    "access_token": "synthetic-token",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "expires_at": "2026-11-04T11:00:00Z",
+    "session_id": "sess_legacy",
+    "accounting_version": 1
+  },
+  "finish_response": {
+    "accounting_version": 2,
+    "accepted_duration_ms": 4440000,
+    "minutes_used": 74,
+    "minutes_remaining": 426,
+    "minutes_limit": 500,
+    "tier": "free"
+  },
+  "long_duration_ms": 21600000
+}

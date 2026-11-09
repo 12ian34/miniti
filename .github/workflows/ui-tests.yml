@@ -1,0 +1,54 @@
+name: isolated UI journeys
+
+# Pilot until a clean hosted runner has passed. Local release evidence remains required.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        type: choice
+        options: [ios, macos]
+        default: ios
+permissions:
+  contents: read
+jobs:
+  ui:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify isolated schemes and toolchain
+        run: |
+          xcodebuild -version
+          python3 scripts/check-coverage-runner.py
+      - uses: actions/cache@v4
+        with:
+          path: Miniti/Resources/NemotronDiarizer
+          key: nemotron-${{ hashFiles('scripts/fetch-nemotron-model.sh') }}
+      - name: Run iOS UI smoke and journeys
+        if: inputs.platform == 'ios'
+        run: |
+          set -o pipefail
+          destination=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for a in d["devices"].values() for x in a if x["name"] in ["iPhone 16", "iPhone 17"] and x.get("isAvailable")))')
+          xcodebuild test -project Miniti.xcodeproj -scheme MinitiMobileUI -configuration Testing \
+            -destination "platform=iOS Simulator,id=$destination" -derivedDataPath DerivedDataUI \
+            -resultBundlePath ui-results.xcresult -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 90 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= 2>&1 | tee ui-tests.log
+      - name: Run Mac UI pilot
+        if: inputs.platform == 'macos'
+        run: |
+          set -o pipefail
+          xcodebuild test -project Miniti.xcodeproj -scheme MinitiUI -configuration Testing \
+            -destination 'platform=macOS' -derivedDataPath DerivedDataUI \
+            -resultBundlePath ui-results.xcresult -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 -maximum-test-execution-time-allowance 90 \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY= 2>&1 | tee ui-tests.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-${{ inputs.platform }}-evidence
+          path: |
+            ui-tests.log
+            ui-results.xcresult

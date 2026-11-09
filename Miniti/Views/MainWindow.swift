@@ -920,13 +920,15 @@ struct TerminalSidebar: View {
         meetings.filter { $0.id != appState.currentMeeting?.id }
     }
 
+    private var folderMeetings: [Meeting] { displayedMeetings.filter { appState.folderIncludes($0) } }
+
     private var historySections: [(title: String, meetings: [Meeting])] {
         if isSearchActive && !searchText.isEmpty {
-            return [("results", displayedMeetings)]
+            return [("results", folderMeetings)]
         }
         let calendar = Calendar.current
-        let pinned = displayedMeetings.filter(\.isPinned)
-        let unpinned = displayedMeetings.filter { !$0.isPinned }
+        let pinned = folderMeetings.filter(\.isPinned)
+        let unpinned = folderMeetings.filter { !$0.isPinned }
         var result: [(String, [Meeting])] = []
         if !pinned.isEmpty { result.append(("pinned", pinned)) }
         let today = unpinned.filter { calendar.isDateInToday($0.startTime) }
@@ -1245,6 +1247,9 @@ struct TerminalSidebar: View {
                         }
                     }
 
+                    MeetingFolderControls(meetings: historicalMeetings)
+                        .padding(.horizontal, 10)
+
                     if showsSearchFilters {
                         MeetingSearchFilterRow(
                             meetings: historicalMeetings,
@@ -1302,7 +1307,7 @@ struct TerminalSidebar: View {
                             }
                             .padding(.horizontal, 10)
                         }
-                        .scrollIndicators(.hidden)
+                        .scrollIndicators(.never)
                     }
                 }
             }
@@ -1594,6 +1599,7 @@ struct SidebarHistoryItem: View {
             }
         }
         .contextMenu {
+            MeetingFolderMoveMenu(meeting: meeting)
             Button(meeting.isPinned ? "Unpin meeting" : "Pin meeting", action: onTogglePin)
             if meeting.endTime != nil {
                 Button(meeting.syncExcluded ? "Put on the cloud" : "Keep off the cloud") {

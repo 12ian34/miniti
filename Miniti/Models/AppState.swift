@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import SwiftUI
 import SwiftData
 import Combine
@@ -12,6 +13,57 @@ import UIKit
 #if os(macOS)
 import AppKit
 #endif
+
+/// Low-frequency setup presentation and permission evidence. Kept separate from
+/// AppState so hiding a task cannot invalidate the meeting history during animation.
+@MainActor
+final class HomeSetupState: ObservableObject {
+    @AppStorage("homeSetup.hidden.v1") var hidden = false
+    @AppStorage("home.calendarHidden.v1") var calendarHidden = false
+    @AppStorage("homeSetup.dismissed.v1") var dismissed = false
+    @AppStorage("homeSetup.skipped.v1") var skippedSteps = ""
+    @AppStorage("homeSetup.audioReviewed.v1") var audioReviewed = false
+    @AppStorage("homeSetup.foldersReviewed.v1") var foldersReviewed = false
+    @Published var revision = 0
+    @Published var microphonePermission: AVAuthorizationStatus?
+    @Published private(set) var permissionCheckUnavailable = false
+    private(set) var refreshTask: Task<Void, Never>?
+    private var requestedRead: (@Sendable () -> AVAuthorizationStatus)?
+    private var permissionGeneration = 0
+    var readTimeout: Duration = .seconds(3)
+
+    func refresh(read: @escaping @Sendable () -> AVAuthorizationStatus) {
+        requestedRead = read
+        guard refreshTask == nil else { return }
+        refreshTask = Task { [weak self] in
+            guard let self else { return }
+            while let read = requestedRead {
+                requestedRead = nil
+                let generation = permissionGeneration
+                let watchdog = Task { [weak self, readTimeout] in
+                    do { try await Task.sleep(for: readTimeout) } catch { return }
+                    guard let self, generation == permissionGeneration else { return }
+                    permissionCheckUnavailable = true
+                }
+                let result = await Task.detached(priority: .userInitiated) { read() }.value
+                watchdog.cancel()
+                // A newer request or the explicit grant callback supersedes this result.
+                if generation == permissionGeneration, requestedRead == nil {
+                    microphonePermission = result
+                    permissionCheckUnavailable = false
+                }
+            }
+            refreshTask = nil
+        }
+    }
+
+    func receivedPermissionRequest(granted: Bool) {
+        permissionGeneration += 1
+        requestedRead = nil
+        microphonePermission = granted ? .authorized : .denied
+        permissionCheckUnavailable = false
+    }
+}
 
 @MainActor
 final class AudioLevelsState: ObservableObject {
@@ -104,6 +156,12 @@ final class TranscriptRuntimeState: ObservableObject {
             interimSpeaker: interimSpeaker,
             revision: snapshot.revision &+ 1
         )
+    }
+
+    /// An older delayed final must not erase a newer provisional phrase.
+    func clearInterim(through revision: UInt64?) {
+        guard let revision, snapshot.revision <= revision, !snapshot.interimText.isEmpty else { return }
+        update(interimText: "", currentSpeaker: snapshot.currentSpeaker, interimSpeaker: nil)
     }
 
     func clear() {
@@ -338,6 +396,7 @@ enum SettingsSearchCatalog {
         .init("general.launchAtLogin", "Launch at Login", section: "Startup", destination: .general, keywords: ["open automatically", "startup"], platforms: [.macOS]),
         .init("general.showInMenuBar", "Show in Menu Bar", section: "Appearance", destination: .general, keywords: ["status item", "menu icon"], platforms: [.macOS]),
         .init("general.recordingIndicator", "Show Recording Indicator", section: "Appearance", destination: .general, keywords: ["floating", "panel", "overlay", "REC"], platforms: [.macOS]),
+        .init("general.setup", "Setup guide", section: "Home", destination: .general, keywords: ["checklist", "restore", "hidden", "tasks", "set up miniti"]),
         .init("general.interfaceScale", "Interface Scale", section: "Appearance", destination: .general, keywords: ["compact", "standard", "large", "text size"]),
 
         .init("account.subscription", "Subscription", section: "Plan", destination: .account, keywords: ["free", "pro", "upgrade", "manage", "restore"]),
@@ -456,6 +515,7 @@ final class AppState: ObservableObject {
             /// Auto-start waited for the event's call and nobody joined within the window:
             /// ask once whether to record anyway (macOS, 2.11.0).
             case calendarNoShow
+            case association
         }
 
         let id: String
@@ -526,33 +586,7 @@ final class AppState: ObservableObject {
         }
     }
     
-    private struct PendingSessionEndReport: Codable, Identifiable, Equatable {
-        let id: UUID
-        let deviceId: String
-        let sessionId: String
-        let durationMinutes: Double
-        let createdAt: Date
-        var retryCount: Int
-        var meetingId: UUID?
-        
-        init(
-            id: UUID = UUID(),
-            deviceId: String,
-            sessionId: String,
-            durationMinutes: Double,
-            createdAt: Date = Date(),
-            retryCount: Int = 0,
-            meetingId: UUID? = nil
-        ) {
-            self.id = id
-            self.deviceId = deviceId
-            self.sessionId = sessionId
-            self.durationMinutes = durationMinutes
-            self.createdAt = createdAt
-            self.retryCount = retryCount
-            self.meetingId = meetingId
-        }
-    }
+    private typealias PendingSessionEndReport = ManagedSessionReport
 
     private struct ManagedInsightsRequestPlan {
         let transcriptForRequest: String
@@ -599,6 +633,7 @@ final class AppState: ObservableObject {
     }
 
     private struct PendingMicSegment {
+        let interimRevision: UInt64?
         let segment: DeepgramService.SpeakerSegment
         let deadline: Date
     }
@@ -609,6 +644,7 @@ final class AppState: ObservableObject {
     }
 
     private struct PendingOrderedFinalSegment {
+        let interimRevision: UInt64?
         let segment: DeepgramService.SpeakerSegment
         let timelineOffset: TimeInterval
         let arrivalSequence: UInt64
@@ -659,6 +695,13 @@ final class AppState: ObservableObject {
     @Published var isResumingRecording = false
     @Published var currentMeeting: Meeting?
     @Published var pendingOpenSavedMeetingID: UUID?
+    let meetingFolders = MeetingFolderStore(url: AppState.isRunningUnderXCTest ? nil : URL.applicationSupportDirectory.appendingPathComponent("Miniti/Folders/catalog-v1.json"))
+    @AppStorage("automaticFolderFiling") var automaticFolderFiling = true
+    @AppStorage("automaticFolderCreation") var automaticFolderCreation = true
+    private var folderObservation: AnyCancellable?
+    @Published var folderUndo: [FolderMove] = []
+    @Published var folderFilterID: UUID?
+    @Published var showUnfiledMeetings = false
     @Published var recordingDuration: TimeInterval = 0
     @Published private(set) var recordingErrorMessage: String?
     @Published private(set) var isFinalizingMeeting = false
@@ -685,8 +728,32 @@ final class AppState: ObservableObject {
     var modelContext: ModelContext? {
         didSet {
             if modelContext != nil {
+                #if MINITI_TEST_HOST
+                if let modelContext { AccountUITestHarness.seedFolderHistory(in: modelContext) }
+                #endif
+                if folderObservation == nil {
+                    folderObservation = meetingFolders.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+                    meetingFolders.selectOwner(appMode == .managed ? clientAuthStatus.accountID : nil)
+                }
+                if let modelContext {
+                    let descriptor = MeetingSyncDocument.legacyFolderMigrationDescriptor
+                    if let meetings = try? modelContext.fetch(descriptor), !meetings.isEmpty {
+                        _ = commit(.folder, in: modelContext, mutate: {
+                            for meeting in meetings {
+                                MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+                                MeetingSyncDocument.seedSyncBaselineIfClean(meeting)
+                            }
+                        })
+                    }
+                }
                 configureCloudSyncIfNeeded()
-                if !Self.isRunningUnderXCTest { reconcileWebhookCompletions() }
+                if !Self.isRunningUnderXCTest {
+                    reconcileWebhookCompletions()
+                    Task { @MainActor [weak self] in
+                        await Task.yield()
+                        self?.reconcileAutomaticCompletions()
+                    }
+                }
             }
         }
     }
@@ -982,7 +1049,11 @@ final class AppState: ObservableObject {
     // MARK: - App Mode (persisted)
     /// Raw storage — use `appMode` computed property for type-safe access.
     @AppStorage("appMode") var appModeRaw: String = AppMode.managed.rawValue {
-        didSet { if appModeRaw != AppMode.managed.rawValue { diagnosticsQueue.clear() } }
+        didSet {
+            if appModeRaw != AppMode.managed.rawValue { diagnosticsQueue.clear() }
+            meetingFolders.selectOwner(appModeRaw == AppMode.managed.rawValue ? clientAuthStatus.accountID : nil)
+            folderUndo = []; folderFilterID = nil; showUnfiledMeetings = false
+        }
     }
     @AppStorage("hasCompletedOnboarding") var hasCompletedOnboarding: Bool = false
     @AppStorage("hasAcceptedTerms") private var legacyHasAcceptedTerms: Bool = false
@@ -1072,19 +1143,50 @@ final class AppState: ObservableObject {
     
     // MARK: - Managed Mode State
     @Published var usageInfo: MinitiAPIService.UsageInfo? {
-        didSet { refreshCloudSyncState() }
+        didSet {
+            refreshCloudSyncState()
+            #if os(iOS)
+            if (usageInfo?.minutesRemaining ?? 0) > (oldValue?.minutesRemaining ?? 0), !Self.isRunningUnderXCTest {
+                WatchImportService.shared.kick()
+            }
+            #endif
+        }
     }
     // Device-bound authorization (managed mode). The account is an anonymous recovery key;
     // see Miniti/Services/ClientAuth.swift. Screenshot mode fakes an enrolled state.
     @Published var clientAuthStatus: ClientAuthStatus = ClientAuthManager.shared.status
     /// The manager behind every account action below. Tests inject one wired to a stub so
     /// the real actions (attach, restore, join, sign out) are exercised end to end.
-    var clientAuthManager: ClientAuthManager = ClientAuthManager.shared
+    var clientAuthManager: ClientAuthManager = ClientAuthManager.shared {
+        didSet { enrollmentCoordinator = makeEnrollmentCoordinator() }
+    }
     @Published var isEnrollingManagedDevice = false
     @Published var managedEnrollmentError: String?
     /// Show the "save your recovery key" nudge: enrolled, key never acknowledged, not snoozed this launch.
     /// The Home "Keep access to your account" card (B6a). Decided by `accessCardVisible`.
     @Published private(set) var showAccessCard = false
+    let homeSetupState = HomeSetupState()
+    var homeSetupHidden: Bool {
+        get { homeSetupState.hidden }
+        set { homeSetupState.hidden = newValue }
+    }
+    var homeSetupDismissed: Bool {
+        get { homeSetupState.dismissed }
+        set { homeSetupState.dismissed = newValue }
+    }
+    var homeSetupSkippedSteps: String {
+        get { homeSetupState.skippedSteps }
+        set { homeSetupState.skippedSteps = newValue }
+    }
+    var homeSetupAudioReviewed: Bool {
+        get { homeSetupState.audioReviewed }
+        set { homeSetupState.audioReviewed = newValue }
+    }
+    var homeSetupMicrophonePermission: AVAuthorizationStatus? {
+        get { homeSetupState.microphonePermission }
+        set { homeSetupState.microphonePermission = newValue }
+    }
+    var homeSetupMicrophonePermissionTask: Task<Void, Never>? { homeSetupState.refreshTask }
     /// The account's email as last loaded (B6a). `.loading` until the first answer; a failed
     /// load is `.unavailable`, never "no email".
     @Published var accountEmailState: AccountEmailState = .loading {
@@ -1126,8 +1228,10 @@ final class AppState: ObservableObject {
     var diagnosticEventObserver: ((String, [String: String]) -> Void)?
     /// The enrollment policy lives in `ManagedEnrollmentCoordinator` (ClientAuth.swift); this
     /// object keeps the guards that need the host and the published mirrors it updates.
-    private lazy var enrollmentCoordinator = ManagedEnrollmentCoordinator(
-        manager: ClientAuthManager.shared,
+    private lazy var enrollmentCoordinator = makeEnrollmentCoordinator()
+    private func makeEnrollmentCoordinator() -> ManagedEnrollmentCoordinator {
+        ManagedEnrollmentCoordinator(
+        manager: clientAuthManager,
         hooks: .init(
             deviceIDIsSessionOnly: { DeviceIdentifier.isUsingSessionOnlyID },
             deviceLabel: { Self.managedDeviceLabel },
@@ -1139,6 +1243,7 @@ final class AppState: ObservableObject {
             log: { DebugLogger.shared.log(.app, $0) }
         )
     )
+    }
     @Published var isLoadingUsage = false
     @Published var managedSessionError: String?
     @Published var isDeviceDisabled = false
@@ -1451,9 +1556,27 @@ final class AppState: ObservableObject {
         return "\(rounded)m"
     }
     
+    var recordingUnavailableReason: String? {
+        #if os(macOS)
+        if audioCaptureService?.requiresRestart == true { return AudioHardwareExecutor.Failure.unresponsive.localizedDescription }
+        #endif
+        return nil
+    }
+
+    @discardableResult
+    private func checkCaptureAvailable() -> Bool {
+        guard let message = recordingUnavailableReason else { return true }
+        recordingErrorMessage = message
+        if !isRecording {
+            isStartingMeeting = false; isResumingRecording = false
+            closeUnusedManagedSession()
+        }
+        return false
+    }
+
     /// Whether the app can start recording right now.
     var canStartRecording: Bool {
-        guard !isFinalizingMeeting else { return false }
+        guard recordingUnavailableReason == nil, !accountTransitionInFlight, !managedStartInFlight, !isFinalizingMeeting else { return false }
         switch appMode {
         case .byok:
             return !deepgramApiKey.isEmpty || willTranscribeOnDevice
@@ -1532,7 +1655,21 @@ final class AppState: ObservableObject {
             #endif
         }
     }
-    @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false
+    @AppStorage("googleCalendarEnabled") var googleCalendarEnabled: Bool = false {
+        didSet {
+            guard googleCalendarEnabled != oldValue else { return }
+            if googleCalendarEnabled {
+                startCalendarRefreshTimer()
+                startAutoStartMonitoring()
+                if !Self.isRunningUnderXCTest || AccountUITestHarness.isActive {
+                    Task { await refreshGoogleCalendarStatus() }
+                }
+            } else {
+                stopCalendarRefreshTimer()
+                stopAutoStartMonitoring()
+            }
+        }
+    }
     @AppStorage("autoAttioSync") var autoAttioSync: Bool = false
     @AppStorage("autoTwentySync") var autoTwentySync: Bool = false
     @AppStorage("autoStartFromCalendar") var autoStartFromCalendar: Bool = false {
@@ -1564,6 +1701,8 @@ final class AppState: ObservableObject {
     let onDeviceDiarization: OnDeviceDiarizationService
     enum SessionSpeakerState: String { case inactive, deepgram, onDevice = "on_device", unavailable }
     @Published private(set) var sessionSpeakerState: SessionSpeakerState = .inactive
+    @Published private(set) var speakerRestoration = SpeakerRestoration()
+    private var speakerRestorationDeadlineTask: Task<Void, Never>?
     private var recordingSpeakerTimeline: OnDeviceSpeakerTimeline?
     private var recordingSpeakerSessionID: UUID?
     private var recordingSpeakerTranscribesOnDevice = false
@@ -1571,6 +1710,8 @@ final class AppState: ObservableObject {
     static let unavailableSpeakerName = "Unknown speaker"
     var speakerSeparationIssue: String? {
         guard recordingSpeakerSeparationRequested, sessionSpeakerState == .unavailable, isRecording || isFinalizingMeeting else { return nil }
+        if speakerRestoration.phase == .pending { return "Restoring speaker separation. Recording continues." }
+        if speakerRestoration.phase == .unconfirmed { return "Waiting for speech to confirm speaker separation. Recording continues." }
         return "Speaker separation is unavailable for this recording. Recording continues."
     }
 
@@ -1746,7 +1887,8 @@ final class AppState: ObservableObject {
     /// frontmost. When the app is behind another app (or the surface is disabled), the
     /// same guidance is delivered through Notification Center instead.
     @Published private(set) var recordingNudge: RecordingNudge?
-    private var recordingNudgeDismissTask: Task<Void, Never>?
+    private(set) var recordingNudgeDismissTask: Task<Void, Never>?
+    var recordingNudgeSleep: (TimeInterval) async -> Void = { try? await Task.sleep(for: .seconds($0)) }
     nonisolated static let recordingNudgeDuration: TimeInterval = 10
     #endif
 
@@ -1817,6 +1959,7 @@ final class AppState: ObservableObject {
     }
     
     @Published var isGoogleCalendarConnected: Bool = false
+    @Published var hasResolvedCalendarConnection = false
     @Published var googleCalendarEmail: String?
     @Published var upcomingEvents: [MinitiAPIService.CalendarEvent] = []
     /// Every non-cancelled event from the last calendar fetch, before the meeting
@@ -1840,8 +1983,9 @@ final class AppState: ObservableObject {
         let isAllDay: Bool
         let skipReason: MinitiAPIService.CalendarMeetingSkipReason?
     }
+    private var associatingCalendarMetadata = false
     @Published var selectedCalendarEvent: MinitiAPIService.CalendarEvent? {
-        didSet { applyLateCalendarCloudExclusion() }
+        didSet { if !associatingCalendarMetadata { applyLateCalendarCloudExclusion() } }
     }
 
     /// Storage rules are local to this installation and independent of calendar visibility.
@@ -1885,6 +2029,10 @@ final class AppState: ObservableObject {
     private var autoStartNoShowPromptedEventIDs: Set<String> = []
     @Published var calendarEventEndedWhileRecording: Bool = false
     @Published private(set) var smartMeetingPrompt: SmartMeetingPrompt?
+    private(set) var smartMeetingPromptToken = UUID().uuidString
+    private var smartMeetingPromptRecordingID: UUID?
+    private var pendingAssociationApp: ActiveCallApplication?
+    private var pendingAssociationEvent: MinitiAPIService.CalendarEvent?
     private var calendarRefreshTimer: Timer?
     private var autoStartCheckTimer: Timer?
     /// Bounded retry for a launch-time (or wake-time) calendar status check that could not
@@ -1908,7 +2056,6 @@ final class AppState: ObservableObject {
     var testOpenURLHandler: ((URL) -> Bool)?
     /// Test seam for reminder "not now" routing.
     var testingDismissedAutoStartEventIDs: Set<String> { dismissedAutoStartEventIDs }
-    private var smartMeetingCountdownTimer: Timer?
     private var smartMeetingSnoozedUntilByEventID: [String: Date] = [:]
     private var smartMeetingSuppressedUntil: Date?
     private var smartQuietEpisodePrompted = false
@@ -1987,7 +2134,15 @@ final class AppState: ObservableObject {
     private var desiredAudioRecoveryState: AudioRecoveryState = .healthy
     private var systemAudioInactiveSince: CFAbsoluteTime = 0
     private let pendingSessionReportsDefaultsKey = "pendingSessionEndReports"
-    private var pendingSessionEndReports: [PendingSessionEndReport] = []
+    lazy var managedSessionJournal = ManagedSessionJournal(
+        fileURL: Self.isRunningUnderXCTest ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Miniti/Usage/managed-v2.json"),
+        legacyData: UserDefaults.standard.data(forKey: pendingSessionReportsDefaultsKey))
+    private var managedGrantTask: Task<Bool, Never>?
+    private var managedGrantTaskID: UUID?
+    @Published private var managedStartInFlight = false
+    var managedRecordingID: UUID?
+    private var managedStartMayHaveV2Root = false
+    private var managedGrantEpoch = UUID()
     private let pendingClientEventsDefaultsKey = "pendingClientEvents"
     private let recordingUsageQueue = RecordingUsageQueue(fileURL: AppState.isRunningUnderXCTest ? nil : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("Miniti/Usage/recording-v1.json"))
     private var recordingUsageRetryTask: Task<Void, Never>?
@@ -2020,7 +2175,6 @@ final class AppState: ObservableObject {
     private var recordingRecoveryEvidence = RecordingRecoveryEvidence()
     private var recordingDiagnosticAttempt: RecordingDiagnosticAttempt?
     private let diagnosticsSessionId = UUID().uuidString
-    private var isFlushingPendingSessionReports = false
     private var recordingStartDate: Date?
     /// The published duration advances on a UI timer. Ordering reconnect epochs from the wall
     /// clock avoids up to one second of overlap between the old and new Deepgram timelines.
@@ -2361,7 +2515,11 @@ final class AppState: ObservableObject {
         }
         setupServices()
         updateLogRedaction()
-        pendingSessionEndReports = loadPendingSessionEndReports()
+        Task {
+            if await managedSessionJournal.persist() {
+                UserDefaults.standard.removeObject(forKey: pendingSessionReportsDefaultsKey)
+            }
+        }
         if !shareDiagnostics || appMode != .managed { diagnosticsQueue.clear() }
         // The auth manager read the credential before this object existed; whatever it could
         // not read is waiting in its buffer and arrives now (enrollment-identity-plan A1).
@@ -2382,6 +2540,7 @@ final class AppState: ObservableObject {
         // refresh usage, check for updates, poll the calendar, or flush queued events against
         // production. Tests that need a network path inject a stubbed service explicitly.
         if Self.isRunningUnderXCTest {
+            AccountUITestHarness.configure(self)
             return
         }
         
@@ -2431,6 +2590,7 @@ final class AppState: ObservableObject {
         deepgramService = DeepgramService()
         registerDeliverySenders()
         #if os(macOS)
+        audioCaptureService?.onHardwareFailure = { [weak self] in self?.handleCaptureHardwareFailure() }
         audioCaptureService?.preferredInputDeviceUID = preferredInputDeviceUID
         audioCaptureService?.$inputDevices.receive(on: DispatchQueue.main)
             .sink { [weak self] in self?.availableInputDevices = $0 }.store(in: &cancellables)
@@ -2577,6 +2737,13 @@ final class AppState: ObservableObject {
         #endif
     }
 
+    private var liveInterimSource: TranscriptSource?
+
+    private func interimRevision(for segments: [DeepgramService.SpeakerSegment]) -> UInt64? {
+        guard !interimText.isEmpty, segments.contains(where: { liveInterimSource == nil || $0.source == liveInterimSource }) else { return nil }
+        return transcriptRuntime.snapshot.revision
+    }
+
     private func handleTranscriptUpdate(_ update: DeepgramService.TranscriptUpdate) {
         if update.speakerSeparationUnavailable, update.speakerTimelineID == recordingSpeakerTimeline?.id {
             for id in Set(update.words.map(\.speaker)) where !liveSpeakerOverrides.contains(String(id)) {
@@ -2591,12 +2758,10 @@ final class AppState: ObservableObject {
         noteSmartMeetingActivity(source: .transcript)
         
         if update.isFinal {
-            // Final result - will be handled by speaker segments for better accuracy
-            transcriptRuntime.update(
-                interimText: "",
-                currentSpeaker: currentSpeaker,
-                interimSpeaker: nil
-            )
+            // Speaker reconciliation owns the handoff. In dual-source capture it can
+            // take 350 ms (longer for ambiguous mic echo); keep the visible words
+            // until that owner commits or explicitly suppresses their final.
+            return
         } else {
             #if os(macOS)
             if captureMicrophone,
@@ -2630,6 +2795,7 @@ final class AppState: ObservableObject {
             let presentedCurrentSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
             let presentedInterimSpeaker = canUseCandidateSpeaker ? candidateSpeaker : currentSpeaker
             let interim = transcriptCorrector?.apply(to: update.text) ?? update.text
+            liveInterimSource = update.source
             transcriptRuntime.update(
                 interimText: interim,
                 currentSpeaker: presentedCurrentSpeaker,
@@ -2660,6 +2826,13 @@ final class AppState: ObservableObject {
                !recordingRecoveryEvidence.accepts(connection: deepgramService?.diagnosticConnectionGeneration ?? 0) {
                 return
             }
+            if let service = deepgramService, service.usesProviderDiarization {
+                speakerRestoration.connected(service.diagnosticConnectionGeneration, now: ProcessInfo.processInfo.systemUptime)
+                if speakerRestoration.phase != .pending { speakerRestorationDeadlineTask?.cancel() }
+                if service.lastProviderSpeakerEvidenceGeneration == service.diagnosticConnectionGeneration {
+                    service.onProviderSpeakerEvidence?(service.diagnosticConnectionGeneration)
+                }
+            }
             deepgramReconnectTask?.cancel()
             deepgramReconnectTask = nil
             deepgramReconnectGeneration += 1
@@ -2689,7 +2862,7 @@ final class AppState: ObservableObject {
         guard deepgramReconnectTask == nil else { return }
         guard let deepgramService else { return }
         let now = CFAbsoluteTimeGetCurrent()
-        if now - lastDeepgramReconnectScheduledAt < 1.0 {
+        if reason != "speaker restoration", now - lastDeepgramReconnectScheduledAt < 1.0 {
             DebugLogger.shared.log(.app, "Deepgram reconnect suppressed (cooldown): \(reason)")
             return
         }
@@ -2729,6 +2902,10 @@ final class AppState: ObservableObject {
                 guard self.isRecording else { return }
                 guard generation == self.deepgramReconnectGeneration else { return }
                 
+                if self.speakerRestoration.phase == .pending,
+                   !self.speakerRestoration.attempt(now: ProcessInfo.processInfo.systemUptime) {
+                    self.speakerRestoration.cancel()
+                }
                 DebugLogger.shared.log(.app, "Deepgram reconnect attempt \(idx + 1)/\(backoffSeconds.count)")
                 self.enqueueDiagnosticEvent(
                     "deepgram_reconnect_attempt",
@@ -2739,15 +2916,10 @@ final class AppState: ObservableObject {
                     ]
                 )
                 self.reportRecordingRecovery("recording_restart_planned", extra: ["recovery_reason": reasonCode, "attempt": String(idx + 1), "max_attempts": String(backoffSeconds.count)])
-                deepgramService.disconnect()
-                #if os(macOS)
-                if self.captureMicrophone && self.captureSystemAudio {
-                    self.resetEchoReconciliation(flushPending: true)
-                    self.audioCaptureService?.resetSourceTracking()
-                    self.resetSpeakerIdentityForDeepgramReconnect()
-                    DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
+                if self.speakerRestoration.phase == .pending, deepgramService.connectionState == .connecting {
+                    _ = await deepgramService.waitForConnectionAttempt()
+                    guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
                 }
-                #endif
                 #if os(macOS)
                 let useMultichannel = self.captureMicrophone && self.captureSystemAudio
                 let monoSource: TranscriptSource = self.captureMicrophone ? .microphone : .system
@@ -2765,6 +2937,15 @@ final class AppState: ObservableObject {
                 } else {
                     self.onDeviceTranscription.noteSessionEnded()
                 }
+                #if os(macOS)
+                if self.captureMicrophone && self.captureSystemAudio {
+                    self.resetEchoReconciliation(flushPending: true)
+                    self.audioCaptureService?.resetSourceTracking()
+                    self.resetSpeakerIdentityForDeepgramReconnect()
+                    DebugLogger.shared.log(.app, "Source tracking reset for Deepgram reconnect")
+                }
+                #endif
+                deepgramService.disconnect()
                 // A new Deepgram socket resets word timestamps to zero. Anchor that new clock at
                 // the active meeting duration so post-reconnect segments remain chronological.
                 self.deepgramTimelineOffset = self.preciseCurrentRecordingDuration
@@ -2772,12 +2953,22 @@ final class AppState: ObservableObject {
                     multichannel: useMultichannel,
                     monoSource: monoSource,
                     preserveSpeakerIdentities: true,
-                    onDeviceSpeakerTimeline: self.recordingSpeakerTimeline
+                    onDeviceSpeakerTimeline: self.speakerRestoration.phase == .idle ? self.recordingSpeakerTimeline : nil
                 )
-                
+
                 let connected = await deepgramService.waitForConnectionAttempt()
                 guard !Task.isCancelled, self.isRecording, generation == self.deepgramReconnectGeneration else { return }
                 if connected {
+                    if self.speakerRestoration.phase == .pending {
+                        // A live socket without provider labels is still live audio.
+                        if !deepgramService.usesProviderDiarization { self.speakerRestoration.cancel() }
+                        self.speakerRestoration.connected(deepgramService.diagnosticConnectionGeneration, now: ProcessInfo.processInfo.systemUptime)
+                        if self.speakerRestoration.phase != .pending { self.speakerRestorationDeadlineTask?.cancel() }
+                        else { self.speakerRestoration.cancel() }
+                        if deepgramService.lastProviderSpeakerEvidenceGeneration == deepgramService.diagnosticConnectionGeneration {
+                            deepgramService.onProviderSpeakerEvidence?(deepgramService.diagnosticConnectionGeneration)
+                        }
+                    }
                     DebugLogger.shared.log(.app, "Deepgram reconnect succeeded")
                     self.enqueueDiagnosticEvent("deepgram_reconnect_succeeded", category: .deepgram)
                     self.lastDeepgramReconnectScheduledAt = 0
@@ -2939,7 +3130,7 @@ final class AppState: ObservableObject {
             // Speech resumed after the call ended: treat like the quiet ask. If quiet
             // returns, the fallback prompt machinery re-raises the question later.
             clearSmartMeetingPrompt()
-        case .callStart, .callTransition, .calendarNoShow:
+        case .callStart, .callTransition, .calendarNoShow, .association:
             // Driven by another app's lifecycle, not by our audio activity.
             break
         }
@@ -2951,15 +3142,19 @@ final class AppState: ObservableObject {
         clearRecordingNudge()
         #endif
         clearSmartMeetingNotification()
+        smartMeetingPromptToken = UUID().uuidString
+        smartMeetingPromptRecordingID = currentMeeting?.id
         smartMeetingPrompt = prompt
         sendSmartMeetingNotificationIfNeeded(prompt)
     }
 
     func clearSmartMeetingPrompt() {
-        smartMeetingCountdownTimer?.invalidate()
-        smartMeetingCountdownTimer = nil
-        smartMeetingPrompt = nil
         clearSmartMeetingNotification()
+        smartMeetingPrompt = nil
+        smartMeetingPromptToken = UUID().uuidString
+        smartMeetingPromptRecordingID = nil
+        pendingAssociationApp = nil
+        pendingAssociationEvent = nil
     }
 
     func keepRecordingFromSmartMeetingPrompt() {
@@ -2986,6 +3181,7 @@ final class AppState: ObservableObject {
     }
 
     func endMeetingFromSmartPrompt() {
+        guard smartMeetingPrompt != nil, smartMeetingPromptRecordingID == currentMeeting?.id else { return }
         clearSmartMeetingPrompt()
         finishCurrentMeeting(then: .returnHome)
     }
@@ -3060,16 +3256,17 @@ final class AppState: ObservableObject {
         if previous == nil || !snapshot.hasSameCalls(as: previous!) {
             // Known-app display names only — bounded by the directory, never raw bundle IDs.
             let names = snapshot.activeCalls.map(\.displayName).joined(separator: ", ")
-            DebugLogger.shared.log(.app, "call_activity_changed [\(names)]")
+            DebugLogger.shared.log(.app, "call_activity_changed [\(names)] health=\(snapshot.health.rawValue)")
         }
         guard smartMeetingsEnabled else { return }
+        guard snapshot.isFresh(at: Date()) else { return }
 
         let nowAbsolute = CFAbsoluteTimeGetCurrent()
         let transcriptGap = lastTranscriptReceivedAt > 0
             ? nowAbsolute - lastTranscriptReceivedAt
             : .infinity
         let context = CallLifecycleContext(
-            isRecording: isRecording,
+            isRecording: isRecording || isStartingMeeting || isResumingRecording || currentMeeting != nil,
             smartMeetingsEnabled: smartMeetingsEnabled,
             hasMeaningfulContent: !liveSegments.isEmpty,
             recordingDuration: recordingDuration,
@@ -3089,7 +3286,8 @@ final class AppState: ObservableObject {
     private func handleCallLifecycleEvent(_ event: CallLifecycleEvent) {
         switch event {
         case .offerStartPrompt(let app):
-            guard currentMeeting == nil, !isRecording, !requiresForceUpdate, hasAcceptedTerms,
+            guard recordingUnavailableReason == nil else { return }
+            guard currentMeeting == nil, !isRecording, !isStartingMeeting, !isResumingRecording, !requiresForceUpdate, hasAcceptedTerms,
                   pendingAutoStartEvent == nil else {
                 // Not showable right now (stopped session open, terms gate, calendar start
                 // pending…). Un-mark it so the same call is offered once the gate clears.
@@ -3139,6 +3337,13 @@ final class AppState: ObservableObject {
             let inferred = callLifecycleEngine.associationSource == .adoptedInferred
             DebugLogger.shared.log(.app, inferred ? "inferred_call_adopted (\(app.displayName))" : "expected_call_adopted (\(app.displayName))")
             refreshEnvironmentContextEvidence()
+
+        case .offerAssociation(let app):
+            guard isRecording, smartMeetingPrompt == nil else { return }
+            presentSmartMeetingPrompt(.init(id: "associate-call-" + UUID().uuidString, kind: .association,
+                title: "Use this call for the current meeting?",
+                message: "Call activity appeared in \(app.displayName). Your recording is continuing.", eventID: nil, countdown: nil))
+            pendingAssociationApp = app
 
         case .offerTransition(let app):
             guard isRecording, endingGrace == nil, smartMeetingPrompt == nil else { return }
@@ -3203,7 +3408,7 @@ final class AppState: ObservableObject {
                 id: "call-end-\(app.bundleID)",
                 kind: .callEnd,
                 title: app.confidence == .browser
-                    ? "Browser call ended"
+                    ? "Browser call activity changed"
                     : "\(app.displayName) call ended",
                 message: "Has this meeting finished?",
                 eventID: nil,
@@ -3358,6 +3563,7 @@ final class AppState: ObservableObject {
     }
 
     private static let endingGraceNotificationIdentifier = "miniti.smart-meeting.call-grace"
+    private var currentGraceNotificationIdentifier: String?
 
     private func sendEndingGraceNotificationIfNeeded(app: ActiveCallApplication) {
         guard MacNotificationRoutingPolicy.shouldMirrorToSystem(
@@ -3370,33 +3576,34 @@ final class AppState: ObservableObject {
         let body = "Finishing in \(Int(Self.endingGraceDuration))s. Keep recording to continue."
         // Hoisted out of the @Sendable closure: these are main-actor-isolated statics.
         let category = Self.smartMeetingNotificationCategory + ".call-grace"
-        let identifier = Self.endingGraceNotificationIdentifier
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized
-                    || settings.authorizationStatus == .provisional else { return }
+        guard let grace = endingGrace, let recordingID = currentMeeting?.id.uuidString else { return }
+        let token = String(grace.deadline.timeIntervalSince1970)
+        let identifier = Self.endingGraceNotificationIdentifier + "." + recordingID + "." + token
+        currentGraceNotificationIdentifier = identifier
+        Task { @MainActor [weak self] in
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard let self, self.currentMeeting?.id.uuidString == recordingID, self.endingGrace?.deadline == grace.deadline,
+                  settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
             let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = body
-            content.sound = .default
+            content.title = title; content.body = body; content.sound = .default
             content.categoryIdentifier = category
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(
-                    identifier: identifier,
-                    content: content,
-                    trigger: nil
-                )
-            ) { error in
-                if let error {
-                    DebugLogger.shared.log(.app, "Ending grace notification failed: \(error.localizedDescription)")
-                }
+            content.userInfo = ["promptToken": token, "recordingID": recordingID]
+            do { try await center.add(.init(identifier: identifier, content: content, trigger: nil)) }
+            catch { DebugLogger.shared.log(.app, "Ending grace notification could not be delivered") }
+            if self.currentMeeting?.id.uuidString != recordingID || self.endingGrace?.deadline != grace.deadline {
+                center.removePendingNotificationRequests(withIdentifiers: [identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [identifier])
             }
         }
     }
 
     private func clearEndingGraceNotification() {
         let center = UNUserNotificationCenter.current()
-        center.removePendingNotificationRequests(withIdentifiers: [Self.endingGraceNotificationIdentifier])
-        center.removeDeliveredNotifications(withIdentifiers: [Self.endingGraceNotificationIdentifier])
+        guard let identifier = currentGraceNotificationIdentifier else { return }
+        currentGraceNotificationIdentifier = nil
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
     #endif
@@ -3524,29 +3731,6 @@ final class AppState: ObservableObject {
             threshold = min(threshold, smartMeetingCalendarEndedQuietThreshold)
         }
         return transcriptGap >= threshold && audioGap >= threshold
-    }
-
-    nonisolated static func canAutomaticallyHandoffCalendarMeeting(
-        currentEventEnd: Date?,
-        nextEventStart: Date?,
-        now: Date,
-        transcriptGap: TimeInterval,
-        audioGap: TimeInterval,
-        autoStartEnabled: Bool,
-        calendarAutoStopEnabled: Bool,
-        eventsOverlap: Bool
-    ) -> Bool {
-        guard autoStartEnabled,
-              calendarAutoStopEnabled,
-              !eventsOverlap,
-              let currentEventEnd,
-              let nextEventStart,
-              currentEventEnd <= now,
-              nextEventStart >= currentEventEnd,
-              nextEventStart.timeIntervalSince(currentEventEnd) <= 15 * 60,
-              transcriptGap >= 2 * 60,
-              audioGap >= 2 * 60 else { return false }
-        return true
     }
 
     enum TranscriptHealthAction: Equatable {
@@ -3882,7 +4066,7 @@ final class AppState: ObservableObject {
         }
         #endif
 
-        commitFinalSpeakerSegments(finalSegments)
+        commitFinalSpeakerSegments(finalSegments, clearingInterimThrough: interimRevision(for: finalSegments))
     }
 
     #if os(macOS)
@@ -3906,12 +4090,13 @@ final class AppState: ObservableObject {
             pruneSystemEchoHistory(now: now)
             suppressPendingMicEchoes()
             releasePendingMicSegmentsCoveredBySystem()
-            enqueueOrderedFinalSegments(systemSegments)
+            enqueueOrderedFinalSegments(systemSegments, interimRevision: interimRevision(for: systemSegments))
         }
 
         var immediateMic: [DeepgramService.SpeakerSegment] = []
         for segment in micSegments {
             if isLikelyEcho(segment) {
+                transcriptRuntime.clearInterim(through: interimRevision(for: [segment]))
                 DebugLogger.shared.log(
                     .deepgram,
                     "Suppressed mic playback echo: words=\(Self.echoTokens(segment.text).count), start=\(String(format: "%.2f", segment.startTime))"
@@ -3926,6 +4111,7 @@ final class AppState: ObservableObject {
             case .system, .unknown, .none:
                 pendingMicSegments.append(
                     PendingMicSegment(
+                        interimRevision: interimRevision(for: [segment]),
                         segment: segment,
                         deadline: Date().addingTimeInterval(micEchoReconciliationDelay)
                     )
@@ -3934,12 +4120,12 @@ final class AppState: ObservableObject {
         }
 
         if !immediateMic.isEmpty {
-            enqueueOrderedFinalSegments(immediateMic)
+            enqueueOrderedFinalSegments(immediateMic, interimRevision: interimRevision(for: immediateMic))
         }
         if !unclassified.isEmpty {
             // Defensive fallback for malformed multichannel results. Never drop
             // transcript content merely because Deepgram omitted channel_index.
-            enqueueOrderedFinalSegments(unclassified)
+            enqueueOrderedFinalSegments(unclassified, interimRevision: interimRevision(for: unclassified))
         }
         schedulePendingMicFlush()
     }
@@ -3977,6 +4163,7 @@ final class AppState: ObservableObject {
 
         for pending in pendingMicSegments {
             if isLikelyEcho(pending.segment) {
+                transcriptRuntime.clearInterim(through: pending.interimRevision)
                 DebugLogger.shared.log(
                     .deepgram,
                     "Suppressed delayed mic playback echo: words=\(Self.echoTokens(pending.segment.text).count), start=\(String(format: "%.2f", pending.segment.startTime))"
@@ -4006,13 +4193,16 @@ final class AppState: ObservableObject {
 
         let coveredIDs = Set(covered.map(\.segment.id))
         pendingMicSegments.removeAll { coveredIDs.contains($0.segment.id) }
-        enqueueOrderedFinalSegments(covered.map(\.segment))
+        for pending in covered {
+            enqueueOrderedFinalSegments([pending.segment], interimRevision: pending.interimRevision)
+        }
     }
 
     /// Keep the common dual-channel case append-only by allowing nearby mic/system final callbacks
     /// to rendezvous briefly on Deepgram's precise stream clock. Interim text remains immediate.
     private func enqueueOrderedFinalSegments(
         _ segments: [DeepgramService.SpeakerSegment],
+        interimRevision: UInt64?,
         now: Date = Date()
     ) {
         guard !segments.isEmpty else { return }
@@ -4020,6 +4210,7 @@ final class AppState: ObservableObject {
             nextOrderedFinalArrivalSequence &+= 1
             pendingOrderedFinalSegments.append(
                 PendingOrderedFinalSegment(
+                    interimRevision: interimRevision,
                     segment: segment,
                     timelineOffset: deepgramTimelineOffset,
                     arrivalSequence: nextOrderedFinalArrivalSequence,
@@ -4078,16 +4269,19 @@ final class AppState: ObservableObject {
         // applying a new socket's offset to an older segment.
         var batch: [DeepgramService.SpeakerSegment] = []
         var batchOffset: TimeInterval?
+        var batchInterimRevision: UInt64?
         for item in ordered {
             if let batchOffset, batchOffset != item.timelineOffset {
-                commitFinalSpeakerSegments(batch, timelineOffset: batchOffset)
+                commitFinalSpeakerSegments(batch, timelineOffset: batchOffset, clearingInterimThrough: batchInterimRevision)
                 batch.removeAll(keepingCapacity: true)
+                batchInterimRevision = nil
             }
+            if let revision = item.interimRevision { batchInterimRevision = max(batchInterimRevision ?? revision, revision) }
             batchOffset = item.timelineOffset
             batch.append(item.segment)
         }
         if let batchOffset, !batch.isEmpty {
-            commitFinalSpeakerSegments(batch, timelineOffset: batchOffset)
+            commitFinalSpeakerSegments(batch, timelineOffset: batchOffset, clearingInterimThrough: batchInterimRevision)
         }
     }
 
@@ -4107,10 +4301,10 @@ final class AppState: ObservableObject {
 
     private func flushExpiredPendingMicSegments(now: Date = Date()) {
         suppressPendingMicEchoes()
-        let due = pendingMicSegments.filter { $0.deadline <= now }.map(\.segment)
+        let due = pendingMicSegments.filter { $0.deadline <= now }
         pendingMicSegments.removeAll { $0.deadline <= now }
-        if !due.isEmpty {
-            enqueueOrderedFinalSegments(due, now: now)
+        for pending in due {
+            enqueueOrderedFinalSegments([pending.segment], interimRevision: pending.interimRevision, now: now)
         }
         pruneSystemEchoHistory(now: now)
         schedulePendingMicFlush()
@@ -4120,10 +4314,10 @@ final class AppState: ObservableObject {
         pendingMicFlushTask?.cancel()
         pendingMicFlushTask = nil
         suppressPendingMicEchoes()
-        let remaining = pendingMicSegments.map(\.segment)
+        let remaining = pendingMicSegments
         pendingMicSegments.removeAll()
-        if !remaining.isEmpty {
-            enqueueOrderedFinalSegments(remaining)
+        for pending in remaining {
+            enqueueOrderedFinalSegments([pending.segment], interimRevision: pending.interimRevision)
         }
     }
 
@@ -4147,7 +4341,8 @@ final class AppState: ObservableObject {
 
     private func commitFinalSpeakerSegments(
         _ finalSegments: [DeepgramService.SpeakerSegment],
-        timelineOffset: TimeInterval? = nil
+        timelineOffset: TimeInterval? = nil,
+        clearingInterimThrough interimRevision: UInt64?
     ) {
         guard !finalSegments.isEmpty else { return }
         
@@ -4201,7 +4396,7 @@ final class AppState: ObservableObject {
                 }
                 recordEnvironmentEvidence(for: segment)
                 evaluateSalesDetection(for: text)
-                evaluateJevSalesDetection(finalCount: updated.filter(\.isFinal).count)
+                evaluateJevSalesDetection(finalCount: updated.count)
             }
             switch mergeResult {
             case .appended:
@@ -4228,11 +4423,7 @@ final class AppState: ObservableObject {
         
         // Single atomic mutation — one @Published change instead of N
         liveSegments = updated
-        transcriptRuntime.update(
-            interimText: "",
-            currentSpeaker: currentSpeaker,
-            interimSpeaker: nil
-        )
+        transcriptRuntime.clearInterim(through: interimRevision)
         
         // Push final segment to Live Activity (throttled)
         #if os(iOS)
@@ -5661,7 +5852,7 @@ final class AppState: ObservableObject {
     /// the setting. Called at launch, when the setting changes, and when the language changes.
     /// Never touches an active session.
     func refreshOnDeviceTranscriptionAvailability() {
-        guard !ScreenshotMode.isActive else { return }
+        guard !AccountUITestHarness.isActive, !ScreenshotMode.isActive else { return }
         if onDeviceTranscriptionEnabled, OnDeviceTranscriptionSupport.tier(forCode: meetingLanguage) != .cloudOnly {
             onDeviceTranscription.prepare(languageCode: meetingLanguage)
         } else if !onDeviceTranscriptionEnabled {
@@ -5776,6 +5967,9 @@ final class AppState: ObservableObject {
     /// nil (Deepgram diarizes) when the setting is off or the models are not ready.
     func beginOnDeviceDiarizationSession(multichannel: Bool, monoSource: TranscriptSource, transcribesOnDevice: Bool) -> OnDeviceSpeakerTimeline? {
         let sources: Set<TranscriptSource> = multichannel ? [.microphone, .system] : [monoSource]
+        speakerRestorationDeadlineTask?.cancel()
+        speakerRestoration = SpeakerRestoration()
+        deepgramService?.requiresProviderSpeakerLabels = false
         recordingSpeakerTranscribesOnDevice = transcribesOnDevice
         recordingSpeakerSeparationRequested = onDeviceSpeakerSeparationEnabled
         var timeline: OnDeviceSpeakerTimeline?
@@ -5803,6 +5997,27 @@ final class AppState: ObservableObject {
         sessionSpeakerState = .unavailable
         livePrintSuggestions = [:]
         reportSpeakerState(failure: reason.rawValue)
+        #if os(macOS)
+        guard isRecording, !recordingSpeakerTranscribesOnDevice,
+              speakerRestoration.begin(now: ProcessInfo.processInfo.systemUptime) else { return }
+        deepgramService?.requiresProviderSpeakerLabels = true
+        deepgramService?.onProviderSpeakerEvidence = { [weak self] generation in
+            guard let self, self.isRecording,
+                  self.speakerRestoration.observe(generation) else { return }
+            self.sessionSpeakerState = .deepgram
+            self.reportSpeakerState(failure: nil)
+        }
+        speakerRestorationDeadlineTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: .seconds(45)) } catch { return }
+            guard let self, self.recordingSpeakerSessionID == id, self.isRecording,
+                  self.speakerRestoration.phase == .pending else { return }
+            // The sleep deadline has elapsed even if systemUptime paused during Mac sleep.
+            self.speakerRestoration.cancel()
+            // Speaker recovery has a deadline; transport recovery retains its owner
+            // and continues normally if the connection is still down.
+        }
+        if deepgramReconnectTask == nil { scheduleDeepgramReconnect(reason: "speaker restoration") }
+        #endif
     }
 
     private func reportSpeakerState(failure: String?) {
@@ -6759,8 +6974,9 @@ final class AppState: ObservableObject {
     private func startNewMeeting(calendarEvent: MinitiAPIService.CalendarEvent?) -> Bool {
         DebugLogger.shared.log(.app, "startNewMeeting (mode=\(appMode.rawValue))")
         updateLogRedaction()
+        guard checkCaptureAvailable() else { return false }
 
-        guard !isFinalizingMeeting else { return false }
+        guard !accountTransitionInFlight, !managedStartInFlight, !isFinalizingMeeting, !isRecording, !isStartingMeeting, !isResumingRecording else { return false }
         recordingErrorMessage = nil
         finalizationStatusText = ""
         shouldOpenMeetingAfterFinalization = false
@@ -6778,12 +6994,24 @@ final class AppState: ObservableObject {
                 return false
             }
         case .managed:
-            guard !isLimitReached else {
+            guard !isLimitReached else { return false }
+            if !privateModeEnabled && !willTranscribeOnDevice,
+               clientAuthManager.accessChoiceRequired || clientAuthManager.unreadableCredentialMessage != nil {
+                refreshClientAuthStatus()
+                jumpToSetting("account")
+                showSettings = true
                 return false
             }
         }
         
+        clearSmartMeetingPrompt()
+        cancelAutoStartCountdown()
+        pendingReminderJoinEventID = nil
+        #if os(macOS)
+        startPromptApp = nil
+        #endif
         isStartingMeeting = true
+        rescheduleMeetingReminders()
         wasAutoStopped = false
         autoStopReason = nil
         calendarEventEndedWhileRecording = false
@@ -6923,6 +7151,17 @@ final class AppState: ObservableObject {
     /// Start taking notes for a calendar event, then open its Meet/Zoom/Teams link once.
     /// Starting is synchronous state setup; the browser takes focus afterward.
     func joinAndStartMeeting(from event: MinitiAPIService.CalendarEvent) {
+        if let meeting = currentMeeting, isRecording || isStartingMeeting || isResumingRecording {
+            guard meeting.calendarEventId == nil || meeting.calendarEventId == event.id else { return }
+            if meeting.calendarEventId == nil {
+                presentSmartMeetingPrompt(.init(id: "associate-calendar-" + UUID().uuidString, kind: .association,
+                    title: "Is this the meeting you are recording?", message: event.title,
+                    eventID: event.id, countdown: nil))
+                pendingAssociationEvent = event
+            } else { clearSmartMeetingPrompt() }
+            _ = openMeetingLink(for: event)
+            return
+        }
         guard startMeetingFromEvent(event) else {
             // Terms, key, limit, or finalization refused the start. Opening the call
             // anyway would leave the user in a meeting miniti is not recording, and
@@ -7021,28 +7260,7 @@ final class AppState: ObservableObject {
         // Save current meeting if there's content
         saveCurrentMeetingIfNeeded()
 
-        // Auto-export markdown (reads live in-memory state before clearCurrentSession)
-        #if os(macOS)
-        if autoExportMarkdown, let meeting = currentMeeting {
-            // Ensure training metrics are computed for the export
-            if trainingMetrics == nil {
-                let segments = liveSegments.map {
-                    TrainingMetrics.Segment(text: $0.text, speaker: $0.speaker, isFinal: $0.isFinal, timestamp: $0.timestamp)
-                }
-                trainingMetrics = TrainingMetrics.compute(from: segments, duration: recordingDuration, language: meetingLanguage, names: liveSpeakerNames, selfIDs: liveSpeakerLabelSelfIDs)
-            }
-            let markdown = fullMeetingAsMarkdown()
-            exportMeetingAsMarkdownFile(markdown: markdown, meeting: meeting)
-        }
-        #endif
-
-        // Completion webhooks belong to the durable final-processing run, never navigation.
-
-        // Auto-sync to configured CRMs using calendar attendee domains.
-        if let meeting = currentMeeting, !meeting.attendees.isEmpty {
-            autoSyncToAttio(meeting: meeting)
-            autoSyncToTwenty(meeting: meeting)
-        }
+        // Completion owns configured exports. Navigation never sends a second copy.
 
         // Clear session and return to home
         clearCurrentSession()
@@ -7051,6 +7269,72 @@ final class AppState: ObservableObject {
         insightsMode = .standard
         rememberedSpecialistMode = nil
         selectedCalendarEvent = nil
+    }
+
+    /// Called after final processing settles, including provider failures and private mode.
+    /// The saved result stays in place so review, selection and Resume are uninterrupted.
+    var automaticCompletionOwner: String {
+        appMode == .byok ? "byok" : "managed:" + (clientAuthManager.status.accountID ?? "unenrolled")
+    }
+
+    func reconcileAutomaticCompletions() {
+        guard let modelContext else { return }
+        let query = FetchDescriptor<Meeting>(predicate: #Predicate { $0.automaticCompletionID != nil })
+        guard let meetings = try? modelContext.fetch(query) else { return }
+        for meeting in meetings where !finalizingInsightMeetingIDs.contains(meeting.id) {
+            completeSavedMeetingExports(meeting)
+        }
+    }
+
+    #if os(macOS)
+    var automaticMarkdownRenderer: (Meeting) -> String = { $0.fullMeetingAsMarkdown() }
+    #endif
+
+    func completeSavedMeetingExports(_ meeting: Meeting) {
+        guard meeting.automaticCompletionSuspended != true,
+              let end = meeting.endTime, let completionID = meeting.automaticCompletionID,
+              meeting.automaticCompletionOwner == automaticCompletionOwner,
+              !isMeetingDeleted(meeting.id), meeting.modelContext != nil,
+              !(currentMeeting?.id == meeting.id && (isRecording || isResumingRecording || isStartingMeeting)) else { return }
+        let attioID = FolderMatcher.automaticID(title: "attio", owner: completionID.uuidString)
+        let twentyID = FolderMatcher.automaticID(title: "twenty", owner: completionID.uuidString)
+        #if os(macOS)
+        if autoExportMarkdown, meeting.automaticCompletionMarkdownRequested == true {
+            let markdownFingerprint = MeetingSyncDocument.markdownFingerprint(of: meeting)
+            if meeting.automaticCompletionMarkdownExportedAt != end || meeting.automaticCompletionMarkdownFingerprint != markdownFingerprint,
+               exportMeetingAsMarkdownFile(markdown: automaticMarkdownRenderer(meeting), meeting: meeting) {
+                let previous = (meeting.automaticCompletionMarkdownExportedAt, meeting.automaticCompletionMarkdownFingerprint)
+                _ = commit(.webhookCompletion, mutate: {
+                    meeting.automaticCompletionMarkdownExportedAt = end
+                    meeting.automaticCompletionMarkdownFingerprint = markdownFingerprint
+                }, revert: {
+                    meeting.automaticCompletionMarkdownExportedAt = previous.0
+                    meeting.automaticCompletionMarkdownFingerprint = previous.1
+                })
+            }
+        }
+        #endif
+        if meeting.automaticCompletionExportedAt != nil {
+            // Recovery after acknowledgement but before release. Missing rows were delivered.
+            _ = deliveryOutbox.releaseCRM(id: attioID); _ = deliveryOutbox.releaseCRM(id: twentyID)
+            return
+        }
+        var saved = true
+        if !Self.externalAttendeeDomains(of: meeting).isEmpty {
+            if autoAttioSync { saved = deliveryOutbox.stageCRM(.attio, meetingID: meeting.id, id: attioID) && saved }
+            if autoTwentySync { saved = deliveryOutbox.stageCRM(.twenty, meetingID: meeting.id, id: twentyID) && saved }
+        }
+        guard saved else { return }
+        let previous = meeting.automaticCompletionExportedAt
+        guard commit(.webhookCompletion, mutate: { meeting.automaticCompletionExportedAt = end },
+                     revert: { meeting.automaticCompletionExportedAt = previous }) else {
+            persistenceRetryAction = { [weak self, weak meeting] in
+                guard let self, let meeting else { return }
+                self.completeSavedMeetingExports(meeting)
+            }
+            return
+        }
+        _ = deliveryOutbox.releaseCRM(id: attioID); _ = deliveryOutbox.releaseCRM(id: twentyID)
     }
 
     /// Save the current meeting (stopping first if needed) and request the UI open it from history.
@@ -7101,6 +7385,7 @@ final class AppState: ObservableObject {
                     updateAudioRecoveryState()
                 }
             } catch {
+                guard isRecording else { return }
                 recordingErrorMessage = "Audio could not restart. Check microphone permissions and your selected audio devices, then try again."
                 applyAudioRecoveryState(.degraded)
                 DebugLogger.shared.log(.app, "Manual recording repair FAILED: \(error.localizedDescription)")
@@ -7108,12 +7393,35 @@ final class AppState: ObservableObject {
         }
     }
 
+    #if os(macOS)
+    func handleCaptureHardwareFailure() {
+        let wasRecording = isRecording
+        cancelAutoStartCountdown()
+        clearSmartMeetingPrompt()
+        startPromptApp = nil
+        recordingDiagnosticAttempt?.failed = true
+        enqueueDiagnosticEvent("microphone_capture_failed", category: .audio, level: .error,
+                               details: ["error_domain": "capture_hardware_timeout"])
+        if wasRecording { stopRecording() }
+        else { isStartingMeeting = false; isResumingRecording = false }
+        recordingErrorMessage = (wasRecording ? "Recording stopped. " : "") + AudioHardwareExecutor.Failure.unresponsive.localizedDescription
+    }
+    #endif
+
     func dismissRecordingError() {
         recordingErrorMessage = nil
     }
     
     /// Discard current meeting without saving — deletes from SwiftData and clears session
     func discardCurrentMeeting() {
+        managedGrantEpoch = UUID()
+        managedGrantTask?.cancel()
+        if isRecording { stopRecording() }
+        // An explicitly discarded attempt is not a retry of the next meeting.
+        managedRecordingID = nil
+        managedStartMayHaveV2Root = false
+        isStartingMeeting = false
+        isResumingRecording = false
         if let eventId = selectedCalendarEvent?.id {
             dismissedAutoStartEventIDs.insert(eventId)
         }
@@ -7801,7 +8109,7 @@ final class AppState: ObservableObject {
         #endif
         
         // Report orphaned managed session usage to backend
-        if appMode == .managed, let sessionId = interrupted.managedSessionId, !sessionId.isEmpty {
+        if appMode == .managed, let sessionId = interrupted.managedSessionId, !sessionId.isEmpty, !ManagedSessionReport.isV2SessionID(sessionId) {
             let deviceId = DeviceIdentifier.getOrCreateDeviceId()
             let durationMinutes = recordingDuration / 60.0
             Task {
@@ -7815,6 +8123,11 @@ final class AppState: ObservableObject {
             }
         }
         
+        interrupted.endTime = Self.estimatedLastActivity(interrupted, now: now)
+        interrupted.automaticCompletionSuspended = true
+        // Recover the draft locally. Resume/Discard has not completed a recording.
+        // Existing completion markers are reconciled separately; do not create one here.
+        if commit(.staleMeetingFinalize) { automaticallyFileMeeting(interrupted) }
         DebugLogger.shared.log(.app, "Interrupted session restored: segments=\(liveSegments.count), duration=\(formattedDuration)")
     }
 
@@ -7842,8 +8155,9 @@ final class AppState: ObservableObject {
         for meeting in meetings {
             let endTime = Self.estimatedLastActivity(meeting, now: now)
             meeting.endTime = endTime
+            meeting.automaticCompletionSuspended = true
 
-            if appMode == .managed, let sessionId = meeting.managedSessionId, !sessionId.isEmpty {
+            if appMode == .managed, let sessionId = meeting.managedSessionId, !sessionId.isEmpty, !ManagedSessionReport.isV2SessionID(sessionId) {
                 pendingReports.append(
                     PendingSessionEndReport(
                         deviceId: DeviceIdentifier.getOrCreateDeviceId(),
@@ -7861,6 +8175,7 @@ final class AppState: ObservableObject {
             DebugLogger.shared.log(.app, "Stale interrupted meetings NOT finalized: count=\(meetings.count)", level: .warning)
             return
         }
+        for meeting in meetings { automaticallyFileMeeting(meeting) }
         DebugLogger.shared.log(.app, "Finalized stale interrupted meetings: count=\(meetings.count)")
 
         for report in pendingReports {
@@ -8449,6 +8764,9 @@ final class AppState: ObservableObject {
     }
     
     func startRecording() {
+        guard checkCaptureAvailable() else { return }
+        guard !accountTransitionInFlight, currentMeeting != nil, !isRecording else { return }
+        guard !managedStartInFlight || hasFreshManagedDeepgramCredential || willTranscribeOnDevice else { return }
         guard let audioCaptureService, let deepgramService else { return }
 
         guard !isFinalizingMeeting else {
@@ -8483,6 +8801,7 @@ final class AppState: ObservableObject {
             return
         }
         sessionTranscribesOnDevice = willTranscribeOnDevice
+        if sessionTranscribesOnDevice { closeUnusedManagedSession() }
         recordingDiagnosticAttempt?.route = sessionTranscribesOnDevice ? "local" : appMode.rawValue
         
         // In managed mode, if the JWT is missing/expired (e.g. resuming after stop),
@@ -8579,6 +8898,11 @@ final class AppState: ObservableObject {
 
         // Configure audio capture
         audioCaptureService.onAudioBuffer = makeAudioBufferHandler(multichannel: useMultichannel, monoSource: monoSource)
+        #if os(macOS)
+        audioCaptureService.onHardwareFailure = { [weak self] in
+            self?.handleCaptureHardwareFailure()
+        }
+        #endif
         
         // Start capturing
         let startingMeetingID = currentMeeting?.id
@@ -8596,7 +8920,10 @@ final class AppState: ObservableObject {
                     microphone: captureMicrophone,
                     systemAudio: captureSystemAudio
                 )
-                if currentMeeting?.id == startingMeetingID, isRecording, audioCaptureService.isCapturing { recordingDiagnosticAttempt?.started = true }
+                if currentMeeting?.id == startingMeetingID, isRecording, audioCaptureService.isCapturing {
+                    recordingDiagnosticAttempt?.started = true
+                    managedSessionJournal.captureBegan()
+                }
                 if currentMeeting?.id == startingMeetingID, isRecording,
                    sessionTranscribesOnDevice, let owner = recordingUsageOwner, !Self.isRunningUnderXCTest {
                     recordingUsageQueue.begin(owner: owner)
@@ -8609,6 +8936,11 @@ final class AppState: ObservableObject {
                 DebugLogger.shared.log(.app, "Audio capture FAILED in startRecording: \(error.localizedDescription)")
                 recordingDiagnosticAttempt?.failed = true
                 recordingErrorMessage = "Recording could not start. Check microphone and system-audio permissions, then try again."
+                #if os(macOS)
+                if error is AudioHardwareExecutor.Failure {
+                    recordingErrorMessage = AudioHardwareExecutor.Failure.unresponsive.localizedDescription
+                }
+                #endif
                 stopRecording()
             }
         }
@@ -8621,6 +8953,7 @@ final class AppState: ObservableObject {
             Task { @MainActor in
                 guard let self, self.isRecording else { return }
                 self.recordingDuration = Date().timeIntervalSince(startDate)
+                self.managedSessionJournal.observe()
                 self.recordingUsageQueue.observe(owner: self.recordingUsageOwner)
                 if Int(self.recordingDuration) % 15 == 0,
                    self.sessionTranscribesOnDevice || !self.recordingUsageQueue.pending.isEmpty {
@@ -8650,21 +8983,24 @@ final class AppState: ObservableObject {
     }
     
     /// Managed mode: request a Deepgram JWT from backend, then start recording.
-    private func startManagedRecording() async {
+    func startManagedRecording() async {
+        guard checkCaptureAvailable() else { return }
+        guard !accountTransitionInFlight, !managedStartInFlight, let meetingID = currentMeeting?.id else { return }
+        let startEpoch = managedGrantEpoch
+        let stillCurrent = { self.currentMeeting?.id == meetingID && self.managedGrantEpoch == startEpoch && !Task.isCancelled }
+        managedStartInFlight = true
+        defer {
+            managedStartInFlight = false
+            if !isRecording || sessionTranscribesOnDevice { closeUnusedManagedSession() }
+        }
+        if !isRecording { closeUnusedManagedSession() }
         guard hasAcceptedTerms else {
             isStartingMeeting = false
             isResumingRecording = false
             return
         }
         beginRecordingDiagnostics()
-        guard await ensureManagedEnrollment(trigger: "start") else {
-            finishRecordingDiagnostics(failed: true)
-            recordingErrorMessage = managedEnrollmentError
-                ?? "Miniti could not set up this device for managed mode. Check your connection and try again."
-            isStartingMeeting = false
-            isResumingRecording = false
-            return
-        }
+
 
         if onDeviceTranscriptionBlocksStart {
             DebugLogger.shared.log(.app, "startManagedRecording refused: on-device transcription model not ready and cloud fallback off")
@@ -8681,22 +9017,53 @@ final class AppState: ObservableObject {
             recordingErrorMessage = nil
             managedSessionStartRecordedDuration = nil
             await flushPendingSessionEndReports(trigger: "session started")
+            guard stillCurrent() else { return }
             startRecording()
             return
         }
 
+        let enrolled = await ensureManagedEnrollment(trigger: "start")
+        guard stillCurrent() else { return }
+        guard enrolled else {
+            finishRecordingDiagnostics(failed: true)
+            recordingErrorMessage = managedEnrollmentError
+                ?? (needsManagedAccessChoice ? "Choose how to sign in from Settings, Account before recording." : "miniti could not set up this device. Try again from Settings, Account.")
+            isStartingMeeting = false
+            isResumingRecording = false
+            return
+        }
+
+        guard stillCurrent(), checkCaptureAvailable() else { return }
+        if managedRecordingID == nil { managedRecordingID = UUID() }
         let obtained = await refreshManagedDeepgramCredential(trigger: "start")
-        guard obtained else { finishRecordingDiagnostics(failed: true); return }
+        guard stillCurrent() else { return }
+        guard obtained else {
+            isStartingMeeting = false
+            isResumingRecording = false
+            finishRecordingDiagnostics(failed: true)
+            return
+        }
 
         recordingErrorMessage = nil
         
         managedSessionStartRecordedDuration = accumulatedRecordedDuration
         await flushPendingSessionEndReports(trigger: "session started")
         
-        // Now start recording with the managed JWT
+        // A discarded or replaced meeting must never capture under the late grant.
+        guard stillCurrent() else { return }
         startRecording()
     }
     
+    func closeUnusedManagedSession() {
+        let confirmedSession = managedSessionJournal.active != nil
+        _ = managedSessionJournal.finish(meetingID: nil, includeUnobservedTime: false)
+        clearManagedDeepgramCredential()
+        currentSessionId = nil
+        // A lost start response may have created a server root. Retry that same ID.
+        if confirmedSession || !managedStartMayHaveV2Root { managedRecordingID = nil }
+        if confirmedSession { managedStartMayHaveV2Root = false }
+    }
+
     /// Stores managed session fields from `/api/session`.
     private func applyManagedSession(_ session: MinitiAPIService.SessionResponse) {
         currentSessionId = session.sessionId
@@ -8744,7 +9111,23 @@ final class AppState: ObservableObject {
     
     /// Always requests a new managed session JWT from the backend.
     @discardableResult
-    private func refreshManagedDeepgramCredential(trigger: String) async -> Bool {
+    func refreshManagedDeepgramCredential(trigger: String) async -> Bool {
+        if trigger == "start", managedRecordingID == nil { managedRecordingID = UUID() }
+        if let managedGrantTask { return await managedGrantTask.value }
+        let epoch = managedGrantEpoch
+        let taskID = UUID()
+        let task = Task { await performManagedDeepgramCredentialRefresh(trigger: trigger, epoch: epoch) }
+        managedGrantTask = task
+        managedGrantTaskID = taskID
+        let result = await task.value
+        if managedGrantTaskID == taskID {
+            managedGrantTask = nil
+            managedGrantTaskID = nil
+        }
+        return result
+    }
+
+    private func performManagedDeepgramCredentialRefresh(trigger: String, epoch: UUID) async -> Bool {
         // Screenshot scenes are seeded and offline; never surface a session error there.
         guard !ScreenshotMode.isActive else { return true }
         guard appMode == .managed else { return true }
@@ -8758,8 +9141,49 @@ final class AppState: ObservableObject {
         
         let deviceId = DeviceIdentifier.getOrCreateDeviceId()
         
+        let requestGeneration = clientAuthManager.credentialGeneration
+        let hadAmbiguousStart = managedStartMayHaveV2Root
         do {
-            let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: "nova-3")
+            guard let account = clientAuthManager.status.accountID else { return false }
+            let generation = clientAuthManager.credentialGeneration
+            if managedSessionJournal.active?.accountID != nil,
+               managedSessionJournal.active?.accountID != account { closeUnusedManagedSession() }
+            let existing = managedSessionJournal.active
+            guard trigger == "start" || existing != nil else { return false }
+            let requestedRecording = existing?.accountingVersion == 1 ? nil : (existing?.recordingID ?? managedRecordingID)
+            if existing == nil { managedStartMayHaveV2Root = true }
+            let session = try await minitiAPIService.requestSession(deviceId: deviceId, model: "nova-3",
+                recordingID: requestedRecording,
+                renewalSessionID: existing?.accountingVersion == 2 ? existing?.sessionId : nil,
+                expectedOwner: (account, generation))
+            guard epoch == managedGrantEpoch, !Task.isCancelled,
+                  clientAuthManager.status.accountID == account,
+                  clientAuthManager.credentialGeneration == generation else { return false }
+            let version = session.accountingVersion ?? 1
+            guard version == 1 || version == 2,
+                  (version == 2) == ManagedSessionReport.isV2SessionID(session.sessionId),
+                  version != 2 || session.sessionStartedAt != nil else {
+                throw ManagedSessionJournal.DeliveryError.incompatibleSession
+            }
+            if existing != nil {
+                try managedSessionJournal.renew(sessionID: session.sessionId, version: version)
+            } else {
+                try await managedSessionJournal.begin(.init(deviceId: deviceId, sessionId: session.sessionId,
+                    durationMinutes: 0, accountID: account, recordingID: version == 2 ? requestedRecording : nil,
+                    accountingVersion: version, durationMS: 0))
+                guard epoch == managedGrantEpoch, !Task.isCancelled,
+                      clientAuthManager.credentialGeneration == generation else {
+                    if managedSessionJournal.active?.sessionId == session.sessionId {
+                        _ = managedSessionJournal.finish(meetingID: nil)
+                        _ = await managedSessionJournal.persist()
+                    }
+                    return false
+                }
+            }
+            managedStartMayHaveV2Root = false
+            if existing == nil, shareDiagnostics, !privateModeEnabled {
+                enqueueDiagnosticEvent("managed_accounting_selected", category: .app, details: ["accounting_version": String(version)])
+            }
             applyManagedSession(session)
             DebugLogger.shared.log(
                 .app,
@@ -8767,10 +9191,21 @@ final class AppState: ObservableObject {
             )
             return true
         } catch let error as MinitiAPIService.ServiceError {
+            guard epoch == managedGrantEpoch, !Task.isCancelled,
+                  clientAuthManager.credentialGeneration == requestGeneration else { return false }
             if trigger == "start" {
                 managedSessionStartRecordedDuration = nil
                 isStartingMeeting = false
                 isResumingRecording = false
+            }
+            // A rejected request did not allocate a root. Preserve ambiguity from an
+            // earlier lost response, but do not invent it for quota or auth failures.
+            if !hadAmbiguousStart {
+                switch error {
+                case .limitReached, .deviceDisabled, .rateLimited, .notEnrolled, .authRevoked:
+                    managedStartMayHaveV2Root = false
+                default: break
+                }
             }
             switch error {
             case .limitReached(_, _):
@@ -8794,10 +9229,16 @@ final class AppState: ObservableObject {
             recordingErrorMessage = managedSessionError
             return false
         } catch {
+            guard epoch == managedGrantEpoch, !Task.isCancelled,
+                  clientAuthManager.credentialGeneration == requestGeneration else { return false }
             if trigger == "start" {
                 managedSessionStartRecordedDuration = nil
                 isStartingMeeting = false
                 isResumingRecording = false
+            }
+            if !hadAmbiguousStart, let urlError = error as? URLError,
+               [.notConnectedToInternet, .cannotFindHost, .dnsLookupFailed, .cannotConnectToHost].contains(urlError.code) {
+                managedStartMayHaveV2Root = false
             }
             managedSessionError = "Failed to connect: \(error.localizedDescription)"
             recordingErrorMessage = "Miniti could not start transcription. Check your connection and try again."
@@ -8873,7 +9314,6 @@ final class AppState: ObservableObject {
         updateLiveActivityState(isRecording: false)
         #endif
         
-        audioCaptureService?.stopCapture()
         let stoppedOnDevice = sessionTranscribesOnDevice
         sessionTranscribesOnDevice = false
         if stoppedOnDevice {
@@ -8884,29 +9324,35 @@ final class AppState: ObservableObject {
         // Report usage to backend in managed mode. A local session opened no managed session;
         // a session id still pending from an earlier cloud meeting must not be re-reported
         // with this meeting's duration.
-        if appMode == .managed, !stoppedOnDevice, let sessionId = currentSessionId {
-            let deviceId = DeviceIdentifier.getOrCreateDeviceId()
-            let sessionStart = managedSessionStartRecordedDuration ?? 0
-            let sessionDuration = max(0, recordingDuration - sessionStart)
-            let durationMinutes = sessionDuration / 60.0
-            let meetingId = currentMeeting?.id
-            let report = PendingSessionEndReport(
-                deviceId: deviceId,
-                sessionId: sessionId,
-                durationMinutes: durationMinutes,
-                meetingId: meetingId
-            )
-            Task {
-                await reportManagedSessionEnd(report, trigger: "stop recording")
-            }
-            clearManagedDeepgramCredential()
-            managedSessionStartRecordedDuration = nil
+        managedRecordingID = nil
+        managedStartMayHaveV2Root = false
+        speakerRestorationDeadlineTask?.cancel()
+        speakerRestoration.cancel()
+        deepgramService?.onProviderSpeakerEvidence = nil
+        managedGrantEpoch = UUID()
+        managedGrantTask?.cancel()
+        managedGrantTask = nil
+        if let report = managedSessionJournal.finish(meetingID: stoppedOnDevice ? nil : currentMeeting?.id) {
+            Task { await reportManagedSessionEnd(report, trigger: "stop recording") }
         }
+        // Capture is logically stopped immediately; Mac hardware teardown is queued off-main.
+        // Freeze the accounting checkpoint before touching any platform cleanup.
+        audioCaptureService?.stopCapture()
+        clearManagedDeepgramCredential()
+        managedSessionStartRecordedDuration = nil
 
         // Gracefully close Deepgram (wait for final transcripts) then generate insights
         if let meeting = currentMeeting {
             let meetingIDAtStop = meeting.id
             meeting.endTime = Date()
+            meeting.automaticCompletionSuspended = false
+            #if os(macOS)
+            meeting.automaticCompletionMarkdownRequested = autoExportMarkdown
+            #endif
+            if meeting.automaticCompletionID == nil {
+                meeting.automaticCompletionID = UUID()
+                meeting.automaticCompletionOwner = automaticCompletionOwner
+            }
 
             var hasContent = !liveSegments.isEmpty ||
                 !stoppedInterimText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -9283,6 +9729,13 @@ final class AppState: ObservableObject {
             let valid = savedAIRequestIsCurrent(request, meeting: meeting)
             finishSavedAIRequest(request)
             settleMeetingCompletion(meeting, id: completionID, outcomes: outcomes, interrupted: !valid)
+            // Edited speaker names can invalidate AI without invalidating a saved
+            // recording's completion. Delivery uses current saved data and its owner.
+            if meeting.automaticCompletionOwner == automaticCompletionOwner,
+               !isMeetingDeleted(meeting.id), meeting.modelContext != nil {
+                automaticallyFileMeeting(meeting)
+                completeSavedMeetingExports(meeting)
+            }
         }
         guard !privateModeEnabled, aiContentPermitted else {
             outcomes = Dictionary(uniqueKeysWithValues: requestedModes.map { ($0, .skipped) })
@@ -9579,11 +10032,7 @@ final class AppState: ObservableObject {
         guard isFinalInsightsRequestStillCurrent(), aiContentPermitted else { return }
         guard commit(.finalInsights) else { return }
 
-        #if os(macOS)
-        if autoExportMarkdown {
-            exportMeetingAsMarkdownFile(markdown: meeting.fullMeetingAsMarkdown(), meeting: meeting)
-        }
-        #endif
+
 
 
     }
@@ -10166,142 +10615,68 @@ final class AppState: ObservableObject {
 
     // MARK: - Managed Session End Durability
     
-    private func reportManagedSessionEnd(_ report: PendingSessionEndReport, trigger: String) async {
-        guard appMode == .managed else { return }
-        guard let minitiAPIService else {
-            enqueuePendingSessionEndReport(report, reason: "\(trigger): service unavailable")
-            return
-        }
-        
-        do {
-            let result = try await minitiAPIService.endSession(
-                deviceId: report.deviceId,
-                sessionId: report.sessionId,
-                durationMinutes: report.durationMinutes
-            )
-            DebugLogger.shared.log(
-                .app,
-                "Managed session end reported (\(trigger)): id=\(report.sessionId), used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m"
-            )
-            clearManagedSessionReference(sessionId: report.sessionId, meetingId: report.meetingId)
-            await refreshUsage()
-            await flushPendingSessionEndReports(trigger: "post-success")
-        } catch {
-            DebugLogger.shared.log(.app, "Managed session end report FAILED (\(trigger)): \(error.localizedDescription)")
-            enqueuePendingSessionEndReport(report, reason: "\(trigger): request failed")
-        }
-    }
-    
-    private func enqueuePendingSessionEndReport(_ report: PendingSessionEndReport, reason: String) {
-        if let existingIndex = pendingSessionEndReports.firstIndex(
-            where: { $0.sessionId == report.sessionId && $0.deviceId == report.deviceId }
-        ) {
-            var existing = pendingSessionEndReports[existingIndex]
-            existing.retryCount = max(existing.retryCount + 1, report.retryCount + 1)
-            existing.meetingId = existing.meetingId ?? report.meetingId
-            pendingSessionEndReports[existingIndex] = existing
-        } else {
-            var queued = report
-            queued.retryCount += 1
-            pendingSessionEndReports.append(queued)
-        }
-        persistPendingSessionEndReports()
+    @discardableResult
+    private func reportManagedSessionEnd(_ report: PendingSessionEndReport, trigger: String) async -> Bool {
+        // Persist before clearing the meeting reference. Replays use the captured owner,
+        // never whichever account happens to be signed in when the network returns.
+        guard await managedSessionJournal.enqueue(report) else { return false }
         clearManagedSessionReference(sessionId: report.sessionId, meetingId: report.meetingId)
-        DebugLogger.shared.log(
-            .app,
-            "Queued pending managed session end: id=\(report.sessionId), reason=\(reason), pending=\(pendingSessionEndReports.count)"
-        )
+        await flushPendingSessionEndReports(trigger: trigger)
+        return true
     }
-    
-    private func flushPendingSessionEndReports(trigger: String) async {
-        guard appMode == .managed else { return }
-        guard !isFlushingPendingSessionReports else { return }
-        guard !pendingSessionEndReports.isEmpty else { return }
+
+    private var managedReportRetryTask: Task<Void, Never>?
+
+    private func flushPendingSessionEndReports(trigger: String, ignoringBackoff: Bool = false) async {
+        // These are already-recorded managed minutes, even if the person has since chosen BYOK.
         guard let minitiAPIService else { return }
-        
-        isFlushingPendingSessionReports = true
-        defer { isFlushingPendingSessionReports = false }
-        
-        DebugLogger.shared.log(
-            .app,
-            "Flushing pending managed session reports (\(trigger)): count=\(pendingSessionEndReports.count)"
-        )
-        
-        var nextPending: [PendingSessionEndReport] = []
         var hadSuccess = false
-        
-        for report in pendingSessionEndReports {
-            var attemptReport = report
-            do {
-                let result = try await minitiAPIService.endSession(
-                    deviceId: attemptReport.deviceId,
-                    sessionId: attemptReport.sessionId,
-                    durationMinutes: attemptReport.durationMinutes
-                )
-                hadSuccess = true
-                DebugLogger.shared.log(
-                    .app,
-                    "Flushed pending session end: id=\(attemptReport.sessionId), used=\(result.minutesUsed)m, remaining=\(result.minutesRemaining)m"
-                )
-                clearManagedSessionReference(sessionId: attemptReport.sessionId, meetingId: attemptReport.meetingId)
-            } catch {
-                attemptReport.retryCount += 1
-                nextPending.append(attemptReport)
-                DebugLogger.shared.log(
-                    .app,
-                    "Pending session end flush FAILED: id=\(attemptReport.sessionId), retries=\(attemptReport.retryCount), error=\(error.localizedDescription)"
-                )
+        await managedSessionJournal.flush(ignoringBackoff: ignoringBackoff, currentAccount: { [weak self] in
+            guard let self else { return nil }
+            return self.clientAuthManager.status.accountID
+        }, send: { report in
+            guard let account = report.accountID,
+                  self.clientAuthManager.status.accountID == account else {
+                throw ManagedSessionJournal.DeliveryError.terminal
+            }
+            let generation = self.clientAuthManager.credentialGeneration
+            _ = try await minitiAPIService.endSession(deviceId: report.deviceId, sessionId: report.sessionId,
+                durationMinutes: report.durationMinutes, recordingID: report.accountingVersion == 2 ? report.recordingID : nil,
+                durationMS: report.durationMS, expectedOwner: (account, generation))
+            hadSuccess = true
+            self.clearManagedSessionReference(sessionId: report.sessionId, meetingId: report.meetingId)
+        })
+        if hadSuccess { await refreshUsage() }
+        managedReportRetryTask?.cancel()
+        managedReportRetryTask = nil
+        if !Self.isRunningUnderXCTest, clientAuthManager.status.accountID != nil,
+           let next = managedSessionJournal.pending.filter({ $0.accountID == clientAuthManager.status.accountID }).compactMap(\.nextAttemptAt).min() {
+            managedReportRetryTask = Task { @MainActor [weak self] in
+                do { try await Task.sleep(for: .seconds(max(5, next.timeIntervalSinceNow))) } catch { return }
+                await self?.flushPendingSessionEndReports(trigger: "scheduled retry")
             }
         }
-        
-        pendingSessionEndReports = nextPending
-        persistPendingSessionEndReports()
-        
-        if hadSuccess {
-            await refreshUsage()
-        }
     }
-    
+
     private func clearManagedSessionReference(sessionId: String, meetingId: UUID?) {
         if currentSessionId == sessionId {
             currentSessionId = nil
         }
         
-        if currentMeeting?.managedSessionId == sessionId || currentMeeting?.id == meetingId {
+        if currentMeeting?.managedSessionId == sessionId {
             currentMeeting?.managedSessionId = nil
         }
         
         guard let modelContext else { return }
         guard let meetings = fetchMeetings(.sessionReference, in: modelContext) else { return }
         if let targetID = meetingId,
-           let target = meetings.first(where: { $0.id == targetID }) {
+           let target = meetings.first(where: { $0.id == targetID && $0.managedSessionId == sessionId }) {
             commit(.sessionReference, in: modelContext, mutate: { target.managedSessionId = nil })
             return
         }
         
         if let fallback = meetings.first(where: { $0.managedSessionId == sessionId }) {
             commit(.sessionReference, in: modelContext, mutate: { fallback.managedSessionId = nil })
-        }
-    }
-    
-    private func loadPendingSessionEndReports() -> [PendingSessionEndReport] {
-        guard let data = UserDefaults.standard.data(forKey: pendingSessionReportsDefaultsKey) else {
-            return []
-        }
-        do {
-            return try JSONDecoder().decode([PendingSessionEndReport].self, from: data)
-        } catch {
-            DebugLogger.shared.log(.app, "Failed to decode pending session-end reports: \(error.localizedDescription)")
-            return []
-        }
-    }
-    
-    private func persistPendingSessionEndReports() {
-        do {
-            let data = try JSONEncoder().encode(pendingSessionEndReports)
-            UserDefaults.standard.set(data, forKey: pendingSessionReportsDefaultsKey)
-        } catch {
-            DebugLogger.shared.log(.app, "Failed to persist pending session-end reports: \(error.localizedDescription)")
         }
     }
     
@@ -10418,6 +10793,7 @@ final class AppState: ObservableObject {
         case .connected:
             cancelCalendarStatusRetry()
             let status = try? result.get()
+            hasResolvedCalendarConnection = true
             isGoogleCalendarConnected = true
             googleCalendarEmail = status?.email
             await fetchUpcomingEvents()
@@ -10669,15 +11045,19 @@ final class AppState: ObservableObject {
         callDetectionAvailable: Bool,
         callActive: Bool,
         noShowAlreadyPrompted: Bool,
-        now: Date
+        now: Date,
+        eventEnd: Date? = nil,
+        requiresCallEvidence: Bool = true
     ) -> AutoStartDecision {
         let secsUntilStart = eventStart.timeIntervalSince(now)
-        if hasConferenceLink && callDetectionAvailable {
+        guard now < (eventEnd ?? eventStart.addingTimeInterval(4 * 3600)) else { return .none }
+        if hasConferenceLink && requiresCallEvidence {
             if secsUntilStart > autoStartCallEarlyWindow { return .none }
-            if secsUntilStart >= -autoStartCallLateWindow {
-                return callActive ? .startNow : .waitForCall
+            if callDetectionAvailable && callActive { return .startNow }
+            if !callDetectionAvailable || secsUntilStart < -autoStartCallLateWindow {
+                return noShowAlreadyPrompted ? .waitForCall : .noShowPrompt
             }
-            return noShowAlreadyPrompted ? .none : .noShowPrompt
+            return .waitForCall
         }
         if secsUntilStart > 0 && secsUntilStart <= autoStartCountdownLead {
             return .countdown(seconds: max(1, Int(ceil(secsUntilStart))))
@@ -10692,7 +11072,7 @@ final class AppState: ObservableObject {
     /// reliable. Anything else means "no information", so the clock stays the trigger.
     private var autoStartCallDetectionAvailable: Bool {
         #if os(macOS)
-        return smartMeetingsEnabled && (latestCallSnapshot?.isReliable ?? false)
+        return smartMeetingsEnabled && ((latestCallSnapshot?.isReliable ?? false) || (latestCallSnapshot?.hasPositiveCallEvidence ?? false)) && (latestCallSnapshot?.isFresh(at: Date()) ?? false)
         #else
         return false
         #endif
@@ -10700,22 +11080,44 @@ final class AppState: ObservableObject {
 
     private var autoStartCallActive: Bool {
         #if os(macOS)
-        guard let snapshot = latestCallSnapshot, snapshot.isReliable else { return false }
-        return !snapshot.activeCalls.isEmpty
+        guard let snapshot = latestCallSnapshot, snapshot.isFresh(at: Date()) else { return false }
+        return snapshot.hasPositiveCallEvidence
         #else
         return false
         #endif
     }
 
-    private func checkAutoStart() {
+    private var autoStartRequiresCallEvidence: Bool {
+        #if os(macOS)
+        smartMeetingsEnabled
+        #else
+        false
+        #endif
+    }
+
+    private var canAutomaticallyStartMeeting: Bool {
+        recordingUnavailableReason == nil && !isRecording && !isStartingMeeting && !isResumingRecording && !isFinalizingMeeting &&
+        persistenceIssue == nil && (currentMeeting == nil || currentMeeting?.endTime != nil)
+    }
+
+    func checkAutoStart() {
+        guard recordingUnavailableReason == nil else { cancelAutoStartCountdown(); return }
         guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
-        if currentMeeting != nil {
-            if smartMeetingsEnabled {
+        if !canAutomaticallyStartMeeting {
+            if isRecording && smartMeetingsEnabled {
                 checkSmartCalendarTransition()
             }
             return
         }
         let now = Date()
+        // Only one currently eligible calendar event can be inferred from app-level audio.
+        let eligible = upcomingEvents.filter { event in
+            guard event.id != currentMeeting?.calendarEventId,
+                  !event.isAllDay, event.status.lowercased() != "cancelled",
+                  !dismissedAutoStartEventIDs.contains(event.id), let start = event.startDate,
+                  let end = event.endDate else { return false }
+            return start.addingTimeInterval(-Self.autoStartCallEarlyWindow) <= now && now < end
+        }
         // A no-show ask expires with its event.
         if let prompt = smartMeetingPrompt, prompt.kind == .calendarNoShow,
            let event = upcomingEvents.first(where: { $0.id == prompt.eventID }),
@@ -10726,14 +11128,15 @@ final class AppState: ObservableObject {
 
         // While waiting for a call, keep re-evaluating that one event.
         if let waiting = pendingAutoStartEvent, autoStartIsWaitingForCall {
-            guard let start = waiting.startDate else { cancelAutoStartCountdown(); return }
+            guard let waiting = eligible.first(where: { $0.id == waiting.id }),
+                  let start = waiting.startDate else { cancelAutoStartCountdown(); clearSmartMeetingPrompt(); return }
             switch Self.autoStartDecision(
                 eventStart: start,
                 hasConferenceLink: waiting.joinURL != nil,
                 callDetectionAvailable: autoStartCallDetectionAvailable,
-                callActive: autoStartCallActive,
+                callActive: autoStartCallActive && eligible.count == 1,
                 noShowAlreadyPrompted: autoStartNoShowPromptedEventIDs.contains(waiting.id),
-                now: now
+                now: now, eventEnd: waiting.endDate, requiresCallEvidence: autoStartRequiresCallEvidence
             ) {
             case .startNow:
                 DebugLogger.shared.log(.app, "Auto-start: call connected for \(waiting.title), starting")
@@ -10752,17 +11155,18 @@ final class AppState: ObservableObject {
         guard pendingAutoStartEvent == nil else { return }
 
         for event in upcomingEvents {
-            guard let start = event.startDate else { continue }
-            guard event.status.lowercased() != "cancelled" else { continue }
+            guard event.id != currentMeeting?.calendarEventId,
+                  let start = event.startDate else { continue }
+            guard !event.isAllDay, event.status.lowercased() != "cancelled", let end = event.endDate, end > now else { continue }
             guard !dismissedAutoStartEventIDs.contains(event.id) else { continue }
 
             let decision = Self.autoStartDecision(
                 eventStart: start,
                 hasConferenceLink: event.joinURL != nil,
                 callDetectionAvailable: autoStartCallDetectionAvailable,
-                callActive: autoStartCallActive,
+                callActive: autoStartCallActive && eligible.count == 1,
                 noShowAlreadyPrompted: autoStartNoShowPromptedEventIDs.contains(event.id),
-                now: now
+                now: now, eventEnd: event.endDate, requiresCallEvidence: autoStartRequiresCallEvidence
             )
             switch decision {
             case .none:
@@ -10790,14 +11194,16 @@ final class AppState: ObservableObject {
 
     private func presentAutoStartNoShowPrompt(for event: MinitiAPIService.CalendarEvent) {
         autoStartNoShowPromptedEventIDs.insert(event.id)
-        cancelAutoStartCountdown()
+        pendingAutoStartEvent = event
+        autoStartIsWaitingForCall = true
+        autoStartCountdown = 0
         DebugLogger.shared.log(.app, "Auto-start: no call for \(event.title) within \(Int(Self.autoStartCallLateWindow / 60)) min, asking")
         presentSmartMeetingPrompt(
             SmartMeetingPrompt(
                 id: "calendar-no-show-\(event.id)",
                 kind: .calendarNoShow,
-                title: "\(event.title) hasn't started",
-                message: "Nobody has joined the call. Record anyway?",
+                title: "Call not detected",
+                message: "miniti could not detect your call. Record anyway?",
                 eventID: event.id,
                 countdown: nil
             )
@@ -10806,9 +11212,11 @@ final class AppState: ObservableObject {
 
     /// Record from the no-show ask.
     func recordFromNoShowPrompt() {
-        guard let prompt = smartMeetingPrompt, prompt.kind == .calendarNoShow,
-              let eventID = prompt.eventID,
-              let event = upcomingEvents.first(where: { $0.id == eventID }) else {
+        guard canAutomaticallyStartMeeting,
+              smartMeetingPrompt == nil || smartMeetingPrompt?.kind == .calendarNoShow,
+              let eventID = smartMeetingPrompt?.eventID ?? pendingAutoStartEvent?.id,
+              let event = upcomingEvents.first(where: { $0.id == eventID }),
+              event.status.lowercased() != "cancelled", let end = event.endDate, end > Date() else {
             clearSmartMeetingPrompt()
             return
         }
@@ -10819,9 +11227,10 @@ final class AppState: ObservableObject {
 
     /// Skip from the no-show ask: the event never auto-starts.
     func skipNoShowPrompt() {
-        if let eventID = smartMeetingPrompt?.eventID {
+        if let eventID = smartMeetingPrompt?.eventID ?? pendingAutoStartEvent?.id {
             dismissedAutoStartEventIDs.insert(eventID)
         }
+        cancelAutoStartCountdown()
         clearSmartMeetingPrompt()
     }
 
@@ -10844,7 +11253,10 @@ final class AppState: ObservableObject {
     }
     
     private func executeAutoStart() {
-        guard let event = pendingAutoStartEvent else { return }
+        guard let pending = pendingAutoStartEvent,
+              let event = upcomingEvents.first(where: { $0.id == pending.id }),
+              event.status.lowercased() != "cancelled", let end = event.endDate, end > Date(),
+              canAutomaticallyStartMeeting else { cancelAutoStartCountdown(); return }
         DebugLogger.shared.log(.app, "Auto-start: starting meeting from calendar event \(event.title)")
         dismissedAutoStartEventIDs.insert(event.id)
         autoStartCountdownTimer?.invalidate()
@@ -10870,9 +11282,9 @@ final class AppState: ObservableObject {
         autoStartCountdown = 0
     }
 
-    private func checkSmartCalendarTransition() {
+    func checkSmartCalendarTransition() {
         guard smartMeetingsEnabled,
-              isRecording || currentMeeting != nil,
+              isRecording,
               let currentMeeting else { return }
 
         let now = Date()
@@ -10881,13 +11293,23 @@ final class AppState: ObservableObject {
                   !candidate.isAllDay,
                   !dismissedAutoStartEventIDs.contains(candidate.id),
                   let start = candidate.startDate else { return false }
+            guard candidate.status.lowercased() != "cancelled", let end = candidate.endDate, end > now else { return false }
             let snoozedUntil = smartMeetingSnoozedUntilByEventID[candidate.id]
             return (snoozedUntil == nil || snoozedUntil! <= now)
                 && start.timeIntervalSince(now) <= 60
                 && start.timeIntervalSince(now) >= -120
         }) else { return }
 
-        let startsIn = max(0, Int(ceil(event.startDate?.timeIntervalSince(now) ?? 0)))
+        if currentMeeting.calendarEventId == nil {
+            if smartMeetingPrompt?.eventID != event.id {
+                presentSmartMeetingPrompt(.init(id: "associate-calendar-" + UUID().uuidString, kind: .association,
+                    title: "Is this the meeting you are recording?", message: event.title,
+                    eventID: event.id, countdown: nil))
+                pendingAssociationEvent = event
+            }
+            return
+        }
+
         if smartMeetingPrompt?.eventID != event.id {
             let time = event.startDate?.formatted(date: .omitted, time: .shortened) ?? "soon"
             presentSmartMeetingPrompt(
@@ -10902,62 +11324,51 @@ final class AppState: ObservableObject {
             )
         }
 
-        guard isRecording,
-              startsIn <= 15,
-              smartMeetingPrompt?.countdown == nil,
-              let currentEvent = selectedCalendarEvent,
-              currentEvent.id == currentMeeting.calendarEventId else { return }
-
-        let currentEnd = currentEvent.endDate
-        let nextStart = event.startDate
-        let eventsOverlap = {
-            guard let currentEnd, let nextStart else { return true }
-            return nextStart < currentEnd
-        }()
-        let nowAbsolute = CFAbsoluteTimeGetCurrent()
-        guard Self.canAutomaticallyHandoffCalendarMeeting(
-            currentEventEnd: currentEnd,
-            nextEventStart: nextStart,
-            now: now,
-            transcriptGap: nowAbsolute - lastTranscriptReceivedAt,
-            audioGap: audioActivityGap(at: nowAbsolute),
-            autoStartEnabled: autoStartFromCalendar,
-            calendarAutoStopEnabled: autoStopFromCalendar,
-            eventsOverlap: eventsOverlap
-        ) else { return }
-
-        beginSmartMeetingCountdown(for: event, seconds: max(1, startsIn))
+        // A calendar boundary and quiet audio do not prove the call ended.
+        // Keep this recording until the user chooses the next meeting or call-end
+        // detection completes it through the normal lifecycle.
     }
 
-    private func beginSmartMeetingCountdown(
-        for event: MinitiAPIService.CalendarEvent,
-        seconds: Int
-    ) {
-        guard var prompt = smartMeetingPrompt, prompt.eventID == event.id else { return }
-        prompt.countdown = seconds
-        smartMeetingPrompt = prompt
-        smartMeetingCountdownTimer?.invalidate()
-        smartMeetingCountdownTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self,
-                      var prompt = self.smartMeetingPrompt,
-                      prompt.eventID == event.id,
-                      let countdown = prompt.countdown else { return }
-                if countdown <= 1 {
-                    self.smartMeetingCountdownTimer?.invalidate()
-                    self.smartMeetingCountdownTimer = nil
-                    self.endAndStartCalendarMeeting(eventID: event.id)
-                } else {
-                    prompt.countdown = countdown - 1
-                    self.smartMeetingPrompt = prompt
-                }
+    func associateCurrentMeetingFromPrompt() {
+        guard let meeting = currentMeeting, meeting.id == smartMeetingPromptRecordingID,
+              let prompt = smartMeetingPrompt, prompt.kind == .association else { return }
+        if let eventID = prompt.eventID {
+            // The event can end or leave the upcoming feed while this prompt is open.
+            // An explicit association still applies to the event the person was shown.
+            guard let event = upcomingEvents.first(where: { $0.id == eventID }) ?? pendingAssociationEvent,
+                  event.id == eventID, event.status.lowercased() != "cancelled" else {
+                clearSmartMeetingPrompt()
+                return
             }
+            linkCalendarMetadata(event, to: meeting)
         }
+        #if os(macOS)
+        if let app = pendingAssociationApp,
+           latestCallSnapshot?.activeCalls.contains(where: { $0.bundleID == app.bundleID }) == true {
+            callLifecycleEngine.associateByUserChoice(app)
+        }
+        #endif
+        clearSmartMeetingPrompt()
+    }
+
+    private func linkCalendarMetadata(_ event: MinitiAPIService.CalendarEvent, to meeting: Meeting) {
+        guard meeting.id == currentMeeting?.id, meeting.calendarEventId == nil else { return }
+        meeting.calendarEventId = event.id
+        meeting.calendarEventTitle = event.title
+        // Keep manual edits, adding calendar attendees only where no attendee metadata exists.
+        if meeting.attendees.isEmpty { meeting.attendees = event.attendees.map { $0.toMeetingAttendee() } }
+        // Manual title, notes, Cloud/Local and recording identity remain authoritative.
+        associatingCalendarMetadata = true
+        selectedCalendarEvent = event
+        associatingCalendarMetadata = false
+        applyLateCalendarCloudExclusion()
+        dismissedAutoStartEventIDs.insert(event.id)
+        cancelAutoStartCountdown()
+        rescheduleMeetingReminders()
+        if let context = modelContext { commit(.sessionReference, in: context) }
     }
 
     private func cancelSmartMeetingCountdown(keepPrompt: Bool) {
-        smartMeetingCountdownTimer?.invalidate()
-        smartMeetingCountdownTimer = nil
         guard keepPrompt, var prompt = smartMeetingPrompt else {
             smartMeetingPrompt = nil
             return
@@ -11034,6 +11445,7 @@ final class AppState: ObservableObject {
     }
 
     func applyGoogleCalendarDisconnectedState() {
+        hasResolvedCalendarConnection = true
         cancelCalendarStatusRetry()
         isGoogleCalendarConnected = false
         googleCalendarEmail = nil
@@ -11229,14 +11641,14 @@ final class AppState: ObservableObject {
 
     /// Meters a prerecorded (Apple Watch) transcription against the managed account. Uses the
     /// same report-or-queue path as a live session, so a failed report is retried on activate.
-    func reportPrerecordedSessionEnd(sessionId: String, durationMinutes: Double) async {
-        guard appMode == .managed else { return }
+    @discardableResult
+    func reportPrerecordedSessionEnd(sessionId: String, durationMinutes: Double, accountID: String?) async -> Bool {
         let report = PendingSessionEndReport(
             deviceId: DeviceIdentifier.getOrCreateDeviceId(),
             sessionId: sessionId,
-            durationMinutes: max(0, durationMinutes)
+            durationMinutes: max(0, durationMinutes), accountID: accountID, accountingVersion: 1
         )
-        await reportManagedSessionEnd(report, trigger: "watch import")
+        return await reportManagedSessionEnd(report, trigger: "watch import")
     }
     
     // MARK: - Subscription
@@ -11326,9 +11738,64 @@ final class AppState: ObservableObject {
     /// Restore a subscription using a Polar license key.
     // MARK: - Device-bound authorization (managed account)
 
+    @Published var needsManagedAccessChoice = false
+    @Published var managedAccessIssue: String?
+    @Published var enrollmentRetryAt: Date?
+
+    @discardableResult
+    func continueWithoutSigningIn(resetUnreadable: Bool = false) async -> Bool {
+        if resetUnreadable {
+            guard clientAuthManager.canResetUnreadableCredentialByChoice else { return false }
+            clientAuthManager.resetUnreadableCredentialByChoice()
+        } else { clientAuthManager.chooseAnonymousAccess() }
+        appMode = .managed
+        refreshClientAuthStatus()
+        return await ensureManagedEnrollment(trigger: "explicit choice")
+    }
+
+    var canContinueSetupOffline: Bool {
+        !clientAuthManager.isEnrolled && !isEnrollingManagedDevice && managedEnrollmentError != nil &&
+        managedAccessIssue == nil && ["continue", "continueAfterReset"].contains(clientAuthManager.accessChoiceReason ?? "")
+    }
+
+    func retryManagedAccess() async {
+        if clientAuthManager.accessChoiceReason == "deviceAlreadyEnrolled" {
+            // Retry the same ID, never rotate it implicitly.
+            clientAuthManager.chooseAnonymousAccess()
+        }
+        if await ensureManagedEnrollment(trigger: "settings") {
+            refreshClientAuthStatus()
+            await refreshUsage()
+        }
+    }
+
+    func renameManagedDevice(_ device: ClientAuthDevice, label: String?) async -> Bool {
+        let generation = clientAuthManager.credentialGeneration
+        do {
+            try await clientAuthManager.renameDevice(installationID: device.installationID, label: label)
+            guard clientAuthManager.credentialGeneration == generation else { return false }
+            await loadManagedDevices()
+            return true
+        } catch {
+            if clientAuthManager.credentialGeneration == generation { managedDevicesError = error.localizedDescription }
+            return false
+        }
+    }
+
     func refreshClientAuthStatus() {
+        clientAuthManager.rereadUnreadableCredential()
+        needsManagedAccessChoice = clientAuthManager.accessChoiceRequired
+        managedAccessIssue = (clientAuthManager.credentialState == .keyUnusable ? ClientAuthError.keyUnusable.errorDescription : nil)
+            ?? clientAuthManager.unreadableCredentialMessage
+            ?? (clientAuthManager.accessChoiceReason == "deviceAlreadyEnrolled" ? "This device already belongs to an account. Sign in to restore it, or set up this device again." : nil)
+        enrollmentRetryAt = enrollmentCoordinator.deferredUntil
         let status = clientAuthManager.status
         clientAuthStatus = status
+        let previousFolderOwner = meetingFolders.owner
+        meetingFolders.selectOwner(appMode == .managed ? status.accountID : nil)
+        if meetingFolders.owner != previousFolderOwner {
+            folderFilterID = nil; showUnfiledMeetings = false; folderUndo = []
+        }
         noteAccountIdentity(status.accountID)
         // A replaced or cleared credential, even for the same account, takes the authority of
         // any cloud pass in flight (R3).
@@ -11420,10 +11887,17 @@ final class AppState: ObservableObject {
         || NSClassFromString("XCTestCase") != nil
     #endif
 
+    #if MINITI_TEST_HOST
+    var managedEnrollmentTestResult: Bool?
+    #endif
+
     @discardableResult
     func ensureManagedEnrollment(trigger: String) async -> Bool {
+        #if MINITI_TEST_HOST
+        if let managedEnrollmentTestResult { return managedEnrollmentTestResult }
+        #endif
         guard !ScreenshotMode.isActive else { return true }
-        guard !Self.isRunningUnderXCTest else { return false }
+        guard !Self.isRunningUnderXCTest || AccountUITestHarness.isActive else { return false }
         guard appMode == .managed else { return false }
         return await enrollmentCoordinator.ensure(trigger: trigger)
     }
@@ -11433,13 +11907,56 @@ final class AppState: ObservableObject {
         #if os(iOS)
         return "iPhone or iPad"
         #else
-        return "Mac"
+        return Host.current().localizedName ?? "Mac"
         #endif
+    }
+
+    @Published var accountTransitionInFlight = false
+
+    /// Keep metering on its original account until Stop has been acknowledged. This also
+    /// excludes a new recording while an asynchronous account move is awaiting the server.
+    func beginManagedAccountTransition(allowCredentialRepair: Bool = false, allowTemporaryCredentialRepair: Bool = true) async -> Bool {
+        guard !accountTransitionInFlight else { return false }
+        guard !isRecording, !isStartingMeeting, !isResumingRecording, !managedStartInFlight, !isFinalizingMeeting else {
+            managedEnrollmentError = "Stop the recording and wait for it to finish before changing accounts."
+            return false
+        }
+        #if os(iOS)
+        let watchImports = WatchImportService.shared
+        guard !watchImports.isRunning else {
+            managedEnrollmentError = "Wait for the current Watch import to finish before changing accounts. Its audio is saved on this phone."
+            return false
+        }
+        #endif
+        accountTransitionInFlight = true
+        await flushPendingSessionEndReports(trigger: "account change", ignoringBackoff: true)
+        let owner = clientAuthManager.status.accountID
+        // Restoring a failed credential must remain reachable: delivery needs that repair.
+        // Reports keep their original owner and cannot be charged to the new account.
+        let status = clientAuthManager.status
+        let repairingCredential = allowCredentialRepair && (status.keyUnusable || status.keyPermanentlyUnavailable ||
+            (allowTemporaryCredentialRepair && clientAuthManager.keyNeedsReauthentication))
+        guard managedSessionJournal.active == nil,
+              repairingCredential || !managedSessionJournal.pending.contains(where: { $0.accountID == owner }) else {
+            accountTransitionInFlight = false
+            #if os(macOS)
+            let unlockInstruction = "Unlock your keychain"
+            #else
+            let unlockInstruction = "Unlock your device"
+            #endif
+            managedEnrollmentError = clientAuthManager.keyNeedsReauthentication || status.keyUnusable || status.keyPermanentlyUnavailable
+                ? "miniti needs access to your saved account to send recording usage. \(unlockInstruction) or use Sign in again. Stay on this account until usage is saved."
+                : "miniti is saving your recording usage. Stay on this account and try again when you are online."
+            return false
+        }
+        return true
     }
 
     /// Attach this installation to an existing account with its recovery key.
     func restoreManagedAccount(recoveryKey: String) async -> Bool {
         guard !ScreenshotMode.isActive else { return true }
+        guard await beginManagedAccountTransition(allowCredentialRepair: true) else { return false }
+        defer { accountTransitionInFlight = false }
         managedEnrollmentError = nil
         isEnrollingManagedDevice = true
         defer { isEnrollingManagedDevice = false }
@@ -11481,6 +11998,8 @@ final class AppState: ObservableObject {
     /// id are untouched, and a Pro plan on the destination account applies here at once.
     func attachManagedDevice(recoveryKey: String) async -> Bool {
         guard !ScreenshotMode.isActive else { return true }
+        guard await beginManagedAccountTransition(allowCredentialRepair: true) else { return false }
+        defer { accountTransitionInFlight = false }
         managedEnrollmentError = nil
         let keyHadFailed = clientAuthManager.keyNeedsReauthentication
         do {
@@ -11578,6 +12097,11 @@ final class AppState: ObservableObject {
     /// credential remains (review 2026-10-27). A key that cannot sign clears locally.
     @discardableResult
     func signOutManagedDevice() async -> Bool {
+        guard await beginManagedAccountTransition(allowCredentialRepair: true, allowTemporaryCredentialRepair: false) else {
+            managedDevicesError = managedEnrollmentError
+            return false
+        }
+        defer { accountTransitionInFlight = false }
         let cleared: Bool
         do {
             cleared = try await clientAuthManager.signOut()
@@ -11624,6 +12148,10 @@ final class AppState: ObservableObject {
             }
             if let deletedAccountID, !recordingUsageQueue.remove(accountID: deletedAccountID) {
                 DebugLogger.shared.log(.app, "Account deleted; pending local usage cleanup could not be persisted")
+            }
+            if let deletedAccountID {
+                _ = await managedSessionJournal.remove(accountID: deletedAccountID)
+                _ = meetingFolders.removeOwner(deletedAccountID)
             }
             managedDevices = []
             usageInfo = nil
@@ -12046,7 +12574,8 @@ final class AppState: ObservableObject {
     }
     #endif
 
-    func saveExportFolderBookmark(for url: URL) {
+    @discardableResult
+    func saveExportFolderBookmark(for url: URL) -> Bool {
         do {
             let bookmark = try url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
             markdownExportBookmarkData = bookmark
@@ -12054,9 +12583,12 @@ final class AppState: ObservableObject {
             markdownExportIssue = nil
             isMarkdownExportIssueCardDismissed = false
             DebugLogger.shared.log(.app, "Export folder bookmark saved: \(url.path)")
+            return true
         } catch {
             DebugLogger.shared.log(.app, "Export folder bookmark FAILED: \(error.localizedDescription)")
-            markdownExportFolderPath = url.path
+            recordExportFailure("Could not save access to that folder. Your previous export folder is unchanged. Choose a folder again.",
+                                details: ["reason": "bookmark_failed"])
+            return false
         }
     }
 
@@ -12230,8 +12762,14 @@ final class AppState: ObservableObject {
         let recorded = meeting.lastExportedMarkdownFilename ?? lastExportedMarkdownFilenames[meeting.id]
         let existing = (try? fm.contentsOfDirectory(atPath: folderURL.path)) ?? []
         let minutePrefix = Self.exportFilenamePrefix(for: meeting)
-        let sharesMinute = (fetchMeetings(.exportAll, in: modelContext) ?? [])
-            .contains { $0.id != meeting.id && Self.exportFilenamePrefix(for: $0) == minutePrefix }
+        let minuteStart = Calendar.current.dateInterval(of: .minute, for: meeting.startTime)?.start ?? meeting.startTime
+        let minuteEnd = minuteStart.addingTimeInterval(60)
+        let meetingID = meeting.id
+        var sameMinute = FetchDescriptor<Meeting>(predicate: #Predicate {
+            $0.id != meetingID && $0.startTime >= minuteStart && $0.startTime < minuteEnd
+        })
+        sameMinute.fetchLimit = 1
+        let sharesMinute = (try? modelContext?.fetch(sameMinute).isEmpty) == false
         for stale in Self.staleExportFilenames(
             existing: existing, newFilename: filename, recorded: recorded,
             minutePrefix: minutePrefix, anotherMeetingSharesMinute: sharesMinute
@@ -12265,6 +12803,40 @@ final class AppState: ObservableObject {
             updateAgentsMdIndex()
         }
         return true
+    }
+
+    /// Replace only miniti's section. A folder can already contain human-authored
+    /// instructions, so opting into an index never replaces the entire document.
+    nonisolated static let legacyAgentsIndexHeader = "# Miniti Meeting Notes\n\nThis folder contains auto-exported meeting notes from [Miniti](https://miniti.app).\n\nEach file contains notes, AI-generated insights (summary, discussion flow, action items, topics, MEDDPICC analysis), coaching metrics (filler words, pace, talk ratio, clarity), and the full transcript.\n\n## Meetings\n\n"
+
+    nonisolated static func removingLegacyAgentsIndex(_ text: String) -> String {
+        guard text.hasPrefix(legacyAgentsIndexHeader) else { return text }
+        var remainder = String(text.dropFirst(legacyAgentsIndexHeader.count))
+        while !remainder.isEmpty {
+            let line = String(remainder.prefix { $0 != "\n" })
+            let generatedLine = line.range(of: #"^- \[([0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}[^\]]*\.md)\]\(\1\), [0-9]{4}-[0-9]{2}-[0-9]{2}, .*"#, options: .regularExpression) != nil
+            guard line.isEmpty || generatedLine else { break }
+            remainder.removeFirst(min(remainder.count, line.count + 1))
+        }
+        return remainder
+    }
+
+    nonisolated static func agentsIndexDocument(existing: String?, generatedIndex: String) -> String? {
+        let start = "<!-- miniti:meetings:start -->"
+        let end = "<!-- miniti:meetings:end -->"
+        let block = start + "\n" + generatedIndex + "\n" + end
+        guard let supplied = existing, !supplied.isEmpty else { return block + "\n" }
+        let existing = removingLegacyAgentsIndex(supplied)
+        if existing.isEmpty { return block + "\n" }
+        let starts = existing.components(separatedBy: start)
+        let ends = existing.components(separatedBy: end)
+        if starts.count == 1 && ends.count == 1 {
+            return existing + (existing.hasSuffix("\n") ? "\n" : "\n\n") + block + "\n"
+        }
+        guard starts.count == 2, ends.count == 2,
+              let startRange = existing.range(of: start),
+              let endRange = existing.range(of: end), endRange.lowerBound >= startRange.upperBound else { return nil }
+        return existing.replacingCharacters(in: startRange.lowerBound..<endRange.upperBound, with: block)
     }
 
     func updateAgentsMdIndex() {
@@ -12308,8 +12880,19 @@ final class AppState: ObservableObject {
         }
 
         let agentsMdURL = folderURL.appendingPathComponent("AGENTS.md")
-        try? index.write(to: agentsMdURL, atomically: true, encoding: .utf8)
-        DebugLogger.shared.log(.app, "AGENTS.md index updated: \(mdFiles.count) meetings")
+        do {
+            let existing = fm.fileExists(atPath: agentsMdURL.path) ? try String(contentsOf: agentsMdURL, encoding: .utf8) : nil
+            guard let updated = Self.agentsIndexDocument(existing: existing, generatedIndex: index) else {
+                recordExportFailure("AGENTS.md has an incomplete or repeated miniti index. Its existing contents were kept.",
+                                    details: ["reason": "index_markers_invalid"])
+                return
+            }
+            try updated.write(to: agentsMdURL, atomically: true, encoding: .utf8)
+            DebugLogger.shared.log(.app, "AGENTS.md index updated: \(mdFiles.count) meetings")
+        } catch {
+            recordExportFailure("Could not update AGENTS.md. Your meeting files are still saved in the folder.",
+                                details: ["reason": "index_write_failed"])
+        }
     }
     #endif
 
@@ -12439,10 +13022,9 @@ final class AppState: ObservableObject {
         #else
         guard !isAppInForeground() else { return }
         #endif
-        let identifier = "miniti.smart-meeting.\(prompt.id)"
-        let title = prompt.title
-        let message = prompt.message
-        let eventID = prompt.eventID
+        let token = smartMeetingPromptToken
+        let recordingID = currentMeeting?.id.uuidString ?? "idle"
+        let identifier = "miniti.smart-meeting.\(token)"
         let categorySuffix: String
         switch prompt.kind {
         case .calendar: categorySuffix = ".calendar"
@@ -12450,48 +13032,50 @@ final class AppState: ObservableObject {
         case .callStart: categorySuffix = ".call-start"
         case .callTransition: categorySuffix = ".call-transition"
         case .calendarNoShow: categorySuffix = ".calendar-no-show"
+        case .association: categorySuffix = ".association"
         }
         let category = Self.smartMeetingNotificationCategory + categorySuffix
-
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            guard settings.authorizationStatus == .authorized
-                    || settings.authorizationStatus == .provisional else { return }
+        Task { @MainActor [weak self] in
+            let center = UNUserNotificationCenter.current()
+            let settings = await center.notificationSettings()
+            guard let self, self.smartMeetingPromptToken == token,
+                  self.smartMeetingPrompt == prompt,
+                  settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
             let content = UNMutableNotificationContent()
-            content.title = title
-            content.body = message
+            content.title = prompt.title
+            content.body = prompt.message
             content.sound = .default
             content.categoryIdentifier = category
-            if let eventID {
-                content.userInfo = ["eventID": eventID]
-            }
-            UNUserNotificationCenter.current().add(
-                UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
-            ) { error in
-                if let error {
-                    DebugLogger.shared.log(.app, "Smart meeting notification failed: \(error.localizedDescription)")
-                }
+            content.userInfo = ["promptToken": token, "recordingID": recordingID]
+            if let eventID = prompt.eventID { content.userInfo["eventID"] = eventID }
+            do { try await center.add(.init(identifier: identifier, content: content, trigger: nil)) }
+            catch { DebugLogger.shared.log(.app, "Smart meeting notification could not be delivered") }
+            if self.smartMeetingPromptToken != token {
+                center.removePendingNotificationRequests(withIdentifiers: [identifier])
+                center.removeDeliveredNotifications(withIdentifiers: [identifier])
             }
         }
     }
 
     private func clearSmartMeetingNotification() {
+        let identifier = "miniti.smart-meeting.\(smartMeetingPromptToken)"
         let center = UNUserNotificationCenter.current()
-        center.getPendingNotificationRequests { requests in
-            let identifiers = requests.map(\.identifier).filter { $0.hasPrefix("miniti.smart-meeting.") }
-            center.removePendingNotificationRequests(withIdentifiers: identifiers)
-        }
-        center.getDeliveredNotifications { notifications in
-            let identifiers = notifications
-                .map(\.request.identifier)
-                .filter { $0.hasPrefix("miniti.smart-meeting.") }
-            center.removeDeliveredNotifications(withIdentifiers: identifiers)
-        }
+        center.removePendingNotificationRequests(withIdentifiers: [identifier])
+        center.removeDeliveredNotifications(withIdentifiers: [identifier])
     }
 
     func handleSmartMeetingNotificationAction(
         _ actionIdentifier: String,
         eventID: String?
     ) {
+        #if os(macOS)
+        if endingGrace != nil, actionIdentifier == Self.smartMeetingEndNowAction || actionIdentifier == Self.smartMeetingKeepAction {
+            if actionIdentifier == Self.smartMeetingEndNowAction { endEndingGraceNow() }
+            else { keepRecordingFromEndingGrace() }
+            return
+        }
+        #endif
+        guard smartMeetingPrompt != nil, smartMeetingPromptRecordingID == currentMeeting?.id else { return }
         switch actionIdentifier {
         case Self.smartMeetingEndAndStartAction:
             if let eventID {
@@ -12536,7 +13120,9 @@ final class AppState: ObservableObject {
     func handleNotificationResponse(
         actionIdentifier: String,
         categoryIdentifier: String,
-        eventID: String?
+        eventID: String?,
+        promptToken: String? = nil,
+        recordingID: String? = nil
     ) {
         if categoryIdentifier == Self.meetingReminderWithLinkCategory
             || categoryIdentifier == Self.meetingReminderNotesOnlyCategory
@@ -12550,6 +13136,18 @@ final class AppState: ObservableObject {
         if actionIdentifier == UNNotificationDefaultActionIdentifier {
             return
         }
+        #if os(macOS)
+        if categoryIdentifier == Self.smartMeetingNotificationCategory + ".call-grace" {
+            guard recordingID == currentMeeting?.id.uuidString,
+                  let grace = endingGrace, promptToken == String(grace.deadline.timeIntervalSince1970) else { return }
+        } else {
+            guard promptToken == smartMeetingPromptToken,
+                  recordingID == (currentMeeting?.id.uuidString ?? "idle") else { return }
+        }
+        #else
+        guard promptToken == smartMeetingPromptToken,
+              recordingID == (currentMeeting?.id.uuidString ?? "idle") else { return }
+        #endif
         handleSmartMeetingNotificationAction(actionIdentifier, eventID: eventID)
     }
 
@@ -12576,6 +13174,7 @@ final class AppState: ObservableObject {
                 }
                 return
             }
+            guard event.status.lowercased() != "cancelled", let end = event.endDate, end > Date() else { return }
             joinAndStartMeeting(from: event)
         case Self.meetingReminderNotNowAction:
             guard let eventID else { return }
@@ -12614,8 +13213,9 @@ final class AppState: ObservableObject {
         recordingNudgeDismissTask?.cancel()
         recordingNudge = nudge
         let nudgeID = nudge.id
+        let sleep = recordingNudgeSleep
         recordingNudgeDismissTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(duration))
+            await sleep(duration)
             guard !Task.isCancelled, self?.recordingNudge?.id == nudgeID else { return }
             self?.clearRecordingNudge()
         }
@@ -12821,50 +13421,48 @@ final class AppState: ObservableObject {
     /// Always cancels previously-scheduled reminders first, so cancelled/rescheduled
     /// events don't fire stale notifications. Safe to call whenever `upcomingEvents`
     /// changes or the toggle flips.
+    private var reminderGeneration = UUID()
+
     func rescheduleMeetingReminders() {
-        UNUserNotificationCenter.current().getPendingNotificationRequests { [weak self] pending in
-            let staleIDs = pending
-                .filter { $0.identifier.hasPrefix("miniti.meeting-reminder.") }
-                .map { $0.identifier }
-            if !staleIDs.isEmpty {
-                UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: staleIDs)
-            }
-            Task { @MainActor [weak self] in
-                self?.scheduleMeetingRemindersIfEnabled()
-            }
-        }
-    }
-
-    private func scheduleMeetingRemindersIfEnabled() {
-        guard notifyOnUpcomingMeeting else { return }
-        guard googleCalendarEnabled, isGoogleCalendarConnected else { return }
-
-        let now = Date()
-        let center = UNUserNotificationCenter.current()
-        for event in upcomingEvents {
-            guard let start = event.startDate else { continue }
-            let fireAt = start.addingTimeInterval(-60)
-            let interval = fireAt.timeIntervalSince(now)
-            guard interval > 0 else { continue }
-
-            let content = UNMutableNotificationContent()
-            content.title = "meeting in 1 minute"
-            content.body = event.title
-            content.sound = .default
-            content.userInfo = ["eventID": event.id]
-            content.categoryIdentifier = event.joinURL != nil
-                ? Self.meetingReminderWithLinkCategory
-                : Self.meetingReminderNotesOnlyCategory
-
-            let trigger = UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)
-            let request = UNNotificationRequest(
-                identifier: "miniti.meeting-reminder.\(event.id)",
-                content: content,
-                trigger: trigger
-            )
-            center.add(request) { error in
-                if let error {
-                    DebugLogger.shared.log(.app, "Meeting reminder schedule failed: \(error.localizedDescription)")
+        reminderGeneration = UUID()
+        let generation = reminderGeneration
+        Task { @MainActor [weak self] in
+            let center = UNUserNotificationCenter.current()
+            let pending = await center.pendingNotificationRequests()
+            let delivered = await center.deliveredNotifications()
+            guard let self, self.reminderGeneration == generation else { return }
+            center.removePendingNotificationRequests(withIdentifiers: pending.map(\.identifier)
+                .filter { $0.hasPrefix("miniti.meeting-reminder.") })
+            center.removeDeliveredNotifications(withIdentifiers: delivered.map(\.request.identifier)
+                .filter { $0.hasPrefix("miniti.meeting-reminder.") })
+            guard self.notifyOnUpcomingMeeting, self.googleCalendarEnabled, self.isGoogleCalendarConnected else { return }
+            let now = Date()
+            for event in self.upcomingEvents {
+                guard self.reminderGeneration == generation else { return }
+                guard event.id != self.currentMeeting?.calendarEventId,
+                      event.status.lowercased() != "cancelled", !event.isAllDay,
+                      let start = event.startDate else { continue }
+                if self.currentMeeting != nil || self.isStartingMeeting {
+                    guard start > now.addingTimeInterval(5 * 60) else { continue }
+                }
+                let interval = start.addingTimeInterval(-60).timeIntervalSince(now)
+                guard interval > 0 else { continue }
+                let content = UNMutableNotificationContent()
+                content.title = "meeting in 1 minute"
+                content.body = event.title
+                content.sound = .default
+                content.userInfo = ["eventID": event.id]
+                content.categoryIdentifier = event.joinURL != nil
+                    ? Self.meetingReminderWithLinkCategory : Self.meetingReminderNotesOnlyCategory
+                let identifier = "miniti.meeting-reminder.\(generation.uuidString).\(event.id)"
+                do {
+                    try await center.add(.init(identifier: identifier, content: content,
+                        trigger: UNTimeIntervalNotificationTrigger(timeInterval: interval, repeats: false)))
+                } catch { DebugLogger.shared.log(.app, "Meeting reminder could not be scheduled") }
+                if self.reminderGeneration != generation {
+                    center.removePendingNotificationRequests(withIdentifiers: [identifier])
+                    center.removeDeliveredNotifications(withIdentifiers: [identifier])
+                    return
                 }
             }
         }

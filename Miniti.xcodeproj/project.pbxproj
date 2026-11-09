@@ -121,24 +121,6 @@
 		E10000010000000000000003 /* MinitiLiveActivityBundle.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000002 /* MinitiLiveActivityBundle.swift */; };
 		E10000010000000000000004 /* MinitiLiveActivityLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20000010000000000000003 /* MinitiLiveActivityLiveActivity.swift */; };
 		E10000010000000000000005 /* MinitiLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E30000010000000000000001 /* MinitiLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		T10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
-		T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
-		T10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
-		T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
-		T10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
-		T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
-		T10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
-		T10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
-		T10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
-		U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
-		U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
-		U10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
-		U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
-		U10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
-		U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
-		U10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
-		U10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
-		U10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
 		D10000000000000000000002 /* PersistentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* PersistentStore.swift */; };
 		D10000000000000000000003 /* PersistentStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000001 /* PersistentStore.swift */; };
 		D10000000000000000000005 /* StoreRecoveryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D10000000000000000000004 /* StoreRecoveryView.swift */; };
@@ -197,6 +179,24 @@
 		CC2ADF613D67704486A3F647 /* CloudSyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */; };
 		A70EF0B5CBD140ACB7FAC972 /* PurchaseReturnTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E5E46140C8D43F08249C41D /* PurchaseReturnTests.swift */; };
 		FFE4A307BC894C4E87682CD3 /* DiagnosticsQueueTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0F10BC8B57A47FE930E2053 /* DiagnosticsQueueTests.swift */; };
+		T10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
+		T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
+		T10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
+		T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
+		T10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
+		T10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
+		T10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
+		T10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
+		T10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
+		U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000001 /* MinitiAPIServiceTests.swift */; };
+		U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000002 /* TrainingMetricsTests.swift */; };
+		U10000010000000000000003 /* MeetingModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000003 /* MeetingModelTests.swift */; };
+		U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000004 /* WebhookPayloadTests.swift */; };
+		U10000010000000000000005 /* AppStateComputationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000005 /* AppStateComputationTests.swift */; };
+		U10000010000000000000006 /* DeepgramParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000006 /* DeepgramParsingTests.swift */; };
+		U10000010000000000000007 /* InsightsParsingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000007 /* InsightsParsingTests.swift */; };
+		U10000010000000000000008 /* ColorPaletteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000008 /* ColorPaletteTests.swift */; };
+		U10000010000000000000009 /* SelectableAttributedTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = T20000010000000000000009 /* SelectableAttributedTests.swift */; };
 		W10000010000000000000001 /* MinitiWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000001 /* MinitiWatchApp.swift */; };
 		W10000010000000000000002 /* WatchPalette.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000002 /* WatchPalette.swift */; };
 		W10000010000000000000003 /* WatchRecordingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000003 /* WatchRecordingStore.swift */; };
@@ -206,15 +206,15 @@
 		W10000010000000000000007 /* WatchViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000007 /* WatchViews.swift */; };
 		W10000010000000000000009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = W20000010000000000000009 /* Assets.xcassets */; };
 		W1000001000000000000000A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
-		W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
-		W1000001000000000000002A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
 		W1000001000000000000000B /* WatchSessionBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000B /* WatchSessionBridge.swift */; };
 		W1000001000000000000000C /* WatchTranscriptionClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000C /* WatchTranscriptionClient.swift */; };
 		W1000001000000000000000D /* WatchImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000D /* WatchImportService.swift */; };
 		W1000001000000000000000E /* WatchImportViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000E /* WatchImportViews.swift */; };
 		W1000001000000000000000F /* WatchImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000F /* WatchImportTests.swift */; };
-		W1000001000000000000001F /* WatchImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000F /* WatchImportTests.swift */; };
 		W10000010000000000000010 /* MinitiWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = W20000010000000000000010 /* MinitiWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		W1000001000000000000001A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
+		W1000001000000000000001F /* WatchImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000F /* WatchImportTests.swift */; };
+		W1000001000000000000002A /* WatchRecordingProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = W2000001000000000000000A /* WatchRecordingProtocol.swift */; };
 		W31000010000000000000001 /* SpeakerAttendeeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */; };
 		W31000010000000000000002 /* SpeakerAttendeeMatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */; };
 		W31000010000000000000003 /* SpeakerAttendeeMatcherTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */; };
@@ -224,20 +224,38 @@
 		W41000010000000000000003 /* AppState+VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000002 /* AppState+VoicePrints.swift */; };
 		W41000010000000000000004 /* AppState+VoicePrints.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000002 /* AppState+VoicePrints.swift */; };
 		W41000010000000000000005 /* VoicePrintSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000003 /* VoicePrintSettingsView.swift */; };
-		B65000010000000000000001 /* HelpSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65000010000000000000003 /* HelpSettingsView.swift */; };
 		W41000010000000000000006 /* VoicePrintSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000003 /* VoicePrintSettingsView.swift */; };
-		B65000010000000000000002 /* HelpSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65000010000000000000003 /* HelpSettingsView.swift */; };
 		W41000010000000000000007 /* WatchVoiceDiarization.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000004 /* WatchVoiceDiarization.swift */; };
 		W41000010000000000000008 /* VoicePrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000005 /* VoicePrintTests.swift */; };
 		W41000010000000000000009 /* VoicePrintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000005 /* VoicePrintTests.swift */; };
 		W4100001000000000000000A /* VoicePrintIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000006 /* VoicePrintIntegrationTests.swift */; };
 		W4100001000000000000000B /* VoicePrintIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = W42000010000000000000006 /* VoicePrintIntegrationTests.swift */; };
+		B65000010000000000000001 /* HelpSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65000010000000000000003 /* HelpSettingsView.swift */; };
+		B65000010000000000000002 /* HelpSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B65000010000000000000003 /* HelpSettingsView.swift */; };
 		42DEC09262104F1EB9FD17EA /* RecordingUsageQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A87975C774324FE7ABDD4AFD /* RecordingUsageQueue.swift */; };
 		5F976DA8EB104996BB8DE810 /* HardwareCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290FAE329FA24658BAD332FC /* HardwareCapabilities.swift */; };
 		EB472369AC464E33AFBE44D7 /* AIRequestDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A941F5959DC545AAABEE0978 /* AIRequestDiagnostics.swift */; };
 		AA92D645A68949B1A8E3D074 /* RecordingUsageQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = A87975C774324FE7ABDD4AFD /* RecordingUsageQueue.swift */; };
 		BF5D02C26A9648A7A8EF65C8 /* HardwareCapabilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 290FAE329FA24658BAD332FC /* HardwareCapabilities.swift */; };
 		DD02213717F2476CBE519EFE /* AIRequestDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A941F5959DC545AAABEE0978 /* AIRequestDiagnostics.swift */; };
+		12117968AB6E47E89F49E648 /* ManagedSessionJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B09DCB627F4DE6903316A9 /* ManagedSessionJournal.swift */; };
+		162D0334212A8140BE0FA3EA /* AccountUITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EB9461382988ABDDEF367EF /* AccountUITestHarness.swift */; };
+		1BEE4333FDC8643602DBF88B /* MeetingFolderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB11010B8D2E478543692170 /* MeetingFolderViews.swift */; };
+		23C12943B04662410F91A4CE /* MeetingFolders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39735C56750147F6F221D4F6 /* MeetingFolders.swift */; };
+		28C4D7392B724CF3ACD37F84 /* ManagedSessionJournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404CEA61D4BA43EDA54B824B /* ManagedSessionJournalTests.swift */; };
+		2F6643342A7460793A4742E9 /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 434428671FB291344DAE4562 /* Cocoa.framework */; };
+		4265A1C5D0DC18B9E8E42A56 /* AppState+Folders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F0BDDFC211C24B29BF469CD /* AppState+Folders.swift */; };
+		44E099B54C48EA7021F9CA4E /* MeetingFolderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE19048A0C370B14E8C9648E /* MeetingFolderTests.swift */; };
+		4AD5BDCA43B6E50A20843E89 /* AccountJourneys.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD0451F60FB779D2C049287 /* AccountJourneys.swift */; };
+		4F846B5A9B4527F4805F53F6 /* MeetingFolders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39735C56750147F6F221D4F6 /* MeetingFolders.swift */; };
+		763435C64C99588F22B45A63 /* MeetingFolderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE19048A0C370B14E8C9648E /* MeetingFolderTests.swift */; };
+		955B0C41AE2308E0E7CF0DDC /* AppState+Folders.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F0BDDFC211C24B29BF469CD /* AppState+Folders.swift */; };
+		A6481805872446AC8F83FED0 /* ManagedSessionJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B09DCB627F4DE6903316A9 /* ManagedSessionJournal.swift */; };
+		ABFA716CF2D84452721D5112 /* AccountJourneys.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD0451F60FB779D2C049287 /* AccountJourneys.swift */; };
+		B7972966727B9BCDAF1290C8 /* AccountUITestHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0EB9461382988ABDDEF367EF /* AccountUITestHarness.swift */; };
+		BE339AC274BC70AFCA3203AA /* MeetingFolderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB11010B8D2E478543692170 /* MeetingFolderViews.swift */; };
+		D1C137BF33D0B75A81E2E258 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DBA60DE202C4E751DFC96A26 /* Foundation.framework */; };
+		DF63D87A8A8B470E8B9985D5 /* ManagedSessionJournalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 404CEA61D4BA43EDA54B824B /* ManagedSessionJournalTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -268,6 +286,20 @@
 			proxyType = 1;
 			remoteGlobalIDString = W60000010000000000000001;
 			remoteInfo = MinitiWatch;
+		};
+		789BA2221BC9CC8DAE3C8C76 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A60000010000000000000001;
+			remoteInfo = Miniti;
+		};
+		A61947B90C74C5C8EE5AE206 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A90000010000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C60000010000000000000001;
+			remoteInfo = MinitiMobile;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -368,6 +400,30 @@
 		T20000010000000000000009 /* SelectableAttributedTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SelectableAttributedTests.swift; sourceTree = "<group>"; };
 		T30000010000000000000002 /* MinitiTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		U20000010000000000000001 /* MinitiMobileTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		W20000010000000000000001 /* MinitiWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiWatchApp.swift; sourceTree = "<group>"; };
+		W20000010000000000000002 /* WatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPalette.swift; sourceTree = "<group>"; };
+		W20000010000000000000003 /* WatchRecordingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingStore.swift; sourceTree = "<group>"; };
+		W20000010000000000000004 /* WatchRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecorder.swift; sourceTree = "<group>"; };
+		W20000010000000000000005 /* WatchSessionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionClient.swift; sourceTree = "<group>"; };
+		W20000010000000000000006 /* WatchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchModel.swift; sourceTree = "<group>"; };
+		W20000010000000000000007 /* WatchViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViews.swift; sourceTree = "<group>"; };
+		W20000010000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		W20000010000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		W2000001000000000000000A /* WatchRecordingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingProtocol.swift; sourceTree = "<group>"; };
+		W2000001000000000000000B /* WatchSessionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionBridge.swift; sourceTree = "<group>"; };
+		W2000001000000000000000C /* WatchTranscriptionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTranscriptionClient.swift; sourceTree = "<group>"; };
+		W2000001000000000000000D /* WatchImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportService.swift; sourceTree = "<group>"; };
+		W2000001000000000000000E /* WatchImportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/WatchImportViews.swift; sourceTree = "<group>"; };
+		W2000001000000000000000F /* WatchImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportTests.swift; sourceTree = "<group>"; };
+		W20000010000000000000010 /* MinitiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinitiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcher.swift; sourceTree = "<group>"; };
+		W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcherTests.swift; sourceTree = "<group>"; };
+		W42000010000000000000001 /* VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrints.swift; sourceTree = "<group>"; };
+		W42000010000000000000002 /* AppState+VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+VoicePrints.swift"; sourceTree = "<group>"; };
+		W42000010000000000000003 /* VoicePrintSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintSettingsView.swift; sourceTree = "<group>"; };
+		W42000010000000000000004 /* WatchVoiceDiarization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchVoiceDiarization.swift; sourceTree = "<group>"; };
+		W42000010000000000000005 /* VoicePrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintTests.swift; sourceTree = "<group>"; };
+		W42000010000000000000006 /* VoicePrintIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintIntegrationTests.swift; sourceTree = "<group>"; };
 		D10000000000000000000001 /* PersistentStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentStore.swift; sourceTree = "<group>"; };
 		D10000000000000000000004 /* StoreRecoveryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoreRecoveryView.swift; sourceTree = "<group>"; };
 		D10000000000000000000007 /* PersistentStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersistentStoreTests.swift; sourceTree = "<group>"; };
@@ -405,38 +461,26 @@
 		CC9797B767A692503713EF53 /* AppState+CloudSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+CloudSync.swift"; sourceTree = "<group>"; };
 		DF00000100000000000000A0 /* DataFlowSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataFlowSummary.swift; sourceTree = "<group>"; };
 		CCB62B23F851FBC91393CD8F /* CloudSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSettingsView.swift; sourceTree = "<group>"; };
-		CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "MeetingSyncDocumentTests.swift"; sourceTree = "<group>"; };
-		CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "CloudSyncEngineTests.swift"; sourceTree = "<group>"; };
-		8E5E46140C8D43F08249C41D /* PurchaseReturnTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "PurchaseReturnTests.swift"; sourceTree = "<group>"; };
-		B0F10BC8B57A47FE930E2053 /* DiagnosticsQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DiagnosticsQueueTests.swift"; sourceTree = "<group>"; };
-		W20000010000000000000001 /* MinitiWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MinitiWatchApp.swift; sourceTree = "<group>"; };
-		W20000010000000000000002 /* WatchPalette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchPalette.swift; sourceTree = "<group>"; };
-		W20000010000000000000003 /* WatchRecordingStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingStore.swift; sourceTree = "<group>"; };
-		W20000010000000000000004 /* WatchRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecorder.swift; sourceTree = "<group>"; };
-		W20000010000000000000005 /* WatchSessionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionClient.swift; sourceTree = "<group>"; };
-		W20000010000000000000006 /* WatchModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchModel.swift; sourceTree = "<group>"; };
-		W20000010000000000000007 /* WatchViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchViews.swift; sourceTree = "<group>"; };
-		W20000010000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		W20000010000000000000009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		W2000001000000000000000A /* WatchRecordingProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRecordingProtocol.swift; sourceTree = "<group>"; };
-		W2000001000000000000000B /* WatchSessionBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionBridge.swift; sourceTree = "<group>"; };
-		W2000001000000000000000C /* WatchTranscriptionClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchTranscriptionClient.swift; sourceTree = "<group>"; };
-		W2000001000000000000000D /* WatchImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportService.swift; sourceTree = "<group>"; };
-		W2000001000000000000000E /* WatchImportViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views/WatchImportViews.swift; sourceTree = "<group>"; };
-		W2000001000000000000000F /* WatchImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchImportTests.swift; sourceTree = "<group>"; };
-		W20000010000000000000010 /* MinitiWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MinitiWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		W30000010000000000000001 /* SpeakerAttendeeMatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcher.swift; sourceTree = "<group>"; };
-		W30000010000000000000002 /* SpeakerAttendeeMatcherTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeakerAttendeeMatcherTests.swift; sourceTree = "<group>"; };
-		W42000010000000000000001 /* VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrints.swift; sourceTree = "<group>"; };
-		W42000010000000000000002 /* AppState+VoicePrints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "AppState+VoicePrints.swift"; sourceTree = "<group>"; };
-		W42000010000000000000003 /* VoicePrintSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintSettingsView.swift; sourceTree = "<group>"; };
+		CCCB33852667003EA18A946A /* MeetingSyncDocumentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingSyncDocumentTests.swift; sourceTree = "<group>"; };
+		CCB308715C47F0EFA41C279A /* CloudSyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncEngineTests.swift; sourceTree = "<group>"; };
+		8E5E46140C8D43F08249C41D /* PurchaseReturnTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseReturnTests.swift; sourceTree = "<group>"; };
+		B0F10BC8B57A47FE930E2053 /* DiagnosticsQueueTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsQueueTests.swift; sourceTree = "<group>"; };
 		B65000010000000000000003 /* HelpSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpSettingsView.swift; sourceTree = "<group>"; };
-		W42000010000000000000004 /* WatchVoiceDiarization.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchVoiceDiarization.swift; sourceTree = "<group>"; };
-		W42000010000000000000005 /* VoicePrintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintTests.swift; sourceTree = "<group>"; };
-		W42000010000000000000006 /* VoicePrintIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoicePrintIntegrationTests.swift; sourceTree = "<group>"; };
 		A87975C774324FE7ABDD4AFD /* RecordingUsageQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingUsageQueue.swift; sourceTree = "<group>"; };
 		290FAE329FA24658BAD332FC /* HardwareCapabilities.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HardwareCapabilities.swift; sourceTree = "<group>"; };
 		A941F5959DC545AAABEE0978 /* AIRequestDiagnostics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIRequestDiagnostics.swift; sourceTree = "<group>"; };
+		09B09DCB627F4DE6903316A9 /* ManagedSessionJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedSessionJournal.swift; sourceTree = "<group>"; };
+		0EB9461382988ABDDEF367EF /* AccountUITestHarness.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AccountUITestHarness.swift; sourceTree = "<group>"; };
+		39735C56750147F6F221D4F6 /* MeetingFolders.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeetingFolders.swift; path = Miniti/Services/MeetingFolders.swift; sourceTree = "<group>"; };
+		404CEA61D4BA43EDA54B824B /* ManagedSessionJournalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ManagedSessionJournalTests.swift; sourceTree = "<group>"; };
+		434428671FB291344DAE4562 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX26.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		5F0BDDFC211C24B29BF469CD /* AppState+Folders.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = "AppState+Folders.swift"; path = "Miniti/Models/AppState+Folders.swift"; sourceTree = "<group>"; };
+		A675923DBD53664A4337405B /* MinitiUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB11010B8D2E478543692170 /* MeetingFolderViews.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeetingFolderViews.swift; path = Miniti/Views/MeetingFolderViews.swift; sourceTree = "<group>"; };
+		CE19048A0C370B14E8C9648E /* MeetingFolderTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = MeetingFolderTests.swift; path = MinitiTests/MeetingFolderTests.swift; sourceTree = "<group>"; };
+		CEFF43EB839377427876B322 /* MinitiMobileUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MinitiMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		CFD0451F60FB779D2C049287 /* AccountJourneys.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AccountJourneys.swift; sourceTree = "<group>"; };
+		DBA60DE202C4E751DFC96A26 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS26.0.sdk/System/Library/Frameworks/Foundation.framework; sourceTree = DEVELOPER_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -485,23 +529,25 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		A238E5498E72C424D4691302 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1C137BF33D0B75A81E2E258 /* Foundation.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DBF1799CA08BC3C655B82D55 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2F6643342A7460793A4742E9 /* Cocoa.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		A50000010000000000000001 = {
-			isa = PBXGroup;
-			children = (
-				3C2BEFA42F9981830058C8BE /* UpdateService.swift */,
-				A50000010000000000000002 /* Miniti */,
-				C50000010000000000000001 /* MinitiMobile */,
-				E50000010000000000000001 /* MinitiLiveActivity */,
-				E50000010000000000000002 /* Shared */,
-				W50000010000000000000001 /* MinitiWatch */,
-				T50000010000000000000001 /* MinitiTests */,
-				A50000010000000000000003 /* Products */,
-			);
-			sourceTree = "<group>";
-		};
 		A50000010000000000000002 /* Miniti */ = {
 			isa = PBXGroup;
 			children = (
@@ -527,6 +573,8 @@
 				T30000010000000000000002 /* MinitiTests.xctest */,
 				U20000010000000000000001 /* MinitiMobileTests.xctest */,
 				W20000010000000000000010 /* MinitiWatch.app */,
+				A675923DBD53664A4337405B /* MinitiUITests.xctest */,
+				CEFF43EB839377427876B322 /* MinitiMobileUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -587,6 +635,7 @@
 				DF4DD1CD941B447F8C63C045 /* PurchaseReturn.swift */,
 				40479FAB9BBA42D7AE242DF6 /* DiagnosticsQueue.swift */,
 				A87975C774324FE7ABDD4AFD /* RecordingUsageQueue.swift */,
+				09B09DCB627F4DE6903316A9 /* ManagedSessionJournal.swift */,
 				290FAE329FA24658BAD332FC /* HardwareCapabilities.swift */,
 				A941F5959DC545AAABEE0978 /* AIRequestDiagnostics.swift */,
 				CC3B01BB5D4DE4EB3C28BC52 /* MinitiAPIService+Cloud.swift */,
@@ -609,6 +658,7 @@
 				AD0000010000000000000011 /* DocsMCPService.swift */,
 				B80000010000000000000001 /* GranolaCSVImporter.swift */,
 				CA0000010000000000000002 /* CallActivityMonitor.swift */,
+				0EB9461382988ABDDEF367EF /* AccountUITestHarness.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -670,6 +720,60 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		3FD85F8B34CCC44D19946027 /* MinitiUITests */ = {
+			isa = PBXGroup;
+			children = (
+				CFD0451F60FB779D2C049287 /* AccountJourneys.swift */,
+			);
+			name = MinitiUITests;
+			path = MinitiUITests;
+			sourceTree = "<group>";
+		};
+		A50000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				3C2BEFA42F9981830058C8BE /* UpdateService.swift */,
+				A50000010000000000000002 /* Miniti */,
+				C50000010000000000000001 /* MinitiMobile */,
+				E50000010000000000000001 /* MinitiLiveActivity */,
+				E50000010000000000000002 /* Shared */,
+				W50000010000000000000001 /* MinitiWatch */,
+				T50000010000000000000001 /* MinitiTests */,
+				A50000010000000000000003 /* Products */,
+				3FD85F8B34CCC44D19946027 /* MinitiUITests */,
+				F818FD6FC0F5111AC3851B5B /* Frameworks */,
+				39735C56750147F6F221D4F6 /* MeetingFolders.swift */,
+				5F0BDDFC211C24B29BF469CD /* AppState+Folders.swift */,
+				BB11010B8D2E478543692170 /* MeetingFolderViews.swift */,
+				CE19048A0C370B14E8C9648E /* MeetingFolderTests.swift */,
+			);
+			sourceTree = "<group>";
+		};
+		ABEB885CCF4AF29833F772B6 /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				434428671FB291344DAE4562 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
+		F818FD6FC0F5111AC3851B5B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				ABEB885CCF4AF29833F772B6 /* OS X */,
+				FABDF493994CF49542CAD868 /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		FABDF493994CF49542CAD868 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				DBA60DE202C4E751DFC96A26 /* Foundation.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
 		T50000010000000000000001 /* MinitiTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -699,6 +803,7 @@
 				D10000000000000000000010 /* PersistencePolicyTests.swift */,
 				D10000000000000000000007 /* PersistentStoreTests.swift */,
 				T20000010000000000000001 /* MinitiAPIServiceTests.swift */,
+				404CEA61D4BA43EDA54B824B /* ManagedSessionJournalTests.swift */,
 				T20000010000000000000002 /* TrainingMetricsTests.swift */,
 				T20000010000000000000003 /* MeetingModelTests.swift */,
 				T20000010000000000000004 /* WebhookPayloadTests.swift */,
@@ -843,6 +948,42 @@
 			productReference = W20000010000000000000010 /* MinitiWatch.app */;
 			productType = "com.apple.product-type.application";
 		};
+		147778D972D97F3919A97DFE /* MinitiUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AF9CDB49C73C094515F39F5E /* Build configuration list for PBXNativeTarget "MinitiUITests" */;
+			buildPhases = (
+				DE651E72654F6A5467DA611B /* Sources */,
+				DBF1799CA08BC3C655B82D55 /* Frameworks */,
+				6E20088E518497E31719662B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				FD2D3B58CC3A7D3BEEA3A4AF /* PBXTargetDependency */,
+			);
+			name = MinitiUITests;
+			productName = MinitiUITests;
+			productReference = A675923DBD53664A4337405B /* MinitiUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		4C78AC6BA2D557393ACC0FDC /* MinitiMobileUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AC73B779D4ABB13B42AAF74E /* Build configuration list for PBXNativeTarget "MinitiMobileUITests" */;
+			buildPhases = (
+				59CDDC0A8B3290523A204462 /* Sources */,
+				A238E5498E72C424D4691302 /* Frameworks */,
+				6721B6B511B46696E6EF03A4 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				51E72012E9A33ECD9C676068 /* PBXTargetDependency */,
+			);
+			name = MinitiMobileUITests;
+			productName = MinitiMobileUITests;
+			productReference = CEFF43EB839377427876B322 /* MinitiMobileUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -898,6 +1039,8 @@
 				T60000010000000000000001 /* MinitiTests */,
 				U50000010000000000000001 /* MinitiMobileTests */,
 				W60000010000000000000001 /* MinitiWatch */,
+				147778D972D97F3919A97DFE /* MinitiUITests */,
+				4C78AC6BA2D557393ACC0FDC /* MinitiMobileUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -949,6 +1092,20 @@
 			buildActionMask = 2147483647;
 			files = (
 				W10000010000000000000009 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6721B6B511B46696E6EF03A4 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		6E20088E518497E31719662B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1025,6 +1182,7 @@
 				68EE0399500249FCA9806006 /* PurchaseReturn.swift in Sources */,
 				350C7EA9D4C1400AAA4EF0B0 /* DiagnosticsQueue.swift in Sources */,
 				42DEC09262104F1EB9FD17EA /* RecordingUsageQueue.swift in Sources */,
+				A6481805872446AC8F83FED0 /* ManagedSessionJournal.swift in Sources */,
 				5F976DA8EB104996BB8DE810 /* HardwareCapabilities.swift in Sources */,
 				EB472369AC464E33AFBE44D7 /* AIRequestDiagnostics.swift in Sources */,
 				CCEBC49F09AF285BAAF7040F /* MinitiAPIService+Cloud.swift in Sources */,
@@ -1078,6 +1236,10 @@
 				CA0000010000000000000011 /* CallLifecyclePolicy.swift in Sources */,
 				CA0000010000000000000013 /* CallActivityMonitor.swift in Sources */,
 				CA0000010000000000000014 /* RecordingIndicatorPanel.swift in Sources */,
+				162D0334212A8140BE0FA3EA /* AccountUITestHarness.swift in Sources */,
+				4F846B5A9B4527F4805F53F6 /* MeetingFolders.swift in Sources */,
+				955B0C41AE2308E0E7CF0DDC /* AppState+Folders.swift in Sources */,
+				1BEE4333FDC8643602DBF88B /* MeetingFolderViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1103,6 +1265,7 @@
 				F8C33AD470DE45DB9DA6B3FB /* PurchaseReturn.swift in Sources */,
 				C1FCA75A84F44AE9B519DB60 /* DiagnosticsQueue.swift in Sources */,
 				AA92D645A68949B1A8E3D074 /* RecordingUsageQueue.swift in Sources */,
+				12117968AB6E47E89F49E648 /* ManagedSessionJournal.swift in Sources */,
 				BF5D02C26A9648A7A8EF65C8 /* HardwareCapabilities.swift in Sources */,
 				DD02213717F2476CBE519EFE /* AIRequestDiagnostics.swift in Sources */,
 				CC045106FC0CF75582A1084A /* MinitiAPIService+Cloud.swift in Sources */,
@@ -1153,6 +1316,10 @@
 				B80000010000000000000003 /* GranolaCSVImporter.swift in Sources */,
 				B90000010000000000000003 /* MinitiDesignSystem.swift in Sources */,
 				CA0000010000000000000012 /* CallLifecyclePolicy.swift in Sources */,
+				B7972966727B9BCDAF1290C8 /* AccountUITestHarness.swift in Sources */,
+				23C12943B04662410F91A4CE /* MeetingFolders.swift in Sources */,
+				4265A1C5D0DC18B9E8E42A56 /* AppState+Folders.swift in Sources */,
+				BE339AC274BC70AFCA3203AA /* MeetingFolderViews.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1196,6 +1363,7 @@
 				D10000000000000000000011 /* PersistencePolicyTests.swift in Sources */,
 				D10000000000000000000008 /* PersistentStoreTests.swift in Sources */,
 				T10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */,
+				28C4D7392B724CF3ACD37F84 /* ManagedSessionJournalTests.swift in Sources */,
 				T10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
 				T10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				T10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
@@ -1207,6 +1375,7 @@
 				T10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
 				T10000010000000000000009 /* SelectableAttributedTests.swift in Sources */,
 				CA0000010000000000000015 /* CallLifecycleTests.swift in Sources */,
+				44E099B54C48EA7021F9CA4E /* MeetingFolderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1240,6 +1409,7 @@
 				D10000000000000000000012 /* PersistencePolicyTests.swift in Sources */,
 				D10000000000000000000009 /* PersistentStoreTests.swift in Sources */,
 				U10000010000000000000001 /* MinitiAPIServiceTests.swift in Sources */,
+				DF63D87A8A8B470E8B9985D5 /* ManagedSessionJournalTests.swift in Sources */,
 				U10000010000000000000002 /* TrainingMetricsTests.swift in Sources */,
 				U10000010000000000000003 /* MeetingModelTests.swift in Sources */,
 				U10000010000000000000004 /* WebhookPayloadTests.swift in Sources */,
@@ -1251,6 +1421,7 @@
 				U10000010000000000000008 /* ColorPaletteTests.swift in Sources */,
 				U10000010000000000000009 /* SelectableAttributedTests.swift in Sources */,
 				CA0000010000000000000016 /* CallLifecycleTests.swift in Sources */,
+				763435C64C99588F22B45A63 /* MeetingFolderTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1269,6 +1440,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		59CDDC0A8B3290523A204462 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ABFA716CF2D84452721D5112 /* AccountJourneys.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		DE651E72654F6A5467DA611B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				4AD5BDCA43B6E50A20843E89 /* AccountJourneys.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -1276,6 +1463,18 @@
 			isa = PBXTargetDependency;
 			target = E60000010000000000000001 /* MinitiLiveActivityExtension */;
 			targetProxy = E90000010000000000000001 /* PBXContainerItemProxy */;
+		};
+		51E72012E9A33ECD9C676068 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = MinitiMobile;
+			target = C60000010000000000000001 /* MinitiMobile */;
+			targetProxy = A61947B90C74C5C8EE5AE206 /* PBXContainerItemProxy */;
+		};
+		FD2D3B58CC3A7D3BEEA3A4AF /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = Miniti;
+			target = A60000010000000000000001 /* Miniti */;
+			targetProxy = 789BA2221BC9CC8DAE3C8C76 /* PBXContainerItemProxy */;
 		};
 		T92000010000000000000001 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
@@ -1428,7 +1627,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1446,7 +1645,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1465,7 +1664,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1483,7 +1682,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1500,7 +1699,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -1518,7 +1717,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1540,7 +1739,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -1558,7 +1757,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1578,7 +1777,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1589,7 +1788,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1605,7 +1804,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1616,7 +1815,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1633,11 +1832,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1653,11 +1852,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1673,10 +1872,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1696,10 +1895,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1721,7 +1920,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiWatch/Info.plist;
@@ -1730,9 +1929,9 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
+				MARKETING_VERSION = 3.8.0;
 				MINITI_PHONE_BUNDLE_IDENTIFIER = com.miniti.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -1751,7 +1950,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiWatch/Info.plist;
@@ -1760,9 +1959,9 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
+				MARKETING_VERSION = 3.8.0;
 				MINITI_PHONE_BUNDLE_IDENTIFIER = com.miniti.mobile;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -1852,7 +2051,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -1870,7 +2069,7 @@
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.testhost;
 				PRODUCT_NAME = miniti;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1887,7 +2086,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = MinitiMobile/MinitiMobile.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiMobile/Info.plist;
@@ -1905,7 +2104,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.testhost;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1924,7 +2123,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiLiveActivity/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Miniti Live Activity";
@@ -1935,7 +2134,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
+				MARKETING_VERSION = 3.8.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.miniti.mobile.testhost.live-activity";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1951,11 +2150,11 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				MACOSX_DEPLOYMENT_TARGET = 14.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.app.testhost.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1971,10 +2170,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
-				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSPrincipalClass = "$(PRODUCT_MODULE_NAME).TestRunSetup";
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.testhost.tests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1995,7 +2194,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 149;
+				CURRENT_PROJECT_VERSION = 162;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = MinitiWatch/Info.plist;
@@ -2004,9 +2203,9 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 3.7.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.testhost.watchkitapp;
+				MARKETING_VERSION = 3.8.0;
 				MINITI_PHONE_BUNDLE_IDENTIFIER = com.miniti.mobile.testhost;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.mobile.testhost.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -2017,6 +2216,121 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 4;
 				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Testing;
+		};
+		0C78578F54669C804668E03D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitiuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Miniti;
+			};
+			name = Release;
+		};
+		511D55149DD0C883297308FC /* Testing */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitiuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Miniti;
+			};
+			name = Testing;
+		};
+		6D5504EFCC50DF4404693F00 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitimobileuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MinitiMobile;
+			};
+			name = Debug;
+		};
+		7A5115B84C2C0875F362C903 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.2;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitiuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Miniti;
+			};
+			name = Debug;
+		};
+		82EED0CF5FD174FC06873971 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitimobileuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MinitiMobile;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E1448E43C5CB28340E81BA7D /* Testing */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_OBJC_WEAK = NO;
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9AUR5U5KTF;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.miniti.minitimobileuitests;
+				PRODUCT_MODULE_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) MINITI_UI_TEST_TARGET";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = MinitiMobile;
 			};
 			name = Testing;
 		};
@@ -2089,6 +2403,26 @@
 				WB0000010000000000000001 /* Debug */,
 				370000000000000000000006 /* Testing */,
 				WB0000010000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AC73B779D4ABB13B42AAF74E /* Build configuration list for PBXNativeTarget "MinitiMobileUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				82EED0CF5FD174FC06873971 /* Release */,
+				6D5504EFCC50DF4404693F00 /* Debug */,
+				E1448E43C5CB28340E81BA7D /* Testing */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AF9CDB49C73C094515F39F5E /* Build configuration list for PBXNativeTarget "MinitiUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0C78578F54669C804668E03D /* Release */,
+				7A5115B84C2C0875F362C903 /* Debug */,
+				511D55149DD0C883297308FC /* Testing */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

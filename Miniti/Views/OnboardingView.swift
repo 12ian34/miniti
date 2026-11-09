@@ -4,7 +4,7 @@ import SwiftUI
 struct OnboardingView: View {
     @EnvironmentObject private var appState: AppState
     @State private var step = 0
-    @State private var showRestoreSheet = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ScrollView {
@@ -19,7 +19,7 @@ struct OnboardingView: View {
                     Text("miniti")
                         .font(.system(size: 30, weight: .bold, design: .monospaced))
                         .foregroundStyle(ColorPalette.Text.primary)
-                    Text(step == 0 ? "Turn meetings into useful notes while you talk." : "Make sure Miniti can hear you.")
+                    Text(step == 0 ? "Turn meetings into useful notes while you talk." : (step == 1 ? "Make sure miniti can hear you." : "Choose what works for your meetings."))
                         .font(.headline)
                         .foregroundStyle(ColorPalette.Text.secondary)
                         .multilineTextAlignment(.center)
@@ -28,9 +28,11 @@ struct OnboardingView: View {
                 if step == 0 {
                     planStep
                         .transition(.opacity)
-                } else {
+                } else if step == 1 {
                     microphoneStep
                         .transition(.opacity)
+                } else {
+                    recordingChoiceStep
                 }
 
                 Spacer(minLength: 24)
@@ -45,16 +47,16 @@ struct OnboardingView: View {
 
     private var planStep: some View {
         VStack(spacing: 14) {
-            OnboardingChoice(
-                icon: "sparkles",
-                title: "Continue with Miniti Free",
-                detail: "No API keys. Includes 500 transcription minutes each month.",
-                accent: ColorPalette.Accent.green,
-                isPrimary: true
-            ) {
-                appState.appModeRaw = AppMode.managed.rawValue
-                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
-                Task { await appState.refreshUsage() }
+            if appState.clientAuthStatus.isEnrolled {
+                OnboardingChoice(
+                    icon: "person.crop.circle",
+                    title: "Continue with your account",
+                    detail: "Keep your current plan and account on this device.",
+                    accent: ColorPalette.Accent.green,
+                    isPrimary: true
+                ) { continueWithManagedAccount() }
+            } else {
+                ManagedAccessChoiceCard(onContinued: continueWithManagedAccount)
             }
 
             #if os(macOS)
@@ -68,29 +70,24 @@ struct OnboardingView: View {
                 isPrimary: false
             ) {
                 appState.appModeRaw = AppMode.byok.rawValue
-                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
+                advanceToMicrophone()
             }
             #endif
-
-            Button("Already use Miniti on another device? Restore with your recovery key") {
-                showRestoreSheet = true
-            }
-            .buttonStyle(.plain)
-            .font(.footnote)
-            .foregroundStyle(ColorPalette.Accent.green)
 
             Text("You can change this later in Settings.")
                 .font(.footnote)
                 .foregroundStyle(ColorPalette.Text.muted)
         }
-        .sheet(isPresented: $showRestoreSheet) {
-            RestoreRecoveryKeySheet(onRestored: {
-                appState.appModeRaw = AppMode.managed.rawValue
-                withAnimation(.easeInOut(duration: 0.2)) { step = 1 }
-            })
-            .environmentObject(appState)
-            .preferredColorScheme(.dark)
-        }
+    }
+
+    private func continueWithManagedAccount() {
+        appState.appModeRaw = AppMode.managed.rawValue
+        advanceToMicrophone()
+        Task { await appState.refreshUsage() }
+    }
+
+    private func advanceToMicrophone() {
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { step = 1 }
     }
 
     private var microphoneStep: some View {
@@ -126,17 +123,50 @@ struct OnboardingView: View {
                     .stroke(ColorPalette.Border.primary, lineWidth: 1)
             }
 
-            Button("Continue") { finish() }
+            Button("Continue") { finishMicrophone() }
                 .buttonStyle(.borderedProminent)
                 .tint(ColorPalette.Accent.green)
                 .controlSize(.large)
                 .frame(maxWidth: .infinity, minHeight: 48)
 
-            Button("Set up microphone later") { finish() }
+            Button("Set up microphone later") { finishMicrophone() }
                 .buttonStyle(.plain)
                 .font(.footnote.weight(.medium))
                 .foregroundStyle(ColorPalette.Text.muted)
                 .frame(minHeight: 44)
+        }
+    }
+
+    private func finishMicrophone() {
+        appState.stopAudioMonitoring()
+        #if os(macOS)
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { step = 2 }
+        #else
+        finish()
+        #endif
+    }
+
+    private var recordingChoiceStep: some View {
+        VStack(spacing: MinitiDesignSystem.Spacing.standard) {
+            #if os(macOS)
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
+                Text("Save meeting files").font(.title2)
+                HomeMeetingFilesSetup()
+            }
+            .padding(.bottom, MinitiDesignSystem.Spacing.section)
+            #endif
+            Text("How should recording start?").font(.title2)
+            Text("With a connected calendar, miniti can start notes when it detects a call for an upcoming meeting. You can skip any meeting or start manually if detection is uncertain.")
+                .foregroundStyle(ColorPalette.Text.secondary)
+            Button("Use automatic recording (recommended)") {
+                appState.autoStartFromCalendar = true
+                appState.smartMeetingsEnabled = true
+                finish()
+            }.buttonStyle(.borderedProminent).tint(ColorPalette.Accent.green)
+            Button("I'll start recordings myself") {
+                appState.autoStartFromCalendar = false
+                finish()
+            }.buttonStyle(.bordered)
         }
     }
 

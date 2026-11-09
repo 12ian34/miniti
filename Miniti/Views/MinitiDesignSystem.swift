@@ -23,10 +23,25 @@ enum MinitiDesignSystem {
     }
 
     enum Control {
+        #if os(iOS)
+        static let minimumIconHitSize: CGFloat = 44
+        #else
+        static let minimumIconHitSize: CGFloat = 24
+        #endif
         static let compactHeight: CGFloat = 30
         static let horizontalPadding: CGFloat = 10
         static let modeHorizontalPadding: CGFloat = 10
         static let modeSpacing: CGFloat = 4
+    }
+
+    enum HomeSetup {
+        static let maximumWidth: CGFloat = 480
+        static let actionColumnWidth: CGFloat = 320
+        static let desktopUtilityClearance: CGFloat = 72
+    }
+
+    enum Documentation {
+        static let popoverWidth: CGFloat = 300
     }
 
     enum CoachingTypography {
@@ -54,6 +69,8 @@ enum MinitiDesignSystem {
 
     enum Motion {
         static let hoverDuration: Double = 0.12
+        static let disclosureDuration: Double = 0.18
+        static let transcriptCommitDuration: Double = 0.28
         static let navigationCueDismissDuration: Double = 0.14
     }
 
@@ -213,7 +230,7 @@ struct MinitiFadingDivider: View {
 struct MinitiControlLabel<Content: View>: View {
     let role: MinitiControlRole
     let isEmphasized: Bool
-    let height: CGFloat
+    let height: CGFloat?
     let horizontalPadding: CGFloat
     @ViewBuilder let content: () -> Content
 
@@ -223,7 +240,7 @@ struct MinitiControlLabel<Content: View>: View {
     init(
         role: MinitiControlRole = .secondary,
         isEmphasized: Bool = false,
-        height: CGFloat = MinitiDesignSystem.Control.compactHeight,
+        height: CGFloat? = MinitiDesignSystem.Control.compactHeight,
         horizontalPadding: CGFloat = MinitiDesignSystem.Control.horizontalPadding,
         @ViewBuilder content: @escaping () -> Content
     ) {
@@ -425,8 +442,10 @@ struct MinitiHomeActionLabel: View {
     let icon: String
     let label: String
     var shortcut: String? = nil
+    var isEmphasized = false
     var body: some View {
-        MinitiControlLabel(role: .secondary) {
+        MinitiControlLabel(role: .secondary, isEmphasized: isEmphasized,
+                           height: max(MinitiDesignSystem.Control.compactHeight, MinitiDesignSystem.Control.minimumIconHitSize)) {
             HStack(spacing: MinitiDesignSystem.Spacing.standard) {
                 Image(systemName: icon).font(.system(size: 11, weight: .semibold))
                 Text(label).font(.system(size: 11, weight: .medium)).lineLimit(1)
@@ -436,5 +455,184 @@ struct MinitiHomeActionLabel: View {
                 }
             }
         }
+    }
+}
+
+
+/// Benefit-led descriptions kept consistent between setup and Settings.
+enum AudioProcessingChoiceCopy {
+    static let transcription = [
+        (provider: "Deepgram", benefit: "More languages and less work for your Mac. Processes audio online."),
+        (provider: "This Mac", benefit: "Transcribes audio on your Mac. Downloads about 600 MB.")
+    ]
+    static let speakers = [
+        (provider: "Deepgram", benefit: "Labels speakers as part of online transcription."),
+        (provider: "This Mac", benefit: "Separates voices on your Mac. Recommended for a shared microphone.")
+    ]
+}
+
+/// The same readable provider comparison in Home and Settings.
+struct AudioProcessingComparison: View {
+    let options: [(provider: String, benefit: String)]
+
+    var body: some View {
+        Grid(alignment: .topLeading,
+             horizontalSpacing: MinitiDesignSystem.Spacing.section,
+             verticalSpacing: MinitiDesignSystem.Spacing.standard) {
+            ForEach(options.indices, id: \.self) { index in
+                GridRow {
+                    Text(options[index].provider)
+                        .fontWeight(.medium)
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .fixedSize()
+                    Text(options[index].benefit)
+                        .foregroundStyle(ColorPalette.Text.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+        .font(.callout)
+        .lineSpacing(MinitiDesignSystem.Spacing.hairline)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Stable, topic-specific documentation destinations shared by setup and Settings.
+enum MinitiDocumentationTopic: String, CaseIterable {
+    case permissions, account, calendar, transcription, speakers, exports, smartMeetings, folders
+    var title: String {
+        switch self {
+        case .permissions: return "Recording access"
+        case .account: return "Your account"
+        case .calendar: return "Google Calendar"
+        case .transcription: return "Transcription"
+        case .speakers: return "Speaker separation"
+        case .exports: return "Markdown export"
+        case .smartMeetings: return "Smart meetings"
+        case .folders: return "Meeting folders"
+        }
+    }
+    var url: URL {
+        let path: String
+        switch self {
+        case .permissions: path = "get-started/permissions"
+        case .account: path = "reference/account-and-recovery-key"
+        case .calendar: path = "integrations/google-calendar"
+        case .transcription: path = "features/transcription"
+        case .speakers: path = "features/transcription#multi-speaker-diarization"
+        case .exports: path = "features/markdown-export"
+        case .smartMeetings: path = "features/smart-meetings"
+        case .folders: path = "features/folders"
+        }
+        return URL(string: "https://miniti.app/docs/" + path)!
+    }
+    var explanation: String {
+        switch self {
+        case .permissions:
+            return "Microphone access lets miniti capture your voice when you record. On Mac, system audio access is checked when recording starts. Opening this guide does not record anything."
+        case .account:
+            return "Add a verified email for free account recovery. Cloud storage and sync between devices are optional Pro features, enabled separately in Cloud settings. Your recovery key remains a backup."
+        case .calendar:
+            return "Connect Google Calendar for upcoming meetings, titles and attendees. Automatic recording is a separate choice. Connected calendars no longer need a Home setup task; you can change these choices in Settings, Calendar."
+        case .transcription:
+            return "Deepgram sends audio to an online transcription service. It supports more languages and leaves more of your Mac available for other work. This Mac processes speech on your device after a model download, so transcription can work offline in supported languages. It uses your Mac’s processing power. The fallback setting can allow Deepgram when the model is not ready. Enabled AI insights still send transcript text to the AI service."
+        case .speakers:
+            return "Speaker separation labels who spoke when. Deepgram does this as part of online transcription, without running a speaker model on your device. This Mac uses the included model and is recommended for several people sharing one microphone. With local transcription, choose local speaker separation too if you want voices labelled. Local speaker separation alone does not make transcription or AI insights local."
+        case .exports:
+            return "Save readable copies of your meetings in a folder you choose. If you use an AI assistant with access to that folder, the optional meeting list helps it find the right notes when you ask about past discussions or decisions. miniti updates this list in AGENTS.md whenever it exports a meeting, keeping existing instructions. This does not connect an AI service or upload your notes. Your meeting history stays in miniti."
+        case .folders:
+            return "Folders help you find related conversations. miniti can organise new completed meetings using text already on your device, with no extra AI request. You can create or rename folders and describe what belongs in them. Existing history changes only after you preview and apply. Cloud sync stays a separate choice."
+        case .smartMeetings:
+            return "Detect supported calls and finish recordings after the call ends, with a countdown you can cancel. Calendar automatic start is a separate setting."
+        }
+    }
+}
+
+struct MinitiDocumentationLink: View {
+    let topic: MinitiDocumentationTopic
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var presented = false
+    private var usesSheet: Bool {
+        #if os(iOS)
+        return true
+        #else
+        return dynamicTypeSize.isAccessibilitySize
+        #endif
+    }
+    var body: some View {
+        Button { presented.toggle() } label: {
+            Image(systemName: "info.circle")
+                .font(.callout)
+                .foregroundStyle(ColorPalette.Text.muted)
+                .padding(MinitiDesignSystem.Spacing.compact)
+                .frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize, minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("About \(topic.title.lowercased())")
+        .accessibilityLabel("About \(topic.title.lowercased())")
+        .accessibilityHint("Shows an explanation and a link to the documentation")
+        .accessibilityIdentifier("docs.\(topic.rawValue)")
+        .popover(isPresented: Binding(get: { presented && !usesSheet }, set: { presented = $0 })) {
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.comfortable) {
+                HStack(alignment: .top) {
+                    Text(topic.title).font(.headline)
+                    Spacer()
+                    Button { presented = false } label: {
+                        Image(systemName: "xmark").font(.callout)
+                            .frame(minWidth: MinitiDesignSystem.Control.minimumIconHitSize, minHeight: MinitiDesignSystem.Control.minimumIconHitSize)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Close help")
+                    .accessibilityIdentifier("docs.close.\(topic.rawValue)")
+                }
+                explanation
+                Link("Read the docs", destination: topic.url)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("docs.open.\(topic.rawValue)")
+            }
+            .foregroundStyle(ColorPalette.Text.primary)
+            .padding(MinitiDesignSystem.Spacing.section)
+            .frame(width: MinitiDesignSystem.Documentation.popoverWidth)
+            .fixedSize(horizontal: false, vertical: true)
+            .dynamicTypeSize(dynamicTypeSize)
+            .presentationCompactAdaptation(.popover)
+        }
+        .sheet(isPresented: Binding(get: { presented && usesSheet }, set: { presented = $0 })) {
+            VStack(spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button("Close") { presented = false }
+                        .accessibilityLabel("Close help")
+                        .accessibilityIdentifier("docs.close.\(topic.rawValue)")
+                }
+                .padding(MinitiDesignSystem.Spacing.section)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+                        Text(topic.title).font(.headline)
+                            .fixedSize(horizontal: false, vertical: true)
+                        explanation
+                        Link("Read the docs", destination: topic.url)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("docs.open.\(topic.rawValue)")
+                    }
+                    .padding(MinitiDesignSystem.Spacing.section)
+                }
+                .accessibilityIdentifier("docs.body.\(topic.rawValue)")
+            }
+            .foregroundStyle(ColorPalette.Text.primary)
+            .dynamicTypeSize(dynamicTypeSize)
+            #if os(iOS)
+            .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
+            .presentationDragIndicator(.visible)
+            #endif
+        }
+    }
+
+    private var explanation: some View {
+        Text(topic.explanation).font(.callout)
+            .foregroundStyle(ColorPalette.Text.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -780,3 +780,20 @@ Variants follow the `<name>-<state>` convention (`button-primary-hover`, `button
 - Don't hardcode a speaker color — always call `ColorPalette.Speaker.color(for:micSpeakerID:)` so the mic speaker stays green.
 - Don't mix radii within a single surface (e.g. a 6px button inside an 8px card is fine; a 6px button next to a 7px sibling is not — pick one).
 - Don't use `text-subtle` or `text-placeholder` for body copy. They exist only for disabled/empty states.
+
+## Optional Home setup
+
+The 3.8.0 setup guide sits directly on Home, using native controls, semantic palette colors and the `MinitiDesignSystem.HomeSetup` width. A vertical checklist shows recording access, calendar, account recovery and Mac-only files/audio choices. Keep all task headings and current-state summaries visible, with one expanded group of direct controls and truthful completion checks. No containing card or horizontal setup navigation. Keep Record ahead of it and scroll Home at constrained sizes, with its utility bar outside the scroll area. Hide/reopen uses the shared short disclosure animation and disables it under Reduce Motion. File setup displays the real destination and binds the folder/export/index choices to the same state as Settings. Email sheet actions stay in the toolbar above the keyboard.
+
+
+Setup visibility (3.8.0 local): the fixed Home footer uses matching `MinitiHomeActionLabel` controls, setup/progress at left and Feedback at right, on an opaque app background so scrolling text cannot cross their hit targets. Keep the guide expanded by default even when configured; explicit collapse and permanent dismissal remain independent. Task hiding never means completion. General owns per-task and whole-guide restoration. `MinitiDocumentationLink` is a native, accessibly labelled info-circle link backed by `MinitiDocumentationTopic`; keep it separate from Picker/Toggle/Button hit targets and point at the relevant topic rather than the docs home.
+
+
+Home refinement (2026-11-05): calendar sections precede the setup checklist. Completed task headings use muted text and strikethrough with checks; row hide/docs controls stay visible outside disclosures. Use the shared approximate local-model progress presentation in Home and Settings, plus the compact Models shortcut in Home's status controls. Today/tomorrow/later groups replace abbreviated day labels.
+
+
+3.8.0 compact icon accessibility: setup hide controls and contextual documentation links use `MinitiDesignSystem.Control.minimumIconHitSize`, 44 points on iOS and 24 points on macOS. The symbol remains visually compact; its full rectangular surface accepts input.
+
+Setup and calendar clarity (2026-11-07, source after build 159): use `AudioProcessingComparison` for aligned provider/benefit rows with matching callout type in Home and Settings. Group each heading, comparison and picker with shared comfortable spacing. “Collapse guide” keeps the footer button; “remove guide from Home” removes both until General restoration. Newly hidden tasks also require restoration, not a timed reminder. A calendar snooze inherited from an older version keeps its original expiry. Guide-level collapse/removal buttons share caption sizing; a divider separates the removal footer from task actions. Calendar day disclosures use `UpcomingCalendarDisclosureStyle`: a full-width native button includes label, empty space and chevron, with platform minimum targets, expanded/collapsed accessibility values and Reduce Motion-aware animation.
+
+Build 160 setup polish (approved source, not packaged): guide headings, field labels and actions use lowercase; keep names such as Deepgram, This Mac and Google Calendar intact, and keep explanation sentences in sentence case. Use “speaker separation” throughout the guide and “confirm audio choices” for explicit review. Audio benefits precede their picker in both Home and Settings. Guide removal has one visible explanation, with no duplicate tooltip.

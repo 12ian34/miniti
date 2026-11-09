@@ -1,5 +1,7 @@
 # Release Process
 
+Release authorized, 2026-11-09: Ian requested the full coordinated release across repositories. Build 162 freezes the post-161 folder setup/journey changes. Full validation and new signed packages are in progress. This authorization supersedes earlier preparation-only publication restrictions. Unverified physical gates remain distinct from automated passes; the release checklist owns their disposition. No public availability is claimed by this note.
+
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
 ## Before you start
@@ -13,17 +15,18 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
   ```
 - `.env` at repo root has `APP_STORE_CONNECT_KEY_ID`, `APP_STORE_CONNECT_ISSUER_ID`, `APP_STORE_CONNECT_API_KEY`.
 
-## Current release preparation: 3.7.0
+## Current release preparation: 3.8.0
 
-Use the [3.7.0 checklist](docs/releases/3.7.0.md) for selected scope, exact test commands/results and remaining checks. Implementation and local automated validation are complete. Physical/provider checks, internal App Store metadata correction, remote CI and distribution remain open. No push, deployment or release is authorized by this document.
+Post-161 source update, 2026-11-08: optional folder setup and focused preview/create/manage screens are implemented. Focused checks pass: 56 Mac tests, 46 iOS tests and all six selected iPhone UI journeys. Final screenshots were inspected, including the editor above the keyboard at the largest text size. These changes are not in the build 161 DMG or TestFlight build. Fresh full suites and packaging remain required before distributing this source. Detailed failures and the UI-runner timing anomaly remain in the development evidence.
 
-- Hosted tests must use `Testing`; ordinary suites leave hardware tests opt-in. Use the released iPhone 16 simulator through the project runner, or an explicitly selected supported destination. See [testing](docs/reference/testing.md).
-- Publish the Apple foundation files before relying on the backend's new CI wire job, which checks out this repository. This source-publication dependency does not authorize distributing an app before its backend is ready.
-- Deploy and verify additive recording-usage acceptance, diagnostic fields/Help sanitization, ownership removal and admin reporting before shipping Apple producers. Model retirement and full operator-email work remain in this package; backend deployment may precede the apps when authorized.
-- Preserve the already-enabled production Luna groups. Retirement changes their off/rollback destinations to pinned GPT-5.4 mini; do not repeat the initial 3.6.0 disabled rollout. Keep historical accounting and notification state. Verify the two supported probes through the ordinary scheduled run.
-- Apply the internal iOS privacy-metadata correction recorded in the checklist. It is an accuracy check, not reviewer outreach. Publish prepared public docs/site/changelog with the corresponding rollout; 3.7.0 remains upcoming until then.
-- Complete Apple and independent Linux BYOK distribution before 2026-12-11, allowing for user upgrades and App Review. No automatic cross-model retry or new force-update policy is selected. A rollback must not restore a retired model.
-- Run remote CI after an authorized push and record the final archive/build hashes, physical checks or explicit waivers, Mac publication and independent iOS availability. Local automated passes are not distribution evidence.
+Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for scope, exact validation and remaining gates. Build 161 includes the simpler Home, fixed Start meeting position, aligned account actions, centered iOS Feedback, anonymous Continue feedback and the noninteractive Keychain API correction, alongside the reviewed 3.8.0 features. Full hosted suites pass: Mac 1,373 tests with nine intentional skips and iOS 1,296 with five, zero failures. All 29 iPhone UI journeys pass in one complete run. Clean Release archives and signed-package verification pass. The Mac archive has no app-source warnings; iOS retains two Watch upload concurrency warnings. The verified signed/notarized DMG and matching internal TestFlight build are available, with Apple processing and Ian’s access confirmed. Sparkle signing is cryptographically verified against the existing public key. Mac UI automation remains blocked by OS authorization. Physical/provider, signed-upgrade, backend rollout and public-release gates remain open. No production deployment or public release occurred. External testing, App Store submission, public appcast/download changes and source pushes remain unauthorized.
+
+- Hosted Apple suites use `Testing`; hardware/provider checks remain opt-in. Run Apple hosted/UI/wire/build jobs serially because they share DerivedDataLocal.
+- Apply additive backend migration `002_folders.sql`, deploy and verify v2 metering, folder sync, device labels and atomic links before distributing new Apple clients. Preserve installed Apple/Linux clients and production model settings. Production migration and deployment require release authorization.
+- Keep all selected work, including folders, completion without Done, browser detection/association and the Home setup guide, in this candidate. Synthetic browser fixtures do not close the actual Arc/Meet reproduction or broader browser matrix.
+- Record signed 3.7.0 upgrade, Mac UI-runner authorization, iPad/VoiceOver and physical audio/Watch checks or explicit waivers. Keep default-off local speakers and existing privacy/account choices.
+- Prepare iOS-scoped store notes, descriptions and review instructions, public docs/site/changelog and justified asset retention. Apply the [internal privacy-label correction](docs/releases/3.8.0-planning-audit.md#internal-app-store-disclosure-correction) before iOS submission. Keep Unreleased labels, backend availability constants, download pointers and the live appcast until the relevant platform is installable.
+- Run remote CI after an authorized source push. Record final archive/package hashes and signing/notarization results. Submit iOS independently with the exact final verified build number to avoid silently incrementing the shared build number. Do not reuse 153 for newer source.
 
 <a id="360-release-preparation"></a>
 <a id="360-rollout-gates"></a>
@@ -48,7 +51,7 @@ Edit:
 
 - `Miniti/Info.plist` — `CFBundleShortVersionString` → `X.Y.Z`, `CFBundleVersion` → `N`.
 - `MinitiMobile/Info.plist` — `CFBundleShortVersionString` → `X.Y.Z`.
-- `Miniti.xcodeproj/project.pbxproj` — `MARKETING_VERSION = X.Y.Z;` (6 places) and `CURRENT_PROJECT_VERSION = N;` (10 places). `CURRENT_PROJECT_VERSION` wins over `Info.plist` at build time; keep them in sync.
+- `Miniti.xcodeproj/project.pbxproj` — `MARKETING_VERSION = X.Y.Z;` and `CURRENT_PROJECT_VERSION = N;` in every target/configuration, including Testing, Watch and extensions. `CURRENT_PROJECT_VERSION` wins over `Info.plist` at build time; keep them in sync.
 - `fastlane/metadata/en-US/release_notes.txt` — user-facing release notes for iOS. Also mirror to `en-GB/release_notes.txt`.
 - `CHANGELOG.md` — use `### Unreleased - vX.Y.Z` while preparing the release, then replace `Unreleased` with `YYYY-MM-DD` immediately before shipping.
 - `fastlane/metadata/en-US/description.txt` + `en-GB/description.txt` — no version footer since 3.7.0; update when iPhone features change. Uploaded by `fastlane ios release` or `fastlane ios metadata`.
@@ -242,7 +245,7 @@ git push origin main vX.Y.Z
 | `which sign_update` returns nothing | Symlink the Sparkle SPM tools — see "Before you start" above. |
 | iOS `exportArchive No Accounts` / `No signing certificate "iOS Distribution" found` | The machine has no Apple Distribution certificate or Xcode account (both are lost in a Migration Assistant transfer). Sign into Xcode → Settings → Accounts and let it create the certificate. See `fastlane/RUNBOOK.md` § `fastlane ios release`. macOS releases are unaffected. |
 | iOS build number ends up one ahead of the shipped macOS DMG | Both targets share `CURRENT_PROJECT_VERSION`, and the iOS lanes auto-increment it unless `build:N` is passed. Pass it explicitly when macOS shipped first. |
-| The DMG's build number is one above what you set in step 1 | `fastlane mac release` increments `CURRENT_PROJECT_VERSION` before building (3.0.0: 129 became 130). Read the real number from `scripts/release-info.sh`, use it in the appcast and pass `build:N` to the iOS lanes. |
+| The DMG retains the previous build number | `fastlane mac release` does not increment it. Set every `CURRENT_PROJECT_VERSION` and the Mac plist build before archiving; verify the built bundle and pass the same `build:N` to iOS upload lanes. |
 | Vercel refuses the backend push as a "non-team member" commit | The GitHub user is linked to another Vercel account (2026-10-16: a second account signed in with GitHub). Sign into the team account with GitHub again. Interim: `git archive HEAD` into a folder with `.vercel/project.json` and `vercel --prod --archive=tgz` there, which carries no commit author. |
 | DMG URL returns 404 | Netlify blob upload didn't happen, or the marketing site's `/dmg/*` route is misconfigured. |
 | DMG URL returns 502 for a larger build | The marketing site's download function is buffering and base64-encoding the binary. Deploy the modern streamed `Response` implementation; Netlify's effective buffered binary limit is about 4.5 MB. |

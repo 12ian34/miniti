@@ -153,6 +153,57 @@ final class AppStateComputationTests: XCTestCase {
         _ = cancellable
     }
 
+    @MainActor
+    func testDelayedFinalCannotClearANewerInterim() {
+        let state = TranscriptRuntimeState()
+        state.update(interimText: "first phrase", currentSpeaker: 1, interimSpeaker: 1)
+        let finalRevision = state.snapshot.revision
+        state.update(interimText: "next phrase", currentSpeaker: 1, interimSpeaker: 1)
+        state.clearInterim(through: finalRevision)
+        XCTAssertEqual(state.snapshot.interimText, "next phrase")
+        state.clearInterim(through: nil)
+        XCTAssertEqual(state.snapshot.interimText, "next phrase")
+        state.clearInterim(through: state.snapshot.revision)
+        XCTAssertEqual(state.snapshot.interimText, "")
+    }
+
+    #if os(macOS)
+    @MainActor
+    func testDualSourceFinalKeepsVisibleWordsUntilCommitAndPreservesNextInterim() async throws {
+        let state = AppState()
+        let oldMic = state.captureMicrophone, oldSystem = state.captureSystemAudio
+        defer { state.captureMicrophone = oldMic; state.captureSystemAudio = oldSystem }
+        state.captureMicrophone = true; state.captureSystemAudio = true
+        let service = try XCTUnwrap(state.deepgramService)
+        func update(_ text: String, final: Bool) -> DeepgramService.TranscriptUpdate {
+            .init(text: text, speaker: 1, isFinal: final, confidence: 1, words: [], channelIndex: 1, source: .system)
+        }
+        func final(_ text: String, time: Double) -> DeepgramService.SpeakerSegment {
+            .init(id: UUID(), speaker: 1, text: text, startTime: time, endTime: time + 1, isFinal: true, confidence: 1, channelIndex: 1, source: .system)
+        }
+        service.transcriptUpdate = update("First phrase", final: false)
+        try await Task.sleep(for: .milliseconds(40))
+        service.speakerSegments = [final("First phrase.", time: 1)]
+        service.transcriptUpdate = update("First phrase.", final: true)
+        try await Task.sleep(for: .milliseconds(70))
+        XCTAssertEqual(state.interimText, "First phrase", "No blank while ordering waits")
+        XCTAssertTrue(state.liveSegments.isEmpty)
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertEqual(state.liveSegments.map(\.text), ["First phrase."])
+        XCTAssertTrue(state.interimText.isEmpty)
+
+        service.transcriptUpdate = update("Second phrase", final: false)
+        try await Task.sleep(for: .milliseconds(40))
+        service.speakerSegments = [final("Second phrase.", time: 3)]
+        service.transcriptUpdate = update("Second phrase.", final: true)
+        try await Task.sleep(for: .milliseconds(40))
+        service.transcriptUpdate = update("Newer phrase", final: false)
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertEqual(state.liveSegments.last?.text, "Second phrase.")
+        XCTAssertEqual(state.interimText, "Newer phrase", "Older final must not erase newer words")
+    }
+    #endif
+
     func testLiveInsightCadenceRequiresMeaningfulDeltaAtMinimumInterval() {
         let now = Date(timeIntervalSince1970: 1_000)
         let policy = AppState.LiveInsightCadencePolicy(
@@ -949,7 +1000,7 @@ final class AppStateComputationTests: XCTestCase {
 
         XCTAssertEqual(state.currentMeeting?.id, recent.id)
         XCTAssertEqual(state.liveSpeakerNames, ["1": "Pat"])
-        XCTAssertNil(recent.endTime)
+        XCTAssertEqual(recent.endTime, AppState.estimatedLastActivity(recent, now: now))
     }
 
     @MainActor
@@ -997,7 +1048,7 @@ final class AppStateComputationTests: XCTestCase {
         state.resumeInterruptedMeeting()
 
         XCTAssertEqual(state.currentMeeting?.id, longRunning.id)
-        XCTAssertNil(longRunning.endTime)
+        XCTAssertEqual(longRunning.endTime, AppState.estimatedLastActivity(longRunning, now: now))
     }
 
     // MARK: - formattedDuration
@@ -2206,43 +2257,6 @@ final class AppStateComputationTests: XCTestCase {
             now: afterBoundary,
             recordingDuration: 20 * 60,
             calendar: calendar
-        ))
-    }
-
-    func testAutomaticCalendarHandoffRequiresBothExistingAutomationsAndQuiet() {
-        let now = Date(timeIntervalSince1970: 1_000)
-        let currentEnd = now.addingTimeInterval(-60)
-        let nextStart = now.addingTimeInterval(10)
-
-        XCTAssertTrue(AppState.canAutomaticallyHandoffCalendarMeeting(
-            currentEventEnd: currentEnd,
-            nextEventStart: nextStart,
-            now: now,
-            transcriptGap: 120,
-            audioGap: 120,
-            autoStartEnabled: true,
-            calendarAutoStopEnabled: true,
-            eventsOverlap: false
-        ))
-        XCTAssertFalse(AppState.canAutomaticallyHandoffCalendarMeeting(
-            currentEventEnd: currentEnd,
-            nextEventStart: nextStart,
-            now: now,
-            transcriptGap: 120,
-            audioGap: 120,
-            autoStartEnabled: false,
-            calendarAutoStopEnabled: true,
-            eventsOverlap: false
-        ))
-        XCTAssertFalse(AppState.canAutomaticallyHandoffCalendarMeeting(
-            currentEventEnd: currentEnd,
-            nextEventStart: nextStart,
-            now: now,
-            transcriptGap: 120,
-            audioGap: 30,
-            autoStartEnabled: true,
-            calendarAutoStopEnabled: true,
-            eventsOverlap: false
         ))
     }
 

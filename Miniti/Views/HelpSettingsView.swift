@@ -198,6 +198,7 @@ struct HelpSettingsSections: View {
                     .accessibilityLabel("Describe the problem")
                 if message.utf16.count > 4_000 { Text("Keep the report under 4,000 characters.").foregroundStyle(ColorPalette.Status.error) }
                 TextField("Reply email (optional)", text: $replyEmail)
+                    .textFieldStyle(.roundedBorder)
                     .textContentType(.emailAddress)
                 if !SupportReport.validEmail(replyEmail.trimmingCharacters(in: .whitespacesAndNewlines)) {
                     Text("Enter a valid email address, or leave it empty.").font(.caption).foregroundStyle(ColorPalette.Status.error)
@@ -309,6 +310,7 @@ struct FeedbackSheet: View {
                 .disabled(busy || sent)
             if message.utf16.count > 4_000 { Text("Keep your message under 4,000 characters.").foregroundStyle(ColorPalette.Status.error) }
             TextField("Reply email (optional)", text: $reply)
+                .textFieldStyle(.roundedBorder)
                 .textContentType(.emailAddress).disabled(busy || sent)
             if !SupportReport.validEmail(reply.trimmingCharacters(in: .whitespacesAndNewlines)) {
                 Text("Enter a valid email address, or leave it empty.").foregroundStyle(ColorPalette.Status.error)

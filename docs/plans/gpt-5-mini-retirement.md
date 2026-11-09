@@ -1,6 +1,6 @@
 # GPT-5 mini retirement, 3.7.0
 
-Selected by Ian on 2026-11-03 for 3.7.0. Implemented locally on Apple, backend and Linux; validation and distribution remain incomplete. Nothing deployed or released. The [roadmap](../roadmap.md#selected-next-release-370) owns priority; the selected test foundation remains first. Linux has its own release version and must deliver the corresponding BYOK update before the same provider deadline.
+Status updated 2026-11-04: 3.7.0 backend deployed and Mac build 149 released; iOS build 149 submitted, availability unconfirmed. [Publication evidence](../releases/3.7.0.md#publication-2026-11-04) supersedes dated local-only status below and retains test/device limitations. [Roadmap](../roadmap.md) owns priority. Linux distribution remains separately tracked; do not infer it from Apple publication.
 
 ## Deadline and current exposure
 

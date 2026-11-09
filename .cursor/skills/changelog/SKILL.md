@@ -16,6 +16,8 @@ Update the changelog after every task that changes user-facing behaviour. There 
 
 Neither lives in `AGENTS.md` — that is the slim dev-facing index. Don't put changelog entries there.
 
+`CHANGELOG.md` also feeds the website: run `../minitidotapp/scripts/build-changelog.mjs` using that repo's runbook rather than hand-editing its generated `changelog/index.html`. Use the Mac bullets for Sparkle and the current backend release-metadata contract. Do not restore obsolete release-note constants. Publication still requires release authorization.
+
 ## CHANGELOG.md
 
 Prepare new work under an explicit Unreleased heading. At publication use `### YYYY-MM-DD - vX.Y.Z` under `## Releases`. Keep dates and versions accurate; historical entries stay unchanged unless Ian explicitly requests a correction.
@@ -35,7 +37,10 @@ Prefixes: `new`, `improvement`, `fix`.
 - **No implementation details.** No code references, function names, file paths, class names, or technical architecture.
 - **Lowercase prefixes.** `- new:` not `- New:`.
 - **No period at end** unless the entry has multiple sentences.
-- **Platform scoping**: prefix with `(macOS)`, `(iOS)`, or `(macOS and iOS)` when relevant, especially for platform-specific bugs or new features.
+- **Platform scoping**: put `(macOS)`, `(iOS)`, `(macOS and iOS)`, or `(Linux)` immediately after the prefix. The website uses these tags to split platform tabs. Availability never belongs in the header.
+- One flat list per release; no feature/fix subheadings in CHANGELOG.md. Keep the file to release entries only.
+- Use short sentences, plain verbs and specific supported numbers. Avoid "seamless", "enhances", "leverages", "not X, it's Y" framing and forced excitement. Put detailed tradeoffs in the docs. Do not label Jev or Nemotron as beta.
+- Name settings using their current visible labels, checking the app rather than copying an old tab list. These public rules are sufficient without the private personal voice guide.
 
 ### Good
 
@@ -62,6 +67,9 @@ Within a version, entries are sorted by prefix: all `new` first, then `improveme
 
 ### Rules
 
+- Describe the final release relative to the previous publicly released version, not relative to the last commit, review or development iteration. Check the released tag when uncertain.
+- A feature first shipping in this release is `new`, even if it was redesigned several times during development. Fold its final behavior into that feature bullet.
+- Do not publish fixes for regressions introduced and repaired entirely within the unreleased candidate. Keep those in the internal release record. Deduplicate and rewrite the candidate entry as its final scope changes.
 - Never modify older changelog entries unless Ian explicitly requests a historical correction. Add ordinary corrections to the unreleased entry.
 - Group related changes into one entry when possible (e.g. "iOS native toolbar items" covers home + recording + history).
 - Add entries immediately after making changes, not at the end of a session.
@@ -82,7 +90,7 @@ For shared views/services that affect both platforms, include the change only if
 
 - Written for end users who don't know what SwiftUI or toolbars are.
 - Slightly more descriptive than `CHANGELOG.md` entries — one sentence per bullet.
-- Start each line with `- `.
+- Group iOS notes under the existing `NEW`, `IMPROVED`, `FIXED` headings as applicable; start each item with `- ` and end it with a full stop. These store-note headings do not apply to CHANGELOG.md.
 - No version numbers or dates in the body.
 
 ### Example

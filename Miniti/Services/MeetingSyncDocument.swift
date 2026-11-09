@@ -16,7 +16,7 @@ enum MeetingSyncDocument {
     /// echoed back, `created_at` among them (Linux sets it; this build fills it from the start
     /// time only when absent).
     static let knownKeys: Set<String> = [
-        "schema_version", "id", "title", "calendar_event_title", "start_time", "end_time", "updated_at",
+        "folder_id", "folder_manual", "schema_version", "id", "title", "calendar_event_title", "start_time", "end_time", "updated_at",
         "language", "pinned", "transcript_revision", "transcript_edited_at", "segments", "speaker_names", "speaker_overrides",
         "self_speaker_ids", "summary", "action_items", "key_decisions", "topics", "discussion_flow", "notes", "insights_updated_at",
         "meddpicc", "questions", "doc_topics", "template", "external_source", "external_id", "external_url", "imported_at",
@@ -115,6 +115,12 @@ enum MeetingSyncDocument {
         doc["external_url"] = orNull(meeting.externalURL)
         doc["imported_at"] = string(meeting.importedAt)
         doc["recorded_on"] = orNull(meeting.recordedOnRaw)
+        // Omission preserves the shared assignment on the server. A device-only
+        // overlay must never send an explicit shared-folder removal.
+        if meeting.folderLocalOnly != true {
+            doc["folder_id"] = orNull(meeting.folderID?.uuidString.lowercased())
+            doc["folder_manual"] = meeting.folderManual ?? false
+        }
         doc["managed_session_id"] = orNull(meeting.managedSessionId)
         doc["calendar_event_id"] = orNull(meeting.calendarEventId)
         doc["attendees"] = meeting.attendees.map { attendee -> [String: Any] in
@@ -140,6 +146,43 @@ enum MeetingSyncDocument {
         [meeting.endTime, meeting.insightsUpdatedAt, meeting.transcriptEditedAt, meeting.importedAt]
             .compactMap { $0 }
             .reduce(meeting.startTime) { max($0, $1) }
+    }
+
+    /// 3.7 preserved newer folder fields as extras. Promote them before any local
+    /// edit/upload, then remove the extras so an explicit Unfiled choice stays cleared.
+    static var legacyFolderMigrationDescriptor: FetchDescriptor<Meeting> {
+        FetchDescriptor<Meeting>(predicate: #Predicate<Meeting> {
+            $0.syncExtraJSON != nil || ($0.cloudRevision > 0 && $0.syncedFolderFingerprint == nil)
+        })
+    }
+
+    static func promoteLegacyFolderFields(_ meeting: Meeting) {
+        var extra = extras(from: meeting)
+        let hasExtras = extra["folder_id"] != nil || extra["folder_manual"] != nil
+        let needsLegacyRefresh = meeting.cloudRevision > 0 && meeting.syncedFolderFingerprint == nil
+        guard hasExtras || needsLegacyRefresh else { return }
+        // Rebase only bookkeeping that matched before this representation change.
+        // Dirty edits must remain dirty, and migration must not invent a content date.
+        let before = fingerprint(of: meeting)
+        let wasSynced = meeting.syncFingerprint == before
+        let wasLocallyObserved = meeting.localFingerprint == before
+        if meeting.folderID == nil, meeting.folderManual == nil, meeting.folderLocalOnly != true {
+            meeting.folderID = (extra["folder_id"] as? String).flatMap(UUID.init(uuidString:))
+            meeting.folderManual = extra["folder_manual"] as? Bool ?? false
+        }
+        extra.removeValue(forKey: "folder_id")
+        extra.removeValue(forKey: "folder_manual")
+        meeting.syncExtraJSON = extra.isEmpty ? nil : jsonString(extra)
+        let after = fingerprint(of: meeting)
+        if wasSynced { meeting.syncFingerprint = after }
+        if wasLocallyObserved { meeting.localFingerprint = after }
+        if meeting.cloudRevision > 0 {
+            // Old clients echoed extras without understanding folder edits. The server may
+            // have retained a different folder at this exact revision: fetch before upload.
+            meeting.syncedContentFingerprint = wasSynced ? contentFingerprint(document: encode(meeting, segments: [])) : "legacy-content-unverified"
+            meeting.syncedFolderFingerprint = folderFingerprint(document: encode(meeting, segments: []))
+            meeting.syncStateRaw = "pending_folder_refresh"
+        }
     }
 
     private static func extras(from meeting: Meeting) -> [String: Any] {
@@ -228,6 +271,10 @@ enum MeetingSyncDocument {
         meeting.externalURL = doc["external_url"] as? String
         meeting.importedAt = date(doc["imported_at"])
         meeting.recordedOnRaw = doc["recorded_on"] as? String
+        if meeting.folderLocalOnly != true {
+            meeting.folderID = (doc["folder_id"] as? String).flatMap(UUID.init(uuidString:))
+            meeting.folderManual = doc["folder_manual"] as? Bool
+        }
         meeting.managedSessionId = doc["managed_session_id"] as? String
         meeting.calendarEventId = doc["calendar_event_id"] as? String
         meeting.attendees = ((doc["attendees"] as? [[String: Any]]) ?? []).compactMap { a in
@@ -293,19 +340,51 @@ enum MeetingSyncDocument {
         return meeting
     }
 
+    static func prepareFolderEdit(_ meeting: Meeting) {
+        if meeting.syncFingerprint == fingerprint(of: meeting) {
+            meeting.folderEditContentFingerprint = fingerprint(of: meeting, includingFolder: false)
+        }
+    }
+
+    static func hasOnlyPendingFolderEdit(_ meeting: Meeting) -> Bool {
+        meeting.syncFingerprint != fingerprint(of: meeting) &&
+            meeting.folderEditContentFingerprint != nil &&
+            meeting.folderEditContentFingerprint == fingerprint(of: meeting, includingFolder: false)
+    }
+
+    static func contentFingerprint(document: [String: Any]) -> String {
+        let ignored: Set<String> = ["folder_id", "folder_manual", "updated_at", "created_at", "segments"]
+        return fnv1a(jsonString(document.filter { !ignored.contains($0.key) }) ?? "")
+    }
+
+    static func folderFingerprint(document: [String: Any]) -> String {
+        (document["folder_id"] as? String ?? "").lowercased() + ":" + String(document["folder_manual"] as? Bool ?? false)
+    }
+
+    static func recordSyncBaseline(_ meeting: Meeting, document: [String: Any]? = nil) {
+        let doc = document ?? encode(meeting, segments: [])
+        meeting.syncedContentFingerprint = contentFingerprint(document: doc)
+        meeting.syncedFolderFingerprint = folderFingerprint(document: doc)
+    }
+
+    static func seedSyncBaselineIfClean(_ meeting: Meeting) {
+        guard let synced = meeting.syncFingerprint, meeting.syncedContentFingerprint == nil, synced == fingerprint(of: meeting) else { return }
+        recordSyncBaseline(meeting)
+    }
+
     // MARK: Fingerprint
 
     /// Cheap change detector over everything that syncs except the transcript text, which is
     /// covered by `transcriptRevision` (trims and corrections bump it) and the segment count
     /// is not consulted so the relation is never loaded for an untouched meeting.
-    static func fingerprint(of meeting: Meeting) -> String {
+    static func fingerprint(of meeting: Meeting, includingFolder: Bool = true, includingPin: Bool = true) -> String {
         var parts: [String] = []
         parts.append(meeting.title)
         parts.append(meeting.calendarEventTitle ?? "")
         parts.append(String(meeting.startTime.timeIntervalSince1970))
         parts.append(meeting.endTime.map { String($0.timeIntervalSince1970) } ?? "")
         parts.append(meeting.language)
-        parts.append(meeting.isPinned ? "1" : "0")
+        if includingPin { parts.append(meeting.isPinned ? "1" : "0") }
         parts.append(String(meeting.transcriptRevision))
         parts.append(meeting.transcriptEditedAt.map { String($0.timeIntervalSince1970) } ?? "")
         parts.append(canonical(meeting.speakerNamesJSON))
@@ -333,12 +412,44 @@ enum MeetingSyncDocument {
         parts.append(meeting.externalID ?? "")
         parts.append(meeting.externalURL ?? "")
         parts.append(meeting.recordedOnRaw ?? "")
+        // Preserve the pre-folder fingerprint for untouched/local-only assignments.
+        // A deliberate shared Unfiled override still needs to sync.
+        if includingFolder, meeting.folderLocalOnly != true, meeting.folderID != nil || meeting.folderManual == true {
+            parts.append(meeting.folderID?.uuidString.lowercased() ?? "")
+            parts.append(String(meeting.folderManual ?? false))
+        }
         parts.append(meeting.managedSessionId ?? "")
         parts.append(meeting.calendarEventId ?? "")
         parts.append(canonical(meeting.attendeesJSON))
         parts.append(meeting.inferredEnvironmentRaw ?? "")
         parts.append(canonical(meeting.syncExtraJSON))
         return fnv1a(parts.joined(separator: "\u{1E}"))
+    }
+
+    /// Locale-free content identity. Transcript revisions cover text edits without loading
+    /// the relationship or running Coaching calculations during launch reconciliation.
+    static func markdownFingerprint(of meeting: Meeting) -> String {
+        // Only inputs rendered by fullMeetingAsMarkdown. Account/session bookkeeping,
+        // calendar identity, folder moves and insight timestamps cannot rewrite user files.
+        let parts: [String] = [
+            meeting.title, String(meeting.startTime.timeIntervalSince1970),
+            meeting.endTime.map { String($0.timeIntervalSince1970) } ?? "",
+            meeting.language, String(meeting.transcriptRevision),
+            canonical(meeting.speakerNamesJSON),
+            canonical(jsonString(meeting.resolvedSpeakerEmails)),
+            meeting.selfSpeakerIDs.sorted().map(String.init).joined(separator: ","),
+            meeting.inferredEnvironmentRaw ?? "",
+            meeting.notes, meeting.summaryText ?? "",
+            canonical(jsonString(meeting.discussionFlow)), canonical(jsonString(meeting.actionItems)),
+            canonical(jsonString(meeting.topics)), canonical(meeting.suggestedQuestionsJSON),
+            canonical(meeting.docTopicsJSON), meeting.insightTemplateID ?? "", canonical(meeting.templateDefinitionJSON),
+            canonical(meeting.templateSectionsJSON), meeting.externalSource?.lowercased() ?? "",
+            meeting.meddpiccMetrics ?? "", meeting.meddpiccEconomicBuyer ?? "",
+            meeting.meddpiccDecisionCriteria ?? "", meeting.meddpiccDecisionProcess ?? "",
+            meeting.meddpiccPaperProcess ?? "", meeting.meddpiccIdentifiedPain ?? "",
+            meeting.meddpiccChampion ?? "", meeting.meddpiccCompetition ?? ""
+        ]
+        return fnv1a(jsonString(parts) ?? "")
     }
 
     /// JSON-string columns are rewritten by their setters with whatever key order the

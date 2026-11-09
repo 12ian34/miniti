@@ -51,6 +51,8 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
     var failNext: CloudSyncError?
     var failStatus: CloudSyncError?
     var failManifest: CloudSyncError?
+    var omitBatchRows = false
+    var omittedBatchIDs: Set<UUID> = []
     var tooLargeTitles: Set<String> = []
     var tier = "pro"
     var accountCloud: (enabled: Bool?, version: Int) = (nil, 0)
@@ -112,7 +114,7 @@ final class FakeCloudTransport: CloudSyncTransport, @unchecked Sendable {
 
     func fetchMeetings(ids: [UUID]) async throws -> [CloudMeetingState] {
         calls.append("batch:\(ids.count)"); await gate.wait("batch"); try throwIfArmed()
-        return ids.compactMap { id in rows[id].map { state(id, $0) } }
+        return omitBatchRows ? [] : ids.filter { !omittedBatchIDs.contains($0) }.compactMap { id in rows[id].map { state(id, $0) } }
     }
 
     func putMeeting(id: UUID, baseRevision: Int, document data: Data, restoreDeleted: Bool = false) async throws -> CloudPutResult {
@@ -198,7 +200,9 @@ final class TestCloudHost: CloudSyncHost {
     var deleted: Set<UUID> = []
     var inserted: [UUID] = []
     var changedCount = 0
+    var changedMeetingIDs: [UUID] = []
     var tierChanges: [Bool] = []
+    var fetchedMeetingRows = 0
 
     init() throws {
         container = try TestSupport.makeInMemoryContainer()
@@ -210,10 +214,14 @@ final class TestCloudHost: CloudSyncHost {
     func isMeetingDeleted(_ id: UUID) -> Bool { deleted.contains(id) }
     func cloudRemoveLocally(_ meeting: Meeting) { deleted.insert(meeting.id); context.delete(meeting) }
     func cloudCommit(_ mutate: @escaping () -> Void) -> Bool { mutate(); if commitFails { return false }; do { try context.save(); return true } catch { return false } }
-    func cloudFetchMeetings(_ descriptor: FetchDescriptor<Meeting>) -> [Meeting]? { fetchFails ? nil : try? context.fetch(descriptor) }
+    func cloudFetchMeetings(_ descriptor: FetchDescriptor<Meeting>) -> [Meeting]? {
+        guard !fetchFails, let rows = try? context.fetch(descriptor) else { return nil }
+        fetchedMeetingRows += rows.count
+        return rows
+    }
     func cloudFetchTombstones() -> [MeetingTombstone]? { try? context.fetch(FetchDescriptor<MeetingTombstone>()) }
     func cloudDidInsertMeetings(_ meetings: [Meeting]) { inserted += meetings.map(\.id) }
-    func cloudDidChangeMeetings(_ updated: [Meeting]) { changedCount += 1 }
+    func cloudDidChangeMeetings(_ updated: [Meeting]) { changedCount += 1; changedMeetingIDs += updated.map(\.id) }
     func cloudTierChanged(isPro: Bool) { tierChanges.append(isPro) }
 
     /// What the app does on a user delete: bookkeeping, tombstone when the cloud knows, delete.
@@ -276,6 +284,33 @@ final class CloudSyncEngineTests: XCTestCase {
         // A kicked pass starts on a later main-actor turn: give it a moment to begin, then wait.
         try? await Task.sleep(nanoseconds: 20_000_000)
         for _ in 0..<400 where engine.isRunning { try? await Task.sleep(nanoseconds: 5_000_000) }
+    }
+
+    func testBusySyncRetriesQuietlyAndPreservesTheEdit() async throws {
+        let meeting = finished("Pending folder edit")
+        var waits: [TimeInterval] = []
+        engine.sleep = { waits.append($0) }
+        transport.failNext = .busy(retryAfter: 2)
+        await engine.sync(reason: "change")
+        XCTAssertEqual(waits, [2])
+        XCTAssertNotNil(transport.rows[meeting.id])
+        XCTAssertFalse(engine.log.contains { $0.kind == .error })
+        XCTAssertNil(engine.lastError)
+    }
+
+    func testPersistentBusyHasBoundedRetriesAndKeepsLocalWorkForNextPoll() async throws {
+        let meeting = finished("Keep this edit")
+        var waits = 0
+        engine.sleep = { _ in waits += 1 }
+        transport.failManifest = .busy(retryAfter: 2)
+        await engine.sync(reason: "change")
+        XCTAssertEqual(waits, 2)
+        XCTAssertFalse(engine.isRunning)
+        XCTAssertFalse(engine.log.contains { $0.kind == .error })
+        XCTAssertNil(engine.lastError)
+        transport.failManifest = nil
+        await engine.sync(reason: "poll")
+        XCTAssertNotNil(transport.rows[meeting.id])
     }
 
     // MARK: 3.6.0 automatic completion and truthful status
@@ -713,12 +748,76 @@ final class CloudSyncEngineTests: XCTestCase {
         XCTAssertNotNil(host.meeting(meeting.id))
         meeting.syncExcluded = false
         meeting.cloudRestoreRequested = true
+        meeting.syncStateRaw = "pending_folder_refresh"
+        try host.context.save()
         engine.noteLocalChange()
         await tick()
         XCTAssertFalse(transport.rows[meeting.id]?.deleted ?? true)
         XCTAssertEqual(host.meeting(meeting.id)?.title, "Original")
         XCTAssertFalse(meeting.cloudRestoreRequested)
+        XCTAssertNil(meeting.syncStateRaw)
         XCTAssertEqual(meeting.cloudRevision, 3)
+    }
+
+    func testUndoCloudExclusionBeforeSyncPreservesBothCopies() async throws {
+        let meeting = finished("Restored before removal")
+        await tick()
+        let state = AppState()
+        state.modelContext = host.context
+        state.cloudSyncEnabled = false
+        XCTAssertTrue(state.setMeetingExcludedFromCloud(meeting, excluded: true))
+        XCTAssertEqual(host.cloudFetchTombstones()?.count, 1)
+        XCTAssertTrue(state.setMeetingExcludedFromCloud(meeting, excluded: false))
+        XCTAssertTrue(host.cloudFetchTombstones()?.isEmpty == true)
+        engine.noteLocalChange()
+        transport.calls.removeAll()
+        await tick()
+        await tick()
+        XCTAssertNotNil(host.meeting(meeting.id))
+        XCTAssertFalse(transport.rows[meeting.id]?.deleted ?? true)
+        XCTAssertFalse(transport.calls.contains("delete"))
+        XCTAssertFalse(meeting.cloudRestoreRequested)
+    }
+
+    func testStaleCloudOnlyRemovalCannotDeleteARestoredLocalMeeting() async throws {
+        let meeting = finished("Restored on older app")
+        await tick()
+        host.context.insert(MeetingTombstone(id: meeting.id, cloudRevision: meeting.cloudRevision))
+        meeting.cloudRestoreRequested = true
+        meeting.syncFingerprint = nil
+        try host.context.save()
+        engine.noteLocalChange()
+        transport.calls.removeAll()
+        await tick()
+        await tick()
+        XCTAssertNotNil(host.meeting(meeting.id))
+        XCTAssertFalse(transport.rows[meeting.id]?.deleted ?? true)
+        XCTAssertFalse(transport.calls.contains("delete"))
+        XCTAssertTrue(host.cloudFetchTombstones()?.isEmpty == true)
+    }
+
+    func testThousandMeetingFolderUpgradeUsesBoundedLocalFetches() async throws {
+        let count = 1_000
+        for index in 0..<count {
+            let meeting = finished("Upgrade \(index)", start: 1_790_000_000 + Double(index), segments: 0)
+            let document = MeetingSyncDocument.encode(meeting, segments: [])
+            _ = transport.seed(document, updatedAt: meeting.updatedAt ?? clock)
+            meeting.cloudRevision = 1
+            meeting.syncFingerprint = MeetingSyncDocument.fingerprint(of: meeting)
+            meeting.syncedContentFingerprint = nil
+            meeting.syncedFolderFingerprint = nil
+            MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        }
+        try host.context.save()
+        host.fetchedMeetingRows = 0
+        let start = Date()
+        await tick()
+        let elapsed = Date().timeIntervalSince(start)
+        print("FOLDER_UPGRADE_PROFILE: \(count) meetings, \(host.fetchedMeetingRows) fetched rows, \(elapsed)s")
+        XCTAssertLessThan(host.fetchedMeetingRows, count * 30, "Single-ID lookups must not fetch the full history per row")
+        XCTAssertEqual(host.allMeetings().count, count)
+        XCTAssertEqual(engine.pendingFolderRefreshCount, 0)
+        XCTAssertTrue(host.allMeetings().allSatisfy { $0.syncedFolderFingerprint != nil })
     }
 
     func testFirstSyncUploadsFinishedMeetingsOnly() async throws {
@@ -772,6 +871,242 @@ final class CloudSyncEngineTests: XCTestCase {
         try host.context.save()
         await tick()
         XCTAssertEqual(a.updatedAt, Date(timeIntervalSince1970: 1_790_005_000))
+    }
+
+    func testFolderOnlyEditPreservesUnseenRemoteNotes() async throws {
+        let meeting = finished("Customer call")
+        await tick()
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(5)) {
+            $0["notes"] = "Notes edited on the older client"
+        }
+        MeetingSyncDocument.prepareFolderEdit(meeting)
+        let folder = UUID()
+        meeting.folderID = folder; meeting.folderManual = true
+        try host.context.save()
+        clock = clock.addingTimeInterval(60)
+        await engine.sync(reason: "test")
+        XCTAssertEqual(meeting.notes, "Notes edited on the older client")
+        XCTAssertEqual(meeting.folderID, folder)
+        XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, meeting.notes)
+        XCTAssertEqual(transport.rows[meeting.id]?.document["folder_id"] as? String, folder.uuidString.lowercased())
+    }
+
+    func testFolderOnlyEditsPreserveRemoteNotesBeyondPushBatchAndDuringReconcile() async throws {
+        let meetings = (0...CloudSyncEngine.pushBatch).map { finished("Bulk \($0)", segments: 0) }
+        await tick()
+        for reconcile in [false, true] {
+            for meeting in meetings {
+                transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(5)) {
+                    $0["notes"] = "Unseen remote edit \(reconcile)"
+                }
+                MeetingSyncDocument.prepareFolderEdit(meeting)
+                meeting.folderID = UUID(); meeting.folderManual = true
+            }
+            try host.context.save()
+            clock = clock.addingTimeInterval(60)
+            if reconcile {
+                // Fresh engine has no feed cursor, so it must reconcile before pushing.
+                engine = CloudSyncEngine(); engine.host = host; engine.transport = transport
+                engine.defaults = UserDefaults(suiteName: "FolderReconcile-\(UUID())")!
+                engine.sleep = { _ in }; engine.now = { [unowned self] in self.clock }
+            }
+            await engine.sync(reason: "test")
+            for meeting in meetings {
+                XCTAssertEqual(meeting.notes, "Unseen remote edit \(reconcile)")
+                XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, meeting.notes)
+                XCTAssertEqual(transport.rows[meeting.id]?.document["folder_id"] as? String, meeting.folderID?.uuidString.lowercased())
+            }
+        }
+    }
+
+    func testContentEditsPreserveRemoteFolderMovesAcrossPushPullAndReconcile() async throws {
+        let meetings = (0...CloudSyncEngine.pushBatch).map { finished("Call \($0)", segments: 0) }
+        await tick()
+        for reconcile in [false, true] {
+            let folder = UUID()
+            for meeting in meetings {
+                transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(5)) {
+                    $0["folder_id"] = folder.uuidString.lowercased()
+                    $0["folder_manual"] = true
+                }
+                meeting.notes = "Local notes \(reconcile)"
+            }
+            try host.context.save()
+            clock = clock.addingTimeInterval(60)
+            if reconcile { engine.resetBookkeepingCursorOnly() }
+            await engine.sync(reason: "test")
+            for meeting in meetings {
+                XCTAssertEqual(meeting.folderID, folder)
+                XCTAssertEqual(meeting.notes, "Local notes \(reconcile)")
+                XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, meeting.notes)
+                XCTAssertEqual(transport.rows[meeting.id]?.document["folder_id"] as? String, folder.uuidString.lowercased())
+            }
+        }
+    }
+
+    func testUpgradeFetchesSameRevisionFolderBeforeUploadingLocalNotes() async throws {
+        for dirtyBeforeUpgrade in [false, true] {
+          for hasLegacyExtras in [false, true] {
+            let meeting = finished("Old client", segments: 0)
+            await tick()
+            let remoteFolder = UUID(), staleFolder = UUID()
+            // The server accepted old-client notes but ignored its echoed stale folder.
+            transport.rows[meeting.id]?.document["folder_id"] = remoteFolder.uuidString.lowercased()
+            transport.rows[meeting.id]?.document["folder_manual"] = true
+            meeting.folderID = nil; meeting.folderManual = nil
+            meeting.syncExtraJSON = hasLegacyExtras ? "{\"folder_id\":\"\(staleFolder.uuidString)\",\"folder_manual\":true}" : nil
+            meeting.syncedContentFingerprint = nil; meeting.syncedFolderFingerprint = nil
+            meeting.syncFingerprint = MeetingSyncDocument.fingerprint(of: meeting)
+            meeting.localFingerprint = meeting.syncFingerprint
+            if dirtyBeforeUpgrade { meeting.notes = "Local edit" }
+            MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+            XCTAssertEqual(meeting.syncStateRaw, "pending_folder_refresh")
+            meeting.notes = "Local edit"
+            try host.context.save()
+            await tick()
+            XCTAssertEqual(meeting.folderID, remoteFolder)
+            XCTAssertEqual(meeting.notes, "Local edit")
+            XCTAssertEqual(transport.rows[meeting.id]?.document["folder_id"] as? String, remoteFolder.uuidString.lowercased())
+            XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, "Local edit")
+            XCTAssertNil(meeting.syncStateRaw)
+          }
+        }
+    }
+
+    func testUnavailableUpgradeFolderFetchIsTruthfulBoundedAndManuallyRetryable() async throws {
+        let meeting = finished("Legacy without folder", segments: 0)
+        await tick()
+        meeting.syncedContentFingerprint = nil; meeting.syncedFolderFingerprint = nil
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        meeting.notes = "Retain local work"
+        try host.context.save()
+        transport.omitBatchRows = true
+        await tick()
+        XCTAssertEqual(engine.pendingFolderRefreshCount, 1)
+        XCTAssertTrue(engine.skippedMeetingIDs.isEmpty)
+        XCTAssertNil(engine.lastError)
+        XCTAssertEqual(engine.phase, .idle)
+        XCTAssertEqual(engine.folderRefreshIssueTitles, [meeting.title])
+        let count = transport.calls.filter { $0 == "manifest" || $0.hasPrefix("batch:") }.count
+        await engine.sync(reason: "poll")
+        await engine.sync(reason: "foreground")
+        XCTAssertEqual(transport.calls.filter { $0 == "manifest" || $0.hasPrefix("batch:") }.count, count, "Activation cannot reset a row's backoff")
+        XCTAssertEqual(meeting.notes, "Retain local work")
+        let remoteFolder = UUID()
+        transport.rows[meeting.id]?.document["folder_id"] = remoteFolder.uuidString.lowercased()
+        transport.omitBatchRows = false
+        await engine.sync(reason: "manual")
+        XCTAssertEqual(meeting.folderID, remoteFolder)
+        XCTAssertEqual(meeting.notes, "Retain local work")
+        XCTAssertNil(meeting.syncStateRaw)
+        XCTAssertEqual(engine.pendingFolderRefreshCount, 0)
+    }
+
+    func testUnreadableUpgradeRowDoesNotBlockHealthySyncAndStopsAutomaticRetries() async throws {
+        let held = finished("Unreadable")
+        let healthy = finished("Healthy")
+        let incoming = finished("Incoming")
+        await tick()
+        held.syncedContentFingerprint = nil; held.syncedFolderFingerprint = nil
+        MeetingSyncDocument.promoteLegacyFolderFields(held)
+        held.notes = "Held edit"
+        healthy.notes = "First independent edit"
+        try host.context.save()
+        let savedEnd = transport.rows[held.id]?.document["end_time"]
+        transport.rows[held.id]?.document["end_time"] = nil
+        transport.remoteEdit(incoming.id, updatedAt: clock.addingTimeInterval(5)) { $0["notes"] = "Still downloads" }
+        await tick()
+        XCTAssertEqual(transport.rows[healthy.id]?.document["notes"] as? String, "First independent edit")
+        XCTAssertEqual(held.syncStateRaw, "pending_folder_refresh")
+        XCTAssertEqual(incoming.notes, "Still downloads")
+        XCTAssertEqual(engine.phase, .idle)
+        for _ in 0..<2 {
+            clock = clock.addingTimeInterval(301)
+            await engine.sync(reason: "poll")
+        }
+        let attempts = transport.calls.filter { $0.hasPrefix("batch:") }.count
+        XCTAssertEqual(attempts, 3)
+        clock = clock.addingTimeInterval(1000)
+        healthy.notes = "Still uploads"
+        try host.context.save()
+        await engine.sync(reason: "foreground")
+        XCTAssertEqual(transport.calls.filter { $0.hasPrefix("batch:") }.count, attempts)
+        XCTAssertEqual(transport.rows[healthy.id]?.document["notes"] as? String, "Still uploads")
+        transport.rows[held.id]?.document["end_time"] = savedEnd
+        await engine.sync(reason: "manual")
+        XCTAssertNil(held.syncStateRaw)
+        XCTAssertEqual(transport.rows[held.id]?.document["notes"] as? String, "Held edit")
+        XCTAssertTrue(engine.folderRefreshIssueTitles.isEmpty)
+    }
+
+    func testUpgradeFolderBookkeepingDoesNotNotifyMarkdownContentChanges() async throws {
+        let meeting = finished("Existing export")
+        await tick()
+        meeting.syncedContentFingerprint = nil; meeting.syncedFolderFingerprint = nil
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        try host.context.save()
+        let folder = UUID()
+        transport.rows[meeting.id]?.document["folder_id"] = folder.uuidString.lowercased()
+        host.changedMeetingIDs = []
+        await tick()
+        XCTAssertEqual(meeting.folderID, folder)
+        XCTAssertFalse(host.changedMeetingIDs.contains(meeting.id), "No export callback for a folder-only or baseline-only refresh")
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(5)) { $0["notes"] = "Actual remote content edit" }
+        await tick()
+        XCTAssertTrue(host.changedMeetingIDs.contains(meeting.id), "Real content edits still refresh the export")
+    }
+
+    func testExplicitRestoreStillReadsUnknownRemoteFolderBeforeUploading() async throws {
+        let meeting = finished("Restore pending folder")
+        await tick()
+        meeting.syncedContentFingerprint = nil; meeting.syncedFolderFingerprint = nil
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        let folder = UUID()
+        transport.rows[meeting.id]?.document["folder_id"] = folder.uuidString.lowercased()
+        meeting.cloudRevision = 0; meeting.cloudRestoreRequested = true
+        meeting.syncFingerprint = nil; meeting.notes = "Explicit local copy"
+        try host.context.save()
+        await tick()
+        XCTAssertEqual(meeting.folderID, folder)
+        XCTAssertEqual(transport.rows[meeting.id]?.document["folder_id"] as? String, folder.uuidString.lowercased())
+        XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, "Explicit local copy")
+    }
+
+    func testDeleteDuringPendingFolderRestoreKeepsExplicitLocalCopy() async throws {
+        let meeting = finished("Restore during delete")
+        await tick()
+        meeting.syncedContentFingerprint = nil; meeting.syncedFolderFingerprint = nil
+        MeetingSyncDocument.promoteLegacyFolderFields(meeting)
+        meeting.cloudRestoreRequested = true; meeting.cloudRevision = 0
+        meeting.syncFingerprint = nil; meeting.notes = "Keep this local copy"
+        try host.context.save()
+        transport.gate.holdNames = ["batch"]
+        let task = Task { await self.engine.sync(reason: "manual") }
+        try await TestSupport.waitUntil { self.transport.gate.held > 0 }
+        transport.remoteDelete(meeting.id)
+        transport.gate.release()
+        await task.value
+        XCTAssertFalse(host.deleted.contains(meeting.id))
+        XCTAssertEqual(transport.rows[meeting.id]?.deleted, false)
+        XCTAssertEqual(transport.rows[meeting.id]?.document["notes"] as? String, "Keep this local copy")
+    }
+
+    func testUndoneFolderEditCannotOverrideLaterRemoteMove() async throws {
+        let meeting = finished("Undo")
+        await tick()
+        MeetingSyncDocument.prepareFolderEdit(meeting)
+        meeting.folderID = UUID()
+        meeting.folderID = nil
+        XCTAssertFalse(MeetingSyncDocument.hasOnlyPendingFolderEdit(meeting))
+        try host.context.save()
+        let remoteFolder = UUID()
+        transport.remoteEdit(meeting.id, updatedAt: clock.addingTimeInterval(5)) {
+            $0["folder_id"] = remoteFolder.uuidString.lowercased()
+            $0["folder_manual"] = true
+        }
+        await tick()
+        XCTAssertEqual(meeting.folderID, remoteFolder, "calls: \(transport.calls), engine: \(engine.log.map(\.detail)), revision: \(meeting.cloudRevision)")
+        XCTAssertNil(meeting.folderEditContentFingerprint)
     }
 
     func testConflictRemoteNewerReplacesLocalAndLocalNewerWins() async throws {
@@ -1393,6 +1728,7 @@ final class CloudSyncAppStateTests: XCTestCase {
         XCTAssertTrue(state.startMeetingFromEvent(event))
         XCTAssertTrue(try XCTUnwrap(state.currentMeeting).syncExcluded, "Rule applies before capture or first save")
         state.currentMeeting = nil
+        state.isStartingMeeting = false // Finish the prior synthetic, capture-less start.
         XCTAssertTrue(state.startNewMeeting())
         XCTAssertFalse(try XCTUnwrap(state.currentMeeting).syncExcluded)
         state.isRecording = true; state.selectedCalendarEvent = event
@@ -1472,13 +1808,14 @@ final class CloudSyncAppStateTests: XCTestCase {
         XCTAssertEqual(tombstones.first?.cloudRevision, 3)
         state.setMeetingExcludedFromCloud(meeting, excluded: false)
         XCTAssertFalse(meeting.syncExcluded)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<MeetingTombstone>()).isEmpty)
 
         // A user delete of a never-synced meeting leaves a tombstone only while the switch is on.
         let fresh = Meeting(title: "Never uploaded", startTime: Date(), endTime: Date())
         context.insert(fresh)
         try context.save()
         state.noteMeetingDeleted(fresh)
-        XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 2)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<MeetingTombstone>()).count, 1)
         state.cloudSyncEnabled = false
     }
 }

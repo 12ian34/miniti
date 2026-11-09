@@ -262,7 +262,7 @@ struct DataFlowSummary: Equatable {
             let summary: String
             if i.cloudPause == nil {
                 status = .automaticExport
-                summary = "Finished meetings, so your other devices see them."
+                summary = "Finished meetings and shared folders, so your other devices see them."
             } else if i.cloudPause == "Off" {
                 status = .off
                 summary = "Cloud is off; meetings stay on each device."
@@ -270,7 +270,7 @@ struct DataFlowSummary: Equatable {
                 status = .paused(i.cloudPause!.lowercased())
                 summary = "Cloud is paused; nothing uploads until it resumes."
             }
-            rows.append(Row(id: "cloud", group: .syncAndExports, title: "miniti cloud", status: status, summary: summary, details: "Pro only. The switch belongs to the account. Choose Cloud or Local in a live or saved meeting, or use title rules in Cloud settings on this device. A meeting recorded in private mode stays off unless you put it on.", configure: Jump(label: "Cloud", target: "cloud.sync")))
+            rows.append(Row(id: "cloud", group: .syncAndExports, title: "miniti cloud", status: status, summary: summary, details: "Pro only. Shared folder names, descriptions and assignments sync too. Local folders stay on this device. The switch belongs to the account. Choose Cloud or Local in a live or saved meeting, or use title rules in Cloud settings on this device. A meeting recorded in private mode stays off unless you put it on.", configure: Jump(label: "Cloud", target: "cloud.sync")))
         }
 
         // Webhook.

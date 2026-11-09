@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 #if os(macOS)
 import AppKit
 #else
@@ -590,6 +591,225 @@ final class SelectableAttributedTests: XCTestCase {
         XCTAssertTrue(reconstructed.isEqual(to: next))
         XCTAssertLessThan(mutation.range.length, previous.length / 10)
         XCTAssertLessThan(mutation.replacement.length, next.length / 10)
+    }
+
+    @MainActor
+    func testMacInterimPromotionIsOneDocumentEditAndBrightensOnlyNewWords() async throws {
+        let prefix = NSAttributedString(string: "Existing words.", attributes: [.foregroundColor: NSColor(ColorPalette.Text.secondary)])
+        let tail = NSAttributedString(string: " New words.", attributes: [.foregroundColor: NSColor(ColorPalette.Text.secondary)])
+        let full = NSMutableAttributedString(attributedString: prefix); full.append(tail)
+        let interim = LiveTranscriptInterimSnapshot(revision: 1, text: "New words", speaker: 1, startsNewTurn: false,
+            hasFinalizedContent: true, speakerNames: [:], selfIDs: [], bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3)
+        let initial = LiveTranscriptTextPaneMac(finalizedAttributed: prefix, finalizedMutation: nil, finalizedRevision: 1,
+            interim: interim, isAutoScrollEnabled: false, reduceMotion: false, onScrolledAwayFromBottom: {})
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: initial)
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: initial)
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        XCTAssertEqual(storage.string, "Existing words. New words▊", "Same-speaker interim stays in the final paragraph")
+        var publishedDocuments: [String] = []
+        let token = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { _ in
+            MainActor.assumeIsolated { publishedDocuments.append(storage.string) }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        view.setSelectedRange(NSRange(location: 0, length: 8))
+        let final = LiveTranscriptTextPaneMac(finalizedAttributed: full,
+            finalizedMutation: .init(revision: 2, range: NSRange(location: prefix.length, length: 0), replacement: tail),
+            finalizedRevision: 2, interim: nil, isAutoScrollEnabled: false, reduceMotion: false, onScrolledAwayFromBottom: {})
+        coordinator.apply(parent: final)
+        XCTAssertEqual(publishedDocuments, [full.string], "Never publish the blank gap or duplicate words")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 0, length: 8))
+        XCTAssertEqual(storage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, NSColor(ColorPalette.Text.secondary))
+        XCTAssertNotEqual(storage.attribute(.foregroundColor, at: prefix.length, effectiveRange: nil) as? NSColor, NSColor(ColorPalette.Text.secondary))
+        try await TestSupport.waitUntil {
+            (storage.attribute(.foregroundColor, at: prefix.length, effectiveRange: nil) as? NSColor) == NSColor(ColorPalette.Text.secondary)
+        }
+        XCTAssertEqual(storage.string, full.string)
+        XCTAssertEqual(storage.attribute(.foregroundColor, at: prefix.length, effectiveRange: nil) as? NSColor, NSColor(ColorPalette.Text.secondary))
+        XCTAssertTrue(publishedDocuments.allSatisfy { $0 == full.string })
+    }
+
+    @MainActor
+    func testReduceMotionCommitsImmediatelyWithoutFadeOrLaterAttributeEdits() async throws {
+        let color = NSColor(ColorPalette.Text.secondary)
+        let prefix = NSAttributedString(string: "Existing words.", attributes: [.foregroundColor: color])
+        let tail = NSAttributedString(string: " New words.", attributes: [.foregroundColor: color])
+        let full = NSMutableAttributedString(attributedString: prefix); full.append(tail)
+        let initial = LiveTranscriptTextPaneMac(finalizedAttributed: prefix, finalizedMutation: nil, finalizedRevision: 1,
+            interim: .init(revision: 1, text: "New words", speaker: 1, startsNewTurn: false,
+                hasFinalizedContent: true, speakerNames: [:], selfIDs: [], bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3),
+            isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {})
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: initial)
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: initial)
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        coordinator.apply(parent: .init(finalizedAttributed: full,
+            finalizedMutation: .init(revision: 2, range: NSRange(location: prefix.length, length: 0), replacement: tail),
+            finalizedRevision: 2, interim: nil, isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {}))
+        XCTAssertEqual(storage.attribute(.foregroundColor, at: prefix.length, effectiveRange: nil) as? NSColor, color)
+        let unwantedEdit = expectation(description: "Reduce Motion must not schedule fade edits")
+        unwantedEdit.isInverted = true
+        let token = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { _ in unwantedEdit.fulfill() }
+        defer { NotificationCenter.default.removeObserver(token) }
+        await fulfillment(of: [unwantedEdit], timeout: 0.6)
+        XCTAssertEqual(storage.string, full.string)
+    }
+
+    @MainActor
+    func testSelectionInsideLocalizedReplacementRestoresAfterBatchProcessing() throws {
+        let previous = NSAttributedString(string: "Before.\nOld middle words.\nFinal paragraph.")
+        let next = NSAttributedString(string: "Before.\nA corrected middle sentence.\nFinal paragraph.")
+        func pane(_ document: NSAttributedString, revision: UInt64, mutation: SelectableTextMutation? = nil) -> LiveTranscriptTextPaneMac {
+            .init(finalizedAttributed: document, finalizedMutation: mutation, finalizedRevision: revision,
+                interim: .init(revision: revision, text: "Live tail", speaker: 1, startsNewTurn: false,
+                    hasFinalizedContent: true, speakerNames: [:], selfIDs: [], bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3),
+                isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {})
+        }
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: pane(previous, revision: 1))
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: pane(previous, revision: 1))
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        let selection = (previous.string as NSString).range(of: "middle words")
+        view.setSelectedRange(selection)
+        let mutation = try XCTUnwrap(LiveTranscriptDocumentMutation.localizedReplacement(previous: previous, next: next, revision: 2))
+        var processedEdit = false
+        var selectionChangedBeforeProcessing = false
+        let did = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { _ in MainActor.assumeIsolated { processedEdit = true } }
+        let selected = NotificationCenter.default.addObserver(forName: NSTextView.didChangeSelectionNotification, object: view, queue: nil) { _ in MainActor.assumeIsolated { selectionChangedBeforeProcessing = selectionChangedBeforeProcessing || !processedEdit } }
+        defer { [did, selected].forEach(NotificationCenter.default.removeObserver) }
+        coordinator.apply(parent: pane(next, revision: 2, mutation: mutation))
+        XCTAssertEqual(storage.string, next.string + " Live tail▊")
+        XCTAssertEqual(view.selectedRange(), NSRange(location: mutation.range.location, length: 0))
+        XCTAssertFalse(selectionChangedBeforeProcessing)
+    }
+
+    @MainActor
+    func testParagraphBoundaryKeepsSameSpeakerInterimAndCommittedWordsInPlace() throws {
+        let prefixText = String(repeating: "ordinary words ", count: 66).trimmingCharacters(in: .whitespaces)
+        let tailText = "these words cross the paragraph boundary without disappearing"
+        let prefix = SelectableAttributed.transcriptDocument(turns: [.init(speaker: 1, timestamp: 0, text: prefixText)], speakerNames: nil).attributed
+        let full = SelectableAttributed.transcriptDocument(turns: [.init(speaker: 1, timestamp: 0, text: prefixText), .init(speaker: 1, timestamp: 1, text: tailText)], speakerNames: nil).attributed
+        let pane = LiveTranscriptTextPaneMac(finalizedAttributed: prefix, finalizedMutation: nil, finalizedRevision: 1,
+            interim: .init(revision: 1, text: tailText, speaker: 1, startsNewTurn: false, hasFinalizedContent: true,
+                speakerNames: [:], selfIDs: [], bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3),
+            isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {})
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: pane)
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: pane)
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        XCTAssertEqual(storage.string, full.string + "▊", "The live phrase must use exactly the final paragraph breaks")
+        XCTAssertTrue(full.string.hasPrefix(prefix.string))
+        let suffix = full.attributedSubstring(from: NSRange(location: prefix.length, length: full.length - prefix.length))
+        coordinator.apply(parent: .init(finalizedAttributed: full,
+            finalizedMutation: .init(revision: 2, range: NSRange(location: prefix.length, length: 0), replacement: suffix),
+            finalizedRevision: 2, interim: nil, isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {}))
+        XCTAssertEqual(storage.string, full.string)
+    }
+
+    @MainActor
+    func testSingleSpeakerFortyMinuteTranscriptKeepsEditedParagraphsBounded() throws {
+        // 6,000 words, about 40 minutes at 150 words/minute, one speaker and no source newlines.
+        let source = String(repeating: "These are ordinary spoken meeting words ", count: 1_000).trimmingCharacters(in: .whitespaces)
+        let document = SelectableAttributed.transcriptDocument(turns: [.init(speaker: 1, timestamp: 0, text: source)], speakerNames: nil)
+        XCTAssertEqual(document.turns.count, 1, "Paragraph boundaries must not invent speaker changes")
+        let body = document.attributed.string.components(separatedBy: "\n").dropFirst()
+        XCTAssertEqual(body.joined(separator: " "), source, "Display breaks must preserve all words")
+        XCTAssertLessThan(body.map { $0.utf16.count }.max() ?? Int.max, 1_020)
+        func pane(_ revision: UInt64) -> LiveTranscriptTextPaneMac {
+            .init(finalizedAttributed: document.attributed, finalizedMutation: nil, finalizedRevision: 1,
+                interim: .init(revision: revision, text: "The current phrase \(revision)", speaker: 1,
+                    startsNewTurn: false, hasFinalizedContent: true, speakerNames: [:], selfIDs: [], bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3),
+                isAutoScrollEnabled: false, reduceMotion: false, onScrolledAwayFromBottom: {})
+        }
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        scroll.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: pane(0))
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: pane(0))
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        var largestParagraphEdit = 0
+        let token = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { _ in
+            MainActor.assumeIsolated {
+                largestParagraphEdit = max(largestParagraphEdit, (storage.string as NSString).paragraphRange(for: storage.editedRange).length)
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let started = CFAbsoluteTimeGetCurrent()
+        for revision in 1...240 {
+            coordinator.apply(parent: pane(UInt64(revision)))
+            if let manager = view.textLayoutManager { manager.ensureLayout(for: manager.documentRange) }
+        }
+        print("TRANSCRIPT_PERF: 40-minute single-speaker fixture, 240 interim layouts: \(CFAbsoluteTimeGetCurrent() - started)s; largest edited paragraph \(largestParagraphEdit)")
+        XCTAssertLessThan(largestParagraphEdit, 1_100)
+    }
+
+    @MainActor
+    func testTranscriptViewPrebuildsBeforeClearingInterimAndSkipsDuplicateSourceRebuild() async throws {
+        let state = AppState()
+        state.liveSegments = [.init(id: UUID(), text: "First words.", speaker: 1, timestamp: 0, isFinal: true)]
+        state.transcriptRuntime.update(interimText: "Next phrase", currentSpeaker: 1, interimSpeaker: 1)
+        var events: [(String, Int, String)] = []
+        let host = NSHostingView(rootView: TranscriptView(cacheEventForTesting: { events.append(($0, $1, $2)) })
+            .environmentObject(state))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 500), styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false; window.contentView = host; window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        try await TestSupport.waitUntil { events.contains { $0.0 == "rebuilt" } && events.contains { $0.0 == "runtime" && $0.2 == "Next phrase" } }
+        events.removeAll()
+        state.liveSegments.append(.init(id: UUID(), text: "Next phrase.", speaker: 1, timestamp: 2, isFinal: true))
+        state.transcriptRuntime.clearInterim(through: state.transcriptRuntime.snapshot.revision)
+        try await TestSupport.waitUntil { events.contains { $0.0 == "sourceChanged" } }
+        let clears = events.filter { $0.0 == "runtime" && $0.2.isEmpty }
+        XCTAssertFalse(clears.isEmpty)
+        XCTAssertTrue(clears.allSatisfy { $0.1 == 2 }, "Final cache must exist before any interim clear is presented")
+        XCTAssertEqual(events.filter { $0.0 == "rebuilt" }.count, 1, "onChange must not rebuild what the clear publisher already prepared")
+    }
+
+    @MainActor
+    func testLongTranscriptInterimEditsStayBoundedToTheTail() throws {
+        let text = String(repeating: "A completed turn with stable selected words.\n", count: 5_000)
+        let document = NSAttributedString(string: text, attributes: [.foregroundColor: NSColor(ColorPalette.Text.secondary)])
+        func pane(_ revision: UInt64) -> LiveTranscriptTextPaneMac {
+            .init(finalizedAttributed: document, finalizedMutation: nil, finalizedRevision: 1,
+                interim: .init(revision: revision, text: "The current phrase \(revision)", speaker: 1,
+                    startsNewTurn: false, hasFinalizedContent: true, speakerNames: [:], selfIDs: [],
+                    bodyFontSize: 17, headerFontSize: 13, lineSpacing: 3),
+                isAutoScrollEnabled: false, reduceMotion: true, onScrolledAwayFromBottom: {})
+        }
+        let scroll = NSTextView.scrollableDocumentContentTextView()
+        let view = try XCTUnwrap(scroll.documentView as? NSTextView)
+        LiveTranscriptTextPaneMac.configure(scrollView: scroll, textView: view)
+        let coordinator = LiveTranscriptTextPaneMac.Coordinator(parent: pane(0))
+        coordinator.attach(scrollView: scroll, textView: view); coordinator.apply(parent: pane(0))
+        defer { coordinator.detach() }
+        let storage = try XCTUnwrap(view.textStorage)
+        var largestEdit = 0
+        let token = NotificationCenter.default.addObserver(forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil) { _ in
+            MainActor.assumeIsolated { largestEdit = max(largestEdit, storage.editedRange.length) }
+        }
+        defer { NotificationCenter.default.removeObserver(token) }
+        view.setSelectedRange(NSRange(location: 20, length: 10))
+        let started = CFAbsoluteTimeGetCurrent()
+        for revision in 1...100 { coordinator.apply(parent: pane(UInt64(revision))) }
+        let elapsed = CFAbsoluteTimeGetCurrent() - started
+        print("TRANSCRIPT_PERF: 5000 lines, 100 interim edits: \(elapsed)s; largest edited range \(largestEdit)")
+        XCTAssertLessThan(largestEdit, 100)
+        XCTAssertEqual(view.selectedRange(), NSRange(location: 20, length: 10))
+        XCTAssertTrue(storage.string.hasPrefix(text))
     }
 
     @MainActor

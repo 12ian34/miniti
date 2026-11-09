@@ -172,6 +172,15 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 enum TestSupport {
+    /// Test-only blocking gates run on a GCD worker, never the cooperative executor.
+    static func waitForSignal(_ signal: DispatchSemaphore) async -> Bool {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(returning: signal.wait(timeout: .now() + 3) == .success)
+            }
+        }
+    }
+
     /// Ephemeral session routed entirely through `StubURLProtocol`.
     static func stubbedSession(context: StubURLProtocol.Context = StubURLProtocol.context) -> URLSession {
         let config = URLSessionConfiguration.ephemeral

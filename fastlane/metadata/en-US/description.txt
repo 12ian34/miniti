@@ -25,6 +25,7 @@ CALENDAR AND MEETINGS
 - Google Calendar shows what's next, with prep notes and join links for Meet, Zoom and Teams
 - Auto-start and smart prompts when a meeting looks finished or the next one is starting
 - Searchable meeting history: titles, transcripts, notes and insights
+- Editable folders with automatic matching and a preview before filing existing meetings
 - Pin meetings, trim transcripts and regenerate insights
 - Import your Granola exports
 - Share as markdown or send to your own tools with webhooks

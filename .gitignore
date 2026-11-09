@@ -4,6 +4,7 @@
 # Xcode
 build/
 DerivedData/
+DerivedDataiOS/
 DerivedDataCoverage/
 DerivedDataLocal/
 DerivedDataLocal-iOS/
@@ -45,7 +46,17 @@ shn.md
 
 .cursor/hooks/
 .clawpatch/
-.claude/
+# Keep local agent settings, backups and private skills ignored. Only reviewed
+# relative links to public project skills are shared.
+.claude/*
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/changelog
+!.claude/skills/color-palette
+!.claude/skills/release-planning
+!.claude/skills/release-workflow
+!.claude/skills/target-membership
+!.claude/skills/version-bump
 scripts/screenshots/out-smoke/
 
 

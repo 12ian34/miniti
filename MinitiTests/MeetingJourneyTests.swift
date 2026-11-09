@@ -62,6 +62,69 @@ final class MeetingJourneyTests: XCTestCase {
         try ModelContext(container).fetch(FetchDescriptor<Meeting>())
     }
 
+    #if os(macOS)
+    func testIdleHardwareTimeoutExplainsFailureAndBlocksStartBeforeGrant() async throws {
+        let state = makeState()
+        let worker = AudioHardwareExecutor(timeout: 0.1)
+        let capture = AudioCaptureService(microphoneStart: {}, systemAudioStart: {}, hardware: worker)
+        state.audioCaptureService = capture
+        capture.onHardwareFailure = { [weak state] in state?.handleCaptureHardwareFailure() }
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        do { try await worker.run { release.wait() } } catch AudioHardwareExecutor.Failure.unresponsive { }
+        try await TestSupport.waitUntil { state.recordingErrorMessage != nil }
+        XCTAssertFalse(state.canStartRecording)
+        XCTAssertFalse(state.startNewMeeting())
+        XCTAssertNil(state.currentMeeting)
+        XCTAssertNil(state.managedSessionJournal.active)
+        XCTAssertTrue(state.recordingErrorMessage?.contains("Quit and reopen") == true)
+        state.dismissRecordingError()
+        XCTAssertNotNil(state.recordingUnavailableReason, "Disabled control must retain its explanation")
+        state.currentMeeting = Meeting(title: "Resume")
+        state.isStartingMeeting = true; state.isResumingRecording = true
+        await state.startManagedRecording()
+        XCTAssertFalse(state.isStartingMeeting)
+        XCTAssertFalse(state.isResumingRecording)
+        state.startRecording()
+        XCTAssertFalse(state.isRecording)
+        XCTAssertNil(state.managedSessionJournal.active)
+    }
+
+    func testHardwareTimeoutStopsAndSavesWhileTheHardwareWorkerRemainsBlocked() async throws {
+        let state = makeState()
+        let worker = AudioHardwareExecutor(timeout: 0.1)
+        let capture = AudioCaptureService(microphoneStart: {}, systemAudioStart: {}, hardware: worker)
+        state.audioCaptureService = capture
+        capture.onHardwareFailure = { [weak state] in state?.handleCaptureHardwareFailure() }
+        try await capture.startCapture(microphone: true, systemAudio: true)
+        let meeting = Meeting(title: "hardware timeout")
+        state.currentMeeting = meeting
+        state.isRecording = true
+        state.liveSegments = [segment("Keep these words", at: 1)]
+        let report = ManagedSessionReport(deviceId: "device", sessionId: "session", durationMinutes: 1,
+                                         accountID: "owner", accountingVersion: 1)
+        try await state.managedSessionJournal.begin(report)
+        state.managedSessionJournal.captureBegan()
+        let release = DispatchSemaphore(value: 0)
+        defer { release.signal() }
+        let entered = expectation(description: "hardware call blocked")
+        let blocked = Task {
+            try await worker.run { entered.fulfill(); release.wait() }
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        do { try await blocked.value; XCTFail("expected hardware deadline") }
+        catch AudioHardwareExecutor.Failure.unresponsive { }
+        try await TestSupport.waitUntil { !state.isRecording && !state.isFinalizingMeeting }
+        XCTAssertFalse(capture.isCapturing)
+        XCTAssertNil(state.managedSessionJournal.active)
+        XCTAssertEqual(state.managedSessionJournal.pending.first?.sessionId, report.sessionId)
+        XCTAssertEqual(state.managedSessionJournal.pending.first?.meetingId, meeting.id)
+        XCTAssertEqual(try persistedMeetings().first?.segments.map(\.text), ["Keep these words"])
+        XCTAssertTrue(state.recordingErrorMessage?.contains("Quit and reopen miniti") == true)
+        // The semaphore remains held until teardown: saving never waits for the OS call.
+    }
+    #endif
+
     // MARK: record → stop → save → history
 
     func testStopAfterTranscriptSavesTheMeetingIntoHistory() async throws {
@@ -87,6 +150,60 @@ final class MeetingJourneyTests: XCTestCase {
         let history = state.fetchMeetings(.historyLoad)
         XCTAssertEqual(history?.map(\.id), [meeting.id])
         XCTAssertFalse(StubURLProtocol.requests.isEmpty, "final insights were attempted against the backend")
+    }
+
+    func testStopCompletesInPlaceWithoutDoneAndExportsAreCheckpointedOnce() async throws {
+        let state = makeState()
+        let meeting = Meeting(title: "Saved result")
+        state.currentMeeting = meeting; state.isRecording = true
+        state.liveSegments = [segment("final saved words", at: 2)]
+        state.stopRecording()
+        state.stopRecording() // manual/automatic Stop race
+        try await TestSupport.waitUntil(timeout: 15) { !state.isFinalizingMeeting && state.finalizingInsightMeetingIDs.isEmpty }
+        XCTAssertTrue(state.currentMeeting === meeting, "Selection and review stay on the same result")
+        XCTAssertEqual(try persistedMeetings().count, 1)
+        XCTAssertNotNil(meeting.automaticCompletionID)
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, meeting.endTime)
+        let completion = meeting.automaticCompletionID
+        state.completeSavedMeetingExports(meeting)
+        state.goHome()
+        XCTAssertEqual(meeting.automaticCompletionID, completion)
+        XCTAssertEqual(try persistedMeetings().count, 1)
+        XCTAssertNil(state.currentMeeting)
+        XCTAssertEqual(try persistedMeetings()[0].segments.first?.text, "final saved words")
+    }
+
+    func testLaunchCompletionStagesCRMBeforeCalendarConnectionCheckFinishes() throws {
+        let state = makeState()
+        state.isGoogleCalendarConnected = false
+        state.autoAttioSync = true; state.autoTwentySync = true
+        let meeting = Meeting(title: "Recovered", endTime: Date())
+        meeting.attendees = [MeetingAttendee(email: "guest@customer.example", displayName: nil, domain: "customer.example", responseStatus: "accepted", isOrganizer: false, isSelf: false)]
+        meeting.automaticCompletionID = UUID()
+        meeting.automaticCompletionOwner = state.automaticCompletionOwner
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        state.completeSavedMeetingExports(meeting)
+        let queued = state.deliveryOutbox.items.filter { $0.meetingID == meeting.id }
+        XCTAssertEqual(Set(queued.map(\.kind)), Set([.attio, .twenty]))
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, meeting.endTime)
+        state.completeSavedMeetingExports(meeting)
+        XCTAssertEqual(state.deliveryOutbox.items.filter { $0.meetingID == meeting.id }.count, 2)
+    }
+
+    func testCompletionCheckpointSaveFailureRetriesWithoutNeedingNavigation() throws {
+        let state = makeState()
+        let meeting = Meeting(title: "Checkpoint", endTime: Date())
+        meeting.automaticCompletionID = UUID()
+        meeting.automaticCompletionOwner = state.automaticCompletionOwner
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        state.persistenceSaveHandler = { _ in throw NSError(domain: "synthetic-disk", code: 1) }
+        state.completeSavedMeetingExports(meeting)
+        XCTAssertNil(meeting.automaticCompletionExportedAt)
+        XCTAssertNotNil(state.persistenceIssue)
+        state.persistenceSaveHandler = { try $0.save() }
+        state.retryPersistence()
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, meeting.endTime)
+        XCTAssertNil(state.persistenceIssue)
     }
 
     func testStopWithNoContentDrainsThenSavesNothing() async throws {
@@ -122,6 +239,40 @@ final class MeetingJourneyTests: XCTestCase {
         XCTAssertEqual(relaunch.currentMeeting?.id, meeting.id)
         XCTAssertEqual(relaunch.liveSegments.map(\.text), ["first thought", "second thought"])
         XCTAssertNil(relaunch.persistenceIssue)
+        XCTAssertNotNil(meeting.endTime)
+        XCTAssertNil(meeting.automaticCompletionID, "Recovery is not explicit recording completion")
+        relaunch.reconcileAutomaticCompletions()
+        XCTAssertNil(meeting.automaticCompletionExportedAt)
+    }
+
+    func testRecoveringResumedAndStaleDraftsCannotSendPendingCompletion() async throws {
+        for stale in [false, true] {
+            let first = makeState()
+            let meeting = Meeting(title: "Previously stopped", startTime: Date().addingTimeInterval(stale ? -86400 : -20))
+            meeting.automaticCompletionID = UUID()
+            meeting.automaticCompletionOwner = first.automaticCompletionOwner
+            meeting.automaticCompletionMarkdownRequested = true
+            first.currentMeeting = meeting
+            first.liveSegments = [segment("resumed draft content", at: 1)]
+            let saved = await first.saveCurrentMeetingAndWait()
+            XCTAssertTrue(saved)
+            let relaunch = makeState()
+            relaunch.resumeInterruptedMeeting()
+            relaunch.reconcileAutomaticCompletions()
+            XCTAssertEqual(meeting.automaticCompletionSuspended, true)
+            XCTAssertNil(meeting.automaticCompletionExportedAt)
+            XCTAssertNil(meeting.automaticCompletionMarkdownExportedAt)
+            if !stale {
+                relaunch.isRecording = true
+                relaunch.stopRecording()
+                // Capture finalization ends before saved AI/export completion settles.
+                try await TestSupport.waitUntil(timeout: 15) {
+                    !relaunch.isFinalizingMeeting && meeting.automaticCompletionExportedAt != nil
+                }
+                XCTAssertEqual(meeting.automaticCompletionSuspended, false)
+                XCTAssertNotNil(meeting.automaticCompletionExportedAt)
+            }
+        }
     }
 
     // MARK: pin survives relaunch
@@ -362,6 +513,20 @@ final class SavedMeetingDeliveryTests: XCTestCase {
 }
 
 extension SavedMeetingDeliveryTests {
+    func testSpeakerEditDuringFinalProcessingStillCompletesSavedExports() async throws {
+        let meeting = try meeting()
+        meeting.automaticCompletionID = UUID()
+        meeting.automaticCompletionOwner = state.automaticCompletionOwner
+        StubURLProtocol.delay = 0.2
+        let task = Task { await state.generateFinalInsightsAndSave(for: meeting, transcript: meeting.fullTranscript,
+            language: "en", existingTitle: meeting.title, includeSales: false) }
+        try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+        meeting.speakerNames = ["0": "Updated name"]
+        await task.value
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, meeting.endTime)
+        XCTAssertEqual(meeting.speakerNames["0"], "Updated name")
+    }
+
     func testAutomaticSpeakerNamingDoesNotDiscardFinalAI() async throws {
         let meeting = try meeting()
         state.currentMeeting = meeting
@@ -1075,4 +1240,336 @@ extension MeetingJourneyTests {
         XCTAssertLessThan(start.duration(to: .now), .seconds(1))
         gate?.resume()
     }
+}
+
+
+extension MeetingJourneyTests {
+    func testManagedRefreshCoordinatorKeepsWholeRecordingAcrossRenewalsAndLongDurations() async throws {
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let data = try JSONSerialization.data(withJSONObject: fixture["start_response"]!)
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (200, data) }
+        for minutes in [74, 360] {
+            let state = makeState()
+            var clock: TimeInterval = 0
+            state.managedSessionJournal.uptime = { clock }
+            let started = await state.refreshManagedDeepgramCredential(trigger: "start")
+            XCTAssertTrue(started)
+            let root = try XCTUnwrap(state.managedSessionJournal.active)
+            state.managedSessionJournal.captureBegan()
+            for _ in 0..<3 {
+                clock += Double(minutes * 20)
+                state.managedSessionJournal.observe()
+                let refreshed = await state.refreshManagedDeepgramCredential(trigger: "renewal")
+                XCTAssertTrue(refreshed)
+            }
+            let report = try XCTUnwrap(state.managedSessionJournal.finish(meetingID: nil))
+            XCTAssertEqual(report.recordingID, root.recordingID)
+            XCTAssertEqual(report.sessionId, root.sessionId)
+            XCTAssertEqual(report.durationMS, minutes * 60000)
+        }
+    }
+
+    func testActualManagedStartRetainsRecordingIDAfterLostResponses() async throws {
+        let state = makeState()
+        let meeting = Meeting(title: "Start awaiting response")
+        container.mainContext.insert(meeting)
+        state.currentMeeting = meeting
+        state.managedEnrollmentTestResult = true
+        #if os(macOS)
+        state.onDeviceTranscriptionEnabled = false
+        #endif
+        StubURLProtocol.script = nil
+        StubURLProtocol.requests = []
+        StubURLProtocol.script = { _ in throw URLError(.timedOut) }
+        await state.startManagedRecording()
+        let id = try XCTUnwrap(state.managedRecordingID)
+        XCTAssertFalse(state.isStartingMeeting)
+        await state.startManagedRecording()
+        XCTAssertEqual(state.managedRecordingID, id)
+        let starts = try StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/session") == true }.map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: TestSupport.bodyData(of: $0)) as? [String: Any])["recording_id"] as? String
+        }
+        XCTAssertGreaterThanOrEqual(starts.count, 2)
+        XCTAssertEqual(Set(starts.compactMap { $0 }).count, 1)
+    }
+
+    func testAmbiguousUncapturedStartCanRetryOnRollbackBackendWithSameRecordingID() async throws {
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let legacy = try JSONSerialization.data(withJSONObject: fixture["legacy_response"]!)
+        let state = makeState()
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (500, Data(#"{"error":"internal_error"}"#.utf8)) }
+        let first = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertFalse(first)
+        StubURLProtocol.handler = { _ in (200, legacy) }
+        let retry = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertTrue(retry)
+        XCTAssertEqual(state.managedSessionJournal.active?.accountingVersion, 1)
+        let starts = try StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/session") == true }.map {
+            try XCTUnwrap(JSONSerialization.jsonObject(with: TestSupport.bodyData(of: $0)) as? [String: Any])["recording_id"] as? String
+        }
+        XCTAssertEqual(starts.count, 2)
+        XCTAssertNotNil(starts[0]); XCTAssertEqual(starts[0], starts[1])
+    }
+}
+
+
+extension MeetingJourneyTests {
+    func testCoalescedGrantCannotApplyAfterStopOrAccountChange() async throws {
+        for signOut in [false, true] {
+            let state = makeState()
+            state.isRecording = true
+            let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+            let data = try JSONSerialization.data(withJSONObject: fixture["start_response"]!)
+            StubURLProtocol.script = nil
+            StubURLProtocol.handler = { _ in (200, data) }
+            StubURLProtocol.requests = []
+            let gate = StubURLProtocol.ResponseGate()
+            StubURLProtocol.context.gate = gate
+            let one = Task { await state.refreshManagedDeepgramCredential(trigger: "start") }
+            let two = Task { await state.refreshManagedDeepgramCredential(trigger: "start") }
+            try await TestSupport.waitUntil { !StubURLProtocol.requests.isEmpty }
+            if signOut { state.clientAuthManager.clearLocal(reason: "signout") }
+            else { state.stopRecording() }
+            gate.release()
+            let first = await one.value, second = await two.value
+            XCTAssertFalse(first); XCTAssertFalse(second)
+            XCTAssertEqual(StubURLProtocol.requests.filter { $0.url?.path.hasSuffix("/session") == true }.count, 1)
+            XCTAssertNil(state.managedSessionJournal.active)
+            XCTAssertNil(state.recordingErrorMessage, "Old work cannot overwrite the current UI")
+            state.isRecording = false
+            StubURLProtocol.context.gate = nil
+        }
+    }
+}
+
+
+extension MeetingJourneyTests {
+    func testQuotaRejectionCanRetryAgainstLegacyBackend() async throws {
+        let state = makeState()
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let legacy = try JSONSerialization.data(withJSONObject: fixture["legacy_response"]!)
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (402, Data(#"{"error":"limit_reached","minutes_used":500}"#.utf8)) }
+        let rejected = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertFalse(rejected)
+        StubURLProtocol.handler = { _ in (200, legacy) }
+        let recovered = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertTrue(recovered)
+        XCTAssertEqual(state.managedSessionJournal.active?.accountingVersion, 1)
+    }
+
+    func testOfflineStartCanRetryAgainstLegacyBackend() async throws {
+        let state = makeState()
+        StubURLProtocol.script = { _ in throw URLError(.notConnectedToInternet) }
+        let failed = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertFalse(failed)
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let legacy = try JSONSerialization.data(withJSONObject: fixture["legacy_response"]!)
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (200, legacy) }
+        let recovered = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertTrue(recovered)
+    }
+
+    func testRepeatedStartWhileGrantIsPendingDoesNotPoisonNextGrant() async throws {
+        let state = makeState()
+        state.managedEnrollmentTestResult = true
+        state.onDeviceTranscriptionEnabled = false
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (402, Data(#"{"error":"limit_reached"}"#.utf8)) }
+        let gate = StubURLProtocol.ResponseGate()
+        StubURLProtocol.context.gate = gate
+        XCTAssertTrue(state.startNewMeeting())
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path.hasSuffix("/session") == true } }
+        state.startRecording()
+        state.startRecording()
+        gate.release()
+        try await TestSupport.waitUntil { !state.isStartingMeeting && !state.isResumingRecording }
+        StubURLProtocol.context.gate = nil
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let legacy = try JSONSerialization.data(withJSONObject: fixture["legacy_response"]!)
+        StubURLProtocol.handler = { _ in (200, legacy) }
+        let recovered = await state.refreshManagedDeepgramCredential(trigger: "start")
+        XCTAssertTrue(recovered)
+    }
+
+    func testDiscardWhileResumeGrantIsPendingCannotStartPhantomRecording() async throws {
+        let state = makeState()
+        state.managedEnrollmentTestResult = true
+        state.onDeviceTranscriptionEnabled = false
+        let meeting = Meeting(title: "Resume then discard", endTime: Date())
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        state.currentMeeting = meeting
+        state.isResumingRecording = true
+        let fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.managedAccounting.utf8)) as? [String: Any])
+        let response = try JSONSerialization.data(withJSONObject: fixture["start_response"]!)
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (200, response) }
+        let gate = StubURLProtocol.ResponseGate()
+        StubURLProtocol.context.gate = gate
+        let start = Task { await state.startManagedRecording() }
+        try await TestSupport.waitUntil { StubURLProtocol.requests.contains { $0.url?.path.hasSuffix("/session") == true } }
+        state.discardCurrentMeeting()
+        XCTAssertFalse(state.startNewMeeting(), "Wait for the cancelled start to unwind before another start")
+        gate.release()
+        await start.value
+        StubURLProtocol.context.gate = nil
+        XCTAssertNil(state.currentMeeting)
+        XCTAssertFalse(state.isRecording)
+        XCTAssertFalse(state.isResumingRecording)
+        XCTAssertNil(state.managedSessionJournal.active)
+        state.startRecording()
+        XCTAssertFalse(state.isRecording, "A missing meeting cannot capture even with a late credential")
+    }
+
+    func testAccountTransitionWaitsForOwnedUsageAndExcludesNewStarts() async throws {
+        let state = makeState()
+        let account = try XCTUnwrap(state.clientAuthManager.status.accountID)
+        let report = ManagedSessionReport(deviceId: DeviceIdentifier.getOrCreateDeviceId(), sessionId: "pending-legacy", durationMinutes: 2, accountID: account)
+        let queued = await state.managedSessionJournal.enqueue(report)
+        XCTAssertTrue(queued)
+        StubURLProtocol.script = nil
+        StubURLProtocol.handler = { _ in (503, Data(#"{"error":"busy"}"#.utf8)) }
+        let gate = StubURLProtocol.ResponseGate()
+        StubURLProtocol.context.gate = gate
+        let move = Task { await state.attachManagedDevice(recoveryKey: "unused") }
+        try await TestSupport.waitUntil { state.accountTransitionInFlight && !StubURLProtocol.requests.isEmpty }
+        XCTAssertFalse(state.canStartRecording)
+        XCTAssertFalse(state.startNewMeeting())
+        gate.release()
+        let moved = await move.value
+        StubURLProtocol.context.gate = nil
+        XCTAssertFalse(moved)
+        XCTAssertFalse(state.accountTransitionInFlight)
+        XCTAssertEqual(state.clientAuthManager.status.accountID, account)
+        XCTAssertEqual(state.managedSessionJournal.pending.count, 1)
+        XCTAssertFalse(StubURLProtocol.requests.contains { $0.url?.path.hasSuffix("/attach") == true })
+        XCTAssertGreaterThan(try XCTUnwrap(state.managedSessionJournal.pending.first?.nextAttemptAt), Date())
+
+        // Switching to BYOK does not erase managed minutes already owed. An explicit
+        // retry sends now, even inside the automatic retry delay, then permits the move.
+        state.appModeRaw = AppMode.byok.rawValue
+        StubURLProtocol.handler = { request in
+            if request.url?.path.hasSuffix("/session/end") == true {
+                return (200, Data(#"{"minutes_used":2,"minutes_remaining":498}"#.utf8))
+            }
+            if request.url?.path.hasSuffix("/auth/account/attach") == true {
+                return (200, Data(#"{"access_token":"new-account-token","expires_in":3600,"refresh_token":"new-refresh","account_id":"account-after-settlement","device_cap":5,"moved":true}"#.utf8))
+            }
+            return (503, Data(#"{"error":"busy"}"#.utf8))
+        }
+        let retriedMove = await state.joinAccount(approvedLinkID: "approved-link")
+        XCTAssertTrue(retriedMove, state.managedEnrollmentError ?? "")
+        XCTAssertTrue(state.managedSessionJournal.pending.isEmpty)
+        XCTAssertEqual(state.clientAuthManager.status.accountID, "account-after-settlement")
+        XCTAssertFalse(state.accountTransitionInFlight)
+    }
+
+    func testAccountMoveIsBlockedDuringRecordingAndPendingResume() async {
+        let state = makeState()
+        state.isRecording = true
+        let recording = await state.attachManagedDevice(recoveryKey: "unused")
+        XCTAssertFalse(recording)
+        state.isRecording = false; state.isResumingRecording = true
+        let resume = await state.joinAccount(approvedLinkID: "unused")
+        XCTAssertFalse(resume)
+        XCTAssertFalse(state.accountTransitionInFlight)
+        XCTAssertTrue(StubURLProtocol.requests.isEmpty)
+        state.isResumingRecording = false
+    }
+
+    func testResumeAndStopKeepTheOriginalCRMCompletionCheckpoint() async throws {
+        let state = makeState()
+        let meeting = Meeting(title: "Continued meeting")
+        state.currentMeeting = meeting; state.isRecording = true
+        state.liveSegments = [segment("first part", at: 2)]
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 15) {
+            !state.isFinalizingMeeting && state.finalizingInsightMeetingIDs.isEmpty
+        }
+        let completion = try XCTUnwrap(meeting.automaticCompletionID)
+        let checkpoint = try XCTUnwrap(meeting.automaticCompletionExportedAt)
+        state.isRecording = true; meeting.endTime = nil
+        state.liveSegments.append(segment("second part", at: 12))
+        state.stopRecording()
+        try await TestSupport.waitUntil(timeout: 15) {
+            !state.isFinalizingMeeting && state.finalizingInsightMeetingIDs.isEmpty
+        }
+        XCTAssertEqual(meeting.automaticCompletionID, completion)
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, checkpoint)
+        XCTAssertGreaterThan(try XCTUnwrap(meeting.endTime), checkpoint)
+    }
+
+    #if os(macOS)
+    func testEnablingExportLaterDoesNotExportPreviouslyCompletedMeetings() throws {
+        let originalTZ = getenv("TZ").map { String(cString: $0) }
+        defer {
+            if let originalTZ { setenv("TZ", originalTZ, 1) } else { unsetenv("TZ") }
+            tzset(); NSTimeZone.resetSystemTimeZone()
+        }
+        setenv("TZ", "UTC", 1); tzset(); NSTimeZone.resetSystemTimeZone()
+        let state = makeState()
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertTrue(state.saveExportFolderBookmark(for: folder))
+        let meeting = Meeting(title: "Earlier meeting", endTime: Date())
+        meeting.managedSessionId = "pending-accounting-session"
+        meeting.automaticCompletionID = UUID(); meeting.automaticCompletionOwner = state.automaticCompletionOwner
+        meeting.automaticCompletionMarkdownRequested = false
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        state.completeSavedMeetingExports(meeting)
+        state.autoExportMarkdown = true
+        state.reconcileAutomaticCompletions()
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+        meeting.automaticCompletionMarkdownRequested = true
+        state.completeSavedMeetingExports(meeting)
+        XCTAssertNotNil(meeting.automaticCompletionMarkdownExportedAt)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path).count, 1)
+        meeting.notes = "Notes added after stopping"
+        try container.mainContext.save()
+        state.reconcileAutomaticCompletions()
+        let files = try FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
+        let markdown = try XCTUnwrap(files.first { $0.pathExtension == "md" })
+        XCTAssertTrue(try String(contentsOf: markdown, encoding: .utf8).contains(meeting.notes))
+        XCTAssertEqual(meeting.automaticCompletionMarkdownFingerprint, MeetingSyncDocument.markdownFingerprint(of: meeting))
+        var renders = 0
+        state.automaticMarkdownRenderer = { meeting in renders += 1; return meeting.fullMeetingAsMarkdown() }
+        try "My edits in my editor".write(to: markdown, atomically: true, encoding: .utf8)
+        meeting.isPinned.toggle(); meeting.folderID = UUID(); meeting.folderManual = true
+        meeting.managedSessionId = nil; meeting.insightsUpdatedAt = Date()
+        meeting.calendarEventId = "unrendered-calendar-id"; meeting.externalURL = "https://example.com"
+        try container.mainContext.save()
+        state.reconcileAutomaticCompletions()
+        XCTAssertEqual(try String(contentsOf: markdown, encoding: .utf8), "My edits in my editor")
+        let oldRenderedDate = meeting.fullMeetingAsMarkdown()
+        setenv("TZ", "Pacific/Auckland", 1); tzset(); NSTimeZone.resetSystemTimeZone()
+        XCTAssertNotEqual(meeting.fullMeetingAsMarkdown(), oldRenderedDate,
+                          "exercise an actual formatted-date change, not a cached timezone")
+        state.reconcileAutomaticCompletions()
+        XCTAssertEqual(try String(contentsOf: markdown, encoding: .utf8), "My edits in my editor")
+        XCTAssertEqual(renders, 0, "unchanged content must not render transcripts even across timezone changes")
+        state.autoExportMarkdown = false
+        meeting.notes += " changed but export disabled"
+        state.reconcileAutomaticCompletions()
+        XCTAssertEqual(renders, 0, "disabled export must never render the completed history")
+        state.autoExportMarkdown = true
+        state.reconcileAutomaticCompletions()
+        XCTAssertEqual(renders, 1, "a genuine content change still refreshes the export")
+
+    }
+
+    func testMissingMarkdownDestinationDoesNotBlockCompletionCheckpoint() throws {
+        let state = makeState()
+        state.autoExportMarkdown = true
+        let meeting = Meeting(title: "Export", endTime: Date())
+        meeting.automaticCompletionID = UUID(); meeting.automaticCompletionOwner = state.automaticCompletionOwner
+        meeting.automaticCompletionMarkdownRequested = true
+        container.mainContext.insert(meeting); try container.mainContext.save()
+        state.completeSavedMeetingExports(meeting)
+        XCTAssertEqual(meeting.automaticCompletionExportedAt, meeting.endTime)
+    }
+    #endif
 }

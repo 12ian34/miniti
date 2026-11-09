@@ -547,10 +547,10 @@ enum SelectableAttributed {
                 .foregroundColor: speakerColor,
                 .paragraphStyle: startsAtDocumentBeginning && index == 0 ? bodyPara : headerPara,
             ]))
-            let body = turn.text + (index == displayTurns.count - 1 ? "" : "\n")
+            let body = paragraphWrappedTranscript(turn.text) + (index == displayTurns.count - 1 ? "" : "\n")
             result.append(NSAttributedString(string: body, attributes: [
                 .font: bodyFont,
-                .foregroundColor: platformColor(for: Color(hex: "E6EDF3")),
+                .foregroundColor: platformColor(for: ColorPalette.Text.secondary),
                 .paragraphStyle: bodyPara,
             ]))
         }
@@ -565,7 +565,7 @@ enum SelectableAttributed {
     static func body(
         _ text: String,
         fontSize: CGFloat = 13,
-        color: Color = Color(hex: "E6EDF3"),
+        color: Color = ColorPalette.Text.secondary,
         lineSpacing: CGFloat = 6
     ) -> NSAttributedString {
         let para = NSMutableParagraphStyle()
@@ -583,7 +583,7 @@ enum SelectableAttributed {
         prefix: String,
         prefixColor: Color,
         fontSize: CGFloat = 13,
-        textColor: Color = Color(hex: "E6EDF3")
+        textColor: Color = ColorPalette.Text.secondary
     ) -> NSAttributedString {
         let result = NSMutableAttributedString()
         let font = appFont(size: fontSize, weight: .regular)
@@ -611,6 +611,32 @@ enum SelectableAttributed {
         let speaker: Int
         let timestamp: TimeInterval
         let text: String
+    }
+
+    /// Display-only breaks keep TextKit's edited paragraph bounded during a long
+    /// single-speaker turn. The same streaming rule renders provisional text, so
+    /// committing it preserves the already-visible prefix. Stored text is untouched.
+    static let transcriptParagraphLimit = 1_000
+
+    static func paragraphWrappedTranscript(_ text: String, initialParagraphLength: Int = 0) -> String {
+        var result = String()
+        result.reserveCapacity(text.utf8.count)
+        var length = initialParagraphLength
+        for character in text {
+            if character.isNewline {
+                result.append(character)
+                length = 0
+                continue
+            }
+            if length >= transcriptParagraphLimit && character == " " {
+                result.append("\n")
+                length = 0
+                continue
+            }
+            result.append(character)
+            length += character.utf16.count
+        }
+        return result
     }
 
     struct TranscriptRenderSegment {

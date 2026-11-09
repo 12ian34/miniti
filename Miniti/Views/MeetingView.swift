@@ -273,7 +273,7 @@ private struct SmartMeetingBanner: View {
         switch prompt.kind {
         case .calendar: return "calendar.badge.clock"
         case .quiet: return "moon.zzz.fill"
-        case .callStart, .callTransition: return "phone.fill"
+        case .callStart, .callTransition, .association: return "phone.fill"
         case .callEnd: return "phone.down.fill"
         case .calendarNoShow: return "calendar.badge.exclamationmark"
         }
@@ -345,6 +345,12 @@ private struct SmartMeetingBanner: View {
             .tint(ColorPalette.Accent.green)
             keepRecordingButton
 
+        case .association:
+            Button("Use for this meeting") { appState.associateCurrentMeetingFromPrompt() }
+                .buttonStyle(.bordered)
+            Button("Keep recording") { appState.keepRecordingFromSmartMeetingPrompt() }
+                .buttonStyle(.bordered)
+
         case .calendarNoShow:
             Button("Record anyway") {
                 appState.recordFromNoShowPrompt()
@@ -398,6 +404,7 @@ private struct RecordingIssueBanner: View {
                 }
             }
             .buttonStyle(.borderedProminent)
+            .disabled(!appState.isRecording && appState.recordingUnavailableReason != nil)
             .tint(ColorPalette.Accent.amber)
 
             if isDismissible {
@@ -445,17 +452,13 @@ private struct PostMeetingReviewBar: View {
 
             if !appState.isFinalizingMeeting {
                 Button {
-                    if appState.isCurrentMeetingGeneratingFinalInsights {
-                        appState.goHome()
-                    } else {
-                        appState.saveAndOpenCurrentMeeting()
-                    }
+                    appState.saveAndOpenCurrentMeeting()
                 } label: {
                     MinitiControlLabel(role: .primary, isEmphasized: true) {
                         HStack(spacing: 6) {
                             Image(systemName: appState.isCurrentMeetingGeneratingFinalInsights ? "checkmark" : "clock.arrow.circlepath")
                                 .font(.system(size: 10, weight: .semibold))
-                            Text(appState.isCurrentMeetingGeneratingFinalInsights ? "done" : "open in history")
+                            Text("history")
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                     }
@@ -479,7 +482,7 @@ private struct PostMeetingReviewBar: View {
             return "You can keep reviewing while Miniti finishes and saves automatically."
         }
         if appState.isCurrentMeetingGeneratingFinalInsights {
-            return "You can return to meetings now; insights will finish in History."
+            return "Saved in History. Final insights are finishing here. You can leave at any time."
         }
         return "Review the transcript and insights, resume recording, or open it in History."
     }
@@ -515,25 +518,9 @@ struct ReadyStateView: View {
     var meetings: [Meeting] = []
 
     var body: some View {
-        VStack(spacing: 24) {
-            Spacer()
-            
-            // Logo and title
-            VStack(spacing: 12) {
-                Text("⬢")
-                    .font(.system(size: 48, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "3FB950"))
-
-                Text("miniti")
-                    .font(.system(size: 28, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Color(hex: "E6EDF3"))
-
-                FlashingTagline(
-                    text: "multi-dimensional meetings",
-                    isIdle: !appState.isMonitoring
-                )
-            }
-            
+        GeometryReader { geometry in
+        ScrollView(showsIndicators: false) {
+        VStack(spacing: MinitiDesignSystem.Spacing.section) {
             // BYOK mode: API key pills
             if appState.appMode == .byok {
                 HStack(spacing: 12) {
@@ -558,14 +545,9 @@ struct ReadyStateView: View {
                 LimitWarningBanner(minutesRemaining: usage.minutesRemaining)
             }
 
-            // Keep access to your account (B6a): after the first saved meeting, never while recording
-            if appState.appMode == .managed && appState.showAccessCard && !appState.isRecording {
-                AccountAccessCard()
-            }
-
-            // Calendar integration nudge
-            if appState.shouldShowCalendarNudge && appState.pendingAutoStartEvent == nil {
-                CalendarNudgeCard()
+            if appState.appMode == .managed && !appState.isRecording,
+               !appState.clientAuthStatus.isEnrolled {
+                ManagedAccessChoiceCard()
             }
 
             // Exports failing (missing folder): say so where the person will see it.
@@ -589,17 +571,17 @@ struct ReadyStateView: View {
                 VStack(spacing: 8) {
                     Text("account disabled")
                         .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(Color(hex: "F85149"))
+                        .foregroundStyle(ColorPalette.Status.error)
                     
                     Text("contact support for help")
                         .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundStyle(Color(hex: "A1A1AA"))
+                        .foregroundStyle(ColorPalette.Text.muted)
                 }
             } else if appState.isLimitReached {
                 VStack(spacing: 8) {
                     Text("limit reached")
                         .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(Color(hex: "F85149"))
+                        .foregroundStyle(ColorPalette.Status.error)
                     
                     Button {
                         appState.appModeRaw = AppMode.byok.rawValue
@@ -610,12 +592,12 @@ struct ReadyStateView: View {
                             Text("switch to BYOK")
                                 .font(.system(size: 11, weight: .medium, design: .default))
                         }
-                        .foregroundStyle(Color(hex: "58A6FF"))
+                        .foregroundStyle(ColorPalette.Accent.blue)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 7)
                         .background(
                             RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(hex: "58A6FF").opacity(0.12))
+                                .fill(ColorPalette.Accent.blue.opacity(0.12))
                         )
                     }
                     .buttonStyle(.plain)
@@ -631,7 +613,7 @@ struct ReadyStateView: View {
                         if appState.isStartingMeeting {
                             ProgressView()
                                 .controlSize(.small)
-                                .tint(Color(hex: "09090B"))
+                                .tint(ColorPalette.Background.primary)
                             Text("starting...")
                                 .font(.system(size: 13, weight: .semibold, design: .default))
                         } else {
@@ -645,40 +627,58 @@ struct ReadyStateView: View {
                         if !appState.isStartingMeeting {
                             Text("⌘⇧R")
                                 .font(.system(size: 10, weight: .medium, design: .default))
-                                .foregroundStyle(Color(hex: "09090B").opacity(0.5))
+                                .foregroundStyle(ColorPalette.Background.primary.opacity(0.5))
                         }
                     }
-                    .foregroundStyle(Color(hex: "09090B"))
+                    .foregroundStyle(ColorPalette.Background.primary)
                     .padding(.horizontal, 28)
                     .padding(.vertical, 14)
+                    .frame(maxWidth: .infinity)
                     .background(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.control)
                             .fill(appState.isStartingMeeting
-                                  ? Color(hex: "484F58")
-                                  : appState.canStartRecording ? Color(hex: "3FB950") : Color(hex: "484F58"))
+                                  ? ColorPalette.Text.disabled
+                                  : appState.canStartRecording ? ColorPalette.Accent.green : ColorPalette.Text.disabled)
                     )
                 }
                 .buttonStyle(.plain)
+                .frame(maxWidth: MinitiDesignSystem.HomeSetup.actionColumnWidth)
                 .focusable(false)
                 .disabled(!appState.canStartRecording || appState.isStartingMeeting)
 
+                if let reason = appState.recordingUnavailableReason {
+                    Text(reason).font(.caption).foregroundStyle(ColorPalette.Status.error)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 MeetingLanguagePicker(language: $appState.meetingLanguage)
             }
 
-            // Upcoming calendar events
-            if appState.pendingAutoStartEvent == nil,
-               appState.googleCalendarEnabled && appState.isGoogleCalendarConnected && !appState.upcomingMeetingEvents.isEmpty {
-                UpcomingEventsPanel(confirmEvent: $confirmEvent)
-                    .frame(maxWidth: 380)
+            HomeSetupOrCalendar {
+                if appState.pendingAutoStartEvent == nil,
+                   appState.googleCalendarEnabled && appState.isGoogleCalendarConnected {
+                    if appState.upcomingMeetingEvents.isEmpty {
+                        Text("No upcoming meetings").font(.callout).foregroundStyle(ColorPalette.Text.muted)
+                    } else {
+                        UpcomingEventsPanel(confirmEvent: $confirmEvent)
+                            .frame(maxWidth: MinitiDesignSystem.HomeSetup.maximumWidth)
+                    }
+                }
             }
 
             Spacer()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .safeAreaInset(edge: .bottom) {
-            HStack { Spacer(); HomeFeedbackButton() }.padding(12)
+        .padding(.horizontal, MinitiDesignSystem.Spacing.page)
+        .padding(.top, MinitiDesignSystem.Spacing.page + MinitiDesignSystem.Spacing.section)
+        .padding(.bottom, MinitiDesignSystem.Spacing.section)
+        .frame(maxWidth: .infinity, minHeight: geometry.size.height)
         }
-        .overlay(alignment: .top) {
+        .scrollIndicators(.never)
+        }
+        .safeAreaInset(edge: .bottom) {
+            HomeUtilityBar().padding(MinitiDesignSystem.Spacing.comfortable)
+                .background(ColorPalette.Background.primary)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
             VStack(spacing: 0) {
                 ZStack(alignment: .top) {
                     HStack(alignment: .top, spacing: 0) {
@@ -686,6 +686,9 @@ struct ReadyStateView: View {
                             .fixedSize()
                         Spacer()
                         HStack(spacing: 8) {
+                            #if arch(arm64)
+                            LocalModelsStatusButton(transcription: appState.onDeviceTranscription, speakers: appState.onDeviceDiarization)
+                            #endif
                             HomeActionButton(
                                 icon: "keyboard",
                                 label: "shortcuts",
@@ -710,9 +713,10 @@ struct ReadyStateView: View {
                 .animation(.easeInOut(duration: 0.2), value: appState.isMonitoring)
 
                 Rectangle()
-                    .fill(Color(hex: "1C1C1F"))
+                    .fill(ColorPalette.Border.primary)
                     .frame(maxWidth: .infinity, maxHeight: 1)
             }
+            .background(ColorPalette.Background.primary)
         }
         .overlay {
             if let event = confirmEvent {
@@ -829,23 +833,36 @@ private struct UpcomingEventsPanel: View {
     @EnvironmentObject var appState: AppState
     @Binding var confirmEvent: MinitiAPIService.CalendarEvent?
 
-    private var displayEvents: [MinitiAPIService.CalendarEvent] {
-        Array(appState.upcomingMeetingEvents.prefix(5))
-    }
+    @State private var collapsed: Set<UpcomingCalendarDay> = [.later]
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 1) {
-            ForEach(displayEvents) { event in
-                CompactEventRow(event: event)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            confirmEvent = event
+        let upcoming = appState.upcomingMeetingEvents
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control) {
+            ForEach(UpcomingCalendarDay.allCases) { day in
+                let events = upcoming.filter { day.contains($0.startDate, end: $0.endDate) }
+                if !events.isEmpty {
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { !collapsed.contains(day) },
+                        set: { if $0 { collapsed.remove(day) } else { collapsed.insert(day) } }
+                    )) {
+                        ForEach(events) { event in
+                            Button { confirmEvent = event } label: {
+                                CompactEventRow(event: event)
+                            }
+                            .buttonStyle(.plain)
                         }
+                    } label: {
+                        HStack {
+                            Text(day.rawValue)
+                            Text("\(events.count)").monospacedDigit().foregroundStyle(ColorPalette.Text.muted)
+                        }
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(ColorPalette.Text.secondary)
                     }
+                    .disclosureGroupStyle(UpcomingCalendarDisclosureStyle(day: day, count: events.count))
+                }
             }
         }
-        .frame(width: 320)
     }
 }
 
@@ -1179,7 +1196,7 @@ private struct CompactEventRow: View {
         if Calendar.current.isDateInToday(date) {
             formatter.dateFormat = "HH:mm"
         } else if Calendar.current.isDateInTomorrow(date) {
-            formatter.dateFormat = "'tom' HH:mm"
+            formatter.dateFormat = "HH:mm"
         } else {
             formatter.dateFormat = "EEE HH:mm"
         }
@@ -1279,14 +1296,14 @@ private struct FlashingTagline: View {
     private var baseText: some View {
         Text(text)
             .font(.system(size: 12, weight: .medium, design: .default))
-            .foregroundStyle(Color(hex: "A1A1AA"))
+            .foregroundStyle(ColorPalette.Text.muted)
             .tracking(2)
     }
     
     private func highlightedText(motion: FlashMotion) -> some View {
         Text(text)
             .font(.system(size: 12, weight: .medium, design: .default))
-            .foregroundStyle(Color(hex: "3FB950"))
+            .foregroundStyle(ColorPalette.Accent.green)
             .tracking(2)
             .opacity(0.72 + (0.20 * motion.spark))
             .blendMode(.plusLighter)
@@ -2536,7 +2553,7 @@ struct TerminalHeader: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights)
+                .disabled(isResumePending || appState.isFinalizingMeeting || appState.isCurrentMeetingGeneratingFinalInsights || (!appState.isRecording && appState.recordingUnavailableReason != nil))
                 .accessibilityLabel(appState.isRecording ? "Stop recording" : "Resume recording")
                 
                 if isStopped {
@@ -2565,20 +2582,20 @@ struct TerminalHeader: View {
                         .accessibilityLabel(appState.finalizationStatusText)
                     } else if appState.isCurrentMeetingGeneratingFinalInsights {
                         Button {
-                            appState.goHome()
+                            appState.saveAndOpenCurrentMeeting()
                         } label: {
                             MinitiControlLabel(role: .primary, isEmphasized: true) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
                                         .frame(width: 11)
-                                    Text("done")
+                                    Text("history")
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                 }
                             }
                         }
                         .buttonStyle(.plain)
-                        .accessibilityHint("Returns home while insights finish in History")
+                        .accessibilityHint("Opens the saved meeting while insights finish")
                     } else {
                         Button {
                             withAnimation(.easeOut(duration: 0.2)) {
@@ -2590,7 +2607,7 @@ struct TerminalHeader: View {
                                     Image(systemName: "checkmark")
                                         .font(.system(size: 10, weight: .semibold))
                                         .frame(width: 11)
-                                    Text("done")
+                                    Text("history")
                                         .font(.system(size: 11, weight: .semibold, design: .default))
                                     Text("⌘S")
                                         .font(.system(size: 10, weight: .medium, design: .default))
@@ -3166,119 +3183,6 @@ struct AudioSourcePill: View {
         .onHover { hovering in
             isHovering = hovering
         }
-    }
-}
-
-// MARK: - Update Available Banner
-
-struct CalendarNudgeCard: View {
-    @EnvironmentObject var appState: AppState
-    @State private var isHovering = false
-    @State private var isConnecting = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                Image(systemName: "calendar")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(ColorPalette.Accent.green)
-                    .frame(width: 18)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("see your meetings here")
-                        .font(.system(size: 13, weight: .semibold, design: .default))
-                        .foregroundStyle(ColorPalette.Text.primary)
-
-                    Text("connect google calendar to see upcoming meetings, auto-start recording, and get attendee context in insights.")
-                        .font(.system(size: 11, weight: .regular, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 8)
-
-                Button {
-                    appState.dismissCalendarNudgeForever()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(4)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .help("dismiss permanently")
-            }
-
-            HStack(spacing: 10) {
-                Button {
-                    guard !isConnecting else { return }
-                    isConnecting = true
-                    appState.startCalendarConnectFromNudge()
-                    // The browser-based OAuth returns to the app asynchronously;
-                    // flip back after a short grace period so the button re-enables.
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        isConnecting = false
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        if isConnecting {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(Color(hex: "09090B"))
-                        } else {
-                            Image(systemName: "link")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                        Text(isConnecting ? "opening browser..." : "connect calendar")
-                            .font(.system(size: 11, weight: .semibold, design: .default))
-                    }
-                    .foregroundStyle(Color(hex: "09090B"))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isHovering ? ColorPalette.Accent.green : ColorPalette.Accent.green.opacity(0.78))
-                    )
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-                .disabled(isConnecting)
-                .onHover { hovering in
-                    withAnimation(.easeOut(duration: 0.12)) { isHovering = hovering }
-                }
-
-                Button {
-                    appState.snoozeCalendarNudge()
-                } label: {
-                    Text("not now")
-                        .font(.system(size: 11, weight: .medium, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(ColorPalette.Background.tertiary)
-                        )
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
-            }
-            .padding(.leading, 28)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .frame(maxWidth: 480, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(ColorPalette.Accent.green.opacity(0.07))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(ColorPalette.Accent.green.opacity(0.22), lineWidth: 1)
-                )
-        )
     }
 }
 

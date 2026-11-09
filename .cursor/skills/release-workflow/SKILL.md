@@ -10,6 +10,8 @@ description: >-
 
 The authoritative runbook is [`RELEASE.md`](../../../RELEASE.md) at the repo root. This skill is a quick reference for the most common flows. Read the current release-specific gates first. Preparing or auditing documentation does not authorize publication, deployment or submission.
 
+For upcoming-release planning or a readiness-plan review, apply the repository [release-planning skill](../release-planning/SKILL.md) and [planning workflow](../../../docs/runbooks/release-planning.md) first. Reconcile its regression, compatibility, UX/design, performance, security and docs/assets register against implementation evidence before following publication steps here.
+
 For deeper context:
 
 - Per-lane detail → [`fastlane/RUNBOOK.md`](../../../fastlane/RUNBOOK.md)

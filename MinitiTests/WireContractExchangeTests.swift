@@ -34,6 +34,8 @@ final class WireContractExchangeTests: XCTestCase {
         let container = try TestSupport.makeInMemoryContainer()
         let context = ModelContext(container)
         var fixture = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(ContractFixtures.meeting.utf8)) as? [String: Any])
+        fixture["folder_id"] = "7b64dfe3-9e1a-448b-9c70-8e5d0d2c1f14"
+        fixture["folder_manual"] = true
         fixture["future_field"] = ["nullable": NSNull(), "decimal": 1.25, "text": "é 日本語"] as [String: Any]
         fixture["start_time"] = "2026-10-01T09:00:00Z" // accepted old-client date spelling
         let decoded = try XCTUnwrap(MeetingSyncDocument.decode(fixture))

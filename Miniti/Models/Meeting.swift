@@ -23,6 +23,16 @@ final class Meeting {
     var lastExportedMarkdownFilename: String?
     /// Device-local webhook handoff. Never encoded into the cloud document.
     var webhookCompletionJSON: String?
+    /// Device-local completed export checkpoint, never synced.
+    var automaticCompletionExportedAt: Date?
+    var automaticCompletionMarkdownExportedAt: Date?
+    /// Snapshot of the export choice at Stop. Enabling exports later is not a bulk export.
+    var automaticCompletionMarkdownRequested: Bool?
+    var automaticCompletionMarkdownFingerprint: String?
+    /// A recovered resumed draft must wait for a new Stop before refreshing exports.
+    var automaticCompletionSuspended: Bool?
+    var automaticCompletionID: UUID?
+    var automaticCompletionOwner: String?
     var transcriptRevision: Int = 0
     var isPinned: Bool = false
     var insightsUpdatedAt: Date?
@@ -30,6 +40,14 @@ final class Meeting {
     var managedSessionId: String?
     var language: String = "en"
     
+    var folderID: UUID?
+    var folderManual: Bool?
+    var folderLocalOnly: Bool?
+    /// Baseline content for a pending folder-only edit; never sent over sync.
+    var folderEditContentFingerprint: String?
+    /// Last accepted cloud components, for independent content/folder merges. Local only.
+    var syncedContentFingerprint: String?
+    var syncedFolderFingerprint: String?
     var calendarEventId: String?
     /// The calendar event's own title, kept even if the meeting is renamed, so `title:`
     /// search finds the call by what the calendar called it (2.11.0; nil before).

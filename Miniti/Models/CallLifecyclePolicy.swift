@@ -32,20 +32,80 @@ struct CallActivitySnapshot: Sendable, Equatable {
     /// then by display name so snapshots compare deterministically. Unknown microphone users
     /// are never included: their bundle IDs stay local to the monitor.
     let activeCalls: [ActiveCallApplication]
-    /// False when the HAL process-list query itself failed (coreaudiod restart, transient
-    /// error). An unreliable reading is "no information", never "no calls": policy must not
+    /// False for failed/partial reads or unidentified active input. An unreliable
+    /// reading is "no information", never "no calls": policy must not
     /// advance start or end detection from it, or an audio-daemon hiccup plus a quiet
     /// transcript becomes indistinguishable from the call ending.
     let isReliable: Bool
+    enum Health: String, Sendable { case complete, partial, unavailable, unidentifiedInput }
+    let health: Health
+    /// Output corroborates an existing association, never starts a recording by itself.
+    let outputActiveBundleIDs: Set<String>
 
-    init(capturedAt: Date, activeCalls: [ActiveCallApplication], isReliable: Bool = true) {
+    init(capturedAt: Date, activeCalls: [ActiveCallApplication], isReliable: Bool = true,
+         health: Health? = nil, outputActiveBundleIDs: Set<String> = []) {
         self.capturedAt = capturedAt
         self.activeCalls = activeCalls
-        self.isReliable = isReliable
+        self.health = health ?? (isReliable ? .complete : .unavailable)
+        self.isReliable = isReliable && self.health == .complete
+        self.outputActiveBundleIDs = outputActiveBundleIDs
+    }
+
+    var hasPositiveCallEvidence: Bool { health != .unavailable && !activeCalls.isEmpty }
+
+    func isFresh(at now: Date) -> Bool {
+        let age = now.timeIntervalSince(capturedAt)
+        return age >= -1 && age <= 5
     }
 
     func hasSameCalls(as other: CallActivitySnapshot) -> Bool {
-        activeCalls == other.activeCalls && isReliable == other.isReliable
+        activeCalls == other.activeCalls && health == other.health && outputActiveBundleIDs == other.outputActiveBundleIDs
+    }
+}
+
+/// Injectable process observations keep failed reads distinct from confirmed inactivity.
+struct CallProcessObservation: Sendable {
+    var pid: Int32?
+    var bundleID: String?
+    var ownerBundleID: String?
+    var runningInput: Bool?
+    var runningOutput: Bool?
+    var deviceUIDs: Set<String> = []
+}
+
+enum CallSnapshotInterpreter {
+    static func snapshot(_ processes: [CallProcessObservation]?, excludingPID: Int32, now: Date) -> CallActivitySnapshot {
+        guard let processes else { return .init(capturedAt: now, activeCalls: [], isReliable: false) }
+        var inputs: [String: ActiveCallApplication] = [:]
+        var outputs: Set<String> = []
+        var health: CallActivitySnapshot.Health = .complete
+        for process in processes {
+            if process.pid == excludingPID || CallApplicationDirectory.isExcluded(bundleID: process.bundleID ?? "")
+                || CallApplicationDirectory.isExcluded(bundleID: process.ownerBundleID ?? "") { continue }
+            guard let input = process.runningInput else { health = .partial; continue }
+            guard input || process.runningOutput == true else { continue }
+            let known = process.ownerBundleID.flatMap { CallApplicationDirectory.normalize(bundleID: $0) }
+                ?? process.bundleID.flatMap { CallApplicationDirectory.normalize(bundleID: $0) }
+            guard let known else {
+                // An identified unrelated app (dictation, OBS, Krisp, etc.) is not
+                // a failed call observation. Unattributed helpers remain uncertain.
+                let bundle = (process.bundleID ?? "").lowercased()
+                let unattributed = bundle.isEmpty || bundle.hasPrefix("com.apple.webkit.") ||
+                    bundle.contains("helper") || bundle.contains(".xpc")
+                if input && unattributed && health == .complete { health = .unidentifiedInput }
+                continue
+            }
+            if process.runningOutput == true { outputs.insert(known.canonicalBundleID) }
+            // Missing output on a known input process makes end evidence incomplete.
+            if input && process.runningOutput == nil { health = .partial }
+            if input {
+                let uids = (inputs[known.canonicalBundleID]?.deviceUIDs ?? []).union(process.deviceUIDs)
+                inputs[known.canonicalBundleID] = .init(bundleID: known.canonicalBundleID, displayName: known.displayName,
+                    deviceUIDs: uids, confidence: known.confidence)
+            }
+        }
+        return .init(capturedAt: now, activeCalls: inputs.values.sorted(by: CallApplicationDirectory.snapshotOrder),
+                     health: health, outputActiveBundleIDs: outputs)
     }
 }
 
@@ -80,20 +140,28 @@ enum CallApplicationDirectory {
         add("com.dialpad.dialpad", "Dialpad", .native)
         add("town.gather.app", "Gather", .native)
         add("com.google.Chrome", "Chrome", .browser)
+        // Shared WebKit helpers are browser-level evidence, never proof of Safari
+        // or Meet. An identified owning application takes precedence in the snapshot.
+        add("com.apple.WebKit", "WebKit", .browser)
         add("com.apple.Safari", "Safari", .browser)
         add("com.apple.SafariTechnologyPreview", "Safari", .browser)
         add("com.microsoft.edgemac", "Edge", .browser)
         add("company.thebrowser.Browser", "Arc", .browser)
         add("com.brave.Browser", "Brave", .browser)
         add("org.mozilla.firefox", "Firefox", .browser)
+        add("company.thebrowser.dia", "Dia", .browser)
+        add("com.operasoftware.Opera", "Opera", .browser)
+        add("com.vivaldi.Vivaldi", "Vivaldi", .browser)
+        add("app.zen-browser.zen", "Zen", .browser)
         return table
     }()
 
     /// Helper bundle IDs that do not share their owner's prefix.
+    // Generic WebKit helpers also serve non-browser apps. Resolve their real owner
+    // from process/bundle evidence, never assume Safari from the helper name alone.
     static let aliases: [String: String] = [
-        // Safari performs media capture in the WebKit GPU process.
-        "com.apple.WebKit.GPU": "com.apple.Safari",
-        "com.apple.WebKit.WebContent": "com.apple.Safari"
+        "com.apple.WebKit.WebContent": "com.apple.WebKit",
+        "com.apple.WebKit.GPU": "com.apple.WebKit"
     ]
 
     /// Processes that must never be treated as a call application: Miniti itself and its
@@ -156,6 +224,8 @@ enum CallLifecycleEvent: Equatable {
     /// A different recognized call app became active during the recording. Never an
     /// automatic split — at most a visible handoff decision.
     case offerTransition(to: ActiveCallApplication)
+    /// A late first call is ambiguous, not proof of a second meeting.
+    case offerAssociation(ActiveCallApplication)
     /// A recording that expected its call (join link / calendar conference link) has
     /// adopted the call that appeared. Informational: no prompt, no state change in AppState.
     case adoptExpectedCall(ActiveCallApplication)
@@ -311,6 +381,16 @@ struct CallLifecycleEngine {
         pendingAdoptionSource = .adoptedExpected
     }
 
+    mutating func associateByUserChoice(_ app: ActiveCallApplication) {
+        associatedApp = app
+        associationSource = .adoptedExpected
+        hasObservedAssociatedActive = true
+        expectedCallUntil = nil
+        pendingAdoptionSource = nil
+        endCandidateSince = nil
+        transitionCandidates = [:]
+    }
+
     /// Source the next adoption will record; set whenever `expectedCallUntil` is armed.
     private var pendingAdoptionSource: AssociationSource?
 
@@ -344,13 +424,14 @@ struct CallLifecycleEngine {
     mutating func ingest(snapshot: CallActivitySnapshot, context: CallLifecycleContext) -> [CallLifecycleEvent] {
         // Smart meetings off leaves lifecycle snapshots inert.
         guard context.smartMeetingsEnabled else { return [] }
-        // An unreliable reading is no information: freeze rather than infer. Debounces
-        // restart from the next reliable snapshot.
-        guard snapshot.isReliable else {
+        // Failed enumeration supplies no evidence. Partial snapshots can still prove
+        // recognized input is present, but cannot prove that an associated call ended.
+        guard snapshot.isReliable || snapshot.hasPositiveCallEvidence else {
             endCandidateSince = nil
             startCandidate = nil
             return []
         }
+        if !snapshot.isReliable { endCandidateSince = nil }
         return context.isRecording
             ? ingestWhileRecording(snapshot: snapshot, context: context)
             : ingestWhileIdle(snapshot: snapshot)
@@ -362,7 +443,11 @@ struct CallLifecycleEngine {
         startCandidate = nil
 
         if let associated = associatedApp {
-            if let current = snapshot.activeCalls.first(where: { $0.bundleID == associated.bundleID }) {
+            if associated.confidence == .browser && snapshot.outputActiveBundleIDs.contains(associated.bundleID)
+                && !snapshot.activeCalls.contains(where: { $0.bundleID == associated.bundleID }) {
+                endCandidateSince = nil
+                if context.isInEndingGrace { events.append(.reactivateDuringGrace) }
+            } else if let current = snapshot.activeCalls.first(where: { $0.bundleID == associated.bundleID }) {
                 // Present again (a device switch changes UIDs, never the association).
                 hasObservedAssociatedActive = true
                 associatedApp = current
@@ -372,7 +457,7 @@ struct CallLifecycleEngine {
                 } else if context.isInEndingGrace {
                     events.append(.reactivateDuringGrace)
                 }
-            } else if hasObservedAssociatedActive, !context.isInEndingGrace {
+            } else if snapshot.isReliable, hasObservedAssociatedActive, !context.isInEndingGrace {
                 if let since = endCandidateSince {
                     if now.timeIntervalSince(since) >= Self.endDebounce(for: associated.confidence),
                        context.transcriptGap >= Self.endQuietRequirement(for: associated.confidence) {
@@ -380,7 +465,7 @@ struct CallLifecycleEngine {
                         // call, so its end is a question, never an automatic stop.
                         let askOnly = !context.hasMeaningfulContent ||
                             context.recordingDuration < Self.shortSessionMinimumDuration ||
-                            associationSource == .adoptedInferred
+                            associationSource == .adoptedInferred || associated.confidence == .browser
                         events.append(.beginEndingGrace(app: associated, askOnly: askOnly))
                         endCandidateSince = nil
                     }
@@ -402,7 +487,7 @@ struct CallLifecycleEngine {
         for app in snapshot.activeCalls where app.bundleID != associatedApp?.bundleID {
             if let since = transitionCandidates[app.bundleID] {
                 guard now.timeIntervalSince(since) >= Self.startDebounce else { continue }
-                if associatedApp == nil, expectedCallUntil != nil {
+                if associatedApp == nil, expectedCallUntil != nil, snapshot.activeCalls.count == 1 {
                     associatedApp = app
                     associationSource = pendingAdoptionSource ?? .adoptedExpected
                     hasObservedAssociatedActive = true
@@ -412,7 +497,7 @@ struct CallLifecycleEngine {
                     events.append(.adoptExpectedCall(app))
                 } else if !offeredTransitionBundleIDs.contains(app.bundleID) {
                     offeredTransitionBundleIDs.insert(app.bundleID)
-                    events.append(.offerTransition(to: app))
+                    events.append(associatedApp == nil ? .offerAssociation(app) : .offerTransition(to: app))
                 }
             } else {
                 transitionCandidates[app.bundleID] = now

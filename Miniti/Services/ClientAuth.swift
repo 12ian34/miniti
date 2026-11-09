@@ -374,6 +374,7 @@ struct ClientAuthCredentials: Codable, Equatable {
     var enrollmentPath: String
     /// The person confirmed they saved the recovery key (or explicitly declined the nudge).
     var recoveryKeyAcknowledged: Bool = false
+    var absenceConfirmed: Bool?
 
     init(installationKey: InstallationKey.Stored, recoveryKey: String, accountID: String, accessToken: String?, accessExpiresAt: Int64?, refreshToken: String?, deviceCap: Int?, enrolledAt: String, enrollmentPath: String, recoveryKeyAcknowledged: Bool = false) {
         self.installationKey = installationKey
@@ -414,6 +415,7 @@ struct ClientAuthCredentials: Codable, Equatable {
         enrollmentPath = try c.decodeIfPresent(String.self, forKey: .enrollmentPath) ?? "create"
         // Older blobs predate the acknowledgement flag.
         recoveryKeyAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .recoveryKeyAcknowledged) ?? false
+        absenceConfirmed = try c.decodeIfPresent(Bool.self, forKey: .absenceConfirmed)
     }
 }
 
@@ -491,8 +493,15 @@ enum ClientAuthStoreDiagnostic: Equatable, Sendable {
     case undecodable(bytes: Int)
 }
 
+enum ClientAuthCredentialRead {
+    case found(ClientAuthCredentials), missing, unreadable(ClientAuthStoreDiagnostic)
+    var value: ClientAuthCredentials? { if case .found(let value) = self { return value }; return nil }
+}
+
 protocol ClientAuthCredentialStore: AnyObject, Sendable {
     func load() -> ClientAuthCredentials?
+    func loadResult() -> ClientAuthCredentialRead
+    func retryLoadResult() -> ClientAuthCredentialRead
     func save(_ credentials: ClientAuthCredentials) -> Bool
     func clear()
     /// What the most recent `load()` could not deliver, or nil when it found an item or
@@ -501,6 +510,12 @@ protocol ClientAuthCredentialStore: AnyObject, Sendable {
 }
 
 extension ClientAuthCredentialStore {
+    func retryLoadResult() -> ClientAuthCredentialRead { loadResult() }
+    func loadResult() -> ClientAuthCredentialRead {
+        if let value = load() { return .found(value) }
+        if let diagnostic = lastLoadDiagnostic { return .unreadable(diagnostic) }
+        return .missing
+    }
     var lastLoadDiagnostic: ClientAuthStoreDiagnostic? { nil }
 }
 
@@ -533,8 +548,16 @@ final class KeychainClientAuthStore: ClientAuthCredentialStore, @unchecked Senda
         )
     }
 
-    func load() -> ClientAuthCredentials? {
-        switch slot.read() {
+    func load() -> ClientAuthCredentials? { load(allowInteraction: false) }
+
+    func retryLoadResult() -> ClientAuthCredentialRead {
+        if let value = load(allowInteraction: true) { return .found(value) }
+        if let diagnostic = lastLoadDiagnostic { return .unreadable(diagnostic) }
+        return .missing
+    }
+
+    private func load(allowInteraction: Bool) -> ClientAuthCredentials? {
+        switch slot.read(allowInteraction: allowInteraction) {
         case .found(let data):
             if let decoded = try? JSONDecoder().decode(ClientAuthCredentials.self, from: data) {
                 setDiagnostic(nil)
@@ -674,6 +697,9 @@ final class ClientAuthManager: @unchecked Sendable {
     private let store: ClientAuthCredentialStore
     private let lock = NSLock()
     private var credentials: ClientAuthCredentials?
+    private var unreadableCredential: ClientAuthStoreDiagnostic?
+    private var retryAfterDate: Date?
+    var enrollmentRetryAfter: Date? { lock.lock(); defer { lock.unlock() }; return retryAfterDate }
     private var cachedKey: InstallationKey?
     private var refreshTask: Task<String, Error>?
     /// One repair at a time; concurrent callers await it (A2d).
@@ -739,7 +765,13 @@ final class ClientAuthManager: @unchecked Sendable {
         self.deviceIDIsNewThisLaunch = deviceIDIsNewThisLaunch
         self.keyLoader = keyLoader
         self.defaults = defaults
-        self.credentials = store.load()
+        let read = store.loadResult()
+        self.credentials = read.value
+        if case .unreadable(let reason) = read { unreadableCredential = reason }
+        if case .missing = read, defaults.string(forKey: "managedAccessChoice") == nil,
+           deviceIDIsNewThisLaunch() || (!defaults.bool(forKey: "hasCompletedOnboarding") && !defaults.bool(forKey: "hasAcceptedTerms")) {
+            defaults.set("awaitingChoice", forKey: "managedAccessChoice")
+        }
         if self.credentials != nil { DiagnosticTimeline.shared.record(.credentialLoaded) }
         else if store.lastLoadDiagnostic == nil { DiagnosticTimeline.shared.record(.credentialMissing) }
         reportLoadDiagnostic(phase: "launch")
@@ -832,13 +864,68 @@ final class ClientAuthManager: @unchecked Sendable {
         case notEnrolled, draft, enrolled
         /// Credential present, key unusable on this machine, no recovery key to replace it.
         case keyUnusable
+        case unreadable(ClientAuthStoreDiagnostic)
     }
 
     var credentialState: CredentialState {
         lock.lock(); defer { lock.unlock() }
+        if let unreadableCredential { return .unreadable(unreadableCredential) }
         guard let credentials else { return .notEnrolled }
         if Self.isDraft(credentials) { return .draft }
         return keyUnusableWithoutRecovery ? .keyUnusable : .enrolled
+    }
+
+    private var credentialRereadInFlight = false
+
+    /// Read outside the state lock: Security may wait for the keychain service.
+    func rereadUnreadableCredential(allowInteraction: Bool = false) {
+        lock.lock()
+        guard unreadableCredential != nil, !credentialRereadInFlight else { lock.unlock(); return }
+        credentialRereadInFlight = true
+        let generation = credentialEpoch
+        lock.unlock()
+        let read = allowInteraction ? store.retryLoadResult() : store.loadResult()
+        lock.lock()
+        credentialRereadInFlight = false
+        guard credentialEpoch == generation, unreadableCredential != nil else { lock.unlock(); return }
+        credentials = read.value
+        if case .unreadable(let reason) = read { unreadableCredential = reason }
+        else {
+            unreadableCredential = nil; cachedKey = nil
+            if case .missing = read { defaults.set("awaitingChoice", forKey: "managedAccessChoice") }
+        }
+        lock.unlock()
+        reconcileDeviceIdentity()
+    }
+
+    var accessChoiceRequired: Bool {
+        !isEnrolled && ["awaitingChoice", "signout", "revoke", "removed", "delete", "deviceAlreadyEnrolled"].contains(defaults.string(forKey: "managedAccessChoice") ?? "")
+    }
+    var accessChoiceReason: String? { defaults.string(forKey: "managedAccessChoice") }
+    var enrollmentDeviceID: String { deviceIDProvider() }
+    var enrollmentDefaults: UserDefaults { defaults }
+    func chooseAnonymousAccess() { defaults.set("continue", forKey: "managedAccessChoice") }
+    func requireAccessChoice(reason: String = "awaitingChoice") { defaults.set(reason, forKey: "managedAccessChoice") }
+    var canResetUnreadableCredentialByChoice: Bool {
+        if accessChoiceReason == "deviceAlreadyEnrolled" { return true }
+        if case .unreadable(.undecodable) = credentialState { return true }
+        return false
+    }
+    func resetUnreadableCredentialByChoice() {
+        guard canResetUnreadableCredentialByChoice else { return }
+        clearLocal(reason: "signout")
+        defaults.set("continueAfterReset", forKey: "managedAccessChoice")
+    }
+    var unreadableCredentialMessage: String? {
+        guard case .unreadable(let reason) = credentialState else { return nil }
+        if case .undecodable = reason {
+            return "miniti could not read its saved sign-in. Restore with your recovery key or email in Settings, Account, or set this device up again."
+        }
+        #if os(macOS)
+        return "miniti's saved sign-in is in a locked keychain. Unlock it and try again."
+        #else
+        return "miniti could not read its saved sign-in. Unlock your device and try again."
+        #endif
     }
 
     /// True when the stored key cannot load here and the stored recovery key can replace it
@@ -905,6 +992,8 @@ final class ClientAuthManager: @unchecked Sendable {
         credentials = nil
         cachedKey = nil
         localClearReason = reason
+        unreadableCredential = nil
+        defaults.set(reason, forKey: "managedAccessChoice")
         credentialEpoch += 1
         store.clear()
     }
@@ -923,6 +1012,8 @@ final class ClientAuthManager: @unchecked Sendable {
         credentials = nil
         cachedKey = nil
         localClearReason = reason
+        unreadableCredential = nil
+        defaults.set(reason, forKey: "managedAccessChoice")
         credentialEpoch += 1
         store.clear()
         lock.unlock()
@@ -1159,6 +1250,12 @@ final class ClientAuthManager: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard store.save(newValue) else { throw ClientAuthError.storage }
         credentials = newValue
+        unreadableCredential = nil
+        if !Self.isDraft(newValue) {
+            defaults.removeObject(forKey: "managedAccessChoice")
+            defaults.removeObject(forKey: "managedEnrollmentNotBefore")
+            defaults.removeObject(forKey: "managedMigrationIneligible")
+        }
         cachedKey = nil
         credentialEpoch += 1
         return credentialEpoch
@@ -1178,6 +1275,12 @@ final class ClientAuthManager: @unchecked Sendable {
         }
         guard store.save(newValue) else { throw ClientAuthError.storage }
         credentials = newValue
+        unreadableCredential = nil
+        if !Self.isDraft(newValue) {
+            defaults.removeObject(forKey: "managedAccessChoice")
+            defaults.removeObject(forKey: "managedEnrollmentNotBefore")
+            defaults.removeObject(forKey: "managedMigrationIneligible")
+        }
         cachedKey = nil
         if replaces { credentialEpoch += 1 }
         return credentialEpoch
@@ -1327,6 +1430,24 @@ final class ClientAuthManager: @unchecked Sendable {
         }
     }
 
+    static func retryDate(_ value: String?, now: Date) -> Date {
+        if let value, let seconds = Double(value.trimmingCharacters(in: .whitespaces)), seconds.isFinite, seconds > 0 {
+            return now.addingTimeInterval(min(seconds, 31_536_000))
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss zzz"
+        if let value, let date = formatter.date(from: value), date > now { return date }
+        return now.addingTimeInterval(60)
+    }
+
+    private func rememberEnrollmentRetryAfter(_ value: String?, epoch: Int) {
+        lock.lock(); defer { lock.unlock() }
+        guard credentialEpoch == epoch else { return }
+        retryAfterDate = Self.retryDate(value, now: Date())
+    }
+
     private func postPublic<T: Decodable>(_ path: String, body: [String: Any]) async throws -> T {
         guard let url = URL(string: "\(baseURL)\(path)") else { throw ClientAuthError.network("bad URL") }
         var request = URLRequest(url: url)
@@ -1334,6 +1455,7 @@ final class ClientAuthManager: @unchecked Sendable {
         request.timeoutInterval = 20
         identityHeaders(&request)
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let requestEpoch = credentialGeneration
         let (data, response): (Data, URLResponse)
         do {
             (data, response) = try await session.data(for: request)
@@ -1345,6 +1467,9 @@ final class ClientAuthManager: @unchecked Sendable {
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else {
             let mapped = mapError(status: status, data: data)
+            if status == 429 {
+                rememberEnrollmentRetryAfter((response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Retry-After"), epoch: requestEpoch)
+            }
             DiagnosticTimeline.shared.record(.authRefused, fields: ["phase": Self.diagnosticPhase(path), "status": String(status), "server_code": Self.diagnosticServerCode(mapped)])
             DebugLogger.shared.log(.app, "Device auth \(path) failed: status=\(status) error=\(mapped)")
             throw mapped
@@ -1446,10 +1571,15 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// Enroll an unenrolled device into the account that approved `loginLinkID`.
     func restoreAccount(loginLinkID: String, label: String? = nil) async throws {
+        rereadUnreadableCredential()
+        if case .unreadable(.unreadable) = credentialState {
+            throw ClientAuthError.keyUnavailable("credential_unreadable")
+        }
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        let enrollmentEpoch = credentialGeneration
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: nil, loginLinkID: loginLinkID, label: label)
-        try storeEnrollment(key: key, recoveryKey: "", tokens: tokens, path: .restore, acknowledged: true)
+        try storeEnrollment(key: key, recoveryKey: "", tokens: tokens, path: .restore, acknowledged: true, expectedEpoch: enrollmentEpoch)
         DebugLogger.shared.log(.app, "Device auth: account restored by email")
     }
 
@@ -1485,8 +1615,8 @@ final class ClientAuthManager: @unchecked Sendable {
     /// A draft is written before any enrollment request so a lost response cannot lose the
     /// only copy of a freshly generated recovery key. A draft has no account yet.
     @discardableResult
-    private func writeDraft(key: InstallationKey, recoveryKey: String, path: ClientAuthEnrollmentPath) -> Bool {
-        let saved = store.save(ClientAuthCredentials(
+    private func writeDraft(key: InstallationKey, recoveryKey: String, path: ClientAuthEnrollmentPath, absenceConfirmed: Bool = false) -> Bool {
+        var value = ClientAuthCredentials(
             installationKey: key.stored,
             recoveryKey: recoveryKey,
             accountID: "",
@@ -1496,7 +1626,9 @@ final class ClientAuthManager: @unchecked Sendable {
             deviceCap: nil,
             enrolledAt: "",
             enrollmentPath: path.rawValue
-        ))
+        )
+        value.absenceConfirmed = absenceConfirmed
+        let saved = store.save(value)
         if !saved { emit("client_auth_draft_write_failed", level: .warning, details: ["path": path.rawValue]) }
         return saved
     }
@@ -1514,14 +1646,23 @@ final class ClientAuthManager: @unchecked Sendable {
 
     /// Create a new anonymous account. Returns the formatted recovery key.
     @discardableResult
-    func createAccount(label: String? = nil, acknowledged: Bool = false) async throws -> String {
+    func createAccount(label: String? = nil, acknowledged: Bool = false, allowDeviceRotation: Bool = false) async throws -> String {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        let enrollmentEpoch = credentialGeneration
+        let read = store.loadResult()
+        if case .unreadable = read { throw ClientAuthError.keyUnavailable("credential_unreadable") }
+        let absenceConfirmed: Bool
+        switch read {
+        case .missing: absenceConfirmed = true
+        case .found(let value): absenceConfirmed = value.absenceConfirmed == true
+        case .unreadable: absenceConfirmed = false
+        }
         reportEnrollmentStart(path: "create")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
         // A credential this device cannot store is one the person cannot recover from later:
         // creating the account first would leave an orphan installation holding a cap slot
         // and a recovery key nobody has (enrollment-identity-plan A2c). Stop before any request.
-        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .create) else { throw ClientAuthError.storage }
+        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .create, absenceConfirmed: absenceConfirmed) else { throw ClientAuthError.storage }
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
@@ -1530,31 +1671,35 @@ final class ClientAuthManager: @unchecked Sendable {
             // The server already has an active installation under this device id with a key
             // this Keychain does not hold: a phone restored from a backup keeps the device id
             // item but not the device-only credentials. No request from here can prove the
-            // old account, so this install takes a new identity. Usage, calendar and CRM
+            // old account. Only the explicit device-reset confirmation permits a new
+            // identity. Usage, calendar and CRM
             // connections were keyed by the old id; a person who kept the recovery key can
             // move the device back with it (2026-10-10).
-            guard let deviceIDRotator else { throw ClientAuthError.deviceAlreadyEnrolled }
+            guard allowDeviceRotation, absenceConfirmed, let deviceIDRotator else { throw ClientAuthError.deviceAlreadyEnrolled }
             let previous = deviceIDProvider()
             let rotated = deviceIDRotator()
             DebugLogger.shared.log(.app, "Device auth: device id already enrolled with another key; rotated to \(rotated.prefix(8))... and creating a fresh account")
             emit("client_auth_device_rotated", level: .warning, details: ["from": String(previous.prefix(8)), "to": String(rotated.prefix(8)), "path": "create"])
             tokens = try await enroll(path: "/auth/account/create", key: key, recoveryKey: recoveryKey, label: label)
         }
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .create, acknowledged: acknowledged)
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .create, acknowledged: acknowledged, expectedEpoch: enrollmentEpoch)
         DebugLogger.shared.log(.app, "Device auth: account created")
         return ClientAuthCrypto.formatRecoveryKey(recoveryKey)
     }
 
     /// Attach this installation to an existing account with its recovery key.
     func restoreAccount(recoveryKeyInput: String, label: String? = nil) async throws {
+        rereadUnreadableCredential()
+        if case .unreadable(.unreadable) = credentialState { throw ClientAuthError.keyUnavailable("credential_unreadable") }
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        let enrollmentEpoch = credentialGeneration
         guard let recoveryKey = ClientAuthCrypto.parseRecoveryKey(recoveryKeyInput) else {
             throw ClientAuthError.invalidRecoveryKey
         }
         let key = InstallationKey.generate()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: label)
         // Restoring means the person already holds the key; no nudge needed.
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .restore, acknowledged: true)
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .restore, acknowledged: true, expectedEpoch: enrollmentEpoch)
         DebugLogger.shared.log(.app, "Device auth: account restored")
     }
 
@@ -1563,9 +1708,14 @@ final class ClientAuthManager: @unchecked Sendable {
     /// existing device record to a new anonymous account.
     func migrateLegacyDevice(label: String? = nil) async throws {
         if isEnrolled { throw ClientAuthError.alreadyEnrolled }
+        let enrollmentEpoch = credentialGeneration
+        let read = store.loadResult()
+        if case .unreadable = read { throw ClientAuthError.keyUnavailable("credential_unreadable") }
+        let absenceConfirmed: Bool
+        if case .missing = read { absenceConfirmed = true } else { absenceConfirmed = read.value?.absenceConfirmed == true }
         reportEnrollmentStart(path: "migrate")
         let (key, recoveryKey) = draft() ?? (InstallationKey.generate(), ClientAuthCrypto.generateRecoveryKey())
-        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .migrate) else { throw ClientAuthError.storage }
+        guard writeDraft(key: key, recoveryKey: recoveryKey, path: .migrate, absenceConfirmed: absenceConfirmed) else { throw ClientAuthError.storage }
         let tokens: TokenResponse
         do {
             tokens = try await enroll(path: "/auth/migrate", key: key, recoveryKey: recoveryKey, label: label)
@@ -1578,7 +1728,7 @@ final class ClientAuthManager: @unchecked Sendable {
             // loses nothing. Treat it like "not eligible" and let the caller fall back.
             throw ClientAuthError.notEligibleForMigration
         }
-        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .migrate, acknowledged: false)
+        try storeEnrollment(key: key, recoveryKey: recoveryKey, tokens: tokens, path: .migrate, acknowledged: false, expectedEpoch: enrollmentEpoch)
         DebugLogger.shared.log(.app, "Device auth: legacy device migrated")
     }
 
@@ -1720,6 +1870,7 @@ final class ClientAuthManager: @unchecked Sendable {
             return credentials.recoveryKey
         }()
         let tokens = try await enroll(path: "/auth/account/restore", key: key, recoveryKey: recoveryKey, label: deviceLabelProvider())
+        emit("client_auth_key_rebound", level: .info, details: [:])
         DebugLogger.shared.log(.app, "Device auth: installation re-bound to its account")
         return tokens
     }
@@ -1822,6 +1973,12 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     private struct Empty: Decodable {}
+
+    func renameDevice(installationID: String, label: String?) async throws {
+        struct Renamed: Decodable { let installation_id: String; let label: String? }
+        let (_, generation): (Renamed, Int) = try await authorizedJSONTracking("PATCH", "/auth/account/devices/\(installationID)", body: ["label": label as Any? ?? NSNull()])
+        guard credentialGeneration == generation else { throw ClientAuthError.notEnrolled }
+    }
 
     func listDevices() async throws -> ClientAuthDeviceList {
         try await authorizedJSON("GET", "/auth/account/devices")
@@ -1981,6 +2138,17 @@ final class ManagedEnrollmentCoordinator {
     init(manager: ClientAuthManager, hooks: Hooks) {
         self.manager = manager
         self.hooks = hooks
+        // The old backend could reject an uppercase legacy device record. Retry that
+        // negative verdict once with the corrected lookup, without undoing sign-out.
+        let defaults = manager.enrollmentDefaults
+        if defaults.integer(forKey: "managedMigrationProbeRevision") < 2 {
+            if defaults.string(forKey: "managedMigrationIneligible") == manager.enrollmentDeviceID,
+               manager.accessChoiceReason == "awaitingChoice", defaults.bool(forKey: "hasCompletedOnboarding") {
+                defaults.removeObject(forKey: "managedAccessChoice")
+            }
+            defaults.removeObject(forKey: "managedMigrationIneligible")
+            defaults.set(2, forKey: "managedMigrationProbeRevision")
+        }
     }
 
     /// True while an attempt is running (for tests and for the host's retry button).
@@ -1993,6 +2161,12 @@ final class ManagedEnrollmentCoordinator {
     /// network anyway. Concurrent callers share one attempt.
     @discardableResult
     func ensure(trigger: String) async -> Bool {
+        manager.rereadUnreadableCredential(allowInteraction: trigger == "settings" || trigger == "explicit choice")
+        if let message = manager.unreadableCredentialMessage {
+            hooks.setError(message)
+            hooks.refreshStatus()
+            return false
+        }
         if manager.credentialState == .keyUnusable {
             // Credential present, key unusable here, nothing to replace it with: the person
             // signs in again. Nothing is migrated, created or rotated meanwhile (A2d).
@@ -2013,14 +2187,27 @@ final class ManagedEnrollmentCoordinator {
                     return false
                 }
             }
+            hooks.setError(nil)
             if !hooks.statusIsEnrolled() { hooks.refreshStatus() }
             return true
+        }
+        if manager.accessChoiceRequired {
+            hooks.setError(nil)
+            hooks.refreshStatus()
+            return false
+        }
+        if let until = deferredUntil, until > Date() {
+            hooks.setError(deferralMessage(until))
+            hooks.refreshStatus()
+            return false
         }
         if hooks.deviceIDIsSessionOnly() {
             // The real device ID exists but the Keychain could not be read right now
             // (locked, prompting). Enrolling would bind a new account and stored
             // credentials to a temporary identity; wait for the next trigger instead.
             hooks.log("enrollment_deferred_session_only_device_id trigger=\(trigger)")
+            hooks.setError("Your saved device identity is temporarily unavailable. Unlock your device and try again. Your existing account has not been replaced.")
+            hooks.refreshStatus()
             return false
         }
         if let task { return await task.value }
@@ -2033,35 +2220,66 @@ final class ManagedEnrollmentCoordinator {
         return await attempt.value
     }
 
+    var deferredUntil: Date? {
+        guard manager.enrollmentDefaults.string(forKey: "managedEnrollmentDeferredDevice") == manager.enrollmentDeviceID else { return nil }
+        return manager.enrollmentDefaults.object(forKey: "managedEnrollmentNotBefore") as? Date
+    }
+
+    private func deferralMessage(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = Calendar.current.isDateInToday(date) ? .none : .medium
+        formatter.timeStyle = .short
+        return "Too many sign-in attempts from this network. Try again after \(formatter.string(from: date))."
+    }
+
     private func perform(trigger: String) async -> Bool {
         hooks.setEnrolling(true)
         defer { hooks.setEnrolling(false) }
         let label = hooks.deviceLabel()
+        let device = manager.enrollmentDeviceID
+        let generation = manager.credentialGeneration
+        let defaults = manager.enrollmentDefaults
+        var path = "migrate"
         do {
-            try await manager.migrateLegacyDevice(label: label)
-            hooks.setError(nil)
-            hooks.log("Managed enrollment: migrated existing device (trigger=\(trigger))")
-            hooks.event("client_auth_migrated", .info, [:])
-        } catch ClientAuthError.notEligibleForMigration, ClientAuthError.deviceAlreadyEnrolled {
-            // Not eligible: no pre-cutoff device record. Already enrolled: the server holds an
-            // installation under this device id with a key this Keychain does not have (a
-            // restored backup); createAccount takes a fresh device id in that case.
-            do {
-                try await manager.createAccount(label: label)
-                hooks.setError(nil)
-                hooks.log("Managed enrollment: created anonymous account (trigger=\(trigger))")
-                hooks.event("client_auth_created", .info, [:])
-            } catch {
-                hooks.setError(error.localizedDescription)
-                hooks.log("Managed enrollment FAILED (create, trigger=\(trigger)): \(error.localizedDescription)")
-                hooks.event("client_auth_enrollment_failed", .warning, ["path": "create"])
+            if manager.accessChoiceReason != "continueAfterReset",
+               defaults.string(forKey: "managedMigrationIneligible") != device || manager.accessChoiceReason == "continue" {
+                do {
+                    try await manager.migrateLegacyDevice(label: label)
+                    hooks.event("client_auth_migrated", .info, [:])
+                } catch ClientAuthError.notEligibleForMigration {
+                    guard manager.enrollmentDeviceID == device, manager.credentialGeneration == generation else { return false }
+                    defaults.set(device, forKey: "managedMigrationIneligible")
+                }
             }
+            if !manager.isEnrolled {
+                guard manager.enrollmentDeviceID == device, manager.credentialGeneration == generation else { return false }
+                guard ["continue", "continueAfterReset"].contains(manager.accessChoiceReason ?? "") else {
+                    manager.requireAccessChoice()
+                    hooks.refreshStatus()
+                    return false
+                }
+                path = "create"
+                try await manager.createAccount(label: label, allowDeviceRotation: manager.accessChoiceReason == "continueAfterReset")
+                hooks.event("client_auth_created", .info, [:])
+            }
+            hooks.setError(nil)
         } catch ClientAuthError.alreadyEnrolled {
             hooks.setError(nil)
+        } catch ClientAuthError.rateLimited {
+            guard manager.enrollmentDeviceID == device, manager.credentialGeneration == generation else { return false }
+            let until = manager.enrollmentRetryAfter ?? Date().addingTimeInterval(60)
+            defaults.set(until, forKey: "managedEnrollmentNotBefore")
+            defaults.set(device, forKey: "managedEnrollmentDeferredDevice")
+            hooks.setError(deferralMessage(until))
+            hooks.event("client_auth_enrollment_deferred", .info, ["until": ISO8601DateFormatter().string(from: until)])
+        } catch ClientAuthError.deviceAlreadyEnrolled {
+            defaults.set(device, forKey: "managedMigrationIneligible")
+            manager.requireAccessChoice(reason: "deviceAlreadyEnrolled")
+            hooks.setError("This device already belongs to an account. Sign in to restore it, or choose to set up this device again.")
         } catch {
             hooks.setError(error.localizedDescription)
-            hooks.log("Managed enrollment FAILED (migrate, trigger=\(trigger)): \(error.localizedDescription)")
-            hooks.event("client_auth_enrollment_failed", .warning, ["path": "migrate"])
+            hooks.log("Managed enrollment FAILED (\(path), trigger=\(trigger)): \(error.localizedDescription)")
+            hooks.event("client_auth_enrollment_failed", .warning, ["path": path])
         }
         hooks.refreshStatus()
         return manager.isEnrolled

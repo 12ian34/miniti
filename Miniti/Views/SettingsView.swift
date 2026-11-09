@@ -1139,6 +1139,7 @@ struct APISettingsView: View {
 
 struct AudioSettingsView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("captureSystemAudio") private var captureSystemAudio: Bool = true
     @AppStorage("captureMicrophone") private var captureMicrophone: Bool = true
     
@@ -1165,7 +1166,14 @@ struct AudioSettingsView: View {
                 HStack {
                     Text("Microphone Access")
                     Spacer()
-                    PermissionStatusBadge(granted: checkMicrophonePermission())
+                    HomeSetupStateObserver(state: appState.homeSetupState) {
+                        if let permission = appState.homeSetupMicrophonePermission {
+                            PermissionStatusBadge(granted: permission == .authorized)
+                        } else {
+                            Text(appState.homeSetupState.permissionCheckUnavailable ? "Access check unavailable" : "Checking access")
+                                .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
+                        }
+                    }
                 }
                 
                 HStack {
@@ -1200,11 +1208,12 @@ struct AudioSettingsView: View {
         .formStyle(.grouped)
         .padding()
         .settingsSearchScrolling(for: .recording)
+        .task { appState.refreshHomeSetupMicrophonePermission() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { appState.refreshHomeSetupMicrophonePermission() }
+        }
     }
     
-    private func checkMicrophonePermission() -> Bool {
-        AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    }
 }
 
 struct PermissionStatusBadge: View {
@@ -1227,6 +1236,8 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
+            HomeSetupSettingsSection()
+
             Section("Startup") {
                 Toggle("Launch at Login", isOn: $launchAtLogin)
                     .id("general.launchAtLogin")
@@ -1473,8 +1484,11 @@ struct IntegrationsSettingsView: View {
                     .foregroundStyle(.secondary)
 
                 if autoExportMarkdown {
-                    Toggle("Generate AGENTS.md index", isOn: $generateAgentsMd)
-                    Text("Maintains an AGENTS.md file listing all exported meetings for AI agents.")
+                    HStack {
+                        Toggle("Help AI assistants find your meetings", isOn: $generateAgentsMd)
+                        MinitiDocumentationLink(topic: .exports)
+                    }
+                    Text("Keeps a list of saved notes for AI tools that can read this folder. Skip this if you don’t use one.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1512,15 +1526,19 @@ struct IntegrationsSettingsView: View {
 
             if content == .calendar {
             Section("Calendar & Meeting Automation") {
-                Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                HStack {
+                    Toggle("Smart meetings", isOn: $appState.smartMeetingsEnabled)
+                    MinitiDocumentationLink(topic: .smartMeetings)
+                }
                     .id("integrations.smartMeetings")
                 Text("Detects calls from apps like Zoom, Teams, Meet and Slack, keeps recordings separated, and finishes when a call ends, after a visible, cancellable countdown. Works with or without Google Calendar.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Link("Learn more about Smart meetings ↗", destination: URL(string: "https://miniti.app/docs/features/smart-meetings")!)
-                    .font(.caption)
 
-                Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                HStack {
+                    Toggle("Enable Google Calendar", isOn: $appState.googleCalendarEnabled)
+                    MinitiDocumentationLink(topic: .calendar)
+                }
                     .id("integrations.googleCalendar")
                 Text("Show upcoming meetings on the home screen and pre-fill meeting context with attendees.")
                     .font(.caption)
@@ -1599,10 +1617,7 @@ struct IntegrationsSettingsView: View {
                 if attioExportEnabled {
                     Toggle("Auto-sync calendar meetings to Attio", isOn: $appState.autoAttioSync)
                     DeliveryStatusRow(kind: .attio, outbox: appState.deliveryOutbox)
-                        .disabled(!appState.isGoogleCalendarConnected)
-                    Text(appState.isGoogleCalendarConnected
-                         ? "Automatically match attendee domains to Attio records and send meeting data after saving."
-                         : "Connect Google Calendar under Calendar to enable automatic Attio sync.")
+                    Text("Match saved attendees to Attio and send once after the first completed recording. Send later changes manually.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1619,10 +1634,7 @@ struct IntegrationsSettingsView: View {
                 if twentyExportEnabled {
                     Toggle("Auto-sync calendar meetings to Twenty", isOn: $appState.autoTwentySync)
                     DeliveryStatusRow(kind: .twenty, outbox: appState.deliveryOutbox)
-                        .disabled(!appState.isGoogleCalendarConnected)
-                    Text(appState.isGoogleCalendarConnected
-                         ? "Automatically match attendee domains to Twenty companies and send meeting data after saving."
-                         : "Connect Google Calendar under Calendar to enable automatic Twenty sync.")
+                    Text("Match saved attendees to Twenty and send once after the first completed recording. Send later changes manually.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1963,9 +1975,7 @@ private struct OnDeviceSpeakerSeparationStatusText: View {
     @ObservedObject var service: OnDeviceDiarizationService
 
     var body: some View {
-        Text(service.statusDescription)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        LocalModelProgress(status: service.status)
         if appState.onDeviceSpeakerSeparationEnabled {
             switch service.retryAvailability(recordingActive: appState.isRecording || appState.isStartingMeeting || appState.isFinalizingMeeting) {
             case .hidden:
@@ -2021,9 +2031,7 @@ private struct OnDeviceTranscriptionStatusText: View {
     @ObservedObject var service: OnDeviceTranscriptionService
 
     var body: some View {
-        Text(service.statusDescription)
-            .font(.caption)
-            .foregroundStyle(.secondary)
+        LocalModelProgress(status: service.status)
     }
 }
 
@@ -2033,7 +2041,8 @@ private struct TranscriptionModelsSection: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        Section("Models") {
+        Section {
+            AudioProcessingComparison(options: AudioProcessingChoiceCopy.transcription)
             Picker("Transcription", selection: Binding(
                 get: { appState.onDeviceTranscriptionEnabled },
                 set: { appState.onDeviceTranscriptionEnabled = $0; appState.refreshOnDeviceTranscriptionAvailability() }
@@ -2047,9 +2056,6 @@ private struct TranscriptionModelsSection: View {
             if appState.onDeviceTranscriptionEnabled {
                 OnDeviceTranscriptionStatusText(service: appState.onDeviceTranscription)
             }
-            Text(OnDeviceTranscriptionCopy.description)
-                .font(.caption)
-                .foregroundStyle(.secondary)
             if appState.onDeviceTranscriptionEnabled, !appState.privateModeEnabled {
                 Toggle("Use Deepgram for a meeting if the model is not ready", isOn: $appState.onDeviceTranscriptionCloudFallback)
                     .id("transcription.fallback")
@@ -2058,7 +2064,8 @@ private struct TranscriptionModelsSection: View {
                     .foregroundStyle(.secondary)
             }
 
-            Picker("Speakers", selection: Binding(
+            AudioProcessingComparison(options: AudioProcessingChoiceCopy.speakers)
+            Picker("Speaker separation", selection: Binding(
                 get: { appState.onDeviceSpeakerSeparationEnabled },
                 set: { appState.onDeviceSpeakerSeparationEnabled = $0; appState.refreshOnDeviceDiarizationAvailability() }
             )) {
@@ -2071,15 +2078,14 @@ private struct TranscriptionModelsSection: View {
             if appState.onDeviceSpeakerSeparationEnabled {
                 OnDeviceSpeakerSeparationStatusText(service: appState.onDeviceDiarization)
             }
-            Text("Who spoke when. This Mac runs NVIDIA's Nemotron speaker model, which ships inside miniti, and did better than Deepgram in our tests, most of all in a room with several people on one mic. Applies to new recordings.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
 
             if appState.privateModeEnabled {
                 Label("Set by private mode. Change it under Privacy.", systemImage: "lock.fill")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        } header: {
+            HStack { Text("Models"); MinitiDocumentationLink(topic: .transcription) }
         }
 
         VoicePrintSettingsSection(store: appState.voicePrints, embedder: appState.voicePrintEmbedder)

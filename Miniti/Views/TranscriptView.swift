@@ -77,6 +77,10 @@ enum LiveTranscriptDocumentMutation {
 #endif
 
 struct TranscriptView: View {
+    #if MINITI_TEST_HOST
+    // Observe real SwiftUI delivery order without exposing a release-only control.
+    var cacheEventForTesting: ((String, Int, String) -> Void)?
+    #endif
     @EnvironmentObject var appState: AppState
     @Environment(\.interfaceScale) private var interfaceScale
     @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
@@ -151,6 +155,7 @@ struct TranscriptView: View {
         detectedSpeakers: Set<Int>,
         forceFullRebuild: Bool = false
     ) {
+        guard forceFullRebuild || liveSegments != cachedSourceSegments else { return }
         let signpostID = OSSignpostID(log: transcriptViewPerformanceLog)
         os_signpost(
             .begin,
@@ -300,6 +305,9 @@ struct TranscriptView: View {
         cachedSourceSegments = liveSegments
         cachedLastDisplaySpeaker = cachedDisplayTurns.last?.speaker
         updateUniqueSpeakers(detectedSpeakers)
+        #if MINITI_TEST_HOST
+        cacheEventForTesting?("rebuilt", cachedSourceSegments.count, runtimeSnapshot.interimText)
+        #endif
     }
 
     private func rebuildAllSegments(
@@ -362,6 +370,9 @@ struct TranscriptView: View {
 
     private func applyRuntimeSnapshot(_ snapshot: TranscriptRuntimeState.Snapshot) {
         guard snapshot.revision >= runtimeSnapshot.revision else { return }
+        #if MINITI_TEST_HOST
+        cacheEventForTesting?("runtime", cachedSourceSegments.count, snapshot.interimText)
+        #endif
         runtimeSnapshot = snapshot
     }
 
@@ -726,6 +737,9 @@ struct TranscriptView: View {
                 liveSegments: newSegments,
                 detectedSpeakers: appState.detectedSpeakers
             )
+            #if MINITI_TEST_HOST
+            cacheEventForTesting?("sourceChanged", cachedSourceSegments.count, runtimeSnapshot.interimText)
+            #endif
         }
         .onChange(of: appState.detectedSpeakers) { _, newSpeakers in
             updateUniqueSpeakers(newSpeakers)
@@ -764,7 +778,11 @@ struct TranscriptView: View {
             appState.transcriptRuntime.$snapshot
                 .filter { $0.interimText.isEmpty }
         ) { snapshot in
-            // Clears are never throttled: finalized text must replace the interim row now.
+            // @Published sends before SwiftUI's onChange. Bring the final cache up to
+            // date in this same presentation update, before removing its live tail.
+            if appState.liveSegments.count != cachedSourceSegments.count || appState.liveSegments.last != cachedSourceSegments.last {
+                rebuildSegmentCaches(liveSegments: appState.liveSegments, detectedSpeakers: appState.detectedSpeakers)
+            }
             applyRuntimeSnapshot(snapshot)
         }
         .onReceive(
@@ -1032,6 +1050,7 @@ struct TerminalTranscriptTurnRow: View {
 
 struct TerminalInterimRow: View {
     @Environment(\.interfaceScale) private var interfaceScale
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let text: String
     let speaker: Int
     var isNewTurn: Bool = true
@@ -1057,11 +1076,11 @@ struct TerminalInterimRow: View {
                         .foregroundStyle(color.opacity(0.7))
                     
                     Text("•")
-                        .foregroundStyle(Color(hex: "1C1C1F"))
+                        .foregroundStyle(ColorPalette.Border.primary)
                     
                     Text("listening...")
                         .font(.system(size: 10, weight: .medium, design: .default))
-                        .foregroundStyle(Color(hex: "3FB950").opacity(0.7))
+                        .foregroundStyle(ColorPalette.Accent.green.opacity(0.7))
                 }
                 .padding(.top, 12)
                 .padding(.bottom, 4)
@@ -1078,7 +1097,7 @@ struct TerminalInterimRow: View {
                 HStack(spacing: 0) {
                     Text(text)
                         .font(.system(size: interfaceScale.transcriptBodySize, weight: .regular, design: .default))
-                        .foregroundStyle(Color(hex: "8B949E"))
+                        .foregroundStyle(ColorPalette.Text.dim)
                         .lineSpacing(interfaceScale.transcriptLineSpacing)
                     
                     // Blinking cursor
@@ -1092,6 +1111,7 @@ struct TerminalInterimRow: View {
             }
         }
         .onAppear {
+            guard !reduceMotion else { return }
             withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
                 cursorVisible.toggle()
             }

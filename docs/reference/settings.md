@@ -1,5 +1,7 @@
 # Settings, Privacy, Models and consent
 
+3.8.0 local candidate: Home and Settings, Account share explicit Sign in / Continue without signing in choices. Account also shows truthful deferred retry time, unreadable-credential recovery and an explicit reset confirmation. Devices offers Rename and Use default name, this-device identification and expandable support IDs; duplicate labels retain a distinguishing ID suffix. Ordinary upgrade keeps its account. These changes are not yet published. See [3.8.0 evidence](../releases/3.8.0-evidence.md#local-implementation-evidence).
+
 3.5.0 reference: Privacy/Models/Help changes shipped on Mac and iOS; 3.4.0 shipped the separate Sending tab. Shared tokens and native controls remain mandatory. Navigation/categories/search come from `SettingsDestination`, `SettingsGroup` and the catalog; root design rules live in [design.md](../../design.md).
 
 ## Navigation and layout
@@ -61,3 +63,33 @@ The shared delivery row offers Retry now for pending webhooks and Resend current
 A changed webhook URL during final processing or held handoff leaves a visible Try again message. That action explicitly accepts the current URL for the waiting completion; clearing the URL waits for a configured destination. Already released queue rows retain the existing current-URL sender policy. Account changes alone do not cancel configured webhook exports, though old-account AI responses are still rejected.
 
 Stopped-meeting and History AI Update controls show finishing and are disabled while final AI runs, with the same guard on the action itself. Coaching can still recompute locally. Changing a stopped meeting’s template persists the choice and invalidates only the old template job, leaving Summary, Sales and Questions independent.
+
+3.8.0 local candidate: first-run Mac setup explicitly offers automatic calendar recording or starting recordings yourself. Existing Smart meetings/calendar auto-start preferences are not silently changed. History, Folders owns automatic filing/creation, local-only folders and preview/apply; cloud consent and Privacy data flows now name shared folder metadata. Browser detection-enabled calendar starts require positive reliable call evidence or an explicit Start now; an unavailable sensor does not enable clock-based capture.
+
+3.8.0 local SG1: [Home setup guide](../plans/home-setup-guide.md) supersedes the independent Home account/calendar cards. It is optional, staged and resumable, preserves existing configuration/dismissals, and presents Add email directly. Calendar switches and the Mac transcription picker apply the real settings directly; unresolved calendar status is not disconnected. Pending verification is not completion. The release record owns automated and remaining manual evidence.
+
+
+3.8.0 UI follow-up (2026-11-05, local): folder fields and Help/Feedback reply-email fields use native bordered text inputs. Hiding the Home guide fades/collapses into a labelled reopen control, with no animation under Reduce Motion. Default-setting recommendations remain discussion in the Home setup plan; this pass does not change persisted or new-install defaults.
+
+
+3.8.0 local file setup (2026-11-05): Mac first-use setup and the Home files checklist row show the current Markdown destination, Choose folder, Save completed meetings as Markdown files and Help AI assistants find your meetings. These are the Settings, Data preferences, not a second storage location or a move of app history. Exports/index remain off until chosen. Folder-picker cancellation changes nothing; bookmark failure preserves the previous destination. The index maintains a marked miniti section while retaining existing instructions. Connected-calendar setup labels automatic recording as recommended and preserves the actual preference; Smart Meetings remains default-on.
+
+Approved checklist revision, 2026-11-05: Home uses visible vertical task rows and completion checks with one expanded set of controls. All headings/current choices remain visible. Recording access is read without capturing; permission is requested only by its button. Saved audio defaults and local history count as configured without enabling optional models/exports. Mac transcription and speaker separation have separate controls and readiness text. Existing dismissals, account/consent and privacy boundaries remain intact.
+
+
+3.8.0 setup visibility follow-up (2026-11-05, local): General now restores the permanently hidden Home guide and each individually hidden task. The bottom-left setup utility shows configured/eligible progress and matches Feedback; hiding an unfinished task does not complete it. The guide does not collapse merely because its tasks are configured. Shared accessible info buttons beside calendar/model concepts open a short explanation with an explicit link to the corresponding documentation. See the [setup contract](../plans/home-setup-guide.md#setup-visibility-and-documentation-links-2026-11-05).
+
+
+Review follow-up (2026-11-05): Mac model preparation shows approximate progress in both setup and Settings, with indeterminate activity during loading/compilation. Home exposes a readiness shortcut to Models; this does not change recording engines or defaults.
+
+Recording access on Mac uses the same asynchronously refreshed permission evidence as Home. Rendering the Recording pane never performs a synchronous authorization query; unknown state is shown as checking and returning to the app refreshes it.
+
+
+3.8.0 remaining-choice refinement (2026-11-07, source after build 158): Audio processing starts unticked on eligible Macs until “I've reviewed these choices” is pressed. Opening the row or changing a picker does not complete it. “Claim your account” requires verified email, with recovery key retained as backup and optional Pro cloud storage/sync explained separately. Authorized recording access and connected calendar tasks leave Home but still count toward progress. Unknown permission waits for the off-main check. Explicit dismissals remain respected; existing preferences and Cloud consent do not change. Mac Home's fixed header is opaque. See the [current setup contract](../plans/home-setup-guide.md#remaining-choice-refinement-2026-11-07).
+
+
+Scoped 156/157 review correction (2026-11-07, source after 158): Home setup preferences and microphone evidence now belong to a dedicated HomeSetupState observable. Setup-only hide/restore/review changes do not notify all AppState observers. Both Mac and iOS Recording settings render cached authorization. Refreshes arriving during a read coalesce into one latest queued read; a permission-request callback supplies the authoritative grant result and supersedes older reads. A three-second UI watchdog marks an unavailable check without blocking Home or spawning duplicate hardware queries. It does not cancel synchronous OS IPC or reset recording state. Mac reactivation notification and badge palette cleanup remain separately deferred.
+
+Setup choice explanations (2026-11-07, source after build 158): setup and Mac Settings compare Deepgram’s online processing, wider transcription language coverage and lower local workload with local processing and its download. Speakers have a separate comparison, with local recommended for shared microphones and a reminder that local transcription needs local separation for speaker labels. The optional meeting-list control describes helping folder-aware AI assistants find saved notes; AGENTS.md, preserved instructions and the fact that it neither connects a service nor uploads notes live in the export help popover. Preferences and explicit audio-review confirmation are unchanged.
+
+Post-158 review correction (2026-11-07): pending or unavailable microphone permission remains visible as an incomplete Home task until resolved; a confirmed grant removes the row while retaining it in progress. Mac Settings keeps the shared concise audio comparison and removes the older duplicate description. The transcript popover retains fallback, language-support and separate AI-insight boundaries.

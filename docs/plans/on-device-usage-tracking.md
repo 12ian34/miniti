@@ -1,6 +1,6 @@
 # On-device transcription usage tracking
 
-Selected by Ian on 2026-11-02 for 3.7.0; implemented locally on Apple/backend, with validation and release checks below; not deployed. The [roadmap](../roadmap.md#selected-next-release-370) owns priority. Follow the selected test foundation before running hosted app tests.
+Status updated 2026-11-04: 3.7.0 backend deployed and Mac build 149 released; iOS build 149 submitted, availability unconfirmed. [Publication evidence](../releases/3.7.0.md#publication-2026-11-04) supersedes dated local-only status below and retains test/device limitations. [Roadmap](../roadmap.md) owns priority. Reconnect undercounting belongs to the new [managed Deepgram metering plan](managed-reconnect-metering.md), separate from this local-duration queue.
 
 ## Problem in released 3.6.0
 

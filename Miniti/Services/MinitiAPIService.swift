@@ -268,6 +268,8 @@ final class MinitiAPIService: @unchecked Sendable {
         let expiresIn: Int?
         let expiresAt: Date
         let sessionId: String
+        let accountingVersion: Int?
+        let sessionStartedAt: Date?
         
         /// Deprecated alias for `accessToken` (older clients / transitional responses).
         var tempApiKey: String { accessToken }
@@ -285,10 +287,14 @@ final class MinitiAPIService: @unchecked Sendable {
             case expiresAtCamel = "expiresAt"
             case sessionId = "session_id"
             case sessionIdCamel = "sessionId"
+            case accountingVersion = "accounting_version"
+            case sessionStartedAt = "session_started_at"
         }
         
         init(from decoder: Decoder) throws {
             let container = try decoder.container(keyedBy: CodingKeys.self)
+            accountingVersion = try container.decodeIfPresent(Int.self, forKey: .accountingVersion)
+            sessionStartedAt = try container.decodeIfPresent(Date.self, forKey: .sessionStartedAt)
             
             // Prefer access_token; fall back to deprecated temp_api_key during cutover.
             let token =
@@ -1341,19 +1347,28 @@ final class MinitiAPIService: @unchecked Sendable {
     
     /// Request a new transcription session. Returns a short-lived Deepgram grant JWT.
     /// The backend validates the device, checks usage limits, and mints `access_token` (Bearer).
-    func requestSession(deviceId: String, model: String) async throws -> SessionResponse {
+    func requestSession(deviceId: String, model: String, recordingID: UUID? = nil, renewalSessionID: String? = nil,
+                        expectedOwner: (account: String, generation: Int)? = nil) async throws -> SessionResponse {
+        var body: [String: Any] = ["model": model]
+        if let recordingID {
+            body["accounting_version"] = 2
+            body["recording_id"] = recordingID.uuidString.lowercased()
+            if let renewalSessionID { body["renew_session_id"] = renewalSessionID }
+        }
         let request = makeRequest(
             path: "/session",
             method: "POST",
             deviceId: deviceId,
-            body: ["model": model]
+            body: body
         )
         
-        let (data, response) = try await send(request)
+        let (data, response) = try await send(request, expectedOwner: expectedOwner)
         try validateResponse(response, data: data)
         
         return try decode(SessionResponse.self, from: data, endpoint: "/session")
     }
+
+    struct TransientSessionError: Error { let retryAfter: Date? }
 
     /// A Deepgram grant for transcribing a saved recording (Apple Watch). Same gates as
     /// `/session`; the backend meters the audio length the client reports on `/session/end`.
@@ -1365,26 +1380,40 @@ final class MinitiAPIService: @unchecked Sendable {
             body: ["model": "nova-3", "language": language, "recording_id": recordingID]
         )
         let (data, response) = try await send(request)
+        if let http = response as? HTTPURLResponse, http.statusCode == 429 || http.statusCode >= 500 {
+            throw TransientSessionError(retryAfter: http.statusCode == 429 ? ClientAuthManager.retryDate(http.value(forHTTPHeaderField: "Retry-After"), now: Date()) : nil)
+        }
         try validateResponse(response, data: data)
         return try decode(SessionResponse.self, from: data, endpoint: "/session/prerecorded")
     }
     
     /// End a transcription session and report duration. Backend increments usage counter.
-    func endSession(deviceId: String, sessionId: String, durationMinutes: Double) async throws -> EndSessionResponse {
+    func endSession(deviceId: String, sessionId: String, durationMinutes: Double, recordingID: UUID? = nil,
+                    durationMS: Int? = nil, expectedOwner: (account: String, generation: Int)? = nil) async throws -> EndSessionResponse {
         func sendRequest(path: String) async throws -> EndSessionResponse {
+            var body: [String: Any] = ["session_id": sessionId, "duration_minutes": durationMinutes]
+            if let recordingID, let durationMS {
+                body = ["session_id": sessionId, "accounting_version": 2,
+                        "recording_id": recordingID.uuidString.lowercased(), "duration_ms": durationMS]
+            }
             let request = makeRequest(
                 path: path,
                 method: "POST",
                 deviceId: deviceId,
-                body: [
-                    "session_id": sessionId,
-                    "duration_minutes": durationMinutes
-                ]
+                body: body
             )
             DebugLogger.shared.log(.app, "API request: POST \(Self.baseURL)\(path)")
             
-            let (data, response) = try await send(request)
+            let (data, response) = try await send(request, expectedOwner: expectedOwner)
+            if let http = response as? HTTPURLResponse, [400, 403, 409, 410].contains(http.statusCode) {
+                throw ManagedSessionJournal.DeliveryError.terminal
+            }
             try validateResponse(response, data: data)
+            if recordingID != nil {
+                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["accounting_version"] as? Int == 2,
+                      json["accepted_duration_ms"] is NSNumber else { throw ManagedSessionJournal.DeliveryError.incompatibleSession }
+            }
             return try decode(EndSessionResponse.self, from: data, endpoint: path)
         }
 
@@ -1723,6 +1752,35 @@ final class MinitiAPIService: @unchecked Sendable {
             "API speaker-names response: duration=\(String(format: "%.2fs", duration)), identified=\(cleaned.count)/\(decoded.speakers.count)"
         )
         return cleaned
+    }
+
+    func readFolders(accountID: String, credentialGeneration: Int) async throws -> FolderCatalog {
+        let request = makeRequest(path: "/sync/folders", deviceId: DeviceIdentifier.getOrCreateDeviceId(), timeoutInterval: 15)
+        let (data, response) = try await send(request, expectedOwner: (accountID, credentialGeneration))
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 409 { throw CloudSyncError.server(code: "folder_conflict", status: 409) }
+            if http.statusCode == 503,
+               (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String == "busy" {
+                throw CloudSyncError.busy(retryAfter: 2)
+            }
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode(FolderCatalog.self, from: data)
+    }
+
+    func writeFolders(_ catalog: FolderCatalog, accountID: String, credentialGeneration: Int) async throws -> FolderCatalog {
+        var request = makeRequest(path: "/sync/folders", method: "PUT", deviceId: DeviceIdentifier.getOrCreateDeviceId(), timeoutInterval: 15)
+        request.httpBody = try JSONEncoder().encode(catalog)
+        let (data, response) = try await send(request, expectedOwner: (accountID, credentialGeneration))
+        if let http = response as? HTTPURLResponse {
+            if http.statusCode == 409 { throw CloudSyncError.server(code: "folder_conflict", status: 409) }
+            if http.statusCode == 503,
+               (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String == "busy" {
+                throw CloudSyncError.busy(retryAfter: 2)
+            }
+        }
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode(FolderCatalog.self, from: data)
     }
 
     func sendRecordingUsage(_ report: RecordingUsageQueue.Report, credentialGeneration: Int) async throws -> UUID {

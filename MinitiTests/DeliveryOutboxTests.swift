@@ -26,6 +26,24 @@ final class DeliveryOutboxTests: XCTestCase {
 
     private func advance(_ seconds: TimeInterval) { clock = clock.addingTimeInterval(seconds) }
 
+    func testCompletionCRMIsHeldUntilDurableAcknowledgementAndResumesOnce() async {
+        let id = UUID(), meeting = UUID()
+        let outbox = makeOutbox()
+        XCTAssertTrue(outbox.stageCRM(.attio, meetingID: meeting, id: id))
+        XCTAssertTrue(outbox.stageCRM(.attio, meetingID: meeting, id: id))
+        let restored = makeOutbox()
+        var sent = 0
+        restored.register(.attio) { _ in sent += 1; return .delivered }
+        await restored.processDue()
+        XCTAssertEqual(sent, 0)
+        XCTAssertTrue(restored.releaseCRM(id: id))
+        await restored.processDue()
+        XCTAssertEqual(sent, 1)
+        XCTAssertFalse(restored.releaseCRM(id: id))
+        await restored.processDue()
+        XCTAssertEqual(sent, 1)
+    }
+
     func testScheduleIsBoundedAndThenTerminal() {
         XCTAssertEqual(DeliveryOutbox.nextDelay(afterAttempts: 1), 30)
         XCTAssertEqual(DeliveryOutbox.nextDelay(afterAttempts: 2), 120)

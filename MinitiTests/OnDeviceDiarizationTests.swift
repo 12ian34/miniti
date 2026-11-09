@@ -563,6 +563,23 @@ final class LocalSpeakerFailureTests: XCTestCase {
         await service.endSessionAndWait()
     }
 
+    func testRestorationWithoutProviderLabelsKeepsAnHonestUnknownGap() throws {
+        var identity = SpeakerIdentityState()
+        identity.beginConnection(preservingIdentities: false)
+        let known = identity.appSpeakerID(source: .microphone, providerID: 0)
+        var segmentation = DeepgramService.SegmentationState()
+        segmentation.lastCommittedSpeakerBySource[.microphone] = known
+        let data = Data(#"{"type":"Results","is_final":true,"channel":{"alternatives":[{"transcript":"still recording","confidence":1,"words":[{"word":"still","start":1,"end":1.2,"confidence":1},{"word":"recording","start":1.2,"end":1.5,"confidence":1}]}]}}"#.utf8)
+        let response = try JSONDecoder().decode(DeepgramResponse.self, from: data)
+        let result = DeepgramService.processTranscriptResponse(response, isMultichannel: false, monoSource: .microphone,
+            segmentationState: segmentation, identityState: identity, requiresProviderSpeakerLabels: true)
+        guard case .transcript(let parsed) = result else { return XCTFail("Expected final words") }
+        XCTAssertTrue(parsed.update.speakerSeparationUnavailable)
+        XCTAssertNotEqual(parsed.update.speaker, known)
+        XCTAssertEqual(parsed.segments.first?.speaker, parsed.update.speaker)
+        XCTAssertTrue(parsed.originalSpeakerIDs.isEmpty)
+    }
+
     func testFailedTimelineAllocatesNeutralBucketWithoutReusingKnownPeople() throws {
         for source in [TranscriptSource.microphone, .system] {
             let timeline = OnDeviceSpeakerTimeline(sources: [source])
@@ -587,7 +604,7 @@ final class LocalSpeakerFailureTests: XCTestCase {
         }
     }
 
-    func testLiveFailureDoesNotReconnectAndNewMetadataHonorsPrivacyAndMode() async throws {
+    func testLiveFailureRequestsOneRestorationAndSpeakerMetadataHonorsPrivacyAndMode() async throws {
         let defaults = UserDefaults.standard
         let keys = ["onDeviceSpeakerSeparation", "appMode", "shareDiagnostics", "privateMode"]
         let saved = Dictionary(uniqueKeysWithValues: keys.map { ($0, defaults.object(forKey: $0)) })
@@ -617,8 +634,15 @@ final class LocalSpeakerFailureTests: XCTestCase {
             XCTAssertEqual(service.activeSessionID, id)
             XCTAssertTrue(state.isRecording)
             XCTAssertNotNil(state.speakerSeparationIssue)
-            XCTAssertEqual(events.count, expectedEvents)
+            XCTAssertEqual(events.filter { $0.hasPrefix("speaker_separation_") }.count, expectedEvents)
+            #if os(macOS)
+            XCTAssertEqual(state.speakerRestoration.phase, .pending)
+            let reconnects = events.filter { $0 == "deepgram_reconnect_scheduled" }.count
+            state.handleLocalSpeakerFailure(id: id, reason: .inference)
+            XCTAssertEqual(events.filter { $0 == "deepgram_reconnect_scheduled" }.count, reconnects)
+            #else
             XCTAssertFalse(events.contains { $0.contains("reconnect") })
+            #endif
             state.isRecording = false
             await service.endSessionAndWait()
         }
@@ -873,5 +897,43 @@ extension LocalSpeakerFailureTests {
         XCTAssertTrue(timeline.isReliable)
         XCTAssertEqual(timeline.matureSlots(source: .microphone), [0])
         XCTAssertTrue(service.isReady)
+    }
+}
+
+final class SpeakerRestorationPolicyTests: XCTestCase {
+    func testOneTransitionHasAnAbsoluteBudgetAndNeedsCurrentSpeakerEvidence() {
+        var state = SpeakerRestoration()
+        XCTAssertTrue(state.begin(now: 0))
+        XCTAssertFalse(state.begin(now: 5))
+        XCTAssertTrue(state.attempt(now: 1))
+        XCTAssertTrue(state.attempt(now: 14))
+        XCTAssertTrue(state.attempt(now: 30))
+        XCTAssertFalse(state.attempt(now: 40))
+        state.connected(7, now: 44)
+        XCTAssertEqual(state.phase, .unconfirmed)
+        state.expire(now: 1000)
+        XCTAssertEqual(state.phase, .unconfirmed, "Silence is not a failure")
+        XCTAssertFalse(state.observe(6))
+        state.connected(8, now: 1001)
+        XCTAssertFalse(state.observe(7), "Evidence from a dropped connection cannot confirm the replacement")
+        XCTAssertTrue(state.observe(8))
+        state.cancel()
+        XCTAssertFalse(state.observe(7))
+    }
+    func testDeadlineCannotRestartAndLocalToProviderDoesNotReuseMicIdentity() {
+        var state = SpeakerRestoration()
+        XCTAssertTrue(state.begin(now: 100))
+        state.expire(now: 145)
+        XCTAssertEqual(state.phase, .unavailable)
+        XCTAssertFalse(state.begin(now: 146))
+        state.connected(8, now: 146)
+        XCTAssertFalse(state.observe(8))
+        var ids = SpeakerIdentityState()
+        ids.beginConnection(preservingIdentities: false)
+        ids.setStableProviderSources([.microphone])
+        let old = ids.appSpeakerID(source: .microphone, providerID: 0)
+        ids.beginConnection(preservingIdentities: true)
+        ids.setStableProviderSources([])
+        XCTAssertNotEqual(ids.appSpeakerID(source: .microphone, providerID: 0), old)
     }
 }

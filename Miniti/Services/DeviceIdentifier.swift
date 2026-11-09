@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 // MARK: - Keychain backend
@@ -128,8 +129,13 @@ final class KeychainSlot: @unchecked Sendable {
         return query
     }
 
-    private func read(dataProtection: Bool) -> ReadResult {
+    private func read(dataProtection: Bool, allowInteraction: Bool) -> ReadResult {
         var query = query(dataProtection: dataProtection)
+        if !allowInteraction {
+            let context = LAContext()
+            context.interactionNotAllowed = true
+            query[kSecUseAuthenticationContext as String] = context
+        }
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         let (status, data) = backend.copyMatching(query)
@@ -174,11 +180,12 @@ final class KeychainSlot: @unchecked Sendable {
         DebugLogger.shared.log(.app, "keychain_data_protection_unavailable service=\(service) status=\(status); using the login keychain")
     }
 
-    func read() -> ReadResult {
-        let primary = read(dataProtection: true)
+    func read(allowInteraction: Bool = true) -> ReadResult {
+        let primary = read(dataProtection: true, allowInteraction: allowInteraction)
         if case .found = primary { return primary }
         #if os(macOS)
-        let legacy = read(dataProtection: false)
+        if case .unreadable(let status) = primary, status != Self.missingEntitlement { return primary }
+        let legacy = read(dataProtection: false, allowInteraction: allowInteraction)
         if case .found(let data) = legacy {
             if case .missing = primary {
                 let moved = upsert(data, dataProtection: true)
@@ -426,7 +433,7 @@ enum DeviceIdentifier {
     // MARK: - Keychain Operations
 
     private static func getFromKeychain() -> KeychainReadResult {
-        switch slot.read() {
+        switch slot.read(allowInteraction: false) {
         case .found(let data):
             guard let string = String(data: data, encoding: .utf8), !string.isEmpty else { return .unreadable(errSecDecode) }
             return .found(string)

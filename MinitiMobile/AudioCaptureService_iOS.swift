@@ -61,6 +61,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     // MARK: - Capture
     
     func startCapture(microphone: Bool, systemAudio: Bool) async throws {
+        #if MINITI_TEST_HOST
+        if AccountUITestHarness.isActive { isCapturing = true; return }
+        #endif
         await stopCaptureAsync()
         
         DebugLogger.shared.log(.audio, "startCapture(mic=\(microphone)) [iOS]")
@@ -72,6 +75,9 @@ final class AudioCaptureService: NSObject, ObservableObject, @unchecked Sendable
     }
     
     func stopCapture() {
+        #if MINITI_TEST_HOST
+        if AccountUITestHarness.isActive { isCapturing = false; return }
+        #endif
         cancelPendingMicRecovery()
         stopMicrophoneCapture()
         isCapturing = false
