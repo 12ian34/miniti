@@ -1,5 +1,7 @@
 # Roadmap
 
+Release execution, 2026-11-09: Ian reports completed Mac and mobile app QA and explicitly requested release. Build 164 freezes the post-163 Home, folder controls and recording-status refinements. Final full validation and signed packaging are in progress. App Privacy is owner-confirmed complete. Specialist checks without individual evidence remain documented limitations, not invented passes. Public Apple publication and iOS submission have not occurred yet.
+
 Post-163 UI refinement, 2026-11-09: Mac folder disclosures use full-row targets and miniti surfaces; Home groups setup, models and feedback at bottom left; its matching full-height right sidebar has the calendar toggle and Cmd-] hint at bottom right, plus a visible calendar label on its collapsed rail. These changes are not in DMG/TestFlight 163. Fresh validation and packaging are required before publishing this revised candidate. Physical QA remains in progress; App Privacy is owner-confirmed complete.
 
 Post-162 Home refinement, 2026-11-09: Ian is performing physical-device QA; no waiver was given. New source moves language/recording above the bottom controls, aligns the iOS footer and gives Mac Home an independent collapsible right calendar sidebar. Build 162 remains a historical testing artifact and must not be published as this revised candidate. Build 163 is signed, verified and available as a DMG and internal TestFlight build. Full local suites and the corrected remote CI run pass.
