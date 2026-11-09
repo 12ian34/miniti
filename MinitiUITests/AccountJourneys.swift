@@ -40,6 +40,53 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    func testLiveInsightUpdateHasMinimumTarget() {
+        launch(screenshotScene: "recording-insights")
+        assertInsightUpdateTarget()
+    }
+
+    func testSavedInsightUpdateHasMinimumTarget() {
+        launch(screenshotScene: "meeting")
+        assertInsightUpdateTarget()
+    }
+
+    private func assertInsightUpdateTarget() {
+        let update = app.buttons["insights.update"].firstMatch
+        XCTAssertTrue(update.waitForExistence(timeout: 10), app.debugDescription)
+        #if os(macOS)
+        let minimum: CGFloat = 24
+        let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
+        #else
+        let minimum: CGFloat = 44
+        let capture = XCTAttachment(screenshot: app.screenshot())
+        #endif
+        capture.name = "Insight Update target in production layout"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCTAssertGreaterThanOrEqual(update.frame.width, minimum)
+        XCTAssertGreaterThanOrEqual(update.frame.height, minimum)
+        XCTAssertTrue(update.isHittable)
+        var frames = "update: \(update.frame)"
+        let modeRowY = app.buttons["summary"].firstMatch.frame.midY
+        for label in ["summary", "questions", "coaching"] {
+            // Mac also has a Coaching sidebar action. Select the actual mode row.
+            let matches = app.buttons.matching(identifier: label).allElementsBoundByIndex
+                .filter { abs($0.frame.midY - modeRowY) < 1 }
+            XCTAssertEqual(matches.count, 1, "Expected one insight mode in this row: \(label)")
+            guard let tab = matches.first else { return }
+            let overlap = update.frame.intersection(tab.frame)
+            XCTAssertTrue(overlap.isNull || overlap.isEmpty,
+                          "Update overlaps \(label): \(overlap)")
+            frames += "\n\(label): \(tab.frame)"
+        }
+        let frameEvidence = XCTAttachment(string: frames)
+        frameEvidence.name = "Update and neighboring mode target frames"
+        frameEvidence.lifetime = .keepAlways
+        add(frameEvidence)
+        // Layout-only: screenshot scenes do not stub user-triggered AI requests.
+        // Action dispatch for the shared target primitive is covered separately.
+    }
+
     #if os(macOS)
     func testMacOwnedWindowsStayDarkWithLightAmbientAppearance() {
         launch("appearance")

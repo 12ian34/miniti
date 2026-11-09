@@ -2057,9 +2057,10 @@ struct LiveInsightsPanel: View {
                                     .stroke(Color(hex: "27272A"), lineWidth: 1)
                             )
                             .contentShape(RoundedRectangle(cornerRadius: 6))
+                            .minitiMinimumControlTarget()
                         }
                         .buttonStyle(.plain)
-                        .focusable(false)
+                        .accessibilityIdentifier("insights.update")
                         .disabled(!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress)
                         .opacity((!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress) ? 0.5 : 1.0)
                     }

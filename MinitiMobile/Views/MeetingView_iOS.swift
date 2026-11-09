@@ -576,8 +576,10 @@ struct MeetingView_iOS: View {
                                 RoundedRectangle(cornerRadius: 6)
                                     .stroke(Color(hex: "27272A"), lineWidth: 1)
                             )
+                            .minitiMinimumControlTarget()
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("insights.update")
                         .disabled(!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress)
                         .opacity((!canUpdateInsights || appState.isGeneratingInsights || appState.currentMeetingFinalAIInProgress) ? 0.5 : 1)
 

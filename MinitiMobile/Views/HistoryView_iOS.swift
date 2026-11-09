@@ -870,8 +870,10 @@ struct MeetingDetail_iOS: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(Color(hex: "27272A"), lineWidth: 1)
                 )
+                .minitiMinimumControlTarget()
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("insights.update")
             .disabled(appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id))
             .opacity((appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id)) ? 0.5 : 1)
             

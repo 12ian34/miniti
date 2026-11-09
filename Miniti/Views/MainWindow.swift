@@ -2173,9 +2173,10 @@ struct MeetingDetailView: View {
                             RoundedRectangle(cornerRadius: 6)
                                 .stroke(Theme.border, lineWidth: 1)
                         )
+                        .minitiMinimumControlTarget()
                     }
                     .buttonStyle(.plain)
-                    .focusable(false)
+                    .accessibilityIdentifier("insights.update")
                     .disabled(appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id))
                     .opacity((appState.isGeneratingInsights || appState.finalizingInsightMeetingIDs.contains(meeting.id)) ? 0.5 : 1.0)
                     
