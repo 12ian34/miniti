@@ -1,0 +1,4 @@
+interface:
+  display_name: "Miniti Pstack"
+  short_description: "Commit-sized implementation with Claude review"
+  default_prompt: "Use $miniti-pstack for the next authorized miniti implementation slice, with focused tests, a local commit and independent Claude review."

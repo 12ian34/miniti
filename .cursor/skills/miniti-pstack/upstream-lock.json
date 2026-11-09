@@ -1,0 +1,46 @@
+{
+  "repository": "https://github.com/cursor/plugins",
+  "commit": "236e5481d05cbadc315b374a5de54971858c27bb",
+  "files": [
+    {
+      "local": "references/upstream/interrogate.txt",
+      "upstream": "pstack/skills/interrogate/SKILL.md",
+      "sha256": "3f3c2e9b8cf6b180dba9f32a4aff85e5691b09805232468e37a0ba45437a9984"
+    },
+    {
+      "local": "references/upstream/show-me-your-work.txt",
+      "upstream": "pstack/skills/show-me-your-work/SKILL.md",
+      "sha256": "920a8217cbb62f92a2222fb81fc9eab17ecd554a0277e444a95a927195139bd1"
+    },
+    {
+      "local": "references/upstream/principle-model-the-domain.txt",
+      "upstream": "pstack/skills/principle-model-the-domain/SKILL.md",
+      "sha256": "52c0d85e0c3827c41c18299b642657d7b47eaf77b7b31609e42e0df42b84c75f"
+    },
+    {
+      "local": "references/upstream/principle-attack-the-premise.txt",
+      "upstream": "pstack/skills/principle-attack-the-premise/SKILL.md",
+      "sha256": "6a932884daad4aa189e9b5d1665226bbc75621d4d2a398fd4003bebd382f4599"
+    },
+    {
+      "local": "references/upstream/principle-sequence-verifiable-units.txt",
+      "upstream": "pstack/skills/principle-sequence-verifiable-units/SKILL.md",
+      "sha256": "2ccbbacc56ace5afdfb8670cef19d7bd009fb2a0033b9a741cbdf2b6baf72187"
+    },
+    {
+      "local": "references/upstream/benchmark-checklist.txt",
+      "upstream": "pstack/skills/benchmark-checklist/SKILL.md",
+      "sha256": "ba109e96c8f6c1c391baccf19e5d11e14370df7b3f2605e1572cd565a6c0fca0"
+    },
+    {
+      "local": "references/upstream/hillclimb.txt",
+      "upstream": "pstack/skills/poteto-mode/playbooks/hillclimb.md",
+      "sha256": "942c1565b75ad02a2cb6230dd7c1ebd87e19f59a00319ebac2b6616007bf018f"
+    },
+    {
+      "local": "LICENSE",
+      "upstream": "pstack/LICENSE",
+      "sha256": "bc957ca6bee02792566a1a028d105e02e247c6e77cf057061674273da77b200e"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Meeting ownership across account changes
 
-Status: planned, not implemented. Version: unassigned. Scope reconciled 2026-10-27. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
+Status: selected for 3.9.0 by Ian on 2026-11-09, not implemented. Original scope reconciled 2026-10-27; release assignment and integration updated 2026-11-09. [Roadmap](../roadmap.md) owns priority; this file owns completion. One release may include several completed plans. Ordered backend deployments inside a plan are not separate unfinished product releases.
 
 ## Deliverable and boundary
 
@@ -9,6 +9,12 @@ B4: preserve each account’s meetings and allow an explicit authorized copy bef
 ## Prerequisites and decisions
 
 Account ownership/lifecycle plan complete; keep shipped R3 generation fences. Define per-platform client versions before server refusal enforcement. Copy permission must be obtained while still authorized on the source account.
+
+Apply the [release stage/capability matrix](../releases/3.9.0.md#backend-stages-and-client-publication) and [B3 entry-point matrix](account-ownership.md#account-change-entry-points) to every review/transfer/reset path. AO4's blanket old-client transition gate starts at S2 before changed ownership semantics; B4's origin-refusal gate is a separate S6 switch after compatible readers are available per platform. New copy/review UI requires `account_v1` and current server revision, never app version alone. Restore/new enrollment, remote removal, Cloud on/off and Delete cloud copy must preserve provenance; they are not all equivalent to attach. A missing/paused post-migration capability cannot justify returning to the old promise that everything follows the device.
+
+Compatible binaries publish under legacy behavior before S2, after testing every staged capability. Reused-ID create after sign-out/removal also preserves B4 provenance and invalidates old credential-bound grants; it cannot turn old local/downloaded rows into newly recorded rows on Y. Genuine rotated IDs do not erase local provenance either. Proven same-account repair remains available during preparing/paused on old/new clients, subject to source authorization, generation invalidation and cap/deletion checks; do not show a cross-account review for that repair. Add separate create/rekey/lost-response journeys and verify the legacy-to-account_v1 local-store transition against the early-publication sequence.
+
+Source refresh, 2026-11-09: the lock critique in the original implementation contract below is historical. `clientAuthStore.withLock` now uses an owner-checked release and a 120-second lease. That fixes unconditional unlock, but does not make the Redis authorization check and Postgres copy transaction atomic. Preserve B4's stated in-flight authorization boundary; do not schedule a repair of the already-fixed unlock. Ian selected B4 for [3.9.0](../releases/3.9.0.md) on 2026-11-09, after B0–B3 and integrated with B5 in one account-switching review. AO6 owns release evidence; original B4 identifiers remain unchanged.
 
 ## Implementation contract
 
@@ -46,6 +52,12 @@ Mapped on 2026-11-09 from the [Apple-app inventory](../research/implicit-state-m
 - Release a saved-AI result after the meeting/account scope changes. Assert that existing authority and revision guards prevent it from overwriting another account's meeting or copy.
 
 Extend the existing cloud, meeting-document, folder and meeting-journey tests with these sequences. Verify persisted source/copy identity and retry outcomes, including the real Postgres boundaries already required below.
+
+## Design-system follow-through
+
+Use the contracts established by [UI consistency/accessibility, order 3d](ui-consistency-and-accessibility.md). This plan owns the Cloud/Local utility-role portion of D10 and focus checks from D13 in the [design audit](../research/design-system-audit-2026-11-09.md). Share the storage/copy status and action labels across live/history and Mac/iOS, keeping native toolbars, sheets and the B4 review state with their existing owners. Neutral configuration chrome must not imply completed cloud upload or granted copy permission.
+
+Acceptance: copy, leave-local, unknown-origin and failure states remain readable and keyboard/VoiceOver accessible at large text; cancellation changes no ownership; selected rows retain their selection through layout changes; retries cannot present a second copy as new success. Use the existing colour/control contracts without coupling this migration to a broad History renderer rewrite. Retire only the findings implemented here, with evidence in this plan and the shared disposition register.
 
 ## Acceptance and delivery
 

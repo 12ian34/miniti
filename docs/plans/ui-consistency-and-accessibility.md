@@ -1,0 +1,111 @@
+# UI consistency and accessibility
+
+Selected by Ian on 2026-11-09 for 3.9.0. Status: planned, not implemented. Release date unassigned. [Roadmap order 3d](../roadmap.md#design-system-audit-follow-through) places this bounded package after 3.8.0 and before account ownership at order 4. Mac 3.8.0 is already released; iOS 3.8.0 remains in App Review. This work does not amend either artifact or require withdrawing the iOS submission.
+
+The [design-system audit](../research/design-system-audit-2026-11-09.md) supplies dated source evidence, not runtime verification. This plan owns the immediate corrections and the disposition of all 21 findings. Later feature plans own their assigned consolidation. The existing [recovery/UI plan](recovery-ui-coverage.md) remains bounded to account recovery; reuse its isolated harness without reopening that deliverable as a general redesign.
+
+## Deliverable and boundaries
+
+Make reading sizes, interactive targets, contrast and live/saved insight presentation consistent across Mac, iPhone and iPad. Strengthen existing design primitives so callers inherit those rules. Remove the temporary saved-iPhone action-completion affordance in favour of the non-interactive action presentation already used elsewhere. No persistent task-completion model is introduced.
+
+Preserve native navigation, Button/Menu ownership, Settings Forms, Mac shortcuts, iOS toolbars and platform capability differences. Keep the existing Home layout, Coaching metric taxonomy and six-chart contract. Keep all recording, account, billing, storage, consent, private-mode and export behaviour with their current owners. No backend/schema/prompt change, dependency upgrade, mandatory sign-in, new AI request, model default change or feature redesign belongs here.
+
+Do not migrate every legacy view or eradicate the entire literal-colour inventory as a completion gate. Consolidate only the content and controls needed for the selected corrections. Broader Settings, banners, notes, help, Coaching and extension work follows the ownership register below. Account-ownership planning and unresolved product decisions can progress independently; a whole-app UI rewrite is not a new dependency for its migration.
+
+## Implementation packages
+
+### UI1 Shared reading and interaction contracts
+
+- Resolve macOS prose metrics from **InterfaceScale only**. No macOS system-text-size source or Dynamic Type equivalent is selected for these views; adding one requires naming the exact setting and revising this contract. Resolve iOS/iPadOS prose from **InterfaceScale × Dynamic Type**, preserving Compact's baseline at normal system size and never reducing requested accessibility sizes. Share the resolved metrics between SwiftUI and UIKit/AppKit attributed text, applying scaling exactly once. Sales and template text inherit these metrics rather than hardcoding 12/13 points; define a notes prose role without consolidating all editors here.
+- Separate compact visual chrome from interactive bounds. Default shared tabs, controls, disclosures and icon actions to platform minimum targets, including 44-point iOS targets. Make metric-help and close controls reachable and accessibly named now, without requiring the later help-presentation extraction. Native container hit frames must be checked in the running app.
+- Adjacent targets must not overlap, including Home action groups, Coaching tabs, metric-help icons beside text and toolbar groups. Preserve the visual layout. Expansion is allowed only when the gap accommodates the total expansion toward that gap (for equal controls, at least the interactive-minus-visual size difference); otherwise clip/partition each target to its own non-overlapping region. Verify the resulting target still meets its required minimum. If the layout cannot satisfy both constraints, record the conflict for a bounded layout decision rather than silently overlapping, stealing taps or claiming a 44-point target that is smaller after clipping.
+- Use readable text roles for question context, copy actions, metric explanations/units and recording status. Add foreground-on-accent roles as needed. Verify actual foreground/background combinations against the design's ordinary-text contrast target, including hover/selected states; do not reclassify useful text as decoration to waive a failure.
+- Establish the Mac app-owned dark-appearance boundary after reproducing its current behaviour under a Light system appearance. Include main, Settings, Debug Log and affected sheets. Keep system-owned menu-bar presentation appropriate to its environment.
+- Preserve native focus and disabled/pressed state in migrated controls. Fix ordinary-window focus opt-outs in the affected copy/update/tab/help controls. Retain explicit exceptions for the nonactivating recording panel and leave the wider keyboard inventory to its owning surfaces.
+
+### UI2 Live and saved insight parity
+
+- Use one meeting-section picker for live and saved iOS transcript/insights/notes, preserving screen-local selection, lowercase labels and selected accessibility traits.
+- Share standard/Sales section descriptors for titles, ordering and semantic accents. Use named Sales fields, not ambiguous single-letter keys. Preserve current content filtering, generation routing and saved/live data ownership. Reuse the existing template section contract.
+- Make the smallest section-layout extraction required to keep headers, text sizes and accents consistent across the four live/history/platform combinations. Native density differences remain explicit variants. Full content-renderer consolidation belongs to order 9.
+- Replace saved-iPhone action checkboxes backed only by local view state with non-interactive action rows. Do not create stored completion, alter CRM task selection or change exported action text.
+- Migrate affected copy/update actions to shared neutral utility chrome. Broader Cloud/Local roles, smart-meeting action semantics and sidebar rails remain with the owners below.
+
+### UI3 Enforcement, documentation and completion evidence
+
+- Add a baseline-aware source check preventing new literal colour construction in app view code outside reviewed palette/assets/export exceptions. Capture existing debt explicitly. Flag new focus opt-outs, undersized text and duplicated control chrome for review rather than banning every numeric dimension or native system style. New checks need positive and negative fixtures.
+- Add behavioural regressions for resolved text scaling, live/saved section parity, selected semantics and action-row behaviour. macOS tests cover each InterfaceScale and SwiftUI/AppKit agreement without invented system scaling; iOS/iPadOS tests cover InterfaceScale × normal/largest accessibility Dynamic Type, compact baseline and no double scaling in attributed text. Colour-role contrast tests and rendered hit-frame checks should exercise outcomes, rather than only asserting constants. Use existing test targets and fixture infrastructure.
+- Render adjacent targets in native containers and assert minimum sizes **and no overlapping hit frames**. Tap each side of a shared edge and the boundary itself; a deterministic designated control receives the tap once, with no neighbor action, dead/ambiguous overlap or transparent overlay stealing input. Include Home, Coaching tabs, metric help and toolbars at compact/narrow layouts. Preserve visual geometry and keyboard/VoiceOver semantics.
+- Reconcile the affected current contracts in `design.md`, including the incorrect placeholder-contrast exception, card token mismatch and explicitly allowed functional fades. Keep unrelated aesthetic decisions, such as hover glow, deferred. Move superseded build notes to dated release evidence when reconciling those sections rather than appending another competing rule.
+- Record one paired fixture set for live/history on both platforms, including long content, empty/loading/error states and disabled controls. Reuse the existing screenshot and UI-test infrastructure; a new gallery application is not required.
+
+Implement UI1 before UI2, then close UI3 against the final candidate. These are execution steps of one bounded deliverable. If implementation shows the package cannot ship as a complete unit, revise the scope into independently supported deliveries before proceeding; do not leave an implicit half-finished umbrella.
+
+## Audit ownership register
+
+Partial assignments specify what this package must finish. Deferred portions do not keep order 3d open.
+
+| Finding | Disposition | Owner and completion boundary |
+|---|---|---|
+| D01 System text scaling | Included now | UI1, macOS uses InterfaceScale; iOS/iPadOS combine it with Dynamic Type once, with attributed/SwiftUI agreement. |
+| D02 Sales/template/notes sizes | Included now | UI1/UI2, shared reading metrics; notes get a role, editor extraction stays at order 9. |
+| D03 Interactive targets | Included now | UI1/UI3, shared defaults/help/close/disclosure targets meet platform minima without adjacent overlap, verified by rendered frames and shared-edge taps. |
+| D04 Contrast | Included now | UI1/UI3, the identified app/menu-bar text roles and the incorrect placeholder claim. Extension-specific copies are D18. |
+| D05 Temporary action checkboxes | Included now | UI2, non-interactive saved action rows; persistent completion is excluded. |
+| D06 Mac dark appearance | Included now | UI1, reproduce, enforce app-owned appearance and record Light-system results. |
+| D07 Palette adoption | Included now, bounded | UI1/UI3 migrate affected surfaces and prevent new violations. Remaining legacy conversions follow their feature owner; zero total literals is not this package's gate. |
+| D08 Insight category colours | Included now | UI2, one semantic descriptor mapping across live/history and platforms. |
+| D09 Saved iPhone tabs | Included now | UI2, one meeting-section picker. |
+| D10 Utility chrome and roles | Split | UI2 owns affected copy/update controls. [Meeting ownership](meeting-ownership.md#design-system-follow-through) owns Cloud/Local controls. Wider smart-meeting action roles are deferred to a bounded recording-UI change. |
+| D11 Cards and section wrappers | Split | UI2 owns the minimal insight-section parity extraction. [History/performance](history-and-session-performance.md#design-system-follow-through) owns the broader renderer consolidation. Native Forms remain native. |
+| D12 Metric help | Split | UI1 fixes targets/labels. History/performance owns shared metric help data and adaptive presentation. |
+| D13 Keyboard focus | Split | UI1 fixes migrated controls. Orders 4–6 and 9 own focus verification for their changed surfaces. Unrelated controls remain a recorded follow-up, not a blanket focus rewrite. |
+| D14 Nested live-insight scrolling | Existing plan | History/performance owns a single scroll-container boundary, with layout and selection regressions. Reproduce an urgent user-facing defect before moving it earlier. |
+| D15 Mac insight rails | Existing plan | History/performance adopts shared sidebar labels/footer measurements in live/saved insight rails. |
+| D16 Banners and status | Split | [Account ownership](account-ownership.md#design-system-follow-through) owns account/usage status. [Integration ownership](integration-ownership.md#design-system-follow-through) owns delivery status. History/performance owns saved-review presentation it touches. Recording/smart-meeting/investigation banner consolidation is deferred. |
+| D17 Settings duplication | Split | Account ownership owns permission/account presenters. Integration ownership owns relevant connection/Playbook/delivery sections. Speaker-naming and local-model section extraction is deferred until those settings change. Preserve Mac-only private-mode behaviour. |
+| D18 Extension palette copies | Deferred | A separately scoped Live Activity/Watch token change; no version assigned. Share dependency-light tokens without importing app-facing UI into extensions. |
+| D19 Conflicting specification | Split | UI3 reconciles contracts used by this package. Unrelated visual effects remain deferred decisions, not an instruction to remove existing effects. |
+| D20 Copy and type roles | Split | UI1/UI3 establish roles and correct touched product copy. Home versus Record and broader navigation renaming remain deferred product decisions. Preserve current labels until selected. |
+| D21 Watch Reduce Motion | Deferred | Include in the next bounded Watch UI change, with Watch-specific validation; not part of the Mac/iOS package. |
+
+Before insight editing, custom coaching templates/goals or video UI is implemented, its feature plan must name the shared sections, metric presentation and History controls it will use. This is a reuse criterion, not selection or implementation of those later ideas. Earlier changes can retire an assigned finding with evidence; update this register and the later owner to avoid duplicate work.
+
+## Acceptance and impact review
+
+All runtime evidence is pending. The source audit and passing document checks do not satisfy these gates.
+
+| Dimension | Planning disposition | Required implementation evidence |
+|---|---|---|
+| Regression and data integrity | Covered by contract; evidence pending | Record/Stop/resume/history still preserve transcript, notes, selection/correction, save timing and final words. Regeneration, copy/export and CRM task selection are unchanged. Reopen a saved meeting after the action-row correction and confirm no misleading completion state. Existing account/default/store data is preserved. |
+| API and compatibility | Not applicable to server migration: no wire, schema or prompt change selected | Inspect the final diff for accidental service/model changes. If required, re-scope explicitly with old/new Apple/Linux clients before implementation. Existing binaries remain compatible. |
+| UX and accessibility | Plan corrected by UI1/UI2; evidence pending | Compact iPhone, regular iPad, minimum supported Mac window; all Mac InterfaceScale sizes, and iPhone/iPad InterfaceScale × normal/largest accessibility Dynamic Type; long Sales/template/notes content; selected/disabled/loading/error states; useful VoiceOver order and labels; keyboard activation and visible focus; Reduce Motion. No clipped prose or unreachable controls. Document intentionally compact navigation separately. |
+| Design system | Plan corrected; evidence pending | Shared metrics, palette roles, tab/control/section primitives and documented exceptions agree. Test contrast on the actual surface/opacity pairing. Inspect Mac Light-system appearance and paired live/saved screens. |
+| Performance and cost | Covered by contract; measurements pending | Compare long transcript append/selection/scroll, text-size changes and large insight layouts with released 3.8.0 on the same hardware/fixtures. Preserve incremental text mutation and bounded measurement; no per-word full-document rebuilding, new network requests or extra save cadence. Investigate any sustained regression before acceptance. Order 9 still owns the full resource-budget programme. |
+| Security and privacy | Covered by contract; evidence pending | No new recipients, telemetry, permission prompts or changes to private mode, consent, cloud or exports. Tests/captures use synthetic data and isolated Testing identities. Check that labels remain truthful under disabled/unavailable actions. |
+| Operations and rollback | Covered by contract; evidence pending | Pure client presentation release, no backend rollout. Record exact build/platform evidence and rollback artifact. Code can revert without data migration; verify forward/backward opening of the unchanged meeting store. No production flags or new monitoring service required. |
+| Documentation and assets | Owned below; implementation evidence pending | Update current documentation only after behaviour lands. Record per-platform asset keep/replace decisions. Never present a source audit or generated mockup as a rendered pass. |
+
+Required implementation commands use the existing isolated lanes: `fastlane mac test`, `fastlane ios test`, `fastlane mac ui_test`, and `fastlane ios ui_test`, with exact destinations/configuration from the [Testing reference](../reference/testing.md) and [Fastlane runbook](../../fastlane/RUNBOOK.md). Run both hosted bundles and affected UI journeys; retain the account recovery/consent regression journeys. Mac runner authorization remains an explicit evidence gap until a real run succeeds. Device inspection follows the active device-panel tooling rules. No hardware/provider tests are implied by an isolated UI fixture run.
+
+The [3.9.0 checklist](../releases/3.9.0.md) and [planning audit](../releases/3.9.0-planning-audit.md) own this package as UI0 under the [release-planning workflow](../runbooks/release-planning.md). Record exact implementation evidence there; do not repurpose the released 3.8.0 checklist for future work. A named owner waiver remains a waiver, never a passing result.
+
+## Documentation and asset register
+
+| Surface/path | Action and owner | Timing and evidence |
+|---|---|---|
+| `docs/roadmap.md`, `AGENTS.md`, source audit and this plan | UI3 maintains position, scope and finding disposition. | Planning now; update implementation/verification status only from actual evidence. |
+| `design.md`, `docs/reference/ui-states.md`, `docs/reference/settings.md`, `docs/reference/testing.md` | UI3 updates affected current contracts and verification commands. | With implementation; keep planned behaviour out of current references until then. |
+| `docs/plans/account-ownership.md`, `meeting-ownership.md`, `integration-ownership.md`, `history-and-session-performance.md` | Each owner records its assigned reuse/acceptance criteria. | Planning now; retire findings with that owner's implementation evidence. |
+| `../minitidotapp/roadmap/index.html`, `../minitidotapp/llms-full.txt`, site `AGENTS.md` | UI3 mirrors the selected customer outcome and ordering. | Local source update now, no deployment. Preserve all shipped features, dates and emojis. |
+| `../minitidotapp/llms.txt`, homepage, privacy/FAQ structured data and download/version pointers | Retain current release/privacy/feature claims. | No behaviour or availability change in this planning task; reassess affected copy at release. |
+| `../miniti-docs/features/transcription.mdx`, `features/ai-insights.mdx`, `features/insight-templates.mdx`, `features/meeting-history.mdx`, `features/speech-coaching.mdx` | UI3 reviews text-size, action-row and navigation examples; updates only affected descriptions/images. | At implementation/release. No new functionality or accessibility certification claims. |
+| `CHANGELOG.md`, `fastlane/metadata/en-US/release_notes.txt`, `fastlane/metadata/en-GB/release_notes.txt`, generated site changelog | UI3 supplies platform-correct public release notes through the changelog skill. | Once implemented; historical entries remain unchanged. No release-note bullet promoted now. |
+| `scripts/screenshots/out-smoke/`, existing UI-test result bundles | UI1/UI2 capture affected Home, live/history standard/Sales/templates, notes, Coaching tabs/help and Mac Settings states. | Real implemented app with synthetic fixtures; inspect normal/large text, narrow layouts and Light-system Mac. Keep internal evidence separate from marketing images. |
+| `scripts/screenshots/out/<device>/`, `fastlane/screenshots/en-US/`, `../minitidotapp/images/screens/`, `../minitidotapp/screens/index.html` | UI3 records keep/replace per Mac, iPhone and iPad asset and supported store locale. | Replace captures whose affected text, tabs or actions become inaccurate; retain unrelated assets with a reason. Review captions, alt text and device/locale coverage before any upload. Follow [capture runbook](../../scripts/screenshots/README.md) subject to active device tooling. |
+| `../miniti-linux/PLAN.md` or a Linux tracking issue/commit | Implementation owner tracks each selected user-visible change and explicit native-platform applicability. | Same day as feature implementation under `AGENTS.md`; no Linux code or backend contract change is selected by this planning-only edit. |
+| Future `docs/releases/` record, app versions, appcast and stores | Release owner records platform availability and evidence independently. | Version assignment/release only. No build-number bump, deployment, submission or screenshot upload now. |
+
+## Completion
+
+Close order 3d when UI1–UI3, their regression/rendered checks and affected documentation are complete in the assigned release. Keep any unverified platform evidence explicit. Later-owner and deferred rows remain tracked through this register and their named plans; they are not hidden leftovers from this package. Re-run the planning audit after material implementation changes and before release preparation.

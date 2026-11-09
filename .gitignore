@@ -53,6 +53,7 @@ shn.md
 .claude/skills/*
 !.claude/skills/changelog
 !.claude/skills/color-palette
+!.claude/skills/miniti-pstack
 !.claude/skills/release-planning
 !.claude/skills/release-workflow
 !.claude/skills/target-membership
