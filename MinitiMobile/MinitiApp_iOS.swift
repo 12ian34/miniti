@@ -74,7 +74,6 @@ struct MinitiMobileApp: App {
     @StateObject private var appState = AppState()
     @AppStorage(InterfaceScale.storageKey) private var interfaceScaleRaw = InterfaceScale.standard.rawValue
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.dynamicTypeSize) private var systemDynamicTypeSize
 
     private var interfaceScale: InterfaceScale {
         InterfaceScale(rawValue: interfaceScaleRaw) ?? .standard
@@ -114,7 +113,7 @@ struct MinitiMobileApp: App {
             }
             .environmentObject(appState)
             .modifier(AccountUITestReady())
-            .minitiInterfaceScale(interfaceScale, systemSize: AccountUITestHarness.dynamicTypeSize(systemDynamicTypeSize))
+            .minitiInterfaceScale(interfaceScale)
             .minitiReduceMotionAware()
             .preferredColorScheme(.dark)
             .onAppear {

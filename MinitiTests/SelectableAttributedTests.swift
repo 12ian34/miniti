@@ -316,6 +316,27 @@ final class SelectableAttributedTests: XCTestCase {
         #endif
     }
 
+    func testNotesMetricsPreserveTheirOwnBaselineAtEveryInterfaceScale() {
+        #if os(macOS)
+        let expected: [CGFloat] = [12, 13, 14]
+        #else
+        let expected: [CGFloat] = [14, 16, 18]
+        #endif
+        for (scale, points) in zip(InterfaceScale.allCases, expected) {
+            XCTAssertEqual(ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .large).notesBodySize, points)
+            let accessible = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .accessibility5)
+            #if os(macOS)
+            XCTAssertEqual(accessible.notesBodySize, points)
+            #else
+            let expectedAccessible = UIFontMetrics(forTextStyle: .body).scaledValue(
+                for: points, compatibleWith: UITraitCollection(preferredContentSizeCategory: .accessibilityExtraExtraExtraLarge))
+            XCTAssertEqual(accessible.notesBodySize, expectedAccessible, accuracy: 0.01)
+            let small = ReadingMetrics(interfaceScale: scale, systemDynamicTypeSize: .xSmall)
+            XCTAssertLessThan(small.notesBodySize, points, "Respect a deliberately smaller system text setting too")
+            #endif
+        }
+    }
+
     /// The production root modifier supplies the original system category, even
     /// though semantic controls see InterfaceScale's shifted category. Inspect
     /// actual native fonts, not just the values handed to a builder.
@@ -380,7 +401,75 @@ final class SelectableAttributedTests: XCTestCase {
         (view as? ReadingNativeTextView).map { [$0] } ?? view.subviews.flatMap { nativeReadingTextViews(in: $0) }
     }
 
+    #if os(macOS)
+    @MainActor
+    func testProductionLiveAndSavedNotesUseTheNotesRole() async throws {
+        let state = AppState()
+        state.liveNotes = "Live notes fixture"
+        let meeting = Meeting(notes: "Saved notes fixture")
+        for (scale, expected) in zip(InterfaceScale.allCases, [CGFloat(12), 13, 14]) {
+            let root = VStack {
+                NotesEditor()
+                SavedNotesView(meeting: meeting)
+            }.environmentObject(state)
+                .minitiInterfaceScale(scale, systemSize: .accessibility5)
+            let host = NSHostingView(rootView: root)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 700),
+                                  styleMask: [.borderless], backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
+            window.contentView = host
+            window.orderFront(nil)
+            defer { window.orderOut(nil); window.close() }
+            for marker in [state.liveNotes, meeting.notes] {
+                try await TestSupport.waitUntil {
+                    Self.nativeReadingTextViews(in: host).contains { $0.string == marker }
+                }
+                let view = try XCTUnwrap(Self.nativeReadingTextViews(in: host).first { $0.string == marker })
+                XCTAssertEqual(view.font?.pointSize, expected)
+            }
+        }
+    }
+    #endif
+
     #if os(iOS)
+    @MainActor
+    func testLiveTranscriptReflowsOnSystemSizeChangeAndKeepsFinalAndInterimWords() async throws {
+        let state = AppState()
+        let sentence = "A longer synthetic turn wraps across several lines in the live transcript. "
+        state.liveSegments = (0..<10).map {
+            .init(id: UUID(), text: sentence + "Turn \($0).", speaker: $0 % 2, timestamp: Double($0 * 10), isFinal: true)
+        }
+        state.transcriptRuntime.update(interimText: "Current interim words", currentSpeaker: 1, interimSpeaker: 1)
+        let original = state.liveSegments
+        let preferences = ReadingFixturePreferences()
+        var rebuilds = 0
+        let host = UIHostingController(rootView: LiveReadingFixture(preferences: preferences) { event, _, _ in
+            if event == "rebuilt" { rebuilds += 1 }
+        }.environmentObject(state))
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first)
+        let previousWindow = scene.windows.first(where: \.isKeyWindow)
+        let window = UIWindow(windowScene: scene)
+        window.frame = CGRect(x: 0, y: 0, width: 390, height: 844)
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true; window.rootViewController = nil; previousWindow?.makeKey() }
+        func scrollViews(_ view: UIView) -> [UIScrollView] {
+            (view as? UIScrollView).map { [$0] } ?? view.subviews.flatMap(scrollViews)
+        }
+        func contentHeight() -> CGFloat {
+            host.view.layoutIfNeeded()
+            return scrollViews(host.view).map { $0.contentSize.height }.max() ?? 0
+        }
+        try await TestSupport.waitUntil { rebuilds > 0 && contentHeight() > 400 }
+        let originalHeight = contentHeight()
+        let initialRebuilds = rebuilds
+        preferences.systemSize = .accessibility5
+        try await TestSupport.waitUntil { rebuilds > initialRebuilds && contentHeight() > originalHeight * 1.5 }
+        XCTAssertGreaterThan(contentHeight(), originalHeight * 1.5, "Real SwiftUI transcript rows must reflow")
+        XCTAssertEqual(state.liveSegments, original)
+        XCTAssertEqual(state.transcriptRuntime.snapshot.interimText, "Current interim words")
+    }
+
     @MainActor
     func testOpenSavedTranscriptRespondsToSystemSizeWithoutChangingTextOrSelection() async throws {
         let container = try TestSupport.makeInMemoryContainer()
@@ -1083,7 +1172,19 @@ private struct SavedReadingFixture: View {
 
     var body: some View {
         TranscriptTrimView(meeting: meeting)
-            .minitiInterfaceScale(.standard, systemSize: preferences.systemSize)
+            .minitiInterfaceScale(.standard)
+            .environment(\.dynamicTypeSize, preferences.systemSize)
+    }
+}
+
+private struct LiveReadingFixture: View {
+    @ObservedObject var preferences: ReadingFixturePreferences
+    let cacheEvent: (String, Int, String) -> Void
+
+    var body: some View {
+        TranscriptView(cacheEventForTesting: cacheEvent)
+            .minitiInterfaceScale(.standard)
+            .environment(\.dynamicTypeSize, preferences.systemSize)
     }
 }
 #endif

@@ -26,6 +26,7 @@ Do not migrate every legacy view or eradicate the entire literal-colour inventor
 ### UI2 Live and saved insight parity
 
 - Use one meeting-section picker for live and saved iOS transcript/insights/notes, preserving screen-local selection, lowercase labels and selected accessibility traits.
+- Use resolved insight line spacing for standard action/discussion/decision lists as well as Sales/templates. The reading-metrics slice already applies it to Sales/templates; UI2 closes the remaining list parity. Compact preserves the 13-point normal transcript baseline, not the superseded smaller Sales size or zero line spacing.
 - Share standard/Sales section descriptors for titles, ordering and semantic accents. Use named Sales fields, not ambiguous single-letter keys. Preserve current content filtering, generation routing and saved/live data ownership. Reuse the existing template section contract.
 - Make the smallest section-layout extraction required to keep headers, text sizes and accents consistent across the four live/history/platform combinations. Native density differences remain explicit variants. Full content-renderer consolidation belongs to order 9.
 - Replace saved-iPhone action checkboxes backed only by local view state with non-interactive action rows. Do not create stored completion, alter CRM task selection or change exported action text.

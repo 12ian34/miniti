@@ -187,13 +187,25 @@ private struct ReduceMotionAwareModifier: ViewModifier {
     }
 }
 
+/// Read the hosting view's live environment, not the App's default environment.
+private struct InterfaceScaleModifier: ViewModifier {
+    @Environment(\.dynamicTypeSize) private var systemSize
+    let scale: InterfaceScale
+    let override: DynamicTypeSize?
+
+    func body(content: Content) -> some View {
+        let size = override ?? AccountUITestHarness.dynamicTypeSize(systemSize)
+        content.environment(\.interfaceScale, scale)
+            .environment(\.systemReadingSize, size)
+            .dynamicTypeSize(scale.dynamicTypeSize(from: size))
+    }
+}
+
 extension View {
     /// Preserve the unshifted system size for prose before applying the existing
     /// InterfaceScale step to semantic controls. Prose combines the two once.
-    func minitiInterfaceScale(_ scale: InterfaceScale, systemSize: DynamicTypeSize) -> some View {
-        environment(\.interfaceScale, scale)
-            .environment(\.systemReadingSize, systemSize)
-            .dynamicTypeSize(scale.dynamicTypeSize(from: systemSize))
+    func minitiInterfaceScale(_ scale: InterfaceScale, systemSize: DynamicTypeSize? = nil) -> some View {
+        modifier(InterfaceScaleModifier(scale: scale, override: systemSize))
     }
 
     func minitiReduceMotionAware() -> some View {
