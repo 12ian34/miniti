@@ -1,6 +1,6 @@
 # Changelog
 
-### Unreleased - v3.8.0
+### 2026-11-09 - v3.8.0
 
 - new: (macOS and iOS) editable folders group meetings automatically, with a preview before organising history
 - new: (macOS and iOS) an optional home setup checklist helps configure miniti and organise meetings, with progress and tasks you can hide and restore in settings

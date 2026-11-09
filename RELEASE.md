@@ -1,10 +1,6 @@
 # Release Process
 
-Release execution, 2026-11-09: Ian reports completed Mac and mobile app QA and explicitly requested release. Build 164 freezes the post-163 Home, folder controls and recording-status refinements. Final full validation and signed packaging are in progress. App Privacy is owner-confirmed complete. Specialist checks without individual evidence remain documented limitations, not invented passes. Public Apple publication and iOS submission have not occurred yet.
-
-Post-163 UI refinement, 2026-11-09: Mac folder disclosures use full-row targets and miniti surfaces; Home groups setup, models and feedback at bottom left; its matching full-height right sidebar has the calendar toggle and Cmd-] hint at bottom right, plus a visible calendar label on its collapsed rail. These changes are not in DMG/TestFlight 163. Fresh validation and packaging are required before publishing this revised candidate. Physical QA remains in progress; App Privacy is owner-confirmed complete.
-
-Release authorized, 2026-11-09: Ian requested the full coordinated release across repositories. Build 163 includes the final Home and folder setup/journey changes. Full local Apple validation and signed-package verification pass; TestFlight 163 is available. Public Apple release remains pending the physical-QA disposition. Ian confirmed the App Store privacy correction on 2026-11-09. This authorization supersedes earlier preparation-only publication restrictions. Unverified physical gates remain distinct from automated passes; the release checklist owns their disposition. No public availability is claimed by this note.
+Build 164, 2026-11-09: final full validation passes: Mac 1,378 checks, iOS 1,298 and all 31 iPhone UI journeys, plus remote Apple CI. The signed/notarized DMG and distribution IPA verify successfully against 225 unchanged inputs. Ian completed Mac/mobile app QA, confirmed App Privacy and authorized release. Public Mac publication and iOS submission are being executed. Unitemised specialist device checks remain evidence limitations, not claimed passes.
 
 Authoritative 10-step runbook for shipping Miniti. For repo context, start with [AGENTS.md](AGENTS.md). For distribution detail, see [docs/reference/distribution.md](docs/reference/distribution.md). For per-lane detail, see [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md).
 
@@ -21,7 +17,7 @@ Authoritative 10-step runbook for shipping Miniti. For repo context, start with 
 
 ## Current release preparation: 3.8.0
 
-Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for exact validation and remaining gates. Build 163 passed full hosted suites, all 31 iPhone UI journeys and signed-package verification, and remains available on internal TestFlight. Post-163 Mac folder controls and Home utilities need fresh validation and packaging. Backend migration 002 and deployment are complete. App Privacy is owner-confirmed complete; physical QA remains in progress without a waiver. No public Apple release or iOS review submission has occurred.
+Use the [3.8.0 checklist](docs/releases/3.8.0.md) and [planning audit](docs/releases/3.8.0-planning-audit.md) for exact evidence. Build 164 passes full hosted suites, all 31 iPhone journeys, remote CI and signed-package verification. Owner Mac/mobile app QA and App Privacy are complete. Backend and Linux are already deployed; Mac publication and submission of the exact iOS build 164 are in progress. iOS latest remains 3.7.0 until actual App Store availability.
 
 - Hosted Apple suites use `Testing`; hardware/provider checks remain opt-in. Run Apple hosted/UI/wire/build jobs serially because they share DerivedDataLocal.
 - Apply additive backend migration `002_folders.sql`, deploy and verify v2 metering, folder sync, device labels and atomic links before distributing new Apple clients. Preserve installed Apple/Linux clients and production model settings. Production migration and deployment require release authorization.

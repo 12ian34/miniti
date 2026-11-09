@@ -52,7 +52,7 @@ What it does not do:
 - no upload
 - no version bump
 
-### `fastlane ios beta version:3.8.0 build:156 changelog:"..."`
+### `fastlane ios beta version:3.8.0 build:164 changelog:"..."`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -64,7 +64,7 @@ What it does not do:
 - no external TestFlight submission
 - no metadata/screenshots sync
 
-### `fastlane ios release version:3.8.0 build:156`
+### `fastlane ios release version:3.8.0 build:164`
 
 What it does:
 - sets `MARKETING_VERSION` if `version:` is passed
@@ -99,7 +99,7 @@ Release prep checklist for this lane:
 Afterward, verify the review info/screenshots and submit the processed build:
 
 ```sh
-fastlane ios submit version:3.8.0 build:156
+fastlane ios submit version:3.8.0 build:164
 ```
 
 The submit lane selects the exact uploaded build, submits it for App Review, and preserves automatic release after approval. It does not upload a binary, metadata, or screenshots.
@@ -250,15 +250,15 @@ The PNGs in `fastlane/screenshots/en-US` are generated, not hand-made: `scripts/
 
 ```sh
 fastlane ios build
-fastlane ios beta version:3.8.0 build:156 changelog:"release notes here"
+fastlane ios beta version:3.8.0 build:164 changelog:"release notes here"
 ```
 
 ### iOS App Store upload
 
 ```sh
 fastlane ios build
-fastlane ios release version:3.8.0 build:156
-fastlane ios submit version:3.8.0 build:156
+fastlane ios release version:3.8.0 build:164
+fastlane ios submit version:3.8.0 build:164
 ```
 
 ### macOS direct distribution
