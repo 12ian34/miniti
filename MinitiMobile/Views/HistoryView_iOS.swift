@@ -1267,7 +1267,7 @@ private struct HistoricalMetricInfoOverlayCard_iOS: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .center, spacing: 10) {
                 Text(info.title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(ColorPalette.Text.primary)

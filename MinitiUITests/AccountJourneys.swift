@@ -56,12 +56,19 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertGreaterThanOrEqual(help.frame.width, 44)
         XCTAssertGreaterThanOrEqual(help.frame.height, 44)
+        let listCapture = XCTAttachment(screenshot: app.screenshot())
+        listCapture.name = "Coaching list with minimum help targets"
+        listCapture.lifetime = .keepAlways
+        add(listCapture)
         help.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         let close = app.buttons["Close metric help"]
         XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertGreaterThanOrEqual(close.frame.width, 44)
         XCTAssertGreaterThanOrEqual(close.frame.height, 44)
-        XCTAssertTrue(app.staticTexts["Fillers"].exists)
+        let title = app.staticTexts["Fillers"]
+        XCTAssertTrue(title.exists)
+        XCTAssertEqual(title.frame.midY, close.frame.midY, accuracy: 1,
+                       "Help title and close action share the header centre")
         let capture = XCTAttachment(screenshot: app.screenshot())
         capture.name = "Metric help with reachable named close action"
         capture.lifetime = .keepAlways
