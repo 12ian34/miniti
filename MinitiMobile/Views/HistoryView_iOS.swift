@@ -657,38 +657,25 @@ struct MeetingDetail_iOS: View {
         Group {
             if hasStandardInsights {
                 VStack(alignment: .leading, spacing: 16) {
-                    if let summary = meeting.summaryText, !summary.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
-                            Text(summary)
-                                .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
-                                .foregroundStyle(Color(hex: "E6EDF3"))
-                                .lineSpacing(readingMetrics.insightLineSpacing)
-                        }
-                    }
-
-                    if !meeting.discussionFlow.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
-                            InsightList(items: meeting.discussionFlow, markerColor: ColorPalette.Accent.orange)
-                        }
-                    }
-
-                    if !meeting.actionItems.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "actions", color: Color(hex: "3FB950")) {
-                            InsightList(items: meeting.actionItems, markerColor: ColorPalette.Status.success)
-                        }
-                    }
-
-                    if !meeting.keyDecisions.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "decisions", color: Color(hex: "D29922")) {
-                            InsightList(items: meeting.keyDecisions, markerColor: ColorPalette.Accent.orange)
-                        }
-                    }
-
-                    if !meeting.topics.isEmpty {
-                        HistoricalDetailBlock_iOS(title: "topics", color: Color(hex: "A371F7")) {
-                            FlowLayout(spacing: 8) {
-                                ForEach(meeting.topics, id: \.self) { topic in
-                                    TerminalTag(text: topic)
+                    StandardInsightSectionList(entries: StandardInsightSection.entries(
+                        summary: meeting.summaryText, discussion: meeting.discussionFlow, actions: meeting.actionItems, decisions: meeting.keyDecisions, topics: meeting.topics
+                    )) { section in
+                        HistoricalDetailBlock_iOS(title: section.title, color: section.color) {
+                            switch section {
+                            case .summary(let text):
+                                Text(text)
+                                    .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
+                                    .foregroundStyle(ColorPalette.Text.secondary)
+                                    .lineSpacing(readingMetrics.insightLineSpacing)
+                            case .discussion(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Accent.orange, textColor: ColorPalette.Text.secondary)
+                            case .actions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: ColorPalette.Text.secondary)
+                            case .decisions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: ColorPalette.Text.secondary)
+                            case .topics(let items):
+                                FlowLayout(spacing: 8) {
+                                    ForEach(items, id: \.self) { topic in TerminalTag(text: topic) }
                                 }
                             }
                         }

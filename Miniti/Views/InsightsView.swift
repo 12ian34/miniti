@@ -312,32 +312,25 @@ struct LiveInsightsContent: View {
                             .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
-                    // Summary (always shown)
-                    if !appState.liveSummary.isEmpty {
-                        TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                            SelectableTextView(
-                                SelectableAttributed.body(
-                                    appState.liveSummary,
-                                    fontSize: readingMetrics.insightBodySize,
+                    StandardInsightSectionList(entries: StandardInsightSection.entries(
+                        summary: appState.liveSummary, actions: appState.liveActionItems, topics: appState.liveTopics
+                    )) { section in
+                        TerminalSection(title: section.title, color: section.color) {
+                            switch section {
+                            case .summary(let text):
+                                SelectableTextView(SelectableAttributed.body(
+                                    text, fontSize: readingMetrics.insightBodySize, color: ColorPalette.Text.secondary,
                                     lineSpacing: readingMetrics.insightLineSpacing
-                                )
-                            )
-                        }
-                    }
-
-                    // Action Items
-                    if !appState.liveActionItems.isEmpty {
-                        TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
-                        }
-                    }
-                    
-                    // Topics
-                    if !appState.liveTopics.isEmpty {
-                        TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
-                            FlowLayout(spacing: 8) {
-                                ForEach(appState.liveTopics, id: \.self) { topic in
-                                    TerminalTag(text: topic)
+                                ))
+                            case .discussion(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Accent.orange, textColor: ColorPalette.Text.secondary)
+                            case .actions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: ColorPalette.Text.secondary)
+                            case .decisions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: ColorPalette.Text.secondary)
+                            case .topics(let items):
+                                FlowLayout(spacing: 8) {
+                                    ForEach(items, id: \.self) { topic in TerminalTag(text: topic) }
                                 }
                             }
                         }
@@ -423,35 +416,25 @@ private struct LiveInsightsContent_iOSPlain: View {
                             .font(.system(size: 12, weight: .medium, design: .default))
                             .foregroundStyle(Color(hex: "8B949E"))
                     }
-                    if !appState.liveSummary.isEmpty {
-                        InsightsPlainBlock_iOS(title: "summary", color: Color(hex: "58A6FF")) {
-                            SelectableTextView(
-                                SelectableAttributed.body(
-                                    appState.liveSummary,
-                                    fontSize: readingMetrics.insightBodySize,
+                    StandardInsightSectionList(entries: StandardInsightSection.entries(
+                        summary: appState.liveSummary, discussion: appState.liveDiscussionFlow, actions: appState.liveActionItems, topics: appState.liveTopics
+                    )) { section in
+                        InsightsPlainBlock_iOS(title: section.title, color: section.color) {
+                            switch section {
+                            case .summary(let text):
+                                SelectableTextView(SelectableAttributed.body(
+                                    text, fontSize: readingMetrics.insightBodySize, color: ColorPalette.Text.secondary,
                                     lineSpacing: readingMetrics.insightLineSpacing
-                                )
-                            )
-                        }
-                    }
-
-                    if !appState.liveDiscussionFlow.isEmpty {
-                        InsightsPlainBlock_iOS(title: "discussion", color: Color(hex: "F59E0B")) {
-                            InsightList(items: appState.liveDiscussionFlow, markerColor: ColorPalette.Accent.orange)
-                        }
-                    }
-
-                    if !appState.liveActionItems.isEmpty {
-                        InsightsPlainBlock_iOS(title: "action items", color: Color(hex: "3FB950")) {
-                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
-                        }
-                    }
-                    
-                    if !appState.liveTopics.isEmpty {
-                        InsightsPlainBlock_iOS(title: "topics", color: Color(hex: "A371F7")) {
-                            FlowLayout(spacing: 8) {
-                                ForEach(appState.liveTopics, id: \.self) { topic in
-                                    TerminalTag(text: topic)
+                                ))
+                            case .discussion(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Accent.orange, textColor: ColorPalette.Text.secondary)
+                            case .actions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: ColorPalette.Text.secondary)
+                            case .decisions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: ColorPalette.Text.secondary)
+                            case .topics(let items):
+                                FlowLayout(spacing: 8) {
+                                    ForEach(items, id: \.self) { topic in TerminalTag(text: topic) }
                                 }
                             }
                         }
@@ -1282,6 +1265,65 @@ private func docsCitationLinkURL(_ raw: String) -> URL? {
     return url
 }
 
+// MARK: - Standard insight sections
+
+/// A visible section carries its own typed content. All screens share the order,
+/// name and accent while choosing which existing fields they supply.
+enum StandardInsightSection: Identifiable, Equatable {
+    case summary(String)
+    case discussion([String])
+    case actions([String])
+    case decisions([String])
+    case topics([String])
+
+    enum ID: String { case summary, discussion, actions, decisions, topics }
+
+    var id: ID {
+        switch self {
+        case .summary: return .summary
+        case .discussion: return .discussion
+        case .actions: return .actions
+        case .decisions: return .decisions
+        case .topics: return .topics
+        }
+    }
+
+    var title: String { id.rawValue }
+
+    var color: Color {
+        switch self {
+        case .summary: return ColorPalette.Insights.summary
+        case .discussion: return ColorPalette.Insights.discussion
+        case .actions: return ColorPalette.Insights.actions
+        case .decisions: return ColorPalette.Insights.decisions
+        case .topics: return ColorPalette.Insights.topics
+        }
+    }
+
+    static func entries(summary: String?, discussion: [String] = [], actions: [String] = [],
+                        decisions: [String] = [], topics: [String] = [],
+                        includesEmptySummary: Bool = false) -> [Self] {
+        var result: [Self] = []
+        if let summary, includesEmptySummary || !summary.isEmpty { result.append(.summary(summary)) }
+        if !discussion.isEmpty { result.append(.discussion(discussion)) }
+        if !actions.isEmpty { result.append(.actions(actions)) }
+        if !decisions.isEmpty { result.append(.decisions(decisions)) }
+        if !topics.isEmpty { result.append(.topics(topics)) }
+        // Do not normalize, sort or deduplicate content. Standard insights do
+        // not use Sales' sentinel filter, and Mac saved summary presence differs.
+        return result
+    }
+}
+
+struct StandardInsightSectionList<Section: View>: View {
+    let entries: [StandardInsightSection]
+    @ViewBuilder let section: (StandardInsightSection) -> Section
+
+    var body: some View {
+        ForEach(entries) { entry in section(entry) }
+    }
+}
+
 // MARK: - MEDDPICC Content
 
 /// Stable Sales identity, order and presentation. Full field names distinguish
@@ -1835,39 +1877,25 @@ struct TerminalInsightsContent: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 20) {
-                if let summary = meeting.summaryText {
-                    TerminalSection(title: "summary", color: Color(hex: "58A6FF")) {
-                        SelectableTextView(SelectableAttributed.body(
-                            summary,
-                            fontSize: readingMetrics.insightBodySize,
-                            lineSpacing: readingMetrics.insightLineSpacing
-                        ))
-                    }
-                }
-
-                if !meeting.discussionFlow.isEmpty {
-                    TerminalSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                        InsightList(items: meeting.discussionFlow, markerColor: ColorPalette.Accent.orange)
-                    }
-                }
-
-                if !meeting.actionItems.isEmpty {
-                    TerminalSection(title: "action items", color: Color(hex: "3FB950")) {
-                        InsightList(items: meeting.actionItems, markerColor: ColorPalette.Status.success)
-                    }
-                }
-
-                if !meeting.keyDecisions.isEmpty {
-                    TerminalSection(title: "decisions", color: Color(hex: "D29922")) {
-                        InsightList(items: meeting.keyDecisions, markerColor: ColorPalette.Accent.orange)
-                    }
-                }
-                
-                if !meeting.topics.isEmpty {
-                    TerminalSection(title: "topics", color: Color(hex: "A371F7")) {
-                        FlowLayout(spacing: 8) {
-                            ForEach(meeting.topics, id: \.self) { topic in
-                                TerminalTag(text: topic)
+                StandardInsightSectionList(entries: StandardInsightSection.entries(
+                    summary: meeting.summaryText, discussion: meeting.discussionFlow, actions: meeting.actionItems, decisions: meeting.keyDecisions, topics: meeting.topics, includesEmptySummary: true
+                )) { section in
+                    TerminalSection(title: section.title, color: section.color) {
+                        switch section {
+                        case .summary(let text):
+                            SelectableTextView(SelectableAttributed.body(
+                                text, fontSize: readingMetrics.insightBodySize, color: ColorPalette.Text.secondary,
+                                lineSpacing: readingMetrics.insightLineSpacing
+                            ))
+                        case .discussion(let items):
+                            InsightList(items: items, markerColor: ColorPalette.Accent.orange, textColor: ColorPalette.Text.secondary)
+                        case .actions(let items):
+                            InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: ColorPalette.Text.secondary)
+                        case .decisions(let items):
+                            InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: ColorPalette.Text.secondary)
+                        case .topics(let items):
+                            FlowLayout(spacing: 8) {
+                                ForEach(items, id: \.self) { topic in TerminalTag(text: topic) }
                             }
                         }
                     }

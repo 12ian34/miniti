@@ -435,8 +435,6 @@ struct ColorPalette {
         static let identifiedPain = Accent.red           // I - Identified Pain
         static let champion = Accent.green               // C - Champion
         static let competition = Color(hex: "818CF8")    // C - Competition (WCAG AA on dark surfaces)
-
-
     }
     
     // MARK: - Template Section Colors
@@ -465,6 +463,7 @@ struct ColorPalette {
         static let summary = Accent.blueGitHub          // Summary section
         static let discussion = Accent.amber             // Discussion flow
         static let actions = Accent.greenGitHub          // Action items
+        static let decisions = Accent.orange            // Decisions
         static let topics = Accent.purpleSoft            // Topics/tags
         static let meddpicc = Accent.amber               // MEDDPICC framework
     }

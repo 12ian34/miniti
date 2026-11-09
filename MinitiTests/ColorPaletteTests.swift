@@ -112,6 +112,34 @@ final class ColorPaletteTests: XCTestCase {
         }
     }
 
+    func testStandardSectionsKeepOrderedContentAndDistinctAccents() {
+        let sections = StandardInsightSection.entries(
+            summary: "  Original summary\n", discussion: ["", "same", "same"],
+            actions: ["Action\r\ncontinuation"], decisions: ["null"], topics: ["Mixed_Case", "Mixed_Case"])
+        XCTAssertEqual(sections, [
+            .summary("  Original summary\n"), .discussion(["", "same", "same"]),
+            .actions(["Action\r\ncontinuation"]), .decisions(["null"]), .topics(["Mixed_Case", "Mixed_Case"])
+        ])
+        XCTAssertEqual(sections.map(\.title), ["summary", "discussion", "actions", "decisions", "topics"])
+        XCTAssertEqual(Set(sections.map(\.id)).count, 5)
+        XCTAssertEqual(sections.map(\.color), [ColorPalette.Insights.summary, ColorPalette.Insights.discussion,
+                                               ColorPalette.Insights.actions, ColorPalette.Insights.decisions,
+                                               ColorPalette.Insights.topics])
+    }
+
+    func testStandardSectionsPreserveEachScreensSummaryPresencePolicy() {
+        XCTAssertTrue(StandardInsightSection.entries(summary: nil, includesEmptySummary: true).isEmpty)
+        XCTAssertTrue(StandardInsightSection.entries(summary: "").isEmpty)
+        XCTAssertEqual(StandardInsightSection.entries(summary: "", includesEmptySummary: true), [.summary("")])
+        for value in [" ", "\n", "null", "N/A", "none"] {
+            XCTAssertEqual(StandardInsightSection.entries(summary: value), [.summary(value)],
+                           "Standard summaries must not adopt the Sales sentinel filter")
+        }
+        XCTAssertEqual(StandardInsightSection.entries(summary: nil, actions: [""], topics: ["topic"]),
+                       [.actions([""]), .topics(["topic"])],
+                       "Omit only empty sections, preserving the supplied content and field coverage")
+    }
+
     func testNamedSalesFieldsPreserveOrderAndDistinguishRepeatedLetters() {
         XCTAssertEqual(SalesInsightField.allCases.map(\.title), [
             "metrics", "economic buyer", "decision criteria", "decision process",
@@ -284,6 +312,22 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     #if os(macOS)
+    @MainActor
+    func testSavedStandardSectionsUseCanonicalAccents() throws {
+        let meeting = Meeting(summaryText: "Summary fixture", actionItems: ["Action fixture"],
+                              topics: ["Topic fixture"], discussionFlow: ["Discussion fixture"])
+        let renderer = ImageRenderer(content: VStack(alignment: .leading, spacing: 16) {
+            SavedStandardInsightBlocks(meeting: meeting)
+        }.minitiInterfaceScale(.compact).frame(width: 420).padding(16)
+            .background(ColorPalette.Background.primary))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        for color in [ColorPalette.Insights.summary, ColorPalette.Insights.discussion,
+                      ColorPalette.Insights.actions, ColorPalette.Insights.topics] {
+            XCTAssertGreaterThan(try pixelCount(color, in: raster), 10)
+        }
+    }
+
     @MainActor
     func testRenderedLiveSectionCopyLabelsUseReadableRole() throws {
         let headers = [

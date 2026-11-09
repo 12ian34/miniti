@@ -2202,68 +2202,7 @@ struct MeetingDetailView: View {
 
             if appState.insightsMode == .standard {
                 if meeting.hasInsights {
-                // Summary
-                if let summary = meeting.summaryText {
-                    DetailInsightBlock(title: "summary", color: Theme.accentBlue) {
-                        Text(summary)
-                            .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
-                            .foregroundStyle(Theme.text)
-                            .lineSpacing(readingMetrics.insightLineSpacing)
-                    }
-                }
-                
-                // Discussion Flow
-                if !meeting.discussionFlow.isEmpty {
-                    DetailInsightBlock(title: "discussion", color: ColorPalette.Accent.yellow) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(meeting.discussionFlow.enumerated()), id: \.offset) { index, item in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("\(index + 1).")
-                                        .font(.system(size: 10, weight: .medium, design: .default))
-                                        .foregroundStyle(ColorPalette.Accent.yellow.opacity(0.7))
-                                        .frame(width: 16, alignment: .trailing)
-                                    Text(item)
-                                        .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                                        .foregroundStyle(Theme.text)
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Actions
-                if !meeting.actionItems.isEmpty {
-                    DetailInsightBlock(title: "actions", color: Theme.accent) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(meeting.actionItems, id: \.self) { item in
-                                HStack(alignment: .top, spacing: 8) {
-                                    Text("→")
-                                        .foregroundStyle(Theme.accent)
-                                    Text(item)
-                                        .foregroundStyle(Theme.text)
-                                }
-                                .font(.system(size: readingMetrics.insightSecondarySize, weight: .regular, design: .default))
-                            }
-                        }
-                    }
-                }
-                
-                // Topics
-                if !meeting.topics.isEmpty {
-                    DetailInsightBlock(title: "topics", color: ColorPalette.Accent.purple) {
-                        FlowLayout(spacing: 6) {
-                            ForEach(meeting.topics, id: \.self) { topic in
-                                Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
-                                    .font(.system(size: 10, weight: .medium, design: .default))
-                                    .foregroundStyle(ColorPalette.Accent.purple)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(ColorPalette.Accent.purple.opacity(0.15))
-                                    .cornerRadius(4)
-                            }
-                        }
-                    }
-                }
+                    SavedStandardInsightBlocks(meeting: meeting)
                 } else {
                     VStack(spacing: 10) {
                         Spacer()
@@ -2529,6 +2468,48 @@ struct SavedNotesView: View {
                 .padding(.vertical, 8)
         }
         .background(Theme.bg)
+    }
+}
+
+/// Saved standard content retains its screen's field coverage and summary policy.
+struct SavedStandardInsightBlocks: View {
+    @Environment(\.readingMetrics) private var readingMetrics
+    let meeting: Meeting
+
+    var body: some View {
+        Group {
+            StandardInsightSectionList(entries: StandardInsightSection.entries(
+                summary: meeting.summaryText, discussion: meeting.discussionFlow, actions: meeting.actionItems, topics: meeting.topics, includesEmptySummary: true
+            )) { section in
+                DetailInsightBlock(title: section.title, color: section.color) {
+                    switch section {
+                    case .summary(let text):
+                        Text(text)
+                            .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
+                            .foregroundStyle(Theme.text)
+                            .lineSpacing(readingMetrics.insightLineSpacing)
+                    case .discussion(let items):
+                        InsightList(items: items, marker: .numbered, markerColor: ColorPalette.Text.muted, textColor: Theme.text)
+                    case .actions(let items):
+                        InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: Theme.text)
+                    case .decisions(let items):
+                        InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: Theme.text)
+                    case .topics(let items):
+                        FlowLayout(spacing: 6) {
+                            ForEach(items, id: \.self) { topic in
+                                Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
+                                    .font(.system(size: 10, weight: .medium, design: .default))
+                                    .foregroundStyle(section.color)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(section.color.opacity(0.15))
+                                    .cornerRadius(4)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

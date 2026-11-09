@@ -313,6 +313,57 @@ final class AccountJourneys: XCTestCase {
         assertInsightUpdateTarget()
     }
 
+    func testLiveStandardSectionsKeepNamesOrderAndCoverage() {
+        launch(screenshotScene: "recording-insights")
+        assertStandardSectionOrder(saved: false)
+        captureAppScreen("Live standard sections")
+    }
+
+    func testSavedStandardSectionsKeepNamesOrderAndCoverage() {
+        launch(screenshotScene: "meeting")
+        assertStandardSectionOrder(saved: true)
+        captureAppScreen("Saved standard sections")
+        #if os(macOS)
+        let discussion = app.textViews.matching(NSPredicate(format: "value CONTAINS %@",
+            "Marcus demoed the Attio pipeline and the fields reps must fill")).firstMatch
+        XCTAssertTrue(discussion.exists, app.debugDescription)
+        let discussionText = discussion.value as? String ?? ""
+        XCTAssertTrue(discussionText.hasPrefix("1. Marcus"))
+        XCTAssertTrue(discussionText.contains("4. Rollout plan for the remaining reps after the pilot"))
+        let actions = app.textViews.matching(NSPredicate(format: "value CONTAINS %@",
+            "Share the data retention and deletion policy with Marcus")).firstMatch
+        XCTAssertTrue(actions.exists, app.debugDescription)
+        XCTAssertTrue((actions.value as? String)?.contains("Send the security questionnaire back before Friday") == true,
+                      "All actions must share one native text surface")
+        let pane = app.windows["Miniti"].scrollViews.allElementsBoundByIndex.max { $0.frame.minX < $1.frame.minX }
+        XCTAssertNotNil(pane)
+        for _ in 0..<4 {
+            if actions.isHittable { break }
+            pane?.scroll(byDeltaX: 0, deltaY: -300)
+        }
+        XCTAssertTrue(actions.isHittable, app.debugDescription)
+        captureAppScreen("Saved Mac selectable standard lists")
+        #endif
+    }
+
+    private func assertStandardSectionOrder(saved: Bool) {
+        var expected = ["discussion", "actions", "topics"]
+        #if os(iOS)
+        if saved { expected.insert("decisions", at: 2) }
+        #endif
+        // Summary also names the mode tab; the remaining section names are unique.
+        let names = ["discussion", "actions", "action items", "decisions", "topics"]
+        XCTAssertTrue(app.staticTexts["discussion"].waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        let headings = app.staticTexts.matching(NSPredicate(format: "value IN %@", names))
+        XCTAssertEqual(headings.allElementsBoundByIndex.map { $0.value as? String ?? "<unreadable>" }, expected,
+                       app.debugDescription)
+        #else
+        let headings = app.staticTexts.matching(NSPredicate(format: "label IN %@", names))
+        XCTAssertEqual(headings.allElementsBoundByIndex.map(\.label), expected, app.debugDescription)
+        #endif
+    }
+
     func testLiveSalesSectionsKeepNamedFieldOrder() {
         launch(screenshotScene: "recording-sales")
         assertSalesSectionOrder()

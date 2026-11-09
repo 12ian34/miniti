@@ -24,7 +24,7 @@ The table is a navigation aid, not an exhaustive API. Check the current palette 
 | `Status` | `success`, `error`, `warning`, `info`, `recording`, `connected`, `disconnected`, `limitReached`, `noApiKey` | `ColorPalette.Status.recording` |
 | `Speaker` | `mic` (green, "You"), `remote` (array, blue/purple) | `ColorPalette.Speaker.mic` |
 | `MEDDPICC` | `metrics`, `economicBuyer`, `decisionCriteria`, etc.; Sales views use named `SalesInsightField` descriptors | `ColorPalette.MEDDPICC.metrics` |
-| `Insights` | `summary`, `discussion`, `actions`, `topics`, `meddpicc` | `ColorPalette.Insights.summary` |
+| `Insights` | `summary`, `discussion`, `actions`, `decisions`, `topics`, `meddpicc` | `ColorPalette.Insights.summary` |
 
 ## Rules
 

@@ -2159,43 +2159,33 @@ struct LiveInsightsPanel: View {
                         .padding(.horizontal, 16)
                     }
 
-                    if !appState.liveSummary.isEmpty {
-                        LiveInsightSection(title: "summary", color: Color(hex: "58A6FF")) {
-                            SelectableTextView(
-                                SelectableAttributed.body(
-                                    appState.liveSummary,
-                                    fontSize: readingMetrics.insightBodySize,
-                                    color: Color(hex: "E6EDF3"),
+                    StandardInsightSectionList(entries: StandardInsightSection.entries(
+                        summary: appState.liveSummary, discussion: appState.liveDiscussionFlow, actions: appState.liveActionItems, topics: appState.liveTopics
+                    )) { section in
+                        LiveInsightSection(title: section.title, color: section.color) {
+                            switch section {
+                            case .summary(let text):
+                                SelectableTextView(SelectableAttributed.body(
+                                    text, fontSize: readingMetrics.insightBodySize, color: ColorPalette.Text.secondary,
                                     lineSpacing: readingMetrics.insightLineSpacing
-                                )
-                            )
-                        }
-                    }
-
-                    if !appState.liveDiscussionFlow.isEmpty {
-                        LiveInsightSection(title: "discussion", color: Color(hex: "F59E0B")) {
-                            InsightList(items: appState.liveDiscussionFlow, marker: .numbered,
-                                        markerColor: ColorPalette.Text.muted, textColor: ColorPalette.Text.muted)
-                        }
-                    }
-
-                    if !appState.liveActionItems.isEmpty {
-                        LiveInsightSection(title: "actions", color: Color(hex: "3FB950")) {
-                            InsightList(items: appState.liveActionItems, markerColor: ColorPalette.Status.success)
-                        }
-                    }
-
-                    if !appState.liveTopics.isEmpty {
-                        LiveInsightSection(title: "topics", color: Color(hex: "A371F7")) {
-                            FlowLayout(spacing: 6) {
-                                ForEach(appState.liveTopics, id: \.self) { topic in
-                                    Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
-                                        .font(.system(size: 10, weight: .medium, design: .default))
-                                        .foregroundStyle(Color(hex: "A371F7"))
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 3)
-                                        .background(Color(hex: "A371F7").opacity(0.15))
-                                        .cornerRadius(3)
+                                ))
+                            case .discussion(let items):
+                                InsightList(items: items, marker: .numbered, markerColor: ColorPalette.Text.muted, textColor: ColorPalette.Text.muted)
+                            case .actions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.actions, textColor: ColorPalette.Text.secondary)
+                            case .decisions(let items):
+                                InsightList(items: items, markerColor: ColorPalette.Insights.decisions, textColor: ColorPalette.Text.secondary)
+                            case .topics(let items):
+                                FlowLayout(spacing: 6) {
+                                    ForEach(items, id: \.self) { topic in
+                                        Text("#\(topic.lowercased().replacingOccurrences(of: "_", with: " "))")
+                                            .font(.system(size: 10, weight: .medium, design: .default))
+                                            .foregroundStyle(section.color)
+                                            .padding(.horizontal, 6)
+                                            .padding(.vertical, 3)
+                                            .background(section.color.opacity(0.15))
+                                            .cornerRadius(3)
+                                    }
                                 }
                             }
                         }
