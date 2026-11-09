@@ -36,6 +36,17 @@ Account ownership/lifecycle plan complete; keep shipped R3 generation fences. De
 
 **Linux:** same fields, rules and copy.
 
+## State-machine acceptance criteria
+
+Mapped on 2026-11-09 from the [Apple-app inventory](../research/implicit-state-machines-2026-11-08.md): D5–D9 (sync, exclusion, cloud preferences and folder ownership) and I3 (saved AI authority). Apply these as B4 regression boundaries; a general replication or AI scheduler rewrite remains outside this plan.
+
+- Distinguish local edits, remote-copy knowledge, removal intent and account provenance. Hold a push/pull across an account change, then release its reply: it must not clear the new account's dirty state, apply an old cursor or move a tombstone to the new account. Cancellation alone is insufficient evidence.
+- Exercise account changes with an excluded meeting's pending tombstone and an unresolved folder baseline. Preserve exclusion and owner-scoped catalog/membership behavior while copying only the meetings authorized by B4.
+- Test the grant transitions above independently: minted, destination bound, membership changed, item committed and retry acknowledged. Credential replacement invalidates the grant; ordinary attachment preserves credential generation and relies on the destination check. Preserve the stated rule that server work already past authorization checks may finish.
+- Release a saved-AI result after the meeting/account scope changes. Assert that existing authority and revision guards prevent it from overwriting another account's meeting or copy.
+
+Extend the existing cloud, meeting-document, folder and meeting-journey tests with these sequences. Verify persisted source/copy identity and retry outcomes, including the real Postgres boundaries already required below.
+
 ## Acceptance and delivery
 
 All B4 scenarios above, especially ordinary A→B copy, A→B→C isolation, revoked/same-key re-enrollment, lost responses and rollback of each Postgres write. Run real Postgres concurrency tests and actual prior binaries against staging. Do not derive provenance from reset revision counters.

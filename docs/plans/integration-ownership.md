@@ -26,6 +26,17 @@ B0–B3 complete. Preserve existing device connections and OAuth state in flight
 
 **Tests:** resolution order including the Mac-X / phone-Y scenario (phone keeps Y); adopt when empty; wrap when different; shared use from a second device after an explicit choice; `connection_required`; disconnect clears routing; legacy TTL; transfer resets routing to the destination's connections; account deletion cleanup.
 
+## State-machine acceptance criteria
+
+Mapped on 2026-11-09 from the [Apple-app inventory](../research/implicit-state-machines-2026-11-08.md): V1 (OAuth, search and manual CRM send), A1 (calendar connection evidence) and D3/D4 (completion and durable delivery). These refine B5 and the roadmap's remaining T16 coverage; shipped sync/webhook behavior remains owned by the [sync/delivery plan](sync-and-delivery-reliability.md).
+
+- Hold OAuth/status/search/send responses across adoption, account transfer and disconnect. Assert that a late response cannot restore a disconnected connection, overwrite the current selection or silently route the phone's CRM Y to the Mac's CRM X. Distinguish unresolved/failed status from confirmed disconnection.
+- Capture the intended account and connection for queued and in-flight sends. Test transfer or disconnect before dispatch and during a request: retain attribution, never silently reroute, and document whether an already-authorized remote request may finish.
+- Cover note-success/task-failure and lost-response retries under an explicit duplicate-prevention contract before changing connection ownership. Assert which remote operation is retried and which successful operation is preserved.
+- Preserve the distinction between completion staged, durably handed off, released for sending and remotely acknowledged. Re-run relevant first-completion/outbox regressions so an ownership change cannot release an incomplete payload or make a local marker claim remote success.
+
+Record these results with the OAuth and partial-send tests required by T16. A unified export engine or new automatic CRM workflow is outside this deliverable.
+
 ## Acceptance and delivery
 
 Test lower/uppercase legacy adoption, concurrent adoption, token refresh, explicit/installation/sole-connection/ask order, account changes, disconnection and old clients. Record admin adoption counts and Linux routing parity.

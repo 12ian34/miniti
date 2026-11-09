@@ -37,7 +37,7 @@ This file is the canonical entry point for AI coding agents working on Miniti. I
 | Ship a version | [RELEASE.md](RELEASE.md), [fastlane/RUNBOOK.md](fastlane/RUNBOOK.md), [distribution](docs/reference/distribution.md) |
 | Check 3.4.0 QA / unresolved device evidence | [Release record](docs/releases/3.4.0.md), [validation register](docs/runbooks/validation.md) |
 | Understand files / cross-file conventions | [Architecture](docs/reference/architecture.md), [patterns](docs/reference/patterns.md) |
-| Find implicit state machines and their transition owners | [Dated Apple-app state-machine inventory](docs/research/implicit-state-machines-2026-11-08.md), a static audit of the local 3.8.0 candidate, not a release gate or implementation plan |
+| Find implicit state machines and their transition owners | [Dated Apple-app state-machine inventory](docs/research/implicit-state-machines-2026-11-08.md), a static audit of the local 3.8.0 candidate; [roadmap follow-through](docs/roadmap.md#state-machine-audit-follow-through) maps transition acceptance criteria to existing ownership and checkpoint plans without changing priority |
 | Work on audio, automation or speaker/source identity | [Audio](docs/reference/audio.md), [recording lifecycle](docs/reference/recording-lifecycle.md) |
 | Work on account access, signing or billing identity | [Accounts](docs/reference/accounts.md); [access plan](docs/plans/account-access.md), [ownership plan](docs/plans/account-ownership.md) |
 | Work on UI, Settings, consent or data flows | [UI states](docs/reference/ui-states.md), [Settings](docs/reference/settings.md), [design.md](design.md) |

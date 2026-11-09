@@ -100,6 +100,10 @@ Metering precedes new reconnect behavior. Account and Watch/link work retain the
 | 10 | [Usage costs and prompt caching](plans/usage-cost-and-cache.md) | Replace historical economics with actual cohort/cost/cache evidence. Collect measurements earlier; pricing changes are excluded. | Scoped |
 | 11 | [Backend runtime](plans/backend-runtime.md), then [Redis client](plans/redis-client.md) | Separate maintenance deliveries after behavior/data migrations stabilize. Revalidate upstream need first; never bundle them with auth or billing changes. | Scoped, revalidation required |
 
+### State-machine audit follow-through
+
+Mapped on 2026-11-09: the [Apple-app state-machine inventory](research/implicit-state-machines-2026-11-08.md) informs transition acceptance criteria in the existing plans, starting with [account ownership, order 4](plans/account-ownership.md#state-machine-acceptance-criteria), then [meeting ownership, order 5](plans/meeting-ownership.md#state-machine-acceptance-criteria), [integration ownership, order 6](plans/integration-ownership.md#state-machine-acceptance-criteria) and [durable checkpoints, order 8](plans/durable-checkpoints.md#state-machine-acceptance-criteria). Those plans own implementation and evidence; priority, versions and scope boundaries are unchanged. Revalidate the dated findings when implementing each boundary and preserve the shipped 3.6–3.8 regression contracts. Broader AI-operation, recovery and calendar-state extraction remains a structural simplification candidate, not a new scheduled project or release gate.
+
 ### Test audit follow-through
 
 Added to the delivery order at Ian's request on 2026-10-31. The full T01–T17 review remains tracked work. The bounded test foundation shipped with Mac 3.7.0 and the backend, with iOS now available; other feature regressions retain the positions below and no version assignment. This does not expand the delivered 3.6.0 release. The [original audit](archive/test-quality-and-coverage-plan.md) retains evidence and detailed acceptance criteria; the [disposition register](archive/README.md#test-audit-disposition) maps it to current owners.

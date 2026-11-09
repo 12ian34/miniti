@@ -126,6 +126,16 @@ If an audit of the repo finds a namespace missing from this table, B0 does not d
 
 **Tests:** attach leaves the source alive and dormant; dormant account restores by key or email; dormancy pass tombstones only truly empty accounts; deletion's effects asserted item by item, including that no billing call is made; revoke of the last device sets dormant; cap counts live installations only.
 
+## State-machine acceptance criteria
+
+Mapped on 2026-11-09 from the [Apple-app inventory](../research/implicit-state-machines-2026-11-08.md): R11–R13 (grants, billing and usage queues), U5/U6 (credentials and account transitions), U9 (purchase entitlement) and W4 (paid Watch results). Revalidate these boundaries against shipped 3.8.0 metering before implementing B0–B3; the inventory does not audit backend transitions or replace the migration decisions above.
+
+- Attach recording/account identity and accounting version to pending work. Test grant renewal, credential replacement and membership change separately: renewal must preserve recording duration; an old completion must not overwrite current credentials or reassign pending usage to the new account.
+- Exercise A → B transfer with a held live-session end and a cached paid Watch result, then retry after a lost response or restart. Assert the original owner is retained, the charge occurs once and the paid result is reused. Missing attribution follows B2's unresolved path rather than guessing B.
+- Hold checkout completion across transfer and replay billing events through backfill. Assert the B1 owner and entitlement outcome, alongside the existing real-storage concurrency checks.
+
+Use the existing journal, auth, transport, meeting-journey and Watch tests as starting points. Acceptance requires observable ownership and persistence assertions; introducing an enum or a new coordinator is not itself evidence. These criteria refine this plan's migration/regression work without scheduling a separate lifecycle rewrite.
+
 ## Acceptance and delivery
 
 Run the complete B0–B3 tests above, including mixed-case old clients, old in-flight sessions, concurrent ends/lost responses, exact duration caps, credit propagation to old clients and seed, transfer during backfill, inactive subscription reactivation, cancellation/renewal ordering, and account deletion without a billing call. T02/T04/T05 purchase and money tests belong to this plan; require real isolated Redis/Lua evidence, not only a fake KV result.
