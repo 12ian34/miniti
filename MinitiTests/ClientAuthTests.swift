@@ -3565,7 +3565,10 @@ final class HomeSetupPolicyTests: XCTestCase {
         let host = NSHostingView(rootView: ReadyStateView().environmentObject(state)
             .environmentObject(KeyboardShortcutsService.shared).environment(\.colorScheme, .dark)
             .background(ColorPalette.Background.primary))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: 680),
+        // AppKit constrains titled windows to the visible desktop. CI has a smaller
+        // display than the build Mac, so leave room for its menu bar/title bar/dock.
+        let contentHeight = min(680, (NSScreen.main?.visibleFrame.height ?? 760) - 80)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 980, height: contentHeight),
             styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = host
         window.orderFront(nil)
@@ -3591,14 +3594,14 @@ final class HomeSetupPolicyTests: XCTestCase {
                 if state.isHomeCalendarVisible != expanded { state.toggleHomeCalendar() }
                 XCTAssertEqual(invalidations, beforeToggle, "Calendar toggles must only publish HomeSetupState")
                 let start = CFAbsoluteTimeGetCurrent()
-                window.setContentSize(NSSize(width: width, height: 680))
+                window.setContentSize(NSSize(width: width, height: contentHeight))
                 host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
                 // Let SwiftUI consume presentation publication before reading/capturing layout.
                 try await Task.sleep(for: .milliseconds(30))
                 host.layoutSubtreeIfNeeded(); host.displayIfNeeded()
                 print("HOME_RESIZE_PROFILE: width=\(width) expanded=\(expanded) \(CFAbsoluteTimeGetCurrent() - start)s including 30ms observation yield")
                 XCTAssertEqual(host.bounds.width, width, accuracy: 1)
-                XCTAssertEqual(host.bounds.height, 680, accuracy: 1)
+                XCTAssertEqual(host.bounds.height, contentHeight, accuracy: 1)
                 XCTAssertEqual(window.contentMinSize, originalMin)
                 if expanded {
                     let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
