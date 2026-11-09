@@ -2,7 +2,7 @@
 
 Local implementation update (2026-11-04): the selected 3.8.0 changes are present in the working tree. The [release evidence](../releases/3.8.0-evidence.md#local-implementation-evidence) owns commands, results and remaining manual/runner gates. This does not change the released 3.7.0 baseline or authorize publication.
 
-Status: selected for 3.8.0 and implemented locally after Ian's 2026-11-04 authorization; automated validation is recorded in the release checklist; manual/runner gates remain. Version: 3.8.0, assigned by Ian on 2026-11-04. The [roadmap](../roadmap.md#next-release-after-370) owns priority; the [combined checklist](../releases/3.8.0.md) coordinates scope, decisions and evidence. This file owns the complete implementation contract.
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. The [roadmap](../roadmap.md#next-release-after-370) owns priority; the [release checklist](../releases/3.8.0.md) owns delivery and evidence. This file owns the implementation contract.
 
 ## Deliverable and boundary
 

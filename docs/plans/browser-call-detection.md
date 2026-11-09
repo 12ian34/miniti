@@ -1,6 +1,6 @@
 # Browser call detection and calendar start reliability, 3.8.0
 
-Status: CD1/CD2 authorized and implemented locally on 2026-11-04, with synthetic regression coverage. Real Arc incident reproduction and the physical browser matrix remain release gates. See the [release record](../releases/3.8.0.md).
+Status, 2026-11-09: Mac 3.8.0 build 164 was released on 2026-11-09; iOS build 164 is waiting for App Review. Final automated validation and signed-package verification pass. Specialist physical evidence remains unitemised; publication does not turn it into a pass. CD1/CD2 have synthetic regression coverage; the exact Arc incident and physical browser matrix have no itemised verification. See the [release record](../releases/3.8.0.md).
 
 Research findings and proposed implementation sequence: [2026-11-04 investigation](../research/browser-call-detection-2026-11-04.md).
 
