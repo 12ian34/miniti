@@ -463,26 +463,13 @@ private struct LiveInsightsContent_iOSPlain: View {
     }
 }
 
-private struct LiveMEDDPICCContent_iOSPlain: View {
+struct LiveMEDDPICCContent_iOSPlain: View {
     @EnvironmentObject var appState: AppState
-    
-    private var fields: [(title: String, color: String, value: String?)] {
-        [
-            ("metrics", "3B82F6", appState.liveMetrics),
-            ("economic buyer", "8B5CF6", appState.liveEconomicBuyer),
-            ("decision criteria", "EC4899", appState.liveDecisionCriteria),
-            ("decision process", "F59E0B", appState.liveDecisionProcess),
-            ("paper process", "F97316", appState.livePaperProcess),
-            ("identified pain", "EF4444", appState.liveIdentifiedPain),
-            ("champion", "22C55E", appState.liveChampion),
-            ("competition", "6366F1", appState.liveCompetition),
-        ]
-    }
-    
+
     var body: some View {
-        ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
-            InsightsPlainBlock_iOS(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!)
+        SalesInsightSectionList(entries: SalesInsightField.entries(from: appState)) { field, value in
+            InsightsPlainBlock_iOS(title: field.title, color: field.color) {
+                MEDDPICCBulletText(value)
             }
         }
     }
@@ -1297,26 +1284,106 @@ private func docsCitationLinkURL(_ raw: String) -> URL? {
 
 // MARK: - MEDDPICC Content
 
+/// Stable Sales identity, order and presentation. Full field names distinguish
+/// decision criteria/process and champion/competition; letters cannot do that.
+enum SalesInsightField: String, CaseIterable, Identifiable {
+    case metrics, economicBuyer, decisionCriteria, decisionProcess, paperProcess, identifiedPain, champion, competition
+    var id: Self { self }
+
+    var title: String {
+        switch self {
+        case .metrics: return "metrics"
+        case .economicBuyer: return "economic buyer"
+        case .decisionCriteria: return "decision criteria"
+        case .decisionProcess: return "decision process"
+        case .paperProcess: return "paper process"
+        case .identifiedPain: return "identified pain"
+        case .champion: return "champion"
+        case .competition: return "competition"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .metrics: return ColorPalette.MEDDPICC.metrics
+        case .economicBuyer: return ColorPalette.MEDDPICC.economicBuyer
+        case .decisionCriteria: return ColorPalette.MEDDPICC.decisionCriteria
+        case .decisionProcess: return ColorPalette.MEDDPICC.decisionProcess
+        case .paperProcess: return ColorPalette.MEDDPICC.paperProcess
+        case .identifiedPain: return ColorPalette.MEDDPICC.identifiedPain
+        case .champion: return ColorPalette.MEDDPICC.champion
+        case .competition: return ColorPalette.MEDDPICC.competition
+        }
+    }
+
+    struct Entry: Identifiable {
+        let field: SalesInsightField
+        let value: String
+        var id: SalesInsightField { field }
+    }
+
+    @MainActor
+    static func entries(from source: AppState) -> [Entry] {
+        entries { field in
+            switch field {
+            case .metrics: return source.liveMetrics
+            case .economicBuyer: return source.liveEconomicBuyer
+            case .decisionCriteria: return source.liveDecisionCriteria
+            case .decisionProcess: return source.liveDecisionProcess
+            case .paperProcess: return source.livePaperProcess
+            case .identifiedPain: return source.liveIdentifiedPain
+            case .champion: return source.liveChampion
+            case .competition: return source.liveCompetition
+            }
+        }
+    }
+
+    @MainActor
+    static func entries(from source: Meeting) -> [Entry] {
+        entries { field in
+            switch field {
+            case .metrics: return source.meddpiccMetrics
+            case .economicBuyer: return source.meddpiccEconomicBuyer
+            case .decisionCriteria: return source.meddpiccDecisionCriteria
+            case .decisionProcess: return source.meddpiccDecisionProcess
+            case .paperProcess: return source.meddpiccPaperProcess
+            case .identifiedPain: return source.meddpiccIdentifiedPain
+            case .champion: return source.meddpiccChampion
+            case .competition: return source.meddpiccCompetition
+            }
+        }
+    }
+
+    private static func entries(valueForField: (Self) -> String?) -> [Entry] {
+        allCases.compactMap { field in
+            guard let value = valueForField(field) else { return nil }
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty, !["null", "n/a", "none"].contains(normalized) else { return nil }
+            // Normalization is only for filtering; keep the original content.
+            return Entry(field: field, value: value)
+        }
+    }
+}
+
+/// Shared ordered projection with each platform retaining its section layout.
+struct SalesInsightSectionList<Section: View>: View {
+    let entries: [SalesInsightField.Entry]
+    @ViewBuilder let section: (SalesInsightField, String) -> Section
+
+    var body: some View {
+        ForEach(entries) { entry in
+            section(entry.field, entry.value)
+        }
+    }
+}
+
 struct MEDDPICCContent: View {
     @EnvironmentObject var appState: AppState
-    
-    private var fields: [(title: String, color: String, value: String?)] {
-        [
-            ("metrics", "3B82F6", appState.liveMetrics),
-            ("economic buyer", "8B5CF6", appState.liveEconomicBuyer),
-            ("decision criteria", "EC4899", appState.liveDecisionCriteria),
-            ("decision process", "F59E0B", appState.liveDecisionProcess),
-            ("paper process", "F97316", appState.livePaperProcess),
-            ("identified pain", "EF4444", appState.liveIdentifiedPain),
-            ("champion", "22C55E", appState.liveChampion),
-            ("competition", "6366F1", appState.liveCompetition),
-        ]
-    }
-    
+
     var body: some View {
-        ForEach(fields.filter { hasMEDDPICCValue($0.value) }, id: \.title) { field in
-            TerminalSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!)
+        SalesInsightSectionList(entries: SalesInsightField.entries(from: appState)) { field, value in
+            TerminalSection(title: field.title, color: field.color) {
+                MEDDPICCBulletText(value)
             }
         }
     }
@@ -1412,12 +1479,6 @@ struct InsightTemplateSectionList<Section: View>: View {
             section(entry.section.title, ColorPalette.Templates.color(forSectionAt: index), entry.value)
         }
     }
-}
-
-private func hasMEDDPICCValue(_ value: String?) -> Bool {
-    guard let value else { return false }
-    let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
 }
 
 struct MEDDPICCBulletText: View {

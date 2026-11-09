@@ -311,11 +311,25 @@ final class SelectableAttributedTests: XCTestCase {
             prefixColor: ColorPalette.Status.success, fontSize: 17, lineSpacing: 5)
         XCTAssertEqual(text.string, "→ " + content + "\n→ Last item")
         let first = try XCTUnwrap(text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        let storage = NSTextStorage(attributedString: text)
+        let layout = NSLayoutManager()
+        let container = NSTextContainer(size: CGSize(width: 280, height: 2000))
+        container.lineFragmentPadding = 0
+        storage.addLayoutManager(layout); layout.addTextContainer(container)
+        layout.ensureLayout(for: container)
+        func glyphX(at character: Int) -> CGFloat {
+            let glyph = layout.glyphIndexForCharacter(at: character)
+            return layout.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minX
+                + layout.location(forGlyphAt: glyph).x
+        }
+        let firstWordX = glyphX(at: 2)
         for word in ["Second", "Third"] {
             let range = (text.string as NSString).range(of: word)
             let continuation = try XCTUnwrap(text.attribute(.paragraphStyle, at: range.location, effectiveRange: nil) as? NSParagraphStyle)
             XCTAssertEqual(continuation.firstLineHeadIndent, first.headIndent)
             XCTAssertEqual(continuation.headIndent, first.headIndent)
+            XCTAssertEqual(glyphX(at: range.location), firstWordX, accuracy: 0.5,
+                           "Explicit paragraph continuations must align in actual layout")
         }
     }
 

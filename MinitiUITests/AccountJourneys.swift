@@ -190,7 +190,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(completionButtons.count, 0)
     }
 
-    func testSavedInsightListOffersNativeSelectionAcrossItems() {
+    func testSavedInsightListSharesTextAndOffersSelectionMenu() {
         launch(screenshotScene: "meeting")
         let first = "Share the data retention and deletion policy with Marcus"
         let last = "Send the security questionnaire back before Friday"
@@ -311,6 +311,50 @@ final class AccountJourneys: XCTestCase {
     func testLiveInsightUpdateHasMinimumTarget() {
         launch(screenshotScene: "recording-insights")
         assertInsightUpdateTarget()
+    }
+
+    func testLiveSalesSectionsKeepNamedFieldOrder() {
+        launch(screenshotScene: "recording-sales")
+        assertSalesSectionOrder()
+        captureAppScreen("Live Sales sections")
+    }
+
+    func testSavedSalesSectionsKeepNamedFieldOrder() {
+        launch(screenshotScene: "meeting")
+        #if os(macOS)
+        let more = app.menuButtons["More insight views"]
+        #else
+        let more = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label == 'More insight views'")).firstMatch
+        #endif
+        XCTAssertTrue(more.waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        more.click()
+        let sales = app.menuItems["Sales"]
+        XCTAssertTrue(sales.waitForExistence(timeout: 5), app.debugDescription)
+        sales.click()
+        #else
+        more.tap()
+        let sales = app.buttons["Sales"]
+        XCTAssertTrue(sales.waitForExistence(timeout: 5), app.debugDescription)
+        sales.tap()
+        #endif
+        assertSalesSectionOrder()
+        captureAppScreen("Saved Sales sections")
+    }
+
+    private func assertSalesSectionOrder() {
+        let expected = ["metrics", "economic buyer", "decision criteria", "decision process",
+                        "paper process", "identified pain", "champion", "competition"]
+        XCTAssertTrue(app.staticTexts["metrics"].waitForExistence(timeout: 5), app.debugDescription)
+        #if os(macOS)
+        let headings = app.staticTexts.matching(NSPredicate(format: "value IN %@", expected))
+        XCTAssertEqual(headings.allElementsBoundByIndex.map { $0.value as? String ?? "<unreadable>" },
+                       expected, app.debugDescription)
+        #else
+        let headings = app.staticTexts.matching(NSPredicate(format: "label IN %@", expected))
+        XCTAssertEqual(headings.allElementsBoundByIndex.map(\.label), expected, app.debugDescription)
+        #endif
     }
 
     func testSavedInsightUpdateHasMinimumTarget() {

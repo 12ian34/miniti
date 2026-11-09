@@ -922,30 +922,11 @@ struct SavedTemplateContent: View {
 
 struct SavedMEDDPICCContent: View {
     let meeting: Meeting
-    
-    private var fields: [(title: String, color: Color, value: String?)] {
-        [
-            ("metrics", ColorPalette.MEDDPICC.metrics, meeting.meddpiccMetrics),
-            ("economic buyer", ColorPalette.MEDDPICC.economicBuyer, meeting.meddpiccEconomicBuyer),
-            ("decision criteria", ColorPalette.MEDDPICC.decisionCriteria, meeting.meddpiccDecisionCriteria),
-            ("decision process", ColorPalette.MEDDPICC.decisionProcess, meeting.meddpiccDecisionProcess),
-            ("paper process", ColorPalette.MEDDPICC.paperProcess, meeting.meddpiccPaperProcess),
-            ("identified pain", ColorPalette.MEDDPICC.identifiedPain, meeting.meddpiccIdentifiedPain),
-            ("champion", ColorPalette.MEDDPICC.champion, meeting.meddpiccChampion),
-            ("competition", ColorPalette.MEDDPICC.competition, meeting.meddpiccCompetition),
-        ]
-    }
-
-    private func hasValue(_ value: String?) -> Bool {
-        guard let value else { return false }
-        let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
-    }
 
     var body: some View {
-        ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
+        SalesInsightSectionList(entries: SalesInsightField.entries(from: meeting)) { field, value in
             HistoricalDetailBlock_iOS(title: field.title, color: field.color) {
-                MEDDPICCBulletText(field.value!)
+                MEDDPICCBulletText(value)
             }
         }
     }

@@ -436,18 +436,7 @@ struct ColorPalette {
         static let champion = Accent.green               // C - Champion
         static let competition = Color(hex: "818CF8")    // C - Competition (WCAG AA on dark surfaces)
 
-        /// Get color for a MEDDPICC field by letter
-        static func color(for letter: String) -> String {
-            switch letter.uppercased() {
-            case "M": return "3B82F6"
-            case "E": return "A78BFA"
-            case "D": return "EC4899"
-            case "P": return "F59E0B"
-            case "I": return "EF4444"
-            case "C": return "22C55E"
-            default: return "3B82F6"
-            }
-        }
+
     }
     
     // MARK: - Template Section Colors

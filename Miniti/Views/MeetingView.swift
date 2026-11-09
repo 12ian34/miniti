@@ -2219,32 +2219,13 @@ struct LiveInsightsPanel: View {
 struct LiveMEDDPICCSections: View {
     @EnvironmentObject var appState: AppState
 
-    private var fields: [(title: String, color: String, value: String?)] {
-        [
-            ("metrics", "3B82F6", appState.liveMetrics),
-            ("economic buyer", "8B5CF6", appState.liveEconomicBuyer),
-            ("decision criteria", "EC4899", appState.liveDecisionCriteria),
-            ("decision process", "F59E0B", appState.liveDecisionProcess),
-            ("paper process", "F97316", appState.livePaperProcess),
-            ("identified pain", "EF4444", appState.liveIdentifiedPain),
-            ("champion", "22C55E", appState.liveChampion),
-            ("competition", "6366F1", appState.liveCompetition),
-        ]
-    }
-
     var body: some View {
-        ForEach(fields.filter { hasValue($0.value) }, id: \.title) { field in
-            LiveInsightSection(title: field.title, color: Color(hex: field.color)) {
-                MEDDPICCBulletText(field.value!)
+        SalesInsightSectionList(entries: SalesInsightField.entries(from: appState)) { field, value in
+            LiveInsightSection(title: field.title, color: field.color) {
+                MEDDPICCBulletText(value)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    private func hasValue(_ value: String?) -> Bool {
-        guard let value else { return false }
-        let t = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return !t.isEmpty && t != "null" && t != "n/a" && t != "none"
     }
 }
 

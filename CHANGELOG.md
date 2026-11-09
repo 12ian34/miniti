@@ -6,6 +6,7 @@
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
 - improvement: (iOS) saved discussion, actions and decisions use selectable lists
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
+- improvement: (macOS and iOS) matching Sales section colours in live and saved meetings
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help

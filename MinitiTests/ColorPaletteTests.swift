@@ -79,22 +79,91 @@ final class ColorPaletteTests: XCTestCase {
 
     // MARK: - MEDDPICC colors
 
-    func testMEDDPICCColorForKnownLetters() {
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "M"), "3B82F6")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "E"), "A78BFA")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "D"), "EC4899")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "P"), "F59E0B")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "I"), "EF4444")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "C"), "22C55E")
+    @MainActor
+    func testProductionSalesHeadersUseTheSameBuyerAndCompetitionColors() throws {
+        let state = AppState()
+        state.liveEconomicBuyer = "Buyer fixture"
+        state.liveCompetition = "Competition fixture"
+        let meeting = Meeting(meddpiccEconomicBuyer: "Buyer fixture", meddpiccCompetition: "Competition fixture")
+        var renderers: [(String, AnyView)] = [
+            ("shared live", AnyView(MEDDPICCContent().environmentObject(state))),
+        ]
+        #if os(macOS)
+        renderers += [
+            ("Mac live", AnyView(LiveMEDDPICCSections().environmentObject(state))),
+            ("Mac saved", AnyView(SavedMEDDPICCBlocks(meeting: meeting))),
+        ]
+        #else
+        renderers += [
+            ("iOS live", AnyView(LiveMEDDPICCContent_iOSPlain().environmentObject(state))),
+            ("iOS saved", AnyView(SavedMEDDPICCContent(meeting: meeting))),
+        ]
+        #endif
+        for (name, view) in renderers {
+            let renderer = ImageRenderer(content: VStack(alignment: .leading, spacing: 16) { view }
+                .minitiInterfaceScale(.compact).frame(width: 420).padding(16)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.MEDDPICC.economicBuyer, in: raster), 10, name)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.MEDDPICC.competition, in: raster), 10, name)
+            XCTAssertEqual(try pixelCount(Color(hex: "8B5CF6"), in: raster), 0, name)
+            XCTAssertEqual(try pixelCount(Color(hex: "6366F1"), in: raster), 0, name)
+        }
     }
 
-    func testMEDDPICCColorDefaultUnknown() {
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "X"), "3B82F6")
+    func testNamedSalesFieldsPreserveOrderAndDistinguishRepeatedLetters() {
+        XCTAssertEqual(SalesInsightField.allCases.map(\.title), [
+            "metrics", "economic buyer", "decision criteria", "decision process",
+            "paper process", "identified pain", "champion", "competition",
+        ])
+        XCTAssertEqual(Set(SalesInsightField.allCases.map(\.id)).count, 8)
+        XCTAssertEqual(SalesInsightField.decisionCriteria.color, ColorPalette.MEDDPICC.decisionCriteria)
+        XCTAssertEqual(SalesInsightField.decisionProcess.color, ColorPalette.MEDDPICC.decisionProcess)
+        XCTAssertEqual(SalesInsightField.paperProcess.color, ColorPalette.MEDDPICC.paperProcess)
+        XCTAssertEqual(SalesInsightField.champion.color, ColorPalette.MEDDPICC.champion)
+        XCTAssertEqual(SalesInsightField.competition.color, ColorPalette.MEDDPICC.competition)
     }
 
-    func testMEDDPICCColorCaseInsensitive() {
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "m"), "3B82F6")
-        XCTAssertEqual(ColorPalette.MEDDPICC.color(for: "e"), "A78BFA")
+    @MainActor
+    func testSalesProjectionKeepsLiveAndSavedValuesInTheirOwnNamedFields() {
+        let state = AppState()
+        state.liveMetrics = "live metrics"
+        state.liveEconomicBuyer = "live economic buyer"
+        state.liveDecisionCriteria = "live decision criteria"
+        state.liveDecisionProcess = "live decision process"
+        state.livePaperProcess = "live paper process"
+        state.liveIdentifiedPain = "live identified pain"
+        state.liveChampion = "live champion"
+        state.liveCompetition = "live competition"
+        let meeting = Meeting(
+            meddpiccMetrics: "saved metrics",
+            meddpiccEconomicBuyer: "saved economic buyer",
+            meddpiccDecisionCriteria: "saved decision criteria",
+            meddpiccDecisionProcess: "saved decision process",
+            meddpiccPaperProcess: "saved paper process",
+            meddpiccIdentifiedPain: "saved identified pain",
+            meddpiccChampion: "saved champion",
+            meddpiccCompetition: "saved competition")
+        let live = SalesInsightField.entries(from: state)
+        let saved = SalesInsightField.entries(from: meeting)
+        XCTAssertEqual(live.map(\.field), SalesInsightField.allCases)
+        XCTAssertEqual(saved.map(\.field), SalesInsightField.allCases)
+        for entry in live { XCTAssertEqual(entry.value, "live " + entry.field.title) }
+        for entry in saved { XCTAssertEqual(entry.value, "saved " + entry.field.title) }
+        // Filtering is case/whitespace insensitive; meaningful values remain byte-identical.
+        for sentinel in [String?.none, "", "  \n", " NULL ", "N/A", "none"] {
+            state.liveEconomicBuyer = sentinel
+            meeting.meddpiccEconomicBuyer = sentinel
+            XCTAssertFalse(SalesInsightField.entries(from: state).contains { $0.field == .economicBuyer })
+            XCTAssertFalse(SalesInsightField.entries(from: meeting).contains { $0.field == .economicBuyer })
+            XCTAssertEqual(SalesInsightField.entries(from: state).count, 7)
+            XCTAssertEqual(SalesInsightField.entries(from: meeting).count, 7)
+        }
+        state.liveEconomicBuyer = "  Budget owner; CFO\nsecond line  "
+        meeting.meddpiccEconomicBuyer = state.liveEconomicBuyer
+        XCTAssertEqual(SalesInsightField.entries(from: state)[1].value, state.liveEconomicBuyer)
+        XCTAssertEqual(SalesInsightField.entries(from: meeting)[1].value, state.liveEconomicBuyer)
     }
 
     // MARK: - Design-system contracts
