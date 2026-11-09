@@ -91,31 +91,25 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(macOS)
-    func testMacLiveSectionCopiesHaveNamedMinimumTargets() {
+    func testMacLiveSectionCopiesHaveNamedMinimumTargets() throws {
         launch(screenshotScene: "recording-insights")
-        assertMacSectionCopies(saved: false)
+        try assertMacSectionCopies(saved: false)
     }
 
-    func testMacSavedSectionCopiesHaveNamedMinimumTargets() {
+    func testMacSavedSectionCopiesHaveNamedMinimumTargets() throws {
         launch(screenshotScene: "meeting")
-        assertMacSectionCopies(saved: true)
+        try assertMacSectionCopies(saved: true)
     }
 
-    private func assertMacSectionCopies(saved: Bool) {
+    private func assertMacSectionCopies(saved: Bool) throws {
         let pasteboard = NSPasteboard.general
-        let originalItems = (pasteboard.pasteboardItems ?? []).map { source in
-            let item = NSPasteboardItem()
-            for type in source.types {
-                if let data = source.data(forType: type) { item.setData(data, forType: type) }
-            }
-            return item
-        }
+        // Never read or rewrite the user's clipboard, including password-manager items.
+        try XCTSkipUnless(pasteboard.types?.isEmpty != false,
+                          "Section-copy journeys require an empty clipboard; existing content is left untouched.")
         var lastCopyChangeCount: Int?
         defer {
-            // Preserve the user's clipboard unless something else changed it since our copy.
             if let lastCopyChangeCount, pasteboard.changeCount == lastCopyChangeCount {
                 pasteboard.clearContents()
-                if !originalItems.isEmpty { pasteboard.writeObjects(originalItems) }
             }
         }
         let expectedNotes = saved ? "weekly digest of pilot usage" : "run the pilot day to day"
@@ -140,8 +134,12 @@ final class AccountJourneys: XCTestCase {
             }
             // The top point is inside the allocated target but outside the compact chrome.
             copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1)).click()
-            lastCopyChangeCount = pasteboard.changeCount
-            XCTAssertTrue((pasteboard.string(forType: .string) ?? "").contains(expectedText),
+            let observedChangeCount = pasteboard.changeCount
+            let copiedExpectedSection = (pasteboard.string(forType: .string) ?? "").contains(expectedText)
+            if copiedExpectedSection && pasteboard.changeCount == observedChangeCount {
+                lastCopyChangeCount = observedChangeCount
+            }
+            XCTAssertTrue(copiedExpectedSection,
                           "Copy must put the correct synthetic section on the clipboard")
             XCTAssertEqual(copy.label, "\(section.capitalized) copied")
         }
