@@ -57,7 +57,9 @@ extension AppState {
             meetingTitle: currentMeeting?.displayTitle ?? "",
             lifecycleStatus: lifecycle,
             transcriptionStatus: (deepgramService?.connectionState ?? .disconnected).presenceLabel,
-            audioStatus: audioRecoveryState.presenceLabel,
+            audioStatus: audioRecoveryState == .recovering
+                ? audioRecoveryActivity.label.prefix(1).uppercased() + audioRecoveryActivity.label.dropFirst()
+                : audioRecoveryState.presenceLabel,
             graceRemainingSeconds: graceSeconds,
             graceAppName: graceApp,
             callAppName: graceApp ?? callLifecycleEngine.associatedApp?.displayName

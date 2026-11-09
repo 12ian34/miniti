@@ -1667,6 +1667,45 @@ final class AppStateComputationTests: XCTestCase {
 
     // MARK: - AudioRecoveryState.label
 
+    @MainActor func testInitialConnectionCopyIsDistinctFromReconnectAndResetsForNextAttempt() {
+        let state = AppState()
+        let service = DeepgramService()
+        state.deepgramService = service
+        state.audioCaptureService = nil
+        state.isRecording = true
+        defer { state.isRecording = false; state.updateAudioRecoveryState() }
+
+        service.connectionState = .connecting
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioStatusLabel, "connecting transcription…")
+        XCTAssertTrue(state.isAudioStartupStatus, "Normal connection must not use warning styling")
+        #if os(macOS)
+        XCTAssertEqual(state.recordingPresence.audioStatus, "Connecting transcription…")
+        #endif
+
+        service.connectionState = .connected
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioStatusLabel, "starting audio…", "A socket alone does not prove capture")
+        XCTAssertTrue(state.isAudioStartupStatus)
+
+        service.connectionState = .error
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioRecoveryState, .degraded)
+        service.connectionState = .connecting
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioRecoveryActivity, .reconnectingTranscription)
+        XCTAssertFalse(state.isAudioStartupStatus)
+        XCTAssertEqual(state.audioRecoveryState, .degraded, "Keep the existing recovery hold, not a cosmetic policy change")
+
+        state.isRecording = false
+        state.updateAudioRecoveryState()
+        state.beginRecordingDiagnostics()
+        state.isRecording = true
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioStatusLabel, "connecting transcription…", "A new recording starts fresh")
+        XCTAssertTrue(state.isAudioStartupStatus)
+    }
+
     func testAudioRecoveryStateHealthy() {
         XCTAssertEqual(AppState.AudioRecoveryState.healthy.label, "audio healthy")
     }

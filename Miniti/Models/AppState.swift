@@ -562,6 +562,32 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Presentation only. Recovery policy still uses AudioRecoveryState.
+    enum AudioRecoveryActivity {
+        case startingAudio, connectingTranscription, reconnectingTranscription, restartingAudio
+
+        var label: String {
+            switch self {
+            case .startingAudio: return "starting audio…"
+            case .connectingTranscription: return "connecting transcription…"
+            case .reconnectingTranscription: return "reconnecting transcription…"
+            case .restartingAudio: return "restarting audio…"
+            }
+        }
+
+        var isStartup: Bool {
+            self == .startingAudio || self == .connectingTranscription
+        }
+    }
+
+    var audioStatusLabel: String {
+        audioRecoveryState == .recovering ? audioRecoveryActivity.label : audioRecoveryState.label
+    }
+
+    var isAudioStartupStatus: Bool {
+        audioRecoveryState == .recovering && audioRecoveryActivity.isStartup
+    }
+
     /// Why a recording stopped itself. Kept distinct from the banner flag so the stopped-state
     /// copy can be honest: a stalled transcript pipeline is not the same as a quiet room.
     enum AutoStopReason: String {
@@ -794,6 +820,8 @@ final class AppState: ObservableObject {
     }
     @Published var isMonitoring = false  // Audio monitoring active (home screen)
     @Published var audioRecoveryState: AudioRecoveryState = .healthy
+    @Published private(set) var audioRecoveryActivity: AudioRecoveryActivity = .startingAudio
+    private var hasObservedRecordingCapture = false
     @Published private(set) var microphoneCaptureIssue: String?
 
     var interimText: String {
@@ -3937,8 +3965,18 @@ final class AppState: ObservableObject {
             return
         }
         
+        #if os(macOS)
+        let requestedSystem = recordingDiagnosticAttempt?.system ?? captureSystemAudio
+        #else
+        let requestedSystem = false
+        #endif
+        let requestedMic = recordingDiagnosticAttempt?.microphone ?? captureMicrophone
+        let recentCapture = audioCaptureService?.hasRecentCaptureBuffers(microphone: requestedMic, systemAudio: requestedSystem) == true
+        if recentCapture { hasObservedRecordingCapture = true }
+
         if deepgramReconnectTask != nil || deepgramService?.connectionState == .connecting {
-            applyAudioRecoveryState(.recovering)
+            applyAudioRecoveryState(.recovering, activity: deepgramReconnectTask != nil || recordingRecoveryEvidence.generation > 0
+                ? .reconnectingTranscription : .connectingTranscription)
             return
         }
         
@@ -3948,13 +3986,8 @@ final class AppState: ObservableObject {
         }
         
         #if os(macOS)
-        let requestedSystem = recordingDiagnosticAttempt?.system ?? captureSystemAudio
         if endingGrace != nil { return }
-        #else
-        let requestedSystem = false
         #endif
-        let requestedMic = recordingDiagnosticAttempt?.microphone ?? captureMicrophone
-        let recentCapture = audioCaptureService?.hasRecentCaptureBuffers(microphone: requestedMic, systemAudio: requestedSystem) == true
         if let service = deepgramService {
             let observed = recordingRecoveryEvidence.observe(connection: service.diagnosticConnectionGeneration,
                 connected: service.connectionState == .connected, transcriptAt: service.transcriptEvidenceUptime,
@@ -3970,7 +4003,9 @@ final class AppState: ObservableObject {
         if !recentCapture {
             let now = CFAbsoluteTimeGetCurrent()
             if systemAudioInactiveSince == 0 { systemAudioInactiveSince = now }
-            applyAudioRecoveryState(now - systemAudioInactiveSince > 12 ? .degraded : .recovering)
+            let restarting = hasObservedRecordingCapture || recordingRecoveryEvidence.generation > 0 || audioRecoveryActivity == .restartingAudio
+            applyAudioRecoveryState(now - systemAudioInactiveSince > 12 ? .degraded : .recovering,
+                                    activity: restarting ? .restartingAudio : .startingAudio)
             return
         }
         systemAudioInactiveSince = 0
@@ -4005,7 +4040,10 @@ final class AppState: ObservableObject {
         }
     }
     
-    private func applyAudioRecoveryState(_ nextState: AudioRecoveryState) {
+    private func applyAudioRecoveryState(_ nextState: AudioRecoveryState, activity: AudioRecoveryActivity? = nil) {
+        if nextState == .recovering, let activity, audioRecoveryActivity != activity {
+            audioRecoveryActivity = activity
+        }
         desiredAudioRecoveryState = nextState
         guard nextState != audioRecoveryState else { return }
 
@@ -7357,7 +7395,7 @@ final class AppState: ObservableObject {
     func retryRecordingHealth() {
         guard isRecording, let audioCaptureService else { return }
         recordingErrorMessage = nil
-        applyAudioRecoveryState(.recovering)
+        applyAudioRecoveryState(.recovering, activity: .restartingAudio)
 
         Task { @MainActor in
             audioCaptureService.stopCapture()
@@ -10471,6 +10509,8 @@ final class AppState: ObservableObject {
     func beginRecordingDiagnostics() {
         guard recordingDiagnosticAttempt == nil else { return }
         recordingRecoveryEvidence = RecordingRecoveryEvidence()
+        hasObservedRecordingCapture = false
+        audioRecoveryActivity = .startingAudio
         #if os(macOS)
         let system = captureSystemAudio
         #else

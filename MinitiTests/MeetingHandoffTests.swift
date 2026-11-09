@@ -207,6 +207,8 @@ final class MeetingHandoffTests: XCTestCase {
         try await service.startCapture(microphone: true, systemAudio: true)
         state.updateAudioRecoveryState()
         XCTAssertEqual(state.audioRecoveryState, .recovering)
+        XCTAssertEqual(state.audioStatusLabel, "starting audio…")
+        XCTAssertTrue(state.isAudioStartupStatus)
         let now = CFAbsoluteTimeGetCurrent()
         service.deliverSystemPCM(Data([0, 0]), multichannel: true, at: now, callback: nil)
         state.updateAudioRecoveryState()
@@ -218,6 +220,10 @@ final class MeetingHandoffTests: XCTestCase {
         state.updateAudioRecoveryState()
         try await Task.sleep(for: .milliseconds(1500))
         XCTAssertEqual(state.audioRecoveryState, .healthy, "silent buffers count; speaking is not required")
+        service.stopCapture()
+        state.updateAudioRecoveryState()
+        XCTAssertEqual(state.audioStatusLabel, "restarting audio…", "Loss after observed capture is not initial startup")
+        XCTAssertFalse(state.isAudioStartupStatus)
     }
 
     func testMicRestartRuleRestartsAStoppedEngineEvenWhenInputIsUnchanged() {

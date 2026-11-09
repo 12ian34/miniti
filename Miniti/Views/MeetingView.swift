@@ -2604,6 +2604,7 @@ struct TerminalHeader: View {
     }
 
     private var recoveryAccent: Color {
+        if appState.isAudioStartupStatus { return ColorPalette.Text.secondary }
         switch appState.audioRecoveryState {
         case .healthy: return ColorPalette.Status.success
         case .recovering, .awaitingTranscript: return ColorPalette.Status.warning
@@ -2803,7 +2804,7 @@ struct TerminalHeader: View {
                 Circle()
                     .fill(recoveryAccent)
                     .frame(width: 6, height: 6)
-                Text(appState.audioRecoveryState.label)
+                Text(appState.audioStatusLabel)
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(recoveryAccent)
                 Spacer(minLength: 0)

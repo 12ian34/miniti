@@ -12,6 +12,7 @@
 - improvement: (macOS and iOS) upcoming meetings are grouped into today, tomorrow and later, with sections you can collapse
 - improvement: (macOS) local models show preparation progress, with a labelled models shortcut at the bottom of home
 - improvement: (macOS and iOS) info buttons explain calendar automation and audio settings, with links to the docs
+- improvement: (macOS and iOS) recording status distinguishes startup from reconnection
 - improvement: (macOS and iOS) smoother handoff from live words to the finished transcript
 - improvement: (macOS) long speaking turns use shorter paragraphs in the transcript
 - improvement: (macOS and iOS) stopping completes the meeting without a done action, with final insights finishing in place

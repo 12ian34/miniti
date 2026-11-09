@@ -8,6 +8,7 @@ IMPROVED
 - Home keeps language and recording above one row of setup, calendar and feedback controls.
 - Upcoming meetings are grouped into Today, Tomorrow and Later, with sections you can collapse.
 - Info buttons explain calendar automation and audio settings, with links to the docs.
+- Recording status distinguishes startup from reconnection.
 - Live words stay visible as they move into the finished transcript.
 - Stopping completes the meeting without a Done action. Final insights finish in place.
 - Clearer recovery choices and retry times when sign-in is unavailable.
