@@ -277,8 +277,8 @@ final class ColorPaletteTests: XCTestCase {
             ("question context", ColorPalette.Text.meta, ColorPalette.Background.primary),
             ("coaching units", ColorPalette.Text.meta, ColorPalette.Background.panel),
             ("coaching headers", ColorPalette.Text.dim, ColorPalette.Background.tertiary),
-            ("copy", ColorPalette.Text.dim, ColorPalette.Border.primary),
-            ("copied", ColorPalette.Status.success, ColorPalette.Border.primary),
+            ("copy", ColorPalette.Text.muted, ColorPalette.Background.panel),
+            ("copied", ColorPalette.Status.success, ColorPalette.Background.panel),
             ("placeholder", ColorPalette.Text.placeholder, ColorPalette.Background.panel),
             ("recording and ending", ColorPalette.OnAccent.recording, ColorPalette.Status.recording),
         ]
@@ -308,7 +308,36 @@ final class ColorPaletteTests: XCTestCase {
         renderer.scale = 2
         let raster = try XCTUnwrap(renderer.cgImage)
         XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.meta, in: raster), 10, "Actual context text must use its readable role")
-        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, "Actual copy label must use its readable role")
+        #if os(macOS)
+        let targetHeight = 24
+        #else
+        let targetHeight = 44
+        #endif
+        // Only the header's trailing Copy region. Antialiased body text can
+        // otherwise contain pixels close to the control's neutral foreground.
+        let copyRaster = try XCTUnwrap(raster.cropping(to: CGRect(
+            x: raster.width - 224, y: 24, width: 200, height: targetHeight * 2)))
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.muted, in: copyRaster), 10, "Actual copy label must use the shared neutral role")
+    }
+
+    @MainActor
+    func testCopyLabelUsesNeutralChromeAndSuccessFeedback() throws {
+        #if os(macOS)
+        let minimum: CGFloat = 24
+        #else
+        let minimum: CGFloat = 44
+        #endif
+        for copied in [false, true] {
+            let renderer = ImageRenderer(content: MinitiCopyLabel(isCopied: copied)
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThanOrEqual(CGFloat(raster.width), minimum * 2)
+            XCTAssertGreaterThanOrEqual(CGFloat(raster.height), minimum * 2)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Background.panel, in: raster), 50)
+            XCTAssertGreaterThan(try pixelCount(copied ? ColorPalette.Status.success : ColorPalette.Text.muted,
+                                              in: raster), 10)
+        }
     }
 
     @MainActor
@@ -325,7 +354,7 @@ final class ColorPaletteTests: XCTestCase {
             AnyView(MinitiInsightUpdateLabel(title: "regenerate") { Text("sales") }),
             AnyView(MinitiInsightUpdateLabel(title: "finishing")),
         ]
-        for label in labels {
+        for (index, label) in labels.enumerated() {
             let renderer = ImageRenderer(content: label.background(ColorPalette.Background.primary))
             renderer.scale = 2
             let raster = try XCTUnwrap(renderer.cgImage)
@@ -333,6 +362,10 @@ final class ColorPaletteTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(CGFloat(raster.height), minimum * 2)
             XCTAssertGreaterThan(try pixelCount(ColorPalette.Background.panel, in: raster), raster.width * raster.height / 5)
             XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.muted, in: raster), 10)
+            if index == 1 {
+                XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10,
+                                     "Saved mode suffix retains a secondary colour on both platforms")
+            }
         }
     }
 
@@ -397,9 +430,10 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
-    func testRenderedLiveSectionCopyLabelsUseReadableRole() throws {
+    func testRenderedSectionCopyLabelsUseNeutralRole() throws {
         let headers = [
             ("notes", AnyView(SectionHeader(title: "notes", icon: "✎", onCopy: { "Synthetic notes" }))),
+            ("saved notes", AnyView(DetailSectionHeader(title: "notes", icon: "✎", onCopy: { "Synthetic notes" }))),
             ("insights", AnyView(InsightsSectionHeader(onCopyInsights: { "Synthetic insights" })
                 .environmentObject(AppState()))),
         ]
@@ -411,8 +445,11 @@ final class ColorPaletteTests: XCTestCase {
                 .background(ColorPalette.Background.primary))
             renderer.scale = 2
             let raster = try XCTUnwrap(renderer.cgImage)
-            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10,
-                                 "Actual live \(name) Copy text must use its readable role")
+            // Exclude the saved title, which already uses the neutral colour.
+            let copyRaster = try XCTUnwrap(raster.cropping(to: CGRect(
+                x: raster.width - 160, y: 0, width: 160, height: raster.height)))
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.muted, in: copyRaster), 10,
+                                 "Actual \(name) Copy text must use the shared neutral role")
         }
     }
 

@@ -534,7 +534,7 @@ final class AccountJourneys: XCTestCase {
     private func assertNeutralUpdateChrome(_ update: XCUIElement) {
         #if os(macOS)
         // Keep the real pointer off the control: this check owns resting chrome.
-        app.windows["Miniti"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02)).click()
+        app.windows["Miniti"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.02)).hover()
         #endif
         let native = update.screenshot().image
         do {
@@ -722,6 +722,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
         copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         XCTAssertTrue(app.buttons["Answer copied"].waitForExistence(timeout: 2))
+        captureAppScreen("Shared docs Copy feedback")
     }
 
     func testQuestionCopyRespondsInItsExpandedTarget() {
@@ -732,6 +733,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertGreaterThanOrEqual(copy.frame.height, 44)
         copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         XCTAssertTrue(app.buttons["Question copied"].waitForExistence(timeout: 2))
+        captureAppScreen("Shared question Copy feedback")
     }
 
     func testSharedTargetsHaveNonOverlappingFramesAndDispatchAtEdges() {

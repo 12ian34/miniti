@@ -1709,20 +1709,7 @@ struct SectionHeader: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(ColorPalette.Border.primary)
-                    )
-                    .minitiMinimumControlTarget()
+                    MinitiCopyLabel(isCopied: showCopied)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("section.copy.\(title)")
@@ -1885,20 +1872,7 @@ struct InsightsSectionHeader: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 9, weight: .medium))
-                            Text(showCopied ? "copied" : "copy")
-                                .font(.system(size: 10, weight: .medium, design: .default))
-                        }
-                        .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(ColorPalette.Border.primary)
-                        )
-                        .minitiMinimumControlTarget()
+                        MinitiCopyLabel(isCopied: showCopied)
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("section.copy.insights")

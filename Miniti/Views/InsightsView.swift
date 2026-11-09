@@ -791,20 +791,7 @@ private struct QuestionCard: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(ColorPalette.Border.primary)
-                    )
-                    .minitiMinimumControlTarget()
+                    MinitiCopyLabel(isCopied: showCopied)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(showCopied ? "Question copied" : "Copy question")
@@ -1180,17 +1167,7 @@ private struct DocAnswerBody: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
 
                 Button(action: copyAnswer) {
-                    HStack(spacing: 4) {
-                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 4).fill(ColorPalette.Border.primary))
-                    .minitiMinimumControlTarget()
+                    MinitiCopyLabel(isCopied: showCopied)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(showCopied ? "Answer copied" : "Copy answer")

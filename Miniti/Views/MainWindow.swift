@@ -2379,20 +2379,7 @@ struct DetailSectionHeader: View {
                         }
                     }
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 9, weight: .medium))
-                        Text(showCopied ? "copied" : "copy")
-                            .font(.system(size: 10, weight: .medium, design: .default))
-                    }
-                    .foregroundStyle(showCopied ? Theme.accent : Theme.textDim)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Theme.bgTertiary)
-                    )
-                    .minitiMinimumControlTarget()
+                    MinitiCopyLabel(isCopied: showCopied)
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("section.copy.\(title)")

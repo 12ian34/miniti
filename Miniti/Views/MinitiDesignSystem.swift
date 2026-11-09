@@ -343,7 +343,7 @@ struct MinitiInsightUpdateLabel<Detail: View>: View {
     private let titleSize: CGFloat = 11
     private let verticalPadding: CGFloat = 7
     private let horizontalPadding: CGFloat = 10
-    private let detailColor = ColorPalette.Text.muted
+    private let detailColor = ColorPalette.Text.dim
     #endif
 
     var body: some View {
@@ -366,6 +366,34 @@ struct MinitiInsightUpdateLabel<Detail: View>: View {
 extension MinitiInsightUpdateLabel where Detail == EmptyView {
     init(title: String, shortcut: String? = nil) {
         self.init(title: title, shortcut: shortcut) { EmptyView() }
+    }
+}
+
+/// Copy feedback presentation only. Native screen buttons retain pasteboard
+/// ownership, accessibility names and their existing feedback timing.
+struct MinitiCopyLabel: View {
+    let isCopied: Bool
+
+    var body: some View {
+        MinitiControlLabel(role: .secondary, height: nil, horizontalPadding: 6) {
+            Group {
+                if isCopied {
+                    label.foregroundStyle(ColorPalette.Status.success)
+                } else {
+                    label
+                }
+            }
+            .padding(.vertical, 3)
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: MinitiDesignSystem.Spacing.compact) {
+            Image(systemName: isCopied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 9, weight: .medium))
+            Text(isCopied ? "copied" : "copy")
+                .font(.system(size: 10, weight: .medium))
+        }
     }
 }
 
