@@ -2441,6 +2441,7 @@ struct DetailSectionHeader: View {
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Theme.textDim)
             Text(title)
+                .accessibilityIdentifier("section.title.\(title)")
                 .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Theme.textMuted)
             Spacer()
@@ -2473,8 +2474,11 @@ struct DetailSectionHeader: View {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Theme.bgTertiary)
                     )
+                    .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("section.copy.\(title)")
+                .accessibilityLabel(showCopied ? "\(title.capitalized) copied" : "Copy \(title)")
             }
         }
         .padding(.horizontal, 16)

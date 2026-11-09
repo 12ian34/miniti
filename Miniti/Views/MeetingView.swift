@@ -1689,6 +1689,7 @@ struct SectionHeader: View {
                 .font(.system(size: 12, weight: .medium, design: .default))
                 .foregroundStyle(Color(hex: "484F58"))
             Text(title)
+                .accessibilityIdentifier("section.title.\(title)")
                 .font(.system(size: 11, weight: .semibold, design: .default))
                 .foregroundStyle(Color(hex: "8B949E"))
             Spacer()
@@ -1714,16 +1715,18 @@ struct SectionHeader: View {
                         Text(showCopied ? "copied" : "copy")
                             .font(.system(size: 10, weight: .medium, design: .default))
                     }
-                    .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                    .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .fill(Color(hex: "1C1C1F"))
+                            .fill(ColorPalette.Border.primary)
                     )
+                    .minitiMinimumControlTarget()
                 }
                 .buttonStyle(.plain)
-                .focusable(false)
+                .accessibilityIdentifier("section.copy.\(title)")
+                .accessibilityLabel(showCopied ? "\(title.capitalized) copied" : "Copy \(title)")
             }
 
             if let shortcut = shortcut {
@@ -1860,6 +1863,7 @@ struct InsightsSectionHeader: View {
                     .font(.system(size: 12, weight: .medium, design: .default))
                     .foregroundStyle(Color(hex: "484F58"))
                 Text("insights")
+                    .accessibilityIdentifier("section.title.insights")
                     .font(.system(size: 11, weight: .semibold, design: .default))
                     .foregroundStyle(Color(hex: "8B949E"))
 
@@ -1885,16 +1889,18 @@ struct InsightsSectionHeader: View {
                             Text(showCopied ? "copied" : "copy")
                                 .font(.system(size: 10, weight: .medium, design: .default))
                         }
-                        .foregroundStyle(showCopied ? Color(hex: "3FB950") : Color(hex: "52525B"))
+                        .foregroundStyle(showCopied ? ColorPalette.Status.success : ColorPalette.Text.dim)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
                         .background(
                             RoundedRectangle(cornerRadius: 4)
-                                .fill(Color(hex: "1C1C1F"))
+                                .fill(ColorPalette.Border.primary)
                         )
+                        .minitiMinimumControlTarget()
                     }
                     .buttonStyle(.plain)
-                    .focusable(false)
+                    .accessibilityIdentifier("section.copy.insights")
+                    .accessibilityLabel(showCopied ? "Insights copied" : "Copy insights")
                 }
             }
             .padding(.horizontal, 16)

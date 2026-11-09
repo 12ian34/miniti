@@ -1,4 +1,7 @@
 import XCTest
+#if os(macOS)
+import AppKit
+#endif
 
 final class AccountJourneys: XCTestCase {
     private var app: XCUIApplication!
@@ -88,6 +91,68 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(macOS)
+    func testMacLiveSectionCopiesHaveNamedMinimumTargets() {
+        launch(screenshotScene: "recording-insights")
+        assertMacSectionCopies(saved: false)
+    }
+
+    func testMacSavedSectionCopiesHaveNamedMinimumTargets() {
+        launch(screenshotScene: "meeting")
+        assertMacSectionCopies(saved: true)
+    }
+
+    private func assertMacSectionCopies(saved: Bool) {
+        let pasteboard = NSPasteboard.general
+        let originalItems = (pasteboard.pasteboardItems ?? []).map { source in
+            let item = NSPasteboardItem()
+            for type in source.types {
+                if let data = source.data(forType: type) { item.setData(data, forType: type) }
+            }
+            return item
+        }
+        var lastCopyChangeCount: Int?
+        defer {
+            // Preserve the user's clipboard unless something else changed it since our copy.
+            if let lastCopyChangeCount, pasteboard.changeCount == lastCopyChangeCount {
+                pasteboard.clearContents()
+                if !originalItems.isEmpty { pasteboard.writeObjects(originalItems) }
+            }
+        }
+        let expectedNotes = saved ? "weekly digest of pilot usage" : "run the pilot day to day"
+        let expectedInsights = saved ? "Technical review" : "40-person sales team"
+        var frames = ""
+        for (section, expectedText) in [("transcript", "Attio"), ("notes", expectedNotes), ("insights", expectedInsights)] {
+            let copy = app.buttons["section.copy.\(section)"]
+            XCTAssertTrue(copy.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertGreaterThanOrEqual(copy.frame.width, 24)
+            XCTAssertGreaterThanOrEqual(copy.frame.height, 24)
+            XCTAssertEqual(copy.label, "Copy \(section)")
+            let title = app.staticTexts["section.title.\(section)"]
+            XCTAssertTrue(title.exists)
+            XCTAssertTrue(copy.frame.intersection(title.frame).isEmpty,
+                          "Copy must not overlap its header title")
+            frames += "\(section) title: \(title.frame); copy: \(copy.frame)\n"
+            if !saved && section == "notes" {
+                let shortcut = app.staticTexts["⌘⇧N"].firstMatch
+                XCTAssertTrue(shortcut.exists)
+                XCTAssertTrue(copy.frame.intersection(shortcut.frame).isEmpty,
+                              "Copy must not overlap the neighboring keyboard hint")
+            }
+            // The top point is inside the allocated target but outside the compact chrome.
+            copy.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 1)).click()
+            lastCopyChangeCount = pasteboard.changeCount
+            XCTAssertTrue((pasteboard.string(forType: .string) ?? "").contains(expectedText),
+                          "Copy must put the correct synthetic section on the clipboard")
+            XCTAssertEqual(copy.label, "\(section.capitalized) copied")
+        }
+        let frameEvidence = XCTAttachment(string: frames)
+        frameEvidence.name = "Section Copy target and neighboring title frames"
+        frameEvidence.lifetime = .keepAlways; add(frameEvidence)
+        let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
+        capture.name = "Section Copy controls in production layout"
+        capture.lifetime = .keepAlways; add(capture)
+    }
+
     func testMacOwnedWindowsStayDarkWithLightAmbientAppearance() {
         launch("appearance")
         continueAfterFailure = true

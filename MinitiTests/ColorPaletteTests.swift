@@ -216,6 +216,26 @@ final class ColorPaletteTests: XCTestCase {
 
     #if os(macOS)
     @MainActor
+    func testRenderedLiveSectionCopyLabelsUseReadableRole() throws {
+        let headers = [
+            ("notes", AnyView(SectionHeader(title: "notes", icon: "✎", onCopy: { "Synthetic notes" }))),
+            ("insights", AnyView(InsightsSectionHeader(onCopyInsights: { "Synthetic insights" })
+                .environmentObject(AppState()))),
+        ]
+        for (name, header) in headers {
+            // Only the header row: exclude the native Menu's renderer placeholder below it.
+            let renderer = ImageRenderer(content: header.frame(width: 420)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 48, alignment: .top).clipped()
+                .background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10,
+                                 "Actual live \(name) Copy text must use its readable role")
+        }
+    }
+
+    @MainActor
     func testRenderedRecordingAndEndingCapsulesUseTheirOnAccentForeground() throws {
         for remaining in [Int?.none, 5] {
             let view = MenuBarIcon(isRecording: true, elapsedText: "00:12",
