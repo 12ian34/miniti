@@ -680,7 +680,7 @@ struct MeetingDetail_iOS: View {
                         HistoricalDetailBlock_iOS(title: "actions", color: Color(hex: "3FB950")) {
                             VStack(alignment: .leading, spacing: 8) {
                                 ForEach(Array(meeting.actionItems.enumerated()), id: \.offset) { index, item in
-                                    TerminalListItem(index: index, text: item, style: .checkbox)
+                                    ActionItemRow(text: item)
                                 }
                             }
                         }

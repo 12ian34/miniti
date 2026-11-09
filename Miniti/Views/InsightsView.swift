@@ -3774,10 +3774,7 @@ struct TerminalListItem: View {
     let text: String
     let style: ListStyle
     
-    @State private var isCompleted = false
-    
     enum ListStyle {
-        case checkbox
         case arrow
         case bullet
     }
@@ -3785,18 +3782,6 @@ struct TerminalListItem: View {
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
             switch style {
-            case .checkbox:
-                Button {
-                    withAnimation(.spring(response: 0.2, dampingFraction: 0.7)) {
-                        isCompleted.toggle()
-                    }
-                } label: {
-                    Text(isCompleted ? "[x]" : "[ ]")
-                        .font(.system(size: 12, weight: .medium, design: .default))
-                        .foregroundStyle(isCompleted ? Color(hex: "3FB950") : Color(hex: "484F58"))
-                }
-                .buttonStyle(.plain)
-                .focusable(false)
             case .arrow:
                 Text("->")
                     .font(.system(size: 12, weight: .medium, design: .default))
@@ -3809,9 +3794,8 @@ struct TerminalListItem: View {
             
             Text(text)
                 .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
-                .foregroundStyle(isCompleted ? Color(hex: "484F58") : Color(hex: "E6EDF3"))
+                .foregroundStyle(ColorPalette.Text.secondary)
                 .lineSpacing(readingMetrics.insightLineSpacing)
-                .strikethrough(isCompleted)
         }
     }
 }
@@ -3982,10 +3966,19 @@ struct InsightSection<Content: View>: View {
     }
 }
 
+/// Meeting actions are readable/exportable text, not a local completion checklist.
 struct ActionItemRow: View {
+    @Environment(\.readingMetrics) private var readingMetrics
     let text: String
+
     var body: some View {
-        TerminalListItem(index: 0, text: text, style: .checkbox)
+        SelectableTextView(SelectableAttributed.bulletList(
+            items: [text],
+            prefix: "→",
+            prefixColor: ColorPalette.Status.success,
+            fontSize: readingMetrics.insightBodySize,
+            lineSpacing: readingMetrics.insightLineSpacing
+        ))
     }
 }
 

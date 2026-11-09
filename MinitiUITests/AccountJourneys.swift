@@ -142,7 +142,7 @@ final class AccountJourneys: XCTestCase {
         let evidence = XCTAttachment(string: frames)
         evidence.name = "Coaching history sort target frames"
         evidence.lifetime = .keepAlways; add(evidence)
-        captureCoachingHistory("Coaching history sort targets")
+        captureAppScreen("Coaching history sort targets")
         continueAfterFailure = false
         return validLayout
     }
@@ -156,7 +156,7 @@ final class AccountJourneys: XCTestCase {
         #endif
     }
 
-    private func captureCoachingHistory(_ name: String) {
+    private func captureAppScreen(_ name: String) {
         #if os(macOS)
         let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
         #else
@@ -167,6 +167,29 @@ final class AccountJourneys: XCTestCase {
     }
 
     #if os(iOS)
+    func testSavedActionItemsHaveNoTemporaryCompletionControls() {
+        launch(screenshotScene: "meeting")
+        let text = "Share the data retention and deletion policy with Marcus"
+        let action = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@ OR value CONTAINS %@", text, text)).firstMatch
+        for _ in 0..<5 {
+            if action.exists && action.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(action.exists && action.isHittable, app.debugDescription)
+        captureAppScreen("Saved action rows without completion controls")
+        let completionButtons = app.buttons.matching(NSPredicate(format: "label IN %@", ["[ ]", "[x]"]))
+        XCTAssertEqual(completionButtons.count, 0,
+                       "Meeting actions must not imply a completion state that is never saved")
+        action.tap()
+        XCTAssertEqual(completionButtons.count, 0)
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "Action text is selectable, not editable")
+        app.buttons["meeting.section.notes"].tap()
+        app.buttons["meeting.section.insights"].tap()
+        XCTAssertTrue(action.exists)
+        XCTAssertEqual(completionButtons.count, 0)
+    }
+
     func testLiveMeetingSectionsHaveSharedTargetsAndRetainNotes() {
         launch(screenshotScene: "recording-insights")
         assertMeetingSectionNavigation()
@@ -188,14 +211,20 @@ final class AccountJourneys: XCTestCase {
             let frame = button.frame
             XCTAssertGreaterThanOrEqual(frame.width + 0.001, 44)
             XCTAssertGreaterThanOrEqual(frame.height + 0.001, 44)
-            if let previous { XCTAssertLessThanOrEqual(previous.maxX, frame.minX + 0.001) }
+            if let previous {
+                XCTAssertEqual(previous.width, frame.width, accuracy: 0.5,
+                               "Section targets must have equal widths")
+                XCTAssertEqual(previous.maxX, frame.minX, accuracy: 0.5,
+                               "Section targets must meet without a dead gap")
+                XCTAssertLessThanOrEqual(previous.maxX, frame.minX + 0.001)
+            }
             frames += "\(section): \(frame)\n"
             previous = frame
         }
         let attachment = XCTAttachment(string: frames)
         attachment.name = "Meeting section target frames"
         attachment.lifetime = .keepAlways; add(attachment)
-        captureCoachingHistory("Meeting section picker before navigation")
+        captureAppScreen("Meeting section picker before navigation")
         XCTAssertTrue(app.buttons["meeting.section.insights"].isSelected)
         for section in ["transcript", "notes"] {
             app.buttons["meeting.section.\(section)"].coordinate(withNormalizedOffset: .zero)
@@ -227,14 +256,14 @@ final class AccountJourneys: XCTestCase {
         let meeting = app.buttons["coaching.sort.name"]
         activateCoachingSort(meeting)
         XCTAssertEqual(meeting.value as? String, "Descending")
-        captureCoachingHistory("Narrow Coaching history with meeting sort selected")
+        captureAppScreen("Narrow Coaching history with meeting sort selected")
         scroll.swipeLeft()
         let questions = app.buttons["coaching.sort.questions"]
         XCTAssertEqual(questions.frame.intersection(scroll.frame).width, 44, accuracy: 0.5,
                        "The full target must become visible after scrolling")
         activateCoachingSort(questions)
         XCTAssertEqual(questions.value as? String, "Ascending")
-        captureCoachingHistory("Narrow Coaching history after horizontal scrolling")
+        captureAppScreen("Narrow Coaching history after horizontal scrolling")
     }
 
     func testCoachingHistoryMetricHelpHasNamedCloseTarget() {
@@ -244,7 +273,7 @@ final class AccountJourneys: XCTestCase {
         fillers.press(forDuration: 0.6)
         let close = app.buttons["coaching.help.close"]
         XCTAssertTrue(close.waitForExistence(timeout: 5), app.debugDescription)
-        captureCoachingHistory("Coaching history metric help")
+        captureAppScreen("Coaching history metric help")
         XCTAssertGreaterThanOrEqual(close.frame.width, 44)
         XCTAssertGreaterThanOrEqual(close.frame.height, 44)
         XCTAssertEqual(close.label, "Close metric help")

@@ -4,6 +4,8 @@
 
 The top-level gates and primary screens for each platform. For UI patterns (focus rings, keyboard handling, etc.) see [patterns.md](patterns.md).
 
+3.9.0 local UI2: saved iOS meeting action items are selectable arrow text. The temporary checkboxes and view-local strike-through state are removed. Meeting action text, Markdown task-list export and CRM send-sheet selection are unchanged; no persistent completion model is introduced.
+
 ## Account, Privacy and consent (3.4.0, revised in 3.5.0)
 
 - **Consent (U2):** `TermsAcceptanceView` is a scrolling disclosure with Allow and Not now in their own bar below it; two provider lines, the two routes, the not-now choice; version 2 unchanged. Escape cancels only on the sheet.

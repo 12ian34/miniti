@@ -4,6 +4,7 @@
 
 - improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
+- improvement: (iOS) saved action items use selectable arrow lists
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
