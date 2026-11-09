@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import SwiftData
+#if os(macOS)
+import AppKit
+#endif
 
 /// Only the Testing build contains fixture credentials or transport. UI runners
 /// do not execute the hosted bundle's TestRunSetup, so isolation starts here.
@@ -47,6 +50,11 @@ enum AccountUITestHarness {
             defaults.removePersistentDomain(forName: "miniti.ui.cleanup")
         }
         let scenario = ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "first"
+        #if os(macOS)
+        // Reproduce ambient Light in this isolated process without changing macOS
+        // preferences or the installed app. Individual window roots must override it.
+        if scenario == "appearance" { NSApplication.shared.appearance = NSAppearance(named: .aqua) }
+        #endif
         if scenario == "folders" { state.automaticFolderCreation = true }
         if !defaults.bool(forKey: "setupFixtureInitialized") {
             UserDefaults.standard.removeObject(forKey: AppState.accessCardDismissedKey(accountID: "acct_ui_fixture"))
@@ -247,8 +255,17 @@ struct AccountUITestReady: ViewModifier {
             #endif
         }.overlay(alignment: .bottomLeading) {
             if AccountUITestHarness.isActive {
-                Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
-                    .accessibilityIdentifier("ui-test.ready").allowsHitTesting(false)
+                VStack(alignment: .leading) {
+                    Text("Test ready").font(.caption2).foregroundStyle(ColorPalette.Text.muted)
+                        .accessibilityIdentifier("ui-test.ready")
+                    #if MINITI_TEST_HOST && os(macOS)
+                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "docsTargets" {
+                        Text(NSApp.isFullKeyboardAccessEnabled ? "Keyboard navigation on" : "Keyboard navigation off")
+                            .font(.caption2).foregroundStyle(ColorPalette.Text.muted)
+                            .accessibilityIdentifier("ui-test.keyboardNavigation")
+                    }
+                    #endif
+                }.allowsHitTesting(false)
             }
         }
     }
@@ -313,6 +330,52 @@ private struct ControlTargetUITestFixture: View {
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(ColorPalette.Background.primary)
+    }
+}
+#endif
+
+/// Read-only diagnostics on real scene roots, absent outside the isolated test case.
+struct AccountUITestAppearanceProbe: ViewModifier {
+    let name: String
+    func body(content: Content) -> some View {
+        #if MINITI_TEST_HOST && os(macOS)
+        content.overlay(alignment: .bottomTrailing) {
+            if AccountUITestHarness.isActive,
+               ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "appearance" {
+                MacAppearanceProbe(name: name).frame(width: 360, height: 14)
+                    .allowsHitTesting(false)
+            }
+        }
+        #else
+        content
+        #endif
+    }
+}
+
+#if MINITI_TEST_HOST && os(macOS)
+private struct MacAppearanceProbe: NSViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
+    let name: String
+    func makeNSView(context: Context) -> AppearanceLabel {
+        let label = AppearanceLabel(labelWithString: "")
+        label.font = .systemFont(ofSize: 9)
+        label.setAccessibilityIdentifier("appearance.\(name)")
+        return label
+    }
+    func updateNSView(_ label: AppearanceLabel, context: Context) {
+        label.swiftUIScheme = colorScheme == .dark ? "dark" : "light"
+        label.refresh()
+    }
+    final class AppearanceLabel: NSTextField {
+        var swiftUIScheme = "unknown"
+        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); refresh() }
+        override func viewDidChangeEffectiveAppearance() { super.viewDidChangeEffectiveAppearance(); refresh() }
+        func refresh() {
+            func scheme(_ appearance: NSAppearance?) -> String {
+                appearance?.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? "dark" : "light"
+            }
+            stringValue = "swiftUI=\(swiftUIScheme); window=\(scheme(window?.effectiveAppearance)); app=\(scheme(NSApp.effectiveAppearance))"
+        }
     }
 }
 #endif

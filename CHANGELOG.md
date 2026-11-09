@@ -8,6 +8,7 @@
 - improvement: (macOS and iOS) clearer accessibility labels for Coaching help and copy actions
 - improvement: (macOS and iOS) clearer question context, copy labels and coaching details
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (macOS) Settings and app windows stay readable when macOS uses Light appearance
 
 ### 2026-11-09 - v3.8.0
 

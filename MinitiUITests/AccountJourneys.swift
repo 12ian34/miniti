@@ -40,6 +40,52 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    #if os(macOS)
+    func testMacOwnedWindowsStayDarkWithLightAmbientAppearance() {
+        launch("appearance")
+        continueAfterFailure = true
+        assertMacAppearance("main")
+        app.buttons["account.signIn"].click()
+        assertMacAppearance("email")
+        app.buttons["Cancel"].firstMatch.click()
+        app.typeKey(",", modifierFlags: .command)
+        assertMacAppearance("settings")
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuItems["Debug Log"].click()
+        assertMacAppearance("debug")
+    }
+
+    func testMacDocsAnswerCopiesUsingKeyboardOnly() throws {
+        launch("docsTargets")
+        // Honour the machine's navigation setting; never change global defaults.
+        let mode = app.staticTexts["ui-test.keyboardNavigation"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5))
+        try XCTSkipUnless(mode.value as? String == "Keyboard navigation on",
+                          "Keyboard navigation is off. Enable it for the Mac keyboard acceptance run.")
+        XCTAssertTrue(app.buttons["Copy answer"].waitForExistence(timeout: 5))
+        for _ in 0..<12 {
+            app.typeKey(.tab, modifierFlags: [])
+            app.typeKey(.space, modifierFlags: [])
+            if app.buttons["Answer copied"].exists { break }
+        }
+        XCTAssertTrue(app.buttons["Answer copied"].exists, app.debugDescription)
+        let capture = XCTAttachment(screenshot: app.windows["Miniti"].screenshot())
+        capture.name = "Docs answer copied using only Tab and Space"
+        capture.lifetime = .keepAlways
+        add(capture)
+    }
+
+    private func assertMacAppearance(_ name: String) {
+        let probe = app.staticTexts["appearance.\(name)"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5), app.debugDescription)
+        let capture = XCTAttachment(screenshot: app.windows.containing(.staticText, identifier: "appearance.\(name)").firstMatch.screenshot())
+        capture.name = "Mac \(name) with Light ambient appearance"
+        capture.lifetime = .keepAlways
+        add(capture)
+        XCTAssertEqual(probe.value as? String, "swiftUI=dark; window=dark; app=light")
+    }
+    #endif
+
     #if os(iOS)
     func testLiveMetricHelpAndCloseHaveNamedMinimumTargets() {
         launch(screenshotScene: "recording-coaching")
@@ -262,7 +308,11 @@ final class AccountJourneys: XCTestCase {
     func testFirstUseCancellationDoesNotCreateAnAccount() {
         launch()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].exists)
+        #if os(macOS)
+        app.buttons["account.signIn"].click()
+        #else
         app.buttons["account.signIn"].tap()
+        #endif
         XCTAssertTrue(app.textFields["Email"].waitForExistence(timeout: 5))
         app.buttons["Cancel"].firstMatch.tap()
         XCTAssertTrue(app.buttons["account.continueAnonymous"].waitForExistence(timeout: 5))

@@ -2182,6 +2182,7 @@ struct EmailSignInSheet: View {
             }
         }
         .padding(24)
+        .modifier(AccountUITestAppearanceProbe(name: "email"))
         #if os(macOS)
         .frame(minWidth: 380, idealWidth: 440)
         #else

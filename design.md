@@ -622,7 +622,7 @@ components:
 
 miniti is a macOS + iOS meeting assistant. The visual language is intentionally utilitarian: near-black surfaces, highly legible system text, and a small palette of saturated accents that carry semantic weight (recording, connected, action items, MEDDPICC letters, speaker identity). The design keeps its terminal-inspired restraint without sacrificing long-form readability — minimal chrome, no gradients, and no ornamental motion. Current-system material is allowed only on small functional utility surfaces where it improves platform fit without weakening contrast.
 
-The system is **dark-mode only**. iOS forces `.preferredColorScheme(.dark)` app-wide; macOS inherits the same palette regardless of the user's system appearance. Light-mode support is explicitly out of scope, so every token is tuned for legibility on a near-black background.
+The system is **dark-mode only**. iOS forces `.preferredColorScheme(.dark)` app-wide. On Mac, the main, Settings and Debug Log scene roots explicitly prefer dark appearance, so native window controls agree with the dark palette under a Light ambient appearance. Do not force `NSApp.appearance` in production: system-owned menu-bar presentation retains its environment. Light-mode support is explicitly out of scope, so every token is tuned for legibility on a near-black background.
 
 Core principles:
 

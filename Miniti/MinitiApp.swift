@@ -437,6 +437,8 @@ struct MinitiApp: App {
             }
             .environmentObject(appState)
             .modifier(AccountUITestReady())
+            .modifier(AccountUITestAppearanceProbe(name: "main"))
+            .preferredColorScheme(.dark)
             .minitiInterfaceScale(interfaceScale)
             .minitiReduceMotionAware()
             .onAppear {
@@ -529,6 +531,8 @@ struct MinitiApp: App {
         Settings {
             SettingsView()
                 .environmentObject(appState)
+                .modifier(AccountUITestAppearanceProbe(name: "settings"))
+                .preferredColorScheme(.dark)
                 .minitiInterfaceScale(interfaceScale)
                 .minitiReduceMotionAware()
                 .modifier(OptionalModelContainer(container: activeContainer))
@@ -536,6 +540,8 @@ struct MinitiApp: App {
         
         Window("Debug Log", id: "debug-log") {
             DebugLogView()
+                .modifier(AccountUITestAppearanceProbe(name: "debug"))
+                .preferredColorScheme(.dark)
                 .minitiInterfaceScale(interfaceScale)
                 .minitiReduceMotionAware()
                 .frame(minWidth: 600, minHeight: 400)
