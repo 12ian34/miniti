@@ -802,6 +802,109 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testSettingsEmailRestoreInheritsInterfaceSize() {
+        assertSettingsAccountPresentation(move: false, recovery: false, largeText: false)
+    }
+
+    func testSettingsKeyRestoreInheritsInterfaceSize() {
+        assertSettingsAccountPresentation(move: false, recovery: true, largeText: false)
+    }
+
+    func testSettingsEmailMoveInheritsInterfaceSize() {
+        assertSettingsAccountPresentation(move: true, recovery: false, largeText: false)
+    }
+
+    func testSettingsKeyMoveInheritsInterfaceSize() {
+        assertSettingsAccountPresentation(move: true, recovery: true, largeText: false)
+    }
+
+    func testSettingsEmailRestoreAtLargestText() {
+        assertSettingsAccountPresentation(move: false, recovery: false, largeText: true)
+    }
+
+    func testSettingsKeyRestoreAtLargestText() {
+        assertSettingsAccountPresentation(move: false, recovery: true, largeText: true)
+    }
+
+    func testSettingsEmailMoveAtLargestText() {
+        assertSettingsAccountPresentation(move: true, recovery: false, largeText: true)
+    }
+
+    func testSettingsKeyMoveAtLargestText() {
+        assertSettingsAccountPresentation(move: true, recovery: true, largeText: true)
+    }
+
+    private func assertSettingsAccountPresentation(move: Bool, recovery: Bool, largeText: Bool) {
+        executionTimeAllowance = 150
+        launch(move ? "first" : "accountKeyUnavailable", largeText: largeText, interfaceScale: 2)
+        if move {
+            let guest = app.buttons["account.continueAnonymous"]
+            XCTAssertTrue(guest.waitForExistence(timeout: 5))
+            for _ in 0..<8 {
+                if guest.isHittable { break }
+                app.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(guest.isHittable)
+            guest.tap()
+            XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+        }
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        XCTAssertTrue(settings.isHittable)
+        settings.tap()
+        let settingsScope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
+        settingsScope.tap()
+        XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
+        let account = app.staticTexts["Account"].firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 5))
+        XCTAssertTrue(account.isHittable)
+        account.tap()
+        let form = app.collectionViews.firstMatch
+        XCTAssertTrue(form.waitForExistence(timeout: 5))
+        let menu = app.buttons[move ? "Switch account…" : "Sign in again…"]
+        for _ in 0..<16 {
+            if menu.exists && menu.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(menu.isHittable, app.debugDescription)
+        // Form exposes the whole row plus the actual Menu label as a child button.
+        // Tap that label, not the empty middle of the row's accessibility frame.
+        let menuLabel = menu.buttons.firstMatch
+        XCTAssertTrue(menuLabel.waitForExistence(timeout: 5))
+        XCTAssertTrue(menu.isEnabled)
+        XCTAssertGreaterThan(menuLabel.frame.width, 0)
+        captureAppScreen("Account menu before opening")
+        let menuFrames = XCTAttachment(string: "Row: \(menu.frame)\nLabel: \(menuLabel.frame)\nForm: \(form.frame)")
+        menuFrames.name = "Account menu target frames"; menuFrames.lifetime = .keepAlways; add(menuFrames)
+        menu.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
+            dx: menuLabel.frame.midX - menu.frame.minX,
+            dy: menuLabel.frame.midY - menu.frame.minY
+        )).tap()
+        let method = app.buttons[recovery ? "With recovery key…" : "With email…"]
+        XCTAssertTrue(method.waitForExistence(timeout: 5))
+        method.tap()
+        let name = "account" + (recovery ? "Key" : "Email") + (move ? "Move" : "Restore")
+        let probe = app.buttons["ui-test.readingScope.\(name)"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        XCTAssertEqual(probe.label, "scale 2; reading \(largeText ? "largest" : "normal"); controls \(largeText ? "accessibility5" : "xxLarge")")
+        probe.tap()
+        XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+        let submit = recovery && !move
+            ? app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Sign in", "account.signIn")).element
+            : app.buttons[recovery ? "Switch" : "Send link"]
+        XCTAssertTrue(submit.waitForExistence(timeout: 5))
+        XCTAssertFalse(submit.isEnabled)
+        captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale 2")
+        let cancel = app.buttons["Cancel"].firstMatch
+        XCTAssertTrue(cancel.waitForExistence(timeout: 5))
+        XCTAssertTrue(cancel.isHittable)
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.navigationBars["Account"].waitForExistence(timeout: 5))
+        app.terminate()
+    }
+
     func testAccessEmailInheritsInterfaceSize() {
         assertAccessPresentation(recovery: false, largeText: false, scale: 2)
     }

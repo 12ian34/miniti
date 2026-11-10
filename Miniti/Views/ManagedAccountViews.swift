@@ -1430,26 +1430,6 @@ struct ManagedAccountSettingsSection: View {
                 emailFieldFocused = true
             }
         }
-        .sheet(isPresented: $isPresentingRestore) {
-            RestoreRecoveryKeySheet()
-                .environmentObject(appState)
-                .preferredColorScheme(.dark)
-        }
-        .sheet(isPresented: $isPresentingMove) {
-            RestoreRecoveryKeySheet(mode: .move, onRestored: { notice = "This device is now on the other account." })
-                .environmentObject(appState)
-                .preferredColorScheme(.dark)
-        }
-        .sheet(isPresented: $isPresentingEmailJoin) {
-            EmailSignInSheet(mode: .move, onJoined: { notice = "This device is now on the other account." })
-                .environmentObject(appState)
-                .preferredColorScheme(.dark)
-        }
-        .sheet(isPresented: $isPresentingEmailRestore) {
-            EmailSignInSheet(mode: .restore)
-                .environmentObject(appState)
-                .preferredColorScheme(.dark)
-        }
         .confirmationDialog("Show your recovery key on screen?", isPresented: $isConfirmingReveal, titleVisibility: .visible) {
             Button("Show key") { revealedKey = appState.revealRecoveryKey() }
             Button("Cancel", role: .cancel) {}
@@ -1605,11 +1585,11 @@ struct ManagedAccountSettingsSection: View {
             }
 
             // Account actions
-            HStack {
+            accountPresentations(HStack {
                 ForEach(model.accountActions.filter { [.tryAgain, .signInAgain, .switchAccount].contains($0) }, id: \.self) { action in
                     actionButton(action)
                 }
-            }
+            })
             .id("account.move")
             if model.accountActions.contains(.switchAccount) {
                 Text("Switch account signs this device in to another account by email or recovery key. It keeps its meetings; if that account has Pro, this device gets it too.")
@@ -1712,6 +1692,36 @@ struct ManagedAccountSettingsSection: View {
         }
     }
 
+    // A presenter must belong to one stable control container, not the Group of
+    // Form sections, which can instantiate multiple presentation owners.
+    private func accountPresentations<Content: View>(_ content: Content) -> some View {
+        content
+            .minitiSheet(isPresented: $isPresentingRestore) {
+                RestoreRecoveryKeySheet()
+                    .modifier(AccountUITestReadingScopeProbe(name: "accountKeyRestore", alignment: .topLeading))
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+            .minitiSheet(isPresented: $isPresentingEmailRestore) {
+                EmailSignInSheet(mode: .restore)
+                    .modifier(AccountUITestReadingScopeProbe(name: "accountEmailRestore", alignment: .topLeading))
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+            .minitiSheet(isPresented: $isPresentingMove) {
+                RestoreRecoveryKeySheet(mode: .move, onRestored: { notice = "This device is now on the other account." })
+                    .modifier(AccountUITestReadingScopeProbe(name: "accountKeyMove", alignment: .topLeading))
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+            .minitiSheet(isPresented: $isPresentingEmailJoin) {
+                EmailSignInSheet(mode: .move, onJoined: { notice = "This device is now on the other account." })
+                    .modifier(AccountUITestReadingScopeProbe(name: "accountEmailMove", alignment: .topLeading))
+                    .environmentObject(appState)
+                    .preferredColorScheme(.dark)
+            }
+    }
+
     private var removeEmailMessage: String {
         let keyPart = appState.managedDeviceHasNoRecoveryKey
             ? "This device holds no recovery key, so make sure another device does before removing it."
@@ -1798,14 +1808,14 @@ struct ManagedAccountSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack {
+            accountPresentations(HStack {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Button("Retry setup") { Task { await appState.ensureManagedEnrollment(trigger: "settings") } }
                         .disabled((appState.enrollmentRetryAt ?? .distantPast) > context.date)
                 }
                 Button("Sign in with email…") { isPresentingEmailRestore = true }
                 Button("Sign in with recovery key…") { isPresentingRestore = true }
-            }
+            })
         }
     }
 

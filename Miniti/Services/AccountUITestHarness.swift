@@ -77,8 +77,23 @@ enum AccountUITestHarness {
         config.protocolClasses = [FixtureProtocol.self]
         let session = URLSession(configuration: config)
         let store = FixtureCredentials(defaults: defaults, scenario: scenario)
+        if scenario == "accountKeyUnavailable" {
+            // A readable synthetic account whose installation key cannot load, unlike
+            // the locked-store fixture. No secret or real keychain item is involved.
+            _ = store.save(ClientAuthCredentials(
+                installationKey: .init(kind: "sw", data: ""), recoveryKey: "",
+                accountID: "acct_ui_fixture", accessToken: "fixture-token",
+                accessExpiresAt: Int64(Date().timeIntervalSince1970) + 3600,
+                refreshToken: nil, deviceCap: 5, enrolledAt: "2026-11-01T00:00:00Z",
+                enrollmentPath: "restore"))
+        }
         let manager = ClientAuthManager(store: store, baseURL: "https://miniti-fixture.invalid/api", session: session,
-            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" }, defaults: defaults)
+            deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" },
+            keyLoader: { stored in
+                scenario == "accountKeyUnavailable"
+                    ? .failure(InstallationKey.LoadError.corruptData) : InstallationKey.load(stored: stored)
+            }, defaults: defaults)
+        if scenario == "accountKeyUnavailable" { manager.retrySigningProbe() }
         state.appMode = scenario == "onboardingBYOK" ? .byok : .managed
         // A prior consentSheet fixture may have recorded a decline in test-host defaults.
         if scenario == "setupUpgrade" { UserDefaults.standard.removeObject(forKey: "declinedTermsVersion") }
