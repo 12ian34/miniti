@@ -2893,6 +2893,7 @@ private struct CoachingGuidanceView: View {
         if let report {
             VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
                 coachingFocus(report)
+                    .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
 
                 VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard) {
                     HStack(alignment: .firstTextBaseline) {
@@ -2905,17 +2906,39 @@ private struct CoachingGuidanceView: View {
                             .foregroundStyle(ColorPalette.Text.meta)
                     }
 
-                    LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
-                        ForEach(report.summaries) { summary in
-                            CoachingTrendCard(
-                                summary: summary,
-                                onSelectMeeting: onSelectMeeting
-                            )
-                        }
+                    #if os(macOS)
+                    // Wide windows use two columns so Coaching does not leave half the
+                    // window empty (Charlie's 3.8.0 feedback). Narrow windows keep one.
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: MinitiDesignSystem.CoachingLayout.trendCardMinimumWidth),
+                                           spacing: MinitiDesignSystem.Spacing.page, alignment: .top)],
+                        alignment: .leading,
+                        spacing: MinitiDesignSystem.Spacing.page
+                    ) {
+                        trendCards(report)
                     }
+                    #else
+                    LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
+                        trendCards(report)
+                    }
+                    #endif
                 }
             }
+            #if os(macOS)
+            .frame(maxWidth: MinitiDesignSystem.CoachingLayout.wideTrendGridMaxWidth, alignment: .leading)
+            #else
             .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private func trendCards(_ report: CoachingReport) -> some View {
+        ForEach(report.summaries) { summary in
+            CoachingTrendCard(
+                summary: summary,
+                onSelectMeeting: onSelectMeeting
+            )
         }
     }
 

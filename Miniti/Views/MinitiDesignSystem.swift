@@ -77,6 +77,9 @@ enum MinitiDesignSystem {
 
     enum CoachingLayout {
         static let trendColumnMaxWidth: CGFloat = 720
+        /// Mac only: trend cards flow into two columns once each can keep this width.
+        static let trendCardMinimumWidth: CGFloat = 460
+        static let wideTrendGridMaxWidth: CGFloat = 1480
         static let compactColumnMaxWidth: CGFloat = 480
         static let statsColumnMaxWidth: CGFloat = 720
         #if os(macOS)
