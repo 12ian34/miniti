@@ -73,6 +73,7 @@ enum AccountUITestHarness {
         if scenario == "revoked" && defaults.data(forKey: "fixtureCredential") == nil {
             defaults.set("revoke", forKey: "managedAccessChoice")
         }
+        if scenario.hasPrefix("accountFallback") { defaults.set("continue", forKey: "managedAccessChoice") }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [FixtureProtocol.self]
         let session = URLSession(configuration: config)
@@ -179,6 +180,8 @@ enum AccountUITestHarness {
     }
 
     private final class FixtureProtocol: URLProtocol, @unchecked Sendable {
+        private let responseLock = NSLock()
+        private var delayedResponse: DispatchWorkItem?
         override class func canInit(with request: URLRequest) -> Bool { true }
         override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
         override func startLoading() {
@@ -188,6 +191,19 @@ enum AccountUITestHarness {
             // stalled request without sleeping the protocol queue or contacting a server.
             if ["onboardingPending", "homePending"].contains(scenario ?? ""), path == "/api/auth/account/create" { return }
             if scenario == "onboardingSlowUsage", path == "/api/usage" { return }
+            if scenario?.hasPrefix("accountFallback") == true, path == "/api/auth/account/restore" {
+                // Keep the real restore awaiting a synthetic response while the UI
+                // replaces its fallback controls with enrollment progress.
+                let succeeds = scenario == "accountFallbackSuccess"
+                let work = DispatchWorkItem { [weak self] in
+                    self?.respond(status: succeeds ? 200 : 409, body: succeeds
+                        ? ["access_token": "fixture-token", "expires_in": 3600, "account_id": "acct_ui_fixture", "device_cap": 5]
+                        : ["error": "fixture_restore_failed"])
+                }
+                responseLock.withLock { delayedResponse = work }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+                return
+            }
             var status = 200
             var body: [String: Any] = [:]
             var headers = ["Content-Type": "application/json"]
@@ -219,7 +235,7 @@ enum AccountUITestHarness {
             case "/api/auth/account/create", "/api/auth/account/restore":
                 if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "throttled" {
                     status = 429; body = ["error": "rate_limited"]; headers["Retry-After"] = "120"
-                } else if ["onboardingOffline", "homeOffline"].contains(scenario ?? "") {
+                } else if ["onboardingOffline", "homeOffline"].contains(scenario ?? "") || scenario?.hasPrefix("accountFallback") == true {
                     status = 503; body = ["error": "temporarily_unavailable"]
                 } else {
                     body = ["access_token": "fixture-token", "expires_in": 3600, "account_id": "acct_ui_fixture", "device_cap": 5]
@@ -244,13 +260,16 @@ enum AccountUITestHarness {
                 // No unhandled request is forwarded to a real endpoint.
                 status = 503; body = ["error": "fixture_route_unavailable"]
             }
+            respond(status: status, body: body, headers: headers)
+        }
+        private func respond(status: Int, body: [String: Any], headers: [String: String] = ["Content-Type": "application/json"]) {
             let data = try! JSONSerialization.data(withJSONObject: body)
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: data)
             client?.urlProtocolDidFinishLoading(self)
         }
-        override func stopLoading() {}
+        override func stopLoading() { responseLock.withLock { delayedResponse?.cancel() } }
     }
     #endif
 }

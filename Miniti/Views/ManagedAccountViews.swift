@@ -1395,15 +1395,19 @@ struct ManagedAccountSettingsSection: View {
 
     var body: some View {
         Group {
+            Section {
+                if accountIsPresent {
+                    yourAccountRows
+                } else {
+                    unenrolledRows
+                        .id("account.recoveryKey")
+                }
+            } header: {
+                accountPresentations(Text(accountIsPresent ? "Your account" : "Account"))
+            }
             if accountIsPresent {
-                yourAccountSection
                 waysToSignInSection
                 devicesSection
-            } else {
-                Section("Account") {
-                    unenrolledRows
-                }
-                .id("account.recoveryKey")
             }
         }
         .alert("Device name", isPresented: $isRenamingDevice, presenting: renamingDevice) { device in
@@ -1462,37 +1466,35 @@ struct ManagedAccountSettingsSection: View {
 
     // MARK: Your account
 
-    private var yourAccountSection: some View {
-        Section("Your account") {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Email")
-                    Spacer()
-                    if let badge = model.emailBadge {
-                        Text(badge)
-                            .font(.caption)
-                            .foregroundStyle(ColorPalette.Status.success)
-                    }
-                }
-                Text(model.emailLine)
-                    .foregroundStyle(model.emailBadge == nil ? .secondary : .primary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let pending = model.pendingLine {
-                    Text(pending)
+    @ViewBuilder
+    private var yourAccountRows: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Email")
+                Spacer()
+                if let badge = model.emailBadge {
+                    Text(badge)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ColorPalette.Status.success)
                 }
             }
-            .id("account.email")
-
-            HStack {
-                Text("Plan")
-                Spacer()
-                Text(model.planLine)
+            Text(model.emailLine)
+                .foregroundStyle(model.emailBadge == nil ? .secondary : .primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let pending = model.pendingLine {
+                Text(pending)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
+        }
+        .id("account.email")
 
+        HStack {
+            Text("Plan")
+            Spacer()
+            Text(model.planLine)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -1585,11 +1587,11 @@ struct ManagedAccountSettingsSection: View {
             }
 
             // Account actions
-            accountPresentations(HStack {
+            HStack {
                 ForEach(model.accountActions.filter { [.tryAgain, .signInAgain, .switchAccount].contains($0) }, id: \.self) { action in
                     actionButton(action)
                 }
-            })
+            }
             .id("account.move")
             if model.accountActions.contains(.switchAccount) {
                 Text("Switch account signs this device in to another account by email or recovery key. It keeps its meetings; if that account has Pro, this device gets it too.")
@@ -1692,8 +1694,8 @@ struct ManagedAccountSettingsSection: View {
         }
     }
 
-    // A presenter must belong to one stable control container, not the Group of
-    // Form sections, which can instantiate multiple presentation owners.
+    // The first Section header stays present across enrollment progress and account acquisition.
+    // Keep presenters outside conditional rows so in-flight sign-in retains its sheet.
     private func accountPresentations<Content: View>(_ content: Content) -> some View {
         content
             .minitiSheet(isPresented: $isPresentingRestore) {
@@ -1808,14 +1810,17 @@ struct ManagedAccountSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            accountPresentations(HStack {
+            HStack {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
                     Button("Retry setup") { Task { await appState.ensureManagedEnrollment(trigger: "settings") } }
                         .disabled((appState.enrollmentRetryAt ?? .distantPast) > context.date)
                 }
                 Button("Sign in with email…") { isPresentingEmailRestore = true }
                 Button("Sign in with recovery key…") { isPresentingRestore = true }
-            })
+            }
+            #if os(iOS)
+            .buttonStyle(.borderless)
+            #endif
         }
     }
 

@@ -802,6 +802,68 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testFallbackEmailRestoreKeepsFailureVisible() {
+        assertFallbackRestore(recovery: false, succeeds: false)
+    }
+
+    func testFallbackKeyRestoreKeepsFailureVisible() {
+        assertFallbackRestore(recovery: true, succeeds: false)
+    }
+
+    func testFallbackEmailRestoreCompletesWithoutReopening() {
+        assertFallbackRestore(recovery: false, succeeds: true)
+    }
+
+    func testFallbackKeyRestoreCompletesWithoutReopening() {
+        assertFallbackRestore(recovery: true, succeeds: true)
+    }
+
+    private func assertFallbackRestore(recovery: Bool, succeeds: Bool) {
+        executionTimeAllowance = 120
+        launch(succeeds ? "accountFallbackSuccess" : "accountFallbackFailure", interfaceScale: 0)
+        let settings = app.buttons["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        scope.tap()
+        app.staticTexts["Account"].firstMatch.tap()
+        let entry = app.buttons[recovery ? "Sign in with recovery key…" : "Sign in with email…"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15), app.debugDescription)
+        entry.tap()
+        let probe = app.buttons["ui-test.readingScope.account" + (recovery ? "Key" : "Email") + "Restore"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        probe.tap()
+        XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+        let field = recovery
+            ? app.textFields.matching(NSPredicate(format: "placeholderValue BEGINSWITH 'M1-'")).firstMatch
+            : app.textFields["Email"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText(recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
+        let submit = recovery
+            ? app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@", "Sign in", "account.signIn")).element
+            : app.buttons["Send link"]
+        XCTAssertTrue(submit.isEnabled)
+        submit.tap()
+        if succeeds {
+            XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 20))
+            XCTAssertTrue(app.buttons["Switch account…"].waitForExistence(timeout: 10), app.debugDescription)
+            XCTAssertFalse(app.buttons["Cancel"].firstMatch.exists)
+        } else {
+            let error = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "fixture_restore_failed")).firstMatch
+            XCTAssertTrue(error.waitForExistence(timeout: 20), app.debugDescription)
+            XCTAssertTrue(field.exists, "The original sheet keeps its input and error")
+            XCTAssertEqual(field.value as? String, recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "fixture@example.invalid")
+            if !recovery { XCTAssertTrue(app.buttons["Try again"].exists) }
+            captureAppScreen("Fallback restore failure retains sheet and input")
+            app.buttons["Cancel"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["Cancel"].firstMatch.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(entry.waitForExistence(timeout: 5))
+        }
+        captureAppScreen("Fallback restore completed")
+    }
+
     func testSettingsEmailRestoreInheritsInterfaceSize() {
         assertSettingsAccountPresentation(move: false, recovery: false, largeText: false)
     }
