@@ -1753,70 +1753,80 @@ private struct EventPrepSheet_iOS: View {
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
-                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
-                    Text(event.title)
-                        .font(.headline)
-                        .foregroundStyle(ColorPalette.Text.primary)
-                    Text(eventTime)
+            ScrollView {
+                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.section) {
+                    VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.compact) {
+                        Text(event.title)
+                            .font(.headline)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(ColorPalette.Text.primary)
+                            .accessibilityIdentifier("prep.title")
+                        Text(eventTime)
+                            .font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .foregroundStyle(ColorPalette.Text.muted)
+                            .accessibilityIdentifier("prep.time")
+                    }
+
+                    Text("Add anything you want surfaced when this meeting starts.")
                         .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
                         .foregroundStyle(ColorPalette.Text.muted)
-                }
-
-                Text("Add anything you want surfaced when this meeting starts.")
-                    .font(.caption)
-                    .foregroundStyle(ColorPalette.Text.muted)
+                        .accessibilityIdentifier("prep.guidance")
 
 
-                TextEditor(text: Binding(
-                    get: { appState.prepNotes(for: event) },
-                    set: { appState.updatePrepNotes($0, for: event) }
-                ))
-                    .font(.system(size: 14, weight: .regular, design: .default))
-                    .foregroundStyle(ColorPalette.Text.primary)
-                    .scrollContentBackground(.hidden)
-                    .padding(MinitiDesignSystem.Spacing.standard)
-                    .frame(minHeight: 180)
-                    .background(ColorPalette.Background.primary)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
-                            .stroke(ColorPalette.Border.primary, lineWidth: 1)
-                    )
-                    .accessibilityLabel("Prep notes for \(event.title)")
+                    TextEditor(text: Binding(
+                        get: { appState.prepNotes(for: event) },
+                        set: { appState.updatePrepNotes($0, for: event) }
+                    ))
+                        .font(.system(size: 14, weight: .regular, design: .default))
+                        .foregroundStyle(ColorPalette.Text.primary)
+                        .scrollContentBackground(.hidden)
+                        .padding(MinitiDesignSystem.Spacing.standard)
+                        .frame(minHeight: 180)
+                        .background(ColorPalette.Background.primary)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: MinitiDesignSystem.Radius.card)
+                                .stroke(ColorPalette.Border.primary, lineWidth: 1)
+                        )
+                        .accessibilityLabel("Prep notes for \(event.title)")
+                        .accessibilityIdentifier("prep.notes")
 
-                if event.joinURL != nil {
+                    if event.joinURL != nil {
+                        Button {
+                            dismiss()
+                            appState.joinAndStartMeeting(from: event)
+                        } label: {
+                            MinitiControlLabel(role: .positive, isEmphasized: true, height: 44) {
+                                Label("join and take notes", systemImage: "arrow.up.right.square")
+                                    .font(.system(size: 13, weight: .semibold, design: .default))
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("prep.join")
+                    }
+
                     Button {
                         dismiss()
-                        appState.joinAndStartMeeting(from: event)
+                        appState.startMeetingFromEvent(event)
                     } label: {
-                        MinitiControlLabel(role: .positive, isEmphasized: true, height: 44) {
-                            Label("join and take notes", systemImage: "arrow.up.right.square")
+                        MinitiControlLabel(
+                            role: event.joinURL != nil ? .secondary : .positive,
+                            isEmphasized: event.joinURL == nil,
+                            height: 44
+                        ) {
+                            Label("start meeting", systemImage: "record.circle")
                                 .font(.system(size: 13, weight: .semibold, design: .default))
                                 .frame(maxWidth: .infinity)
                         }
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("prep.start")
                 }
-
-                Button {
-                    dismiss()
-                    appState.startMeetingFromEvent(event)
-                } label: {
-                    MinitiControlLabel(
-                        role: event.joinURL != nil ? .secondary : .positive,
-                        isEmphasized: event.joinURL == nil,
-                        height: 44
-                    ) {
-                        Label("start meeting", systemImage: "record.circle")
-                            .font(.system(size: 13, weight: .semibold, design: .default))
-                            .frame(maxWidth: .infinity)
-                    }
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 0)
+                .padding(MinitiDesignSystem.Spacing.section)
             }
-            .padding(MinitiDesignSystem.Spacing.section)
+            .accessibilityIdentifier("prep.content")
             .background(ColorPalette.Background.primary)
             .navigationTitle("prep notes")
             .navigationBarTitleDisplayMode(.inline)

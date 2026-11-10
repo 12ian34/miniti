@@ -860,6 +860,7 @@ final class AccountJourneys: XCTestCase {
         scope.tap()
         XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
         captureAppScreen("\(name) \(largeText ? "largest" : "normal") scale \(scale)")
+        if preparing { assertEventPreparationLayout(largeText: largeText, scale: scale) }
         let close = app.buttons[name == "liveCatchUp" ? "close" : "Done"]
         XCTAssertTrue(close.waitForExistence(timeout: 5))
         XCTAssertTrue(close.isHittable)
@@ -868,6 +869,56 @@ final class AccountJourneys: XCTestCase {
         if preparing { XCTAssertTrue(event.waitForExistence(timeout: 5)) }
         else { XCTAssertTrue(app.buttons["meeting.section.transcript"].waitForExistence(timeout: 5)) }
         app.terminate()
+    }
+
+    private func assertEventPreparationLayout(largeText: Bool, scale: Int) {
+        let title = app.staticTexts["prep.title"]
+        let bar = app.navigationBars["prep notes"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        let initial = XCTAttachment(string: "Toolbar: \(bar.frame)\nTitle: \(title.frame)")
+        initial.name = "Preparation initial bounds"
+        initial.lifetime = .keepAlways
+        add(initial)
+        XCTAssertGreaterThanOrEqual(title.frame.minY, bar.frame.maxY - 0.5, "Preparation title must start below its toolbar")
+        guard title.frame.minY >= bar.frame.maxY - 0.5 else { return }
+        let scroll = app.scrollViews["prep.content"]
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5))
+        let targets = [title, app.staticTexts["prep.time"], app.staticTexts["prep.guidance"],
+                       app.textViews["prep.notes"], app.buttons["prep.join"], app.buttons["prep.start"]]
+        var evidence = ""
+        for target in targets {
+            XCTAssertTrue(target.waitForExistence(timeout: 5))
+            for _ in 0..<16 {
+                let visible = scroll.frame.intersection(app.frame).intersection(CGRect(x: 0, y: bar.frame.maxY, width: app.frame.width, height: app.frame.maxY - bar.frame.maxY))
+                let frame = target.frame
+                if target.isHittable && frame.minY >= visible.minY - 0.5 && frame.maxY <= visible.maxY + 0.5 { break }
+                let movingDown = frame.minY < visible.minY
+                // Standard native swipes expand the medium detent before scrolling its content.
+                if movingDown { scroll.swipeDown(velocity: .slow) }
+                else { scroll.swipeUp(velocity: .slow) }
+            }
+            let visible = scroll.frame.intersection(app.frame).intersection(CGRect(x: 0, y: bar.frame.maxY, width: app.frame.width, height: app.frame.maxY - bar.frame.maxY))
+            XCTAssertTrue(target.isHittable)
+            XCTAssertGreaterThanOrEqual(target.frame.minY, visible.minY - 0.5)
+            XCTAssertLessThanOrEqual(target.frame.maxY, visible.maxY + 0.5)
+            XCTAssertGreaterThanOrEqual(target.frame.minX, visible.minX - 0.5)
+            XCTAssertLessThanOrEqual(target.frame.maxX, visible.maxX + 0.5)
+            if target.identifier == "prep.guidance" {
+                captureAppScreen("Preparation guidance \(largeText ? "largest" : "normal") scale \(scale)")
+            }
+            evidence += "\(target.identifier): \(target.frame); viewport: \(visible)\n"
+        }
+        let join = app.buttons["prep.join"]
+        let start = app.buttons["prep.start"]
+        XCTAssertGreaterThanOrEqual(join.frame.height, 44 - 0.001)
+        XCTAssertGreaterThanOrEqual(start.frame.height, 44 - 0.001)
+        XCTAssertLessThanOrEqual(join.frame.maxY, start.frame.minY)
+        let frames = XCTAttachment(string: evidence)
+        frames.name = "Preparation reachable content"
+        frames.lifetime = .keepAlways
+        add(frames)
+        captureAppScreen("Preparation end \(largeText ? "largest" : "normal") scale \(scale)")
     }
 
     func testHistorySpeakerRenameInheritsInterfaceSize() {

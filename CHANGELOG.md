@@ -5,6 +5,7 @@
 - improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
 - improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
 - improvement: (iOS) Settings, History filters and meeting preparation follow your interface text size
+- improvement: (iOS) meeting preparation scrolls to keep notes and actions within reach
 - improvement: (iOS) Debug Log controls fit smaller screens and larger text
 - improvement: (iOS) History folder controls stay readable with larger text
 - improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
