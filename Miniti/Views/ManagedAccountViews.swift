@@ -1762,11 +1762,16 @@ struct ManagedAccountSettingsSection: View {
             Button { isEditingEmail = true; emailFieldFocused = true } label: { accountActionLabel("Change") }
                 .disabled(disabled)
         case .resendEmail:
-            Button("Resend") { resendEmail() }.disabled(disabled)
+            Button { resendEmail() } label: { accountActionLabel("Resend") }
+                .disabled(disabled)
+                .accessibilityIdentifier("account.email.resend")
         case .removeEmail:
-            Button("Remove") { isConfirmingRemoveEmail = true }.disabled(disabled)
+            Button { isConfirmingRemoveEmail = true } label: { accountActionLabel("Remove") }
+                .disabled(disabled)
+                .accessibilityIdentifier("account.email.remove")
         case .retryEmail:
-            Button("Retry") { Task { await appState.refreshAccountEmail(reason: "retry", force: true) } }
+            Button { Task { await appState.refreshAccountEmail(reason: "retry", force: true) } } label: { accountActionLabel("Retry") }
+                .accessibilityIdentifier("account.email.retry")
         case .showKey:
             Button { isConfirmingReveal = true } label: { accountActionLabel("Show recovery key") }
                 .disabled(isBusy)

@@ -165,3 +165,5 @@ Settings Account presents email/recovery restore and move sheets from its persis
 The iOS Recovery key summary uses a horizontal fit attempt and vertical fallback. Status, Show/Replace and the revealed-state Hide action keep their existing state and confirmation ownership. The row can grow vertically, with shared minimum targets inside each native action label. Mac remains horizontal. Tests opening and cancelling confirmations do not reveal or replace a recovery key.
 
 Account inline email editing (AL2) places the address above its actions on iPhone and stacks email action groups at accessibility categories. Empty drafts keep Send link disabled, and Cancel clears the draft and closes editing as before. The ordinary isolated fixture exercises Add, synthetic typing and Cancel only. No email is sent and no verified/pending account state is changed; sign-in sheets retain separate reading/layout gates.
+
+Pending/replacement and unavailable email summaries share the same minimum-target labels for Resend, Remove and Retry. Their validation, native confirmation and refresh closures are unchanged; target geometry does not certify request outcomes.

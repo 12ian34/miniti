@@ -146,3 +146,5 @@ UI3 SP7 corrects Settings Account presentation ownership and category forwarding
 AL1 recovery-row slice adapts the iOS Recovery key title/status/action layout and target allocation without changing confirmation or key handling. The release record owns six-case iPhone geometry/cancellation evidence; other Account rows, fixed sign-in text, actual key operations and broader platform acceptance remain open.
 
 AL2 follows the AL1 recovery row with the iPhone Account email summary and inline editor. Preserve Mac geometry and email semantics; validate full-row draft entry, action separation, synthetic typing and cancellation at injected normal/largest sizes across all three interface scales. Pending/verified/error email states, real link delivery, sign-in prose, iPad/short layouts and wider accessibility acceptance remain separate gates.
+
+AL2 review corrections extend the shared targets to pending/error summary actions and verify final Cancel viewport bounds. Keep request dispatch, verified-only/pending-only variants and broader Account presentation acceptance separate from the normal/Compact and largest/Large target checks.

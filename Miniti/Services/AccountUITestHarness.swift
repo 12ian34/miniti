@@ -212,6 +212,10 @@ enum AccountUITestHarness {
                 body = ["connected": true, "email": "calendar@example.invalid"]
             case "/api/google/events" where ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "calendar":
                 body = ["events": [AccountUITestHarness.tomorrowCalendarEvent()]]
+            case "/api/account/email" where scenario == "accountEmailPending" && request.httpMethod == "GET":
+                body = ["email": "verified@example.invalid", "pending": "replacement@example.invalid"]
+            case "/api/account/email" where scenario == "accountEmailError" && request.httpMethod == "GET":
+                status = 503; body = ["error": "fixture_email_unavailable"]
             case "/api/account/email":
                 let identifier = ProcessInfo.processInfo.environment["MINITI_UI_TEST_ID"] ?? "cleanup"
                 let defaults = UserDefaults(suiteName: "miniti.ui.\(identifier)")!

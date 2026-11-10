@@ -802,6 +802,56 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testPendingAccountEmailActionsKeepMinimumTargets() {
+        for largest in [false, true] { assertAccountEmailStateTargets(pending: true, largest: largest) }
+    }
+
+    func testUnavailableAccountEmailRetryKeepsMinimumTarget() {
+        for largest in [false, true] { assertAccountEmailStateTargets(pending: false, largest: largest) }
+    }
+
+    private func assertAccountEmailStateTargets(pending: Bool, largest: Bool) {
+        executionTimeAllowance = 180
+        if app != nil { resetAccountMatrixFixture() }
+        launch(pending ? "accountEmailPending" : "accountEmailError", largeText: largest, interfaceScale: largest ? 2 : 0)
+        let guest = app.buttons["account.continueAnonymous"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            if guest.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        guest.tap()
+        XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.staticTexts["Account"].firstMatch.tap()
+        let form = app.collectionViews.firstMatch
+        let identifiers = pending ? ["account.email.resend", "Change", "account.email.remove"] : ["account.email.retry"]
+        for identifier in identifiers {
+            let action = app.buttons[identifier]
+            for _ in 0..<16 {
+                if action.exists && action.isHittable { break }
+                form.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(action.isHittable)
+            XCTAssertGreaterThanOrEqual(action.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(action.frame.height, 44 - 0.001)
+        }
+        // Read all frames again at the final scroll position, never compare
+        // coordinates captured before and after a scroll.
+        let frames = identifiers.map { app.buttons[$0].frame }
+        for (left, right) in zip(frames, frames.dropFirst()) {
+            XCTAssertFalse(left.intersects(right))
+        }
+        let attachment = XCTAttachment(string: zip(identifiers, frames).map { "\($0): \($1)" }.joined(separator: "\n"))
+        attachment.name = "Email state targets \(pending ? "pending" : "error") \(largest ? "largest" : "normal")"
+        attachment.lifetime = .keepAlways; add(attachment)
+        captureAppScreen("Email state \(pending ? "pending" : "error") \(largest ? "largest" : "normal")")
+        // No Resend, Remove or Retry action is invoked by this geometry check.
+    }
+
     func testAccountEmailEditorAtNormalTextAcrossScales() {
         for scale in 0...2 { assertAccountEmailEditor(scale: scale, largest: false) }
     }
@@ -870,6 +920,9 @@ final class AccountJourneys: XCTestCase {
         frames.name = "Account email editor frames \(largest ? "largest" : "normal") scale \(scale)"
         frames.lifetime = .keepAlways; add(frames)
         XCTAssertTrue(cancel.isHittable)
+        let finalKeyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY : form.frame.maxY
+        XCTAssertGreaterThanOrEqual(cancel.frame.minY, app.navigationBars["Account"].frame.maxY)
+        XCTAssertLessThanOrEqual(cancel.frame.maxY, min(form.frame.maxY, finalKeyboardTop))
         for button in [send, cancel] {
             XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
             XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
