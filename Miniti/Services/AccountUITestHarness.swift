@@ -389,7 +389,7 @@ struct AccountUITestReady: ViewModifier {
                     }
                     #endif
                     #if MINITI_TEST_HOST && os(macOS)
-                    if ["docsTargets", "controlTargets", "insightUpdateTargets"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "") {
+                    if ["docsTargets", "controlTargets", "insightUpdateTargets", "homeKeyboard"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "") {
                         Text(NSApp.isFullKeyboardAccessEnabled ? "Keyboard navigation on" : "Keyboard navigation off")
                             .font(.caption2).foregroundStyle(ColorPalette.Text.muted)
                             .accessibilityIdentifier("ui-test.keyboardNavigation")

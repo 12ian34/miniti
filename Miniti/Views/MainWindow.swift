@@ -317,6 +317,16 @@ struct MainWindow: View {
                 if !isCompact { isCompactSidebarPresented = false }
             }
         }
+        .overlay(alignment: .topTrailing) {
+            #if MINITI_TEST_HOST
+            if AccountUITestHarness.isActive,
+               ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "homeKeyboard" {
+                Text(isSearchActive ? "Search active" : "Search inactive")
+                    .accessibilityIdentifier("ui-test.homeSearchState")
+                    .allowsHitTesting(false)
+            }
+            #endif
+        }
         .frame(minWidth: 760, minHeight: 520)
         .background(Theme.bg)
         .alert("OpenAI model access", isPresented: $appState.showBYOKModelAccessError) {

@@ -811,6 +811,43 @@ final class AccountJourneys: XCTestCase {
                           "Enable Keyboard Navigation for this acceptance run, then restore its original state.")
     }
 
+    func testMacHomeSearchShortcutAndDelayedReactivation() throws {
+        launch("homeKeyboard", screenshotScene: "home")
+        app.activate()
+        let mode = app.staticTexts["ui-test.keyboardNavigation"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 5))
+        let navigation = try XCTUnwrap(mode.value as? String)
+        XCTAssertTrue(["Keyboard navigation on", "Keyboard navigation off"].contains(navigation))
+        let state = app.staticTexts["ui-test.homeSearchState"]
+        XCTAssertTrue(state.waitForExistence(timeout: 5))
+        func assertSearch(_ expected: String) {
+            let match = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", expected), object: state)
+            XCTAssertEqual(XCTWaiter.wait(for: [match], timeout: 5), .completed)
+        }
+        assertSearch("Search inactive")
+        // Exercise reactivation after the sidebar's initial 1.5s focus guard.
+        // This does not model a process whose first activation is delayed.
+        XCUIApplication(bundleIdentifier: "com.apple.systempreferences").activate()
+        XCTAssertTrue(app.wait(for: .runningBackground, timeout: 5))
+        let elapsed = expectation(description: "Beyond initial sidebar focus guard")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { elapsed.fulfill() }
+        wait(for: [elapsed], timeout: 3)
+        app.activate()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        assertSearch("Search inactive")
+        captureAppScreen("Home after delayed reactivation, \(navigation)")
+        app.typeKey("/", modifierFlags: [])
+        assertSearch("Search active")
+        let search = app.textFields["search meetings"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        app.typeText("Halcyon")
+        XCTAssertEqual(search.value as? String, "Halcyon")
+        app.typeKey(.escape, modifierFlags: [])
+        assertSearch("Search inactive")
+        XCTAssertEqual(search.value as? String, "")
+        captureAppScreen("Home after keyboard search and Escape, \(navigation)")
+    }
+
     func testMacSharedUpdateSupportsKeyboardAndKeepsDisabledInactive() throws {
         launch("insightUpdateTargets")
         try requireMacKeyboardNavigation()
@@ -876,6 +913,8 @@ final class AccountJourneys: XCTestCase {
             let beforeCopy = pasteboard.changeCount
             app.typeKey(.space, modifierFlags: [])
             if app.buttons["Answer copied"].exists {
+                XCTAssertEqual(pasteboard.changeCount, beforeCopy + 1,
+                               "Copied feedback must accompany exactly one clipboard change")
                 // Do not clear a concurrent copy observed after this action.
                 if pasteboard.changeCount == beforeCopy + 1 {
                     copiedChangeCount = beforeCopy + 1
