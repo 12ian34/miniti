@@ -1290,7 +1290,9 @@ struct HomeSetupGuide: View {
                         .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 case .onThisMac:
-                    Text("Audio stays on your Mac. The first recording downloads about 600 MB.")
+                    Text(appState.onDeviceTranscriptionCloudFallback
+                         ? "Processed on your Mac once the model is ready. The first recording downloads about 600 MB."
+                         : "Audio stays on your Mac. The first recording downloads about 600 MB.")
                         .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     // Kept as the person set it; setup never turns the online backup on by itself.

@@ -467,6 +467,7 @@ struct MainWindow: View {
             if newValue != historyOriginMeetingID {
                 historyOriginMeetingID = nil
             }
+            if newValue != nil { isHistoryPageSearchFocused = false }
             recordNavigationDestinationChange()
         }
         .onChange(of: showTraining) { _, isShowing in
@@ -476,7 +477,7 @@ struct MainWindow: View {
             recordNavigationDestinationChange()
         }
         .onChange(of: showHistory) { _, isShowing in
-            if isShowing { showTraining = false }
+            if isShowing { showTraining = false } else { isHistoryPageSearchFocused = false }
             dismissMeetingSearchFocus()
             isCompactSidebarPresented = false
             recordNavigationDestinationChange()
@@ -698,9 +699,9 @@ struct MainWindow: View {
         // On the History page, or in a meeting opened from it, J/K follow the page's
         // own filtered order instead of the sidebar list.
         let followsHistoryPage = (showHistory && selectedMeetingID == nil) || historyOriginMeetingID != nil
-        let ids = followsHistoryPage ? historyPageOrder : displayedMeetings.map(\.id)
-        guard let next = MainWindowListNavigation.step(in: ids, from: selectedMeetingID, direction: direction),
-              meetings.contains(where: { $0.id == next }) else { return }
+        let live = Set(meetings.map(\.id))
+        let ids = (followsHistoryPage ? historyPageOrder : displayedMeetings.map(\.id)).filter { live.contains($0) }
+        guard let next = MainWindowListNavigation.step(in: ids, from: selectedMeetingID, direction: direction) else { return }
         if followsHistoryPage { historyOriginMeetingID = next }
         selectedMeetingID = next
     }
@@ -4557,8 +4558,14 @@ struct HistoryPageView: View {
     private var searching: Bool { !debouncedQuery.isEmpty }
 
     private var visibleMeetings: [Meeting] {
-        let base = searching ? results.map(\.meeting) : meetings
+        // Identity check only: a deleted result must not be read before results refresh.
+        let base = searching ? liveResults.map(\.meeting) : meetings
         return base.filter { appState.folderIncludes($0) }
+    }
+
+    private var liveResults: [MeetingSearchResult] {
+        let live = Set(meetings.map { ObjectIdentifier($0) })
+        return results.filter { live.contains(ObjectIdentifier($0.meeting)) }
     }
 
     private var unfiledCount: Int {
@@ -4639,7 +4646,11 @@ struct HistoryPageView: View {
         .onChange(of: searchFocused) { _, focused in onSearchFocusChange(focused) }
         .onChange(of: orderedVisibleIDs) { _, ids in onVisibleMeetingsChange(ids) }
         .onAppear { onVisibleMeetingsChange(orderedVisibleIDs) }
-        .onDisappear { if searchFocused { onSearchFocusChange(false) } }
+        .onDisappear { onSearchFocusChange(false) }
+        // Lower the "not now" baseline when meetings get filed, so the prompt can return.
+        .onChange(of: unfiledCount) { _, count in
+            if count < organisePromptDismissedAt { organisePromptDismissedAt = count }
+        }
         .sheet(isPresented: $managingFolders) {
             MeetingFolderManager(meetings: meetings)
                 .environmentObject(appState)
@@ -4781,9 +4792,10 @@ struct HistoryPageView: View {
             }
             .padding(.top, 12)
         } else {
-            let snippets = Dictionary(results.compactMap { r in r.snippet.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
-            let counts = Dictionary(results.map { ($0.meeting.id, $0.matchCount) }, uniquingKeysWith: { a, _ in a })
-            let contexts = Dictionary(results.compactMap { r in r.context.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let current = liveResults
+            let snippets = Dictionary(current.compactMap { r in r.snippet.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let counts = Dictionary(current.map { ($0.meeting.id, $0.matchCount) }, uniquingKeysWith: { a, _ in a })
+            let contexts = Dictionary(current.compactMap { r in r.context.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
             LazyVStack(alignment: .leading, spacing: 4) {
                 ForEach(sections, id: \.title) { section in
                     Text(section.title)
@@ -4803,7 +4815,10 @@ struct HistoryPageView: View {
                             matchContext: contexts[meeting.id],
                             action: { onOpen(meeting.id) },
                             onTogglePin: { onTogglePin(meeting) },
-                            onDelete: { onDelete(meeting) }
+                            onDelete: {
+                                results.removeAll { $0.meeting.id == meeting.id }
+                                onDelete(meeting)
+                            }
                         )
                     }
                 }

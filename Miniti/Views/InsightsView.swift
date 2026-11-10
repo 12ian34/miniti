@@ -2881,9 +2881,16 @@ struct TrainingRow: Identifiable, Sendable {
 
 // MARK: - Personalized Coaching Guidance
 
+private struct CoachingTrendWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
 private struct CoachingGuidanceView: View {
     let rows: [TrainingRow]
     let onSelectMeeting: ((UUID) -> Void)?
+    /// Measured width for the trend area; two columns only once both cards keep 460pt.
+    @State private var trendAreaWidth: CGFloat = 0
 
     private var report: CoachingReport? {
         CoachingAdvisor.analyze(rows.map(\.coachingSnapshot))
@@ -2909,21 +2916,29 @@ private struct CoachingGuidanceView: View {
                     #if os(macOS)
                     // Wide windows use exactly two columns so Coaching does not leave half
                     // the window empty (Charlie's 3.8.0 feedback). Otherwise one column at
-                    // the 720pt reading width.
-                    ViewThatFits(in: .horizontal) {
-                        LazyVGrid(
-                            columns: Array(repeating: GridItem(.flexible(), spacing: MinitiDesignSystem.Spacing.page, alignment: .top), count: 2),
-                            alignment: .leading,
-                            spacing: MinitiDesignSystem.Spacing.page
-                        ) {
-                            trendCards(report)
+                    // the 720pt reading width. The choice follows the measured width.
+                    Group {
+                        if trendAreaWidth >= 2 * MinitiDesignSystem.CoachingLayout.trendCardMinimumWidth + MinitiDesignSystem.Spacing.page {
+                            LazyVGrid(
+                                columns: Array(repeating: GridItem(.flexible(), spacing: MinitiDesignSystem.Spacing.page, alignment: .top), count: 2),
+                                alignment: .leading,
+                                spacing: MinitiDesignSystem.Spacing.page
+                            ) {
+                                trendCards(report)
+                            }
+                        } else {
+                            LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
+                                trendCards(report)
+                            }
+                            .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
                         }
-                        .frame(minWidth: 2 * MinitiDesignSystem.CoachingLayout.trendCardMinimumWidth + MinitiDesignSystem.Spacing.page)
-
-                        LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
-                            trendCards(report)
-                        }
-                        .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: CoachingTrendWidthKey.self, value: proxy.size.width)
+                    })
+                    .onPreferenceChange(CoachingTrendWidthKey.self) { width in
+                        if abs(width - trendAreaWidth) >= 1 { trendAreaWidth = width }
                     }
                     #else
                     LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
