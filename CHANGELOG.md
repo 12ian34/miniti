@@ -18,6 +18,8 @@
 - improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
 - improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
+- improvement: (macOS and iOS) action items are now called actions in every meeting view
+- improvement: (iOS) saved actions show as a selectable list without tick boxes, which were never saved
 - improvement: (iOS) hold compact tabs to see larger labels at accessibility text sizes
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (iOS) larger tap areas for the Deepgram and OpenAI choice
@@ -31,7 +33,7 @@
 - improvement: (macOS) clearer recording and ending text in the menu bar
 - improvement: (macOS and iOS) blank device names use a fallback, and new Macs keep their automatic name up to date
 - fix: (macOS and iOS) billing updates with differently formatted dates no longer reset used minutes
-- fix: (macOS) open meeting in the floating panel and Open miniti in the menu bar bring the main window forward when miniti is behind other apps, minimised or another app is full screen
+- fix: (macOS) open meeting in the floating panel and the open command in the menu bar bring the main window forward when miniti is behind other apps, minimised or another app is full screen
 - fix: (macOS and iOS) long meeting titles no longer squeeze Coaching example quotes into a narrow column
 - fix: (macOS and iOS) switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider
 - fix: (macOS) selected transcript text stays selected when you change the interface text size
