@@ -1433,6 +1433,70 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
     }
 
+    func testPrivacyConsentInheritsResolvedInterfaceSize() {
+        openPrivacyConsent(largeText: false, scale: 2)
+        let scope = app.buttons["ui-test.readingScope.consent.sheet"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        captureAppScreen("Privacy consent normal Large category probe")
+        XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
+        scope.tap()
+        app.buttons["consent.decline"].tap()
+        XCTAssertTrue(app.navigationBars["Privacy"].waitForExistence(timeout: 5))
+    }
+
+    func testPrivacyConsentAtNormalTextAcrossInterfaceScales() {
+        assertPrivacyConsentAcrossInterfaceScales(largeText: false)
+    }
+
+    func testPrivacyConsentAtLargestTextAcrossInterfaceScales() {
+        assertPrivacyConsentAcrossInterfaceScales(largeText: true)
+    }
+
+    private func assertPrivacyConsentAcrossInterfaceScales(largeText: Bool) {
+        for scale in 0...2 {
+            app?.terminate()
+            openPrivacyConsent(largeText: largeText, scale: scale)
+            executionTimeAllowance = 360
+            let category = largeText ? "largest" : "normal"
+            let scope = app.buttons["ui-test.readingScope.consent.sheet"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+            XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+            scope.tap()
+            XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            assertConsentSheetActions("Privacy consent \(category) text, scale \(scale)", requiresScroll: largeText, returnButton: "Allow…")
+            XCTAssertTrue(app.navigationBars["Privacy"].exists)
+            XCTAssertTrue(app.buttons["Allow…"].isHittable)
+            XCTAssertFalse(app.buttons["Withdraw permission"].exists)
+        }
+    }
+
+    private func openPrivacyConsent(largeText: Bool, scale: Int) {
+        executionTimeAllowance = 360
+        launch("privacyConsent", largeText: largeText, interfaceScale: scale)
+        app.buttons["Settings"].tap()
+        let settingsScope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
+        settingsScope.tap()
+        XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
+        let privacy = app.staticTexts["settings.title.privacy"]
+        let search = app.searchFields["Search settings"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        // Native search chrome extends above its text-field frame. Hittable alone
+        // can still place the row's tap under that chrome at normal text size.
+        for _ in 0..<12 where !privacy.isHittable || privacy.frame.maxY >= search.frame.minY - 24 {
+            app.collectionViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(privacy.isHittable, app.debugDescription)
+        XCTAssertLessThan(privacy.frame.maxY, search.frame.minY - 24)
+        captureAppScreen("Privacy destination clear of search, scale \(scale), largest \(largeText)")
+        privacy.tap()
+        XCTAssertTrue(app.navigationBars["Privacy"].waitForExistence(timeout: 5))
+        let showConsent = app.buttons["Allow…"]
+        for _ in 0..<12 where !showConsent.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(showConsent.isHittable, app.debugDescription)
+        showConsent.tap()
+    }
+
     func testConsentDisclosureGrowsAtLargestText() {
         launch("consentSheet", interfaceScale: 0)
         let normal = app.staticTexts["consent.heading"]
@@ -1457,6 +1521,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(first.waitForExistence(timeout: 5))
         first.tap()
         app.buttons["ui-test.hideStatus"].tap()
+        XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
         let decline = app.buttons["consent.decline"]
         XCTAssertTrue(decline.isHittable)
         XCTAssertTrue(decline.label.hasPrefix("not now:"))
@@ -1501,7 +1566,7 @@ final class AccountJourneys: XCTestCase {
             app.buttons["ui-test.hideStatus"].tap()
             XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
             XCTAssertTrue(app.buttons["consent.decline"].label.hasPrefix("not now:"))
-            assertConsentSheetActions("First consent \(category) text, scale \(scale)")
+            assertConsentSheetActions("First consent \(category) text, scale \(scale)", requiresScroll: largeText)
         }
     }
 
@@ -1524,11 +1589,11 @@ final class AccountJourneys: XCTestCase {
             XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
             scope.tap()
             XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
-            assertConsentSheetActions("Consent \(category) text, scale \(scale)")
+            assertConsentSheetActions("Consent \(category) text, scale \(scale)", requiresScroll: largeText)
         }
     }
 
-    private func assertConsentSheetActions(_ name: String = "Consent sheet action bounds") {
+    private func assertConsentSheetActions(_ name: String = "Consent sheet action bounds", requiresScroll: Bool = false, returnButton: String = "Settings") {
         let allow = app.buttons["consent.allow"]
         let cancel = app.buttons["consent.decline"]
         XCTAssertTrue(allow.waitForExistence(timeout: 5))
@@ -1544,7 +1609,14 @@ final class AccountJourneys: XCTestCase {
         XCTAssertFalse(allow.frame.intersects(cancel.frame))
         let initialAllowY = allow.frame.minY
         let links = app.descendants(matching: .any)["consent.links"].firstMatch
-        for _ in 0..<16 where !links.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        var scrollCount = 0
+        for _ in 0..<16 where !links.isHittable {
+            app.scrollViews.firstMatch.swipeUp()
+            scrollCount += 1
+        }
+        let scrolls = XCTAttachment(string: "Disclosure scroll gestures: \(scrollCount)")
+        scrolls.name = name + " scroll count"; scrolls.lifetime = .keepAlways; add(scrolls)
+        if requiresScroll { XCTAssertGreaterThan(scrollCount, 0, "Largest-text acceptance must exercise actual scrolling") }
         XCTAssertTrue(links.isHittable, "The disclosure's final links must remain reachable")
         XCTAssertTrue(allow.isHittable)
         XCTAssertTrue(cancel.isHittable)
@@ -1552,7 +1624,7 @@ final class AccountJourneys: XCTestCase {
         captureAppScreen(name + " disclosure end")
         cancel.tap()
         XCTAssertTrue(cancel.waitForNonExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[returnButton].waitForExistence(timeout: 5))
     }
 
     func testSettingsLabelsAtLargestText() {

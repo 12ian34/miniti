@@ -84,9 +84,9 @@ enum AccountUITestHarness {
         if scenario == "setupUpgrade" { UserDefaults.standard.removeObject(forKey: "declinedTermsVersion") }
         state.hasAcceptedTerms = scenario != "setupUpgrade"
         state.hasCompletedOnboarding = !scenario.hasPrefix("onboarding")
-        if scenario == "consentSheet" {
+        if scenario == "consentSheet" || scenario == "privacyConsent" {
             state.setThirdPartyAIConsent(false)
-            state.showThirdPartyAIConsent = true
+            state.showThirdPartyAIConsent = scenario == "consentSheet"
         }
         state.clientAuthManager = manager
         state.minitiAPIService = MinitiAPIService(session: session, auth: manager)

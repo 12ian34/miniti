@@ -553,7 +553,7 @@ struct ThirdPartyAIConsentRow: View {
             Button("Allow…") {
                 showingConsent = true
             }
-            .sheet(isPresented: $showingConsent) {
+            .minitiSheet(isPresented: $showingConsent) {
                 TermsAcceptanceView(presentation: .sheet)
                     #if os(macOS)
                     .frame(width: 560, height: 520)
