@@ -2,54 +2,29 @@
 
 ### 2026-11-10 - v3.9.0
 
-- new: (macOS) history opens as its own page, with search, folder counts and meetings grouped by date
-- new: (macOS) drag the sidebar edge to make it wider. Double-click to reset
-- improvement: (macOS and iOS) recurring meetings and meetings you move by hand teach miniti where later meetings go
-- improvement: (macOS and iOS) automatic folders recognise more kinds of meetings and can use the summary to file into folders you already have
-- improvement: (macOS) history suggests organising when 3 or more meetings are unfiled
+- new: (macOS) history opens as its own page, with search, folders and meetings grouped by date
+- new: (macOS) drag the sidebar edge to make it wider
+- improvement: (macOS and iOS) folders learn from recurring meetings and the meetings you move by hand
+- improvement: (macOS and iOS) folders recognise more kinds of meetings
 - improvement: (macOS) setup asks one audio question: online or on this Mac
-- improvement: (macOS and iOS) collapsing the setup guide shows the button that reopens it
+- improvement: (macOS and iOS) collapsing the setup guide shows where to reopen it
 - improvement: (macOS) Coaching uses two columns on wide windows
-- improvement: (macOS and iOS) Sales, templates and notes follow the interface text size in live and saved meetings
-- improvement: (iOS) transcript and insight text follow the system text size, including accessibility sizes
-- improvement: (iOS) Settings, History filters and meeting preparation follow your interface text size
-- improvement: (iOS) meeting preparation scrolls to keep notes and actions within reach
-- improvement: (iOS) sign-in buttons and the email field follow your interface text size during setup and in Account
-- improvement: (macOS and iOS) sign-in and recovery key text follows your text size
-- improvement: (iOS) sign-in actions stay above the keyboard
-- improvement: (iOS) Debug Log controls fit smaller screens and larger text
-- improvement: (iOS) History folder controls stay readable with larger text
-- improvement: (iOS) email editing, recovery key and device controls stay readable with larger text and have larger tap areas
-- improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
-- improvement: (macOS and iOS) saved discussion and actions use selectable lists
-- improvement: (iOS) saved decisions use a selectable list too
-- improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists
-- improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
-- improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
-- improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
-- improvement: (macOS and iOS) action items are now called actions in every meeting view
-- improvement: (iOS) saved actions show as a selectable list without tick boxes, which were never saved
-- improvement: (iOS) hold compact tabs to see larger labels at accessibility text sizes
-- improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
-- improvement: (iOS) larger tap areas for the Deepgram and OpenAI choice
-- improvement: (iOS) larger tap areas for Terms and Privacy links in billing, with a clearer plan row at larger text sizes
-- improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
-- improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
-- improvement: (macOS and iOS) clearer speaker labels and rename guidance
-- improvement: (macOS and iOS) clearer guidance and status text in Questions, Playbook and while waiting for insights
-- improvement: (macOS and iOS) clearer plan status text
-- improvement: (macOS) clearer Coaching details, API setup labels and notes hints
-- improvement: (macOS) clearer recording and ending text in the menu bar
-- improvement: (macOS and iOS) blank device names use a fallback, and new Macs keep their automatic name up to date
-- fix: (macOS and iOS) billing updates with differently formatted dates no longer reset used minutes
-- fix: (macOS) open meeting in the floating panel and the open command in the menu bar bring the main window forward when miniti is behind other apps, minimised or another app is full screen
-- fix: (macOS and iOS) long meeting titles no longer squeeze Coaching example quotes into a narrow column
-- fix: (macOS and iOS) switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider
-- fix: (macOS) selected transcript text stays selected when you change the interface text size
-- fix: (macOS and iOS) custom date filters keep both the start and end dates
-- fix: (iOS) Playbook answers collapse and reopen while keeping text selectable
-- fix: (macOS) notes stay editable when their pane is resized smaller
-- fix: (macOS) main, Settings and Debug Log windows stay dark when macOS uses Light appearance
+- improvement: (macOS and iOS) text follows your text size in meetings, setup, sign-in and Settings
+- improvement: (iOS) bigger tap areas for buttons, tabs and links
+- improvement: (macOS and iOS) live and saved meetings match, with the same tabs, sections and buttons
+- improvement: (macOS and iOS) clearer labels and guidance text
+- improvement: (macOS and iOS) action items are now called actions
+- improvement: (iOS) saved actions no longer show tick boxes, which were never saved
+- improvement: (macOS) new Macs keep their device name up to date
+- fix: (macOS and iOS) used minutes no longer reset after some billing updates
+- fix: (macOS) open meeting in the floating panel works when miniti is in the background
+- fix: (macOS and iOS) long meeting titles no longer squeeze Coaching examples
+- fix: (macOS and iOS) switching accounts works when both devices share a subscription
+- fix: (macOS and iOS) custom date filters keep both dates
+- fix: (macOS) selected transcript text stays selected when you change text size
+- fix: (macOS) notes stay editable when you make their pane smaller
+- fix: (macOS) windows stay dark when macOS uses Light appearance
+- fix: (iOS) Playbook answers open and close again
 
 ### 2026-11-09 - v3.8.0
 

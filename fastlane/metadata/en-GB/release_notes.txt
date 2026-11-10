@@ -1,20 +1,16 @@
 IMPROVED
-- Recurring meetings and meetings you move by hand teach miniti where later meetings go.
-- Automatic folders recognise more kinds of meetings and can use the summary to file into folders you already have.
-- Collapsing the setup guide shows the button that reopens it.
-- Transcript, insight, sign-in and recovery key text follow the system text size, including accessibility sizes.
-- Settings, History filters, meeting preparation and permission text follow your interface text size.
-- Sign-in actions stay above the keyboard, and meeting preparation keeps notes and actions within reach.
-- Debug Log, History folders, email editing, recovery key and device controls stay readable with larger text.
-- Live and saved meetings share the same transcript, insights and notes tabs, section names, colours, Copy and Update buttons.
-- Saved discussion, actions and decisions use selectable lists with consistent spacing. Action items are now called actions, and saved actions no longer show tick boxes, which were never saved.
-- Larger tap areas for Coaching tabs, history sorting, Update, Copy, help, the Deepgram and OpenAI choice and billing links.
-- Hold compact tabs to see larger labels at accessibility text sizes.
-- Clearer speaker labels, rename guidance, question context, plan status and guidance while waiting for insights.
+- Folders learn from recurring meetings and the meetings you move by hand.
+- Folders recognise more kinds of meetings.
+- Collapsing the setup guide shows where to reopen it.
+- Text follows your text size in meetings, setup, sign-in and Settings.
+- Bigger tap areas for buttons, tabs and links.
+- Live and saved meetings match, with the same tabs, sections and buttons.
+- Clearer labels and guidance text.
+- Action items are now called actions. Saved actions no longer show tick boxes, which were never saved.
 
 FIXED
-- Billing updates with differently formatted dates no longer reset used minutes.
-- Switching accounts accepts a shared subscription and blocks different subscriptions from the same payment provider.
-- Custom date filters keep both the start and end dates.
-- Playbook answers collapse and reopen while keeping text selectable.
-- Long meeting titles no longer squeeze Coaching example quotes into a narrow column.
+- Used minutes no longer reset after some billing updates.
+- Long meeting titles no longer squeeze Coaching examples.
+- Switching accounts works when both devices share a subscription.
+- Custom date filters keep both dates.
+- Playbook answers open and close again.
