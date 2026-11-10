@@ -1833,17 +1833,27 @@ final class ClientAuthManager: @unchecked Sendable {
     }
 
     private func grantRefresh(_ refreshToken: String) async throws -> TokenResponse {
-        try await postPublic("/auth/token", body: ["grant_type": "refresh", "device_id": deviceIDProvider(), "refresh_token": refreshToken])
+        try await postPublic("/auth/token", body: tokenMetadata(["grant_type": "refresh", "device_id": deviceIDProvider(), "refresh_token": refreshToken]))
     }
 
     private func grantChallenge() async throws -> TokenResponse {
         let key = try installationKey()
         let challenge = try await challenge(purpose: "token")
         let proof = try signing { try key.challengeProof(nonce: challenge.nonce, purpose: "token", deviceID: deviceIDProvider(), now: now()) }
-        return try await postPublic("/auth/token", body: [
+        return try await postPublic("/auth/token", body: tokenMetadata([
             "grant_type": "challenge", "device_id": deviceIDProvider(),
             "challenge_id": challenge.challengeId, "proof": proof,
-        ])
+        ]))
+    }
+
+    /// Optional display metadata rides on existing token exchanges. The server owns
+    /// manual-name precedence; cached tokens never cause an extra naming request.
+    private func tokenMetadata(_ body: [String: Any]) -> [String: Any] {
+        var body = body
+        if let label = deviceLabelProvider()?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = label
+        }
+        return body
     }
 
     /// A challenge grant the server answers with `invalid_proof` means the key it holds for

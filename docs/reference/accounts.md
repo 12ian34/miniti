@@ -62,3 +62,8 @@ Temporary unreadability of a signing key does not permit Sign out to bypass unse
 Confirmed Set up again skips the legacy migration probe and proceeds through the explicitly authorized account-creation/reset path. Recovery copy says unlock your device on iOS and unlock your keychain on macOS.
 
 Anonymous Continue selects managed mode before enrollment, shows progress immediately and advances onboarding as soon as enrollment succeeds. The optional usage refresh runs after navigation. A temporarily unreadable device identity reports why setup cannot continue and never creates an account under a session-only ID.
+
+
+### Automatic device names (3.9.0 local)
+
+New enrollment records mark valid supplied names as automatic. Apple refresh/challenge token exchanges send the existing default device label without extra requests; the server may refresh only automatic or previously unnamed records. Explicit names and unknown-provenance nonempty legacy names remain protected. Old clients may omit the additive field. Blank display names use the installation or dual-case legacy fallback, then the existing platform fallback. No hostname refresh is immediate while a cached token remains usable. The [device package](../releases/3.9.0.md#device-counts-and-automatic-name-provenance) owns validation and deployment status.

@@ -260,6 +260,40 @@ final class ClientAuthTests: XCTestCase {
         return stored
     }
 
+    func testTokenExchangeReportsOnlyNonblankDeviceLabel() async throws {
+        for mode in ["refresh", "challenge", "blank"] {
+            let stored = expiredCredentials()
+            let store = InMemoryClientAuthStore(stored)
+            let manager = ClientAuthManager(store: store, baseURL: "https://api.test/api", session: stubbedSession(),
+                deviceIDProvider: { "550e8400-e29b-41d4-a716-446655440000" },
+                deviceLabelProvider: { mode == "blank" ? "   " : " Synthetic device " })
+            nonisolated(unsafe) var grants: [String] = []
+            StubURLProtocol.handler = { [self] request in
+                let body = requestBody(request)
+                if request.url?.path == "/api/auth/challenge" {
+                    return (200, Data(#"{"challenge_id":"c1","nonce":"n1","expires_in":120}"#.utf8))
+                }
+                XCTAssertEqual(request.url?.path, "/api/auth/token")
+                let grant = body["grant_type"] as? String ?? ""
+                grants.append(grant)
+                if mode == "blank" { XCTAssertNil(body["label"]) }
+                else { XCTAssertEqual(body["label"] as? String, "Synthetic device") }
+                if mode == "challenge" && grant == "refresh" {
+                    return (401, Data(#"{"error":"invalid_refresh_token"}"#.utf8))
+                }
+                return (200, Data(#"{"token_type":"Bearer","access_token":"tok2","expires_in":3600,"refresh_token":"mrt_y","refresh_expires_in":7776000,"account_id":"acct_test","device_id":"550e8400-e29b-41d4-a716-446655440000","device_cap":5}"#.utf8))
+            }
+            defer { StubURLProtocol.handler = nil }
+            let token = try await manager.accessToken()
+            XCTAssertEqual(token, "tok2")
+            XCTAssertEqual(grants, mode == "challenge" ? ["refresh", "challenge"] : ["refresh"])
+            XCTAssertEqual(store.load()?.accountID, stored.accountID)
+            XCTAssertEqual(store.load()?.installationKey, stored.installationKey)
+            _ = try await manager.accessToken()
+            XCTAssertEqual(grants.count, mode == "challenge" ? 2 : 1, "cached tokens do not send extra metadata requests")
+        }
+    }
+
     /// The server holds a different key for this device id (a backup restored onto a device
     /// that kept its UUID). The challenge grant answers `invalid_proof`; the manager re-binds
     /// through the restore route with the stored recovery key and the current key, and keeps

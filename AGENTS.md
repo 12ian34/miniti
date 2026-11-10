@@ -165,3 +165,6 @@ Confirmed 3.8.0 choices: automatic CRM sync once at first completion, manual res
 Audio hardware work is serial/off-main with a 15-second execution-only deadline. Genuine timeout requires quit/reopen; exact incident root cause and physical AirPods recovery remain unverified. Watch results received successfully are cached before cancellation and retain billing ownership. Folder upgrades fetch same-revision remote membership before ordinary upload. Dual-case legacy migration reads both existing UUID spellings without changing Swift IDs or adopting B0. Customer records/logs stay outside the repository.
 
 Owner app QA and App Store disclosure review are complete. Specific physical/browser/Watch/accessibility and signed-upgrade/Sparkle installation evidence remains unitemised. Keep these limits distinct from passing automated checks and previously dated waivers.
+
+
+3.9.0 local device metadata: [count/name package](docs/releases/3.9.0.md#device-counts-and-automatic-name-provenance) deduplicates UUID case twins in admin counts without merging records, and adds provenance-protected automatic names on existing token exchanges. Manual/unknown legacy names stay protected. Review and deployment remain separate gates.
