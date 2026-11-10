@@ -97,3 +97,8 @@ Second-review implementation, 2026-11-05: raw Redis snapshot strings are preserv
 
 
 Seventh-review delivery clarification (2026-11-06): pending managed reports remain owner-bound across credential repair or temporary account changes, within the existing 30-day/200-entry bounds; another account cannot send or erase them merely by flushing. Healthy account moves wait for settlement, but a known failed credential may be repaired or locally signed out before delivery succeeds. An explicit transition retries immediately despite automatic backoff, including previously captured managed minutes after choosing BYOK. This creates no reporting for BYOK recordings. Recording/start/finalization and active Watch processing still exclude account transitions. See the [release disposition](../releases/3.8.0-evidence.md#seventh-review-corrections-2026-11-06).
+
+
+## Planned 3.9.0 attribution change, not deployed
+
+Shipped v2 and legacy finalization charge the device period at finish time; the reset-date comparison is a retryable concurrency guard. B2's [ownership settlement design](../research/ownership-settlement-design-2026-11-10.md) deliberately introduces admission-period attribution under a new policy epoch. It must preserve existing duration, zero, replay and ownership checks while specifying old/new epoch rollover behavior. Test a session admitted before rollover and completed afterward on both contracts, including closed-period reconciliation. No 3.8.0 behavior is reclassified as captured-period accounting, and no production change is made by this note.

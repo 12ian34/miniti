@@ -29,6 +29,7 @@
 - improvement: (macOS and iOS) clearer plan status text
 - improvement: (macOS) clearer Coaching details, API setup labels and notes hints
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (macOS and iOS) switching accounts accepts devices that share the same subscription
 - fix: (macOS) selected transcript text stays selected when you change the interface text size
 - fix: (macOS and iOS) custom date filters keep both the start and end dates
 - fix: (iOS) Playbook answers collapse and reopen while keeping text selectable
