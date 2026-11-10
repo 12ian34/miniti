@@ -582,6 +582,11 @@ struct MinitiTabLabel: View {
                     .stroke(isSelected ? ColorPalette.Border.light : Color.clear, lineWidth: 1)
             )
             .minitiMinimumControlTarget()
+            #if os(iOS)
+            .accessibilityShowsLargeContentViewer {
+                Text(MinitiDesignSystem.NavigationCopy.tabTitle(title))
+            }
+            #endif
     }
 }
 

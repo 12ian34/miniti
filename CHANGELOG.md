@@ -18,8 +18,10 @@
 - improvement: (macOS and iOS) matching section names, colours and heading styles in live and saved insights
 - improvement: (macOS and iOS) matching Copy and Update buttons in live and saved meetings
 - improvement: (iOS) matching transcript, insights and notes tabs in live and saved meetings
+- improvement: (iOS) hold compact tabs to see larger labels at accessibility text sizes
 - improvement: (iOS) larger tap areas for Coaching tabs, history sorting and insight Update controls
 - improvement: (iOS) larger tap areas for the Deepgram and OpenAI choice
+- improvement: (iOS) larger Terms and Privacy links in billing, with a clearer plan row at larger text sizes
 - improvement: (macOS and iOS) clearer accessibility labels and larger click and tap areas for Copy and Coaching help
 - improvement: (macOS and iOS) clearer question context, Copy text and Coaching statistics
 - improvement: (macOS and iOS) clearer speaker labels and rename guidance
@@ -27,7 +29,6 @@
 - improvement: (macOS and iOS) clearer plan status text
 - improvement: (macOS) clearer Coaching details, API setup labels and notes hints
 - improvement: (macOS) clearer recording and ending text in the menu bar
-- fix: (iOS) saving your recovery key from setup shows the key when the sheet opens
 - fix: (macOS and iOS) custom date filters keep both the start and end dates
 - fix: (iOS) Playbook answers collapse and reopen while keeping text selectable
 - fix: (macOS) notes stay editable when their pane is resized smaller

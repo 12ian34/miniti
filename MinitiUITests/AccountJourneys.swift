@@ -33,7 +33,7 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForExistence(timeout: 10))
     }
 
-    private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil, interfaceScale: Int? = nil) {
+    private func launch(_ scenario: String = "first", largeText: Bool = false, screenshotScene: String? = nil, interfaceScale: Int? = nil, usesSystemTextSize: Bool = false) {
         app = XCUIApplication()
         if let screenshotScene {
             app.launchArguments = ["-MinitiScreenshotScene", screenshotScene]
@@ -46,9 +46,9 @@ final class AccountJourneys: XCTestCase {
             app.launchArguments += ["-interfaceScale", String(interfaceScale)]
             app.launchEnvironment["MINITI_UI_TEST_READING_MATRIX"] = "1"
         }
-        if largeText {
+        if largeText && !usesSystemTextSize {
             app.launchEnvironment["MINITI_UI_TEST_LARGE_TEXT"] = "1"
-        } else if interfaceScale != nil {
+        } else if interfaceScale != nil && !usesSystemTextSize {
             app.launchEnvironment["MINITI_UI_TEST_NORMAL_TEXT"] = "1"
         }
         app.launchEnvironment["MINITI_UI_TEST_ID"] = testID
@@ -871,6 +871,134 @@ final class AccountJourneys: XCTestCase {
         close.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 2, dy: 2)).tap()
         XCTAssertTrue(close.waitForNonExistence(timeout: 5))
         XCTAssertTrue(help.exists)
+    }
+
+    func testBillingAndCompactTabsAtNormalTextAcrossScales() {
+        for scale in 0...2 { assertBillingAndCompactTabs(scale: scale, largest: false) }
+    }
+
+    func testBillingAndCompactTabsAtLargestTextAcrossScales() {
+        for scale in 0...2 { assertBillingAndCompactTabs(scale: scale, largest: true) }
+    }
+
+    private func enterBillingFixture(scale: Int, largest: Bool, realSystem: Bool = false) {
+        if app != nil { resetAccountMatrixFixture() }
+        launch(realSystem ? "realOSReading" : "billingMatrix", largeText: largest,
+               interfaceScale: scale, usesSystemTextSize: realSystem)
+        let ready = app.staticTexts["ui-test.readingMetrics"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 5))
+        XCTAssertEqual(ready.label, "Reading scale \(scale), text \(largest ? "largest" : "normal")")
+        app.buttons["ui-test.hideStatus"].tap()
+        XCTAssertTrue(app.staticTexts["ui-test.ready"].waitForNonExistence(timeout: 5))
+        let guest = app.buttons["account.continueAnonymous"]
+        for _ in 0..<8 {
+            if guest.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(guest.isHittable); guest.tap()
+        XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+    }
+
+    private func assertBillingAndCompactTabs(scale: Int, largest: Bool) {
+        executionTimeAllowance = 420
+        enterBillingFixture(scale: scale, largest: largest)
+        let bar = app.tabBars.firstMatch
+        XCTAssertTrue(bar.waitForExistence(timeout: 5))
+        for title in ["Coaching", "History", "Record"] {
+            let tab = bar.buttons[title]
+            XCTAssertTrue(tab.isHittable); tab.tap()
+            XCTAssertTrue(tab.isSelected)
+        }
+        let tabs = ["Record", "Coaching", "History"].map { bar.buttons[$0] }
+        for tab in tabs {
+            XCTAssertGreaterThanOrEqual(tab.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(tab.frame.height, 44 - 0.001)
+        }
+        let tabFrames = tabs.map { $0.frame }
+        let geometry = XCTAttachment(string: "tabs=\(tabFrames)")
+        geometry.name = "Native tab target frames"; geometry.lifetime = .keepAlways; add(geometry)
+        // Native accessibility rectangles overlap on iOS 27. Centre dispatch
+        // above is verified; these rectangles do not prove exclusive hit regions.
+        captureAppScreen("Native tabs \(largest ? "largest" : "normal") scale \(scale)")
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "scale \(scale); reading \(largest ? "largest" : "normal"); controls \(largest ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+        scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.staticTexts["Account"].firstMatch.tap()
+        let form = app.collectionViews.firstMatch
+        let purchase = app.buttons["billing.purchase"]
+        for _ in 0..<20 {
+            if purchase.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(purchase.isHittable)
+        let title = app.staticTexts["billing.plan.title"]
+        XCTAssertGreaterThanOrEqual(title.frame.width, title.frame.height,
+                                    "Plan must not become a broken-word column")
+        XCTAssertGreaterThanOrEqual(purchase.frame.height, 44 - 0.001)
+        captureAppScreen("Plan and purchase \(largest ? "largest" : "normal") scale \(scale)")
+        let restore = app.buttons["billing.restore"]
+        for _ in 0..<16 {
+            if restore.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(restore.isHittable)
+        XCTAssertGreaterThanOrEqual(restore.frame.height, 44 - 0.001)
+        let terms = app.descendants(matching: .any)["billing.terms"].firstMatch
+        let privacy = app.descendants(matching: .any)["billing.privacy"].firstMatch
+        XCTAssertTrue(terms.exists); XCTAssertTrue(privacy.exists)
+        for link in [terms, privacy] {
+            XCTAssertGreaterThanOrEqual(link.frame.height, 44 - 0.001)
+        }
+        XCTAssertFalse(terms.frame.intersects(privacy.frame))
+        captureAppScreen("Purchase disclosure and restore \(largest ? "largest" : "normal") scale \(scale)")
+        let explanation = app.staticTexts["billing.restore.explanation"]
+        for _ in 0..<8 {
+            if explanation.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(explanation.isHittable)
+        captureAppScreen("Restore explanation \(largest ? "largest" : "normal") scale \(scale)")
+        // Read-only billing check: do not purchase, restore or open external links.
+    }
+
+    func testRealSystemTextChangeReachesOpenSettings() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MINITI_REAL_OS_READING"] == "1",
+                          "Requires the coordinated simulator text-size run and restoration of the original setting.")
+        executionTimeAllowance = 150
+        enterBillingFixture(scale: 2, largest: false, realSystem: true)
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
+        print("MINITI_REAL_OS_WAIT: change the simulator OS category now")
+        let changed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label == %@", "scale 2; reading largest; controls accessibility5"), object: scope)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 90), .completed)
+        captureAppScreen("Open Settings adopts actual OS largest text without relaunch")
+        scope.tap(); XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 5))
+    }
+
+    func testZRealSystemMeetingPickerLargeContentViewer() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["MINITI_REAL_OS_READING"] == "1",
+                          "Requires the coordinated simulator text-size run and restoration of the original setting.")
+        executionTimeAllowance = 90
+        launch("realOSReading", screenshotScene: "meeting", interfaceScale: 2, usesSystemTextSize: true)
+        let ready = app.staticTexts["ui-test.readingMetrics"]
+        XCTAssertTrue(ready.waitForExistence(timeout: 5))
+        XCTAssertEqual(ready.label, "Reading scale 2, text largest")
+        app.buttons["ui-test.hideStatus"].tap()
+        let transcript = app.buttons["meeting.section.transcript"]
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        // The result recording is inspected during this hold, not after release.
+        print("MINITI_LARGE_CONTENT_HOLD")
+        transcript.press(forDuration: 3)
+        captureAppScreen("Meeting picker after native large-content hold")
+        let notes = app.buttons["meeting.section.notes"]
+        notes.tap(); XCTAssertTrue(notes.isSelected)
+        XCTAssertTrue(app.textViews["meeting.notes.editor"].waitForExistence(timeout: 5))
     }
 
     func testPendingAccountEmailActionsKeepMinimumTargets() {
@@ -2998,6 +3126,7 @@ final class AccountJourneys: XCTestCase {
         let scroll = app.scrollViews["account.recoveryKey.scroll"]
         let key = app.staticTexts["account.recoveryKey.value"]
         XCTAssertTrue(key.waitForExistence(timeout: 5), "The save sheet must show the selected fixture key")
+        XCTAssertGreaterThan(key.frame.height, 24, "Key content must extend beyond its vertical padding")
         var keyPositions = ""
         for _ in 0..<12 {
             keyPositions += "key=\(key.frame); viewport=\(scroll.frame)\n"

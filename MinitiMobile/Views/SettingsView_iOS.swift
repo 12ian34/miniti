@@ -311,6 +311,7 @@ private extension View {
 }
 
 private struct SettingsDetailView_iOS: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
     let category: SettingsDestination
     var initialSearchTarget: String? = nil
@@ -409,9 +410,13 @@ private struct SettingsDetailView_iOS: View {
                     ManagedAccountSettingsSection()
 
                     Section("Plan and billing") {
-                        HStack {
+                        let planLayout = dynamicTypeSize.isAccessibilitySize
+                            ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.standard))
+                            : AnyLayout(HStackLayout())
+                        planLayout {
                             Text("Plan")
-                            Spacer()
+                                .accessibilityIdentifier("billing.plan.title")
+                            if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                             if appState.shouldShowManagedSubscriptionPlaceholder {
                                 Text("Checking…")
                                     .foregroundStyle(.secondary)
@@ -466,21 +471,29 @@ private struct SettingsDetailView_iOS: View {
                                     Text("Upgrade to Pro, $4.99/month")
                                 }
                             }
+                            .accessibilityIdentifier("billing.purchase")
                         }
 
                         if !appState.shouldShowManagedSubscriptionPlaceholder && !appState.isPro {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Miniti Pro Monthly")
+                                    .accessibilityIdentifier("billing.product")
                                     .font(.caption)
                                     .fontWeight(.semibold)
                                 Text("$4.99/month · auto-renewable")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                 HStack(spacing: 8) {
-                                    Link("Terms", destination: URL(string: "https://miniti.app/terms")!)
+                                    Link(destination: URL(string: "https://miniti.app/terms")!) {
+                                        Text("Terms").minitiMinimumControlTarget()
+                                    }
+                                    .accessibilityIdentifier("billing.terms")
                                     Text("•")
                                         .foregroundStyle(.secondary)
-                                    Link("Privacy", destination: URL(string: "https://miniti.app/privacy")!)
+                                    Link(destination: URL(string: "https://miniti.app/privacy")!) {
+                                        Text("Privacy").minitiMinimumControlTarget()
+                                    }
+                                    .accessibilityIdentifier("billing.privacy")
                                 }
                                 .font(.caption2)
                             }
@@ -509,7 +522,9 @@ private struct SettingsDetailView_iOS: View {
                                 Text("Restore App Store purchases")
                             }
                         }
+                        .accessibilityIdentifier("billing.restore")
                         Text("This restores a purchase from the App Store. It does not sign you into an account. Bought Pro already? Sign in to that account first.")
+                            .accessibilityIdentifier("billing.restore.explanation")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         

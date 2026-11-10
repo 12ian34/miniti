@@ -374,7 +374,7 @@ struct AccountUITestReady: ViewModifier {
             #if MINITI_TEST_HOST
             if AccountUITestHarness.isActive, !statusHidden {
                 VStack(alignment: .leading) {
-                    if ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "setupUpgrade" {
+                    if ["setupUpgrade", "billingMatrix", "realOSReading"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? "") {
                         Button("Hide test status") { statusHidden = true }
                             .font(.caption2)
                             .accessibilityIdentifier("ui-test.hideStatus")
@@ -398,7 +398,7 @@ struct AccountUITestReady: ViewModifier {
                 }
                 // Test status must not grow over the production controls under test.
                 .dynamicTypeSize(.large)
-                .allowsHitTesting(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] == "setupUpgrade")
+                .allowsHitTesting(["setupUpgrade", "billingMatrix", "realOSReading"].contains(ProcessInfo.processInfo.environment["MINITI_UI_TEST_SCENARIO"] ?? ""))
             }
             #endif
         }
