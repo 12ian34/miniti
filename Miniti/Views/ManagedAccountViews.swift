@@ -1197,7 +1197,10 @@ struct HomeSetupGuide: View {
         case .transcription:
             switch HomeSetupAudioChoice(appState: appState) {
             case .online: return "Online. Fast, with the most languages."
-            case .onThisMac: return "On this Mac. Audio stays on your Mac."
+            case .onThisMac:
+                return appState.onDeviceTranscriptionCloudFallback
+                    ? "On this Mac, with online backup until the model is ready."
+                    : "On this Mac. Audio stays on your Mac."
             case .custom: return "Custom. Each part is chosen in Settings, Transcription."
             }
         }
@@ -1264,7 +1267,6 @@ struct HomeSetupGuide: View {
                         let local = choice == .onThisMac
                         appState.onDeviceTranscriptionEnabled = local
                         appState.onDeviceSpeakerSeparationEnabled = local
-                        if local { appState.onDeviceTranscriptionCloudFallback = true }
                         selected = .transcription
                         appState.refreshOnDeviceTranscriptionAvailability()
                         appState.refreshOnDeviceDiarizationAvailability()
@@ -1288,9 +1290,13 @@ struct HomeSetupGuide: View {
                         .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 case .onThisMac:
-                    Text("Audio stays on your Mac. The first recording downloads about 600 MB. If the model is not ready, miniti uses online processing.")
+                    Text("Audio stays on your Mac. The first recording downloads about 600 MB.")
                         .font(.caption).foregroundStyle(ColorPalette.Text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                    // Kept as the person set it; setup never turns the online backup on by itself.
+                    Toggle("use online processing until the model is ready", isOn: $appState.onDeviceTranscriptionCloudFallback)
+                        .disabled(appState.privateModeEnabled)
+                        .accessibilityIdentifier("setup.audio.fallback")
                     if OnDeviceTranscriptionSupport.tier(forCode: appState.meetingLanguage) == .cloudOnly {
                         Text("Your selected language is processed online. Choose a supported language to keep it on your Mac.")
                             .font(.caption).foregroundStyle(ColorPalette.Text.secondary)

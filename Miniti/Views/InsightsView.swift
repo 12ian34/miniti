@@ -2907,15 +2907,23 @@ private struct CoachingGuidanceView: View {
                     }
 
                     #if os(macOS)
-                    // Wide windows use two columns so Coaching does not leave half the
-                    // window empty (Charlie's 3.8.0 feedback). Narrow windows keep one.
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: MinitiDesignSystem.CoachingLayout.trendCardMinimumWidth),
-                                           spacing: MinitiDesignSystem.Spacing.page, alignment: .top)],
-                        alignment: .leading,
-                        spacing: MinitiDesignSystem.Spacing.page
-                    ) {
-                        trendCards(report)
+                    // Wide windows use exactly two columns so Coaching does not leave half
+                    // the window empty (Charlie's 3.8.0 feedback). Otherwise one column at
+                    // the 720pt reading width.
+                    ViewThatFits(in: .horizontal) {
+                        LazyVGrid(
+                            columns: Array(repeating: GridItem(.flexible(), spacing: MinitiDesignSystem.Spacing.page, alignment: .top), count: 2),
+                            alignment: .leading,
+                            spacing: MinitiDesignSystem.Spacing.page
+                        ) {
+                            trendCards(report)
+                        }
+                        .frame(minWidth: 2 * MinitiDesignSystem.CoachingLayout.trendCardMinimumWidth + MinitiDesignSystem.Spacing.page)
+
+                        LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
+                            trendCards(report)
+                        }
+                        .frame(maxWidth: MinitiDesignSystem.CoachingLayout.trendColumnMaxWidth, alignment: .leading)
                     }
                     #else
                     LazyVStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.page) {
