@@ -28,7 +28,6 @@
 - improvement: (macOS and iOS) clearer guidance and status text in Questions, Playbook and while waiting for insights
 - improvement: (macOS and iOS) clearer plan status text
 - improvement: (macOS) clearer Coaching details, API setup labels and notes hints
-- improvement: (macOS) use Tab and Space to reach compact buttons and tabs with Keyboard Navigation on
 - improvement: (macOS) clearer recording and ending text in the menu bar
 - fix: (macOS and iOS) custom date filters keep both the start and end dates
 - fix: (iOS) Playbook answers collapse and reopen while keeping text selectable

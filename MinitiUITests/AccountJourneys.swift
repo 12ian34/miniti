@@ -811,7 +811,7 @@ final class AccountJourneys: XCTestCase {
                           "Enable Keyboard Navigation for this acceptance run, then restore its original state.")
     }
 
-    func testMacSharedUpdateSupportsKeyboardAndSkipsDisabled() throws {
+    func testMacSharedUpdateSupportsKeyboardAndKeepsDisabledInactive() throws {
         launch("insightUpdateTargets")
         try requireMacKeyboardNavigation()
         let counts = app.staticTexts["update.fixture.counts"]
@@ -873,9 +873,13 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(app.buttons["Copy answer"].waitForExistence(timeout: 5))
         for _ in 0..<12 {
             app.typeKey(.tab, modifierFlags: [])
+            let beforeCopy = pasteboard.changeCount
             app.typeKey(.space, modifierFlags: [])
             if app.buttons["Answer copied"].exists {
-                copiedChangeCount = pasteboard.changeCount
+                // Do not clear a concurrent copy observed after this action.
+                if pasteboard.changeCount == beforeCopy + 1 {
+                    copiedChangeCount = beforeCopy + 1
+                }
                 break
             }
         }
