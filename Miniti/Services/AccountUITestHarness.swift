@@ -312,7 +312,7 @@ private struct DocsGuidanceUITestFixture: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             if scenario == "docsGuidance-questions" {
-                QuestionsEmptyState(variant: .needsMore)
+                QuestionsEmptyState(variant: .noQuestions)
             } else {
                 DocsTabContent(topics: topics, isExtracting: false,
                                hasMCPURL: scenario != "docsGuidance-setup",

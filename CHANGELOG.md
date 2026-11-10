@@ -15,6 +15,7 @@
 - improvement: (macOS and iOS) clearer guidance and status text in Questions and Playbook
 - improvement: (macOS) clearer filler counts during a meeting
 - improvement: (macOS) clearer recording and ending text in the menu bar
+- fix: (iOS) Playbook answers collapse and reopen while keeping text selectable
 - fix: (macOS) notes stay editable when their pane is resized smaller
 - fix: (macOS) main, Settings and Debug Log windows stay dark when macOS uses Light appearance
 

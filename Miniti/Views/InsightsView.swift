@@ -1160,12 +1160,23 @@ struct DocAnswerBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top, spacing: 6) {
+                #if os(iOS)
+                // Keep text selection inside its native view. SwiftUI Text's
+                // selection interaction can swallow taps on the topic header.
+                SelectableTextView(SelectableAttributed.body(
+                    card.answer, fontSize: readingMetrics.insightBodySize,
+                    color: ColorPalette.Text.secondary,
+                    lineSpacing: readingMetrics.insightLineSpacing
+                ))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                #else
                 Text(card.answer)
                     .font(.system(size: readingMetrics.insightBodySize, weight: .regular, design: .default))
                     .foregroundStyle(Color(hex: "E6EDF3"))
                     .lineSpacing(readingMetrics.insightLineSpacing)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                #endif
 
                 Button(action: copyAnswer) {
                     MinitiCopyLabel(isCopied: showCopied)

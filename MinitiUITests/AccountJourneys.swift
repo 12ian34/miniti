@@ -756,7 +756,7 @@ final class AccountJourneys: XCTestCase {
         for (scenario, expected) in [
             ("manual", "tap a topic to look it up in your docs"),
             ("error", "Synthetic lookup failure"),
-            ("questions", "questions appear once there's enough")
+            ("questions", "use update above to generate")
         ] {
             launch("docsGuidance-" + scenario)
             let text = app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", expected)).firstMatch
@@ -779,6 +779,43 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(snippet.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(app.buttons["Copy answer"].exists)
         captureAppScreen("Docs answer with citation snippet")
+    }
+
+    func testDocsAnswersCollapseAndReopenWithAndWithoutCitations() {
+        for scenario in ["docsTargets", "docsGuidance-answered"] {
+            launch(scenario)
+            let row = app.buttons["docs.topic.fixture topic"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertTrue(app.buttons["Copy answer"].exists)
+            row.tap()
+            XCTAssertTrue(app.images["chevron.down"].waitForExistence(timeout: 2), app.debugDescription)
+            XCTAssertFalse(app.buttons["Copy answer"].exists)
+            XCTAssertFalse(app.textViews.firstMatch.exists)
+            if scenario == "docsGuidance-answered" {
+                XCTAssertFalse(app.staticTexts["A synthetic grounded citation snippet."].exists)
+            }
+            row.tap()
+            XCTAssertTrue(app.images["chevron.up"].waitForExistence(timeout: 2))
+            XCTAssertTrue(app.buttons["Copy answer"].exists)
+            XCTAssertTrue(app.textViews.firstMatch.exists)
+            if scenario == "docsGuidance-answered" {
+                XCTAssertTrue(app.staticTexts["A synthetic grounded citation snippet."].exists)
+            }
+            captureAppScreen("Docs reopened: " + scenario)
+        }
+    }
+
+    func testDocsAnswerKeepsNativeTextSelection() {
+        launch("docsTargets")
+        let answer = app.textViews.matching(NSPredicate(format: "value == %@",
+            "A synthetic answer with a real copy action.")).firstMatch
+        XCTAssertTrue(answer.waitForExistence(timeout: 5), app.debugDescription)
+        answer.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: 50, dy: 8)).press(forDuration: 1)
+        let copy = app.descendants(matching: .any).matching(NSPredicate(format: "label == 'Copy'")).firstMatch
+        XCTAssertTrue(copy.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(app.keyboards.firstMatch.exists)
+        captureAppScreen("Docs answer native selection menu")
     }
 
     func testDocsAnswerCopyRespondsInItsExpandedTarget() {

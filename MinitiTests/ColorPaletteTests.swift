@@ -412,7 +412,11 @@ final class ColorPaletteTests: XCTestCase {
             } else {
                 XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.meta, in: raster), 3, "\(state) indicator")
                 if state == .noMatch {
-                    XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, "no-match guidance")
+                    // Last 14pt of content above the row's 10pt bottom padding.
+                    // Exclude antialiased retry-chip pixels in the header.
+                    let guidance = try XCTUnwrap(raster.cropping(to: CGRect(
+                        x: 0, y: raster.height - 48, width: raster.width, height: 28)))
+                    XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: guidance), 10, "no-match guidance")
                 }
             }
         }
