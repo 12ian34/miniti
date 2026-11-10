@@ -6,7 +6,7 @@ IMPROVED
 - Settings, History filters, meeting preparation and permission text follow your interface text size.
 - Sign-in actions stay above the keyboard, and meeting preparation keeps notes and actions within reach.
 - Debug Log, History folders, email editing, recovery key and device controls stay readable with larger text.
-- Live and saved meetings share the same transcript, insights and notes tabs, section names, colours, Copy and Update buttons.
+- Live and saved meetings share the same transcript, insights and notes tabs, section names, colors, Copy and Update buttons.
 - Saved discussion, actions and decisions use selectable lists with consistent spacing. Action items are now called actions, and saved actions no longer show tick boxes, which were never saved.
 - Larger tap areas for Coaching tabs, history sorting, Update, Copy, help, the Deepgram and OpenAI choice and billing links.
 - Hold compact tabs to see larger labels at accessibility text sizes.
