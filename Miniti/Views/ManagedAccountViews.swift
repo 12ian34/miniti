@@ -761,6 +761,12 @@ extension AppState {
         return step == .calendar && calendarNudgeDismissedUntil > Date().timeIntervalSince1970
     }
 
+    /// Mac Home stats visibility. Bumps the revision so Home and Settings update at once.
+    func setHomeStatsHidden(_ hidden: Bool) {
+        homeSetupState.statsHidden = hidden
+        homeSetupState.revision += 1
+    }
+
     func setHomeSetupCollapsed(_ collapsed: Bool) {
         homeSetupHidden = collapsed
         #if os(iOS)
@@ -989,7 +995,7 @@ struct HomeSetupSettingsSection: View {
             Section("Stats on Home") {
                 Toggle("Show stats on Home", isOn: Binding(
                     get: { !appState.homeSetupState.statsHidden },
-                    set: { appState.homeSetupState.statsHidden = !$0 }))
+                    set: { appState.setHomeStatsHidden(!$0) }))
                     .accessibilityIdentifier("home.stats.settings.visible")
                 Text("Meetings, time recorded, filler words, questions and your longest meeting. Counted on this Mac.")
                     .font(.caption).foregroundStyle(ColorPalette.Text.secondary)

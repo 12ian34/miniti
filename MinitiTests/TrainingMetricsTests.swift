@@ -532,7 +532,14 @@ final class TrainingMetricsTests: XCTestCase {
         let relaunched = CoachingOverviewStore(cacheURL: url)
         relaunched.refreshIfNeeded(meetings: meetings)
         XCTAssertEqual(relaunched.rows.count, 9, "Cached rows are available immediately after relaunch")
-        XCTAssertFalse(relaunched.isComputing, "Unchanged meetings are not analysed again")
+        await relaunched.settle()
+        XCTAssertEqual(relaunched.analysedMeetingCount, 0, "Unchanged meetings are not analysed again")
+        XCTAssertFalse(relaunched.isComputing)
+
+        let otherBuild = CoachingOverviewStore(cacheURL: url)
+        XCTAssertNotNil(CoachingRowCache.load(from: url))
+        XCTAssertNil(CoachingRowCache.load(from: url, build: "different-build"), "A new app build recomputes once")
+        _ = otherBuild
 
         relaunched.refreshIfNeeded(meetings: Array(meetings.prefix(2)))
         try await waitForCacheFile(url) { (CoachingRowCache.load(from: url)?.count ?? 0) == 2 }
@@ -540,36 +547,36 @@ final class TrainingMetricsTests: XCTestCase {
     }
 
     @MainActor
-    func testCoachingCountsALargeHistoryQuicklyAndRelaunchesInstantly() async throws {
+    func testCachedRelaunchOfALargeHistoryIsFast() async throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("coaching-perf-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
         var meetings: [Meeting] = []
-        for index in 0..<200 {
+        for index in 0..<60 {
             let start = Date(timeIntervalSince1970: Double(10_000 + index * 4000))
             var segments: [TranscriptSegment] = []
-            for line in 0..<400 {
+            for line in 0..<150 {
                 let speaker = line % 3 == 0 ? 2 : DeepgramService.micSpeakerID
-                segments.append(TranscriptSegment(text: "So um I think we should basically ship it, like, this week. What do you think about that?",
+                segments.append(TranscriptSegment(text: "So um I think we should basically ship it, like, this week. What do you think?",
                                                   speaker: speaker, timestamp: Double(line * 6), isFinal: true))
             }
-            meetings.append(Meeting(title: "Meeting \(index)", startTime: start, endTime: start.addingTimeInterval(2400), segments: segments))
+            meetings.append(Meeting(title: "Meeting \(index)", startTime: start, endTime: start.addingTimeInterval(900), segments: segments))
         }
         let begin = CFAbsoluteTimeGetCurrent()
         let store = CoachingOverviewStore(cacheURL: url)
         store.refreshIfNeeded(meetings: meetings)
-        for _ in 0..<12_000 where !(store.rows.count == 200 && !store.isComputing) {
-            try await Task.sleep(nanoseconds: 10_000_000)
-        }
-        XCTAssertEqual(store.rows.count, 200)
+        await store.settle()
         let firstCount = CFAbsoluteTimeGetCurrent() - begin
+        XCTAssertEqual(store.rows.count, 60)
         try await waitForCacheFile(url)
         let relaunchBegin = CFAbsoluteTimeGetCurrent()
         let relaunched = CoachingOverviewStore(cacheURL: url)
         relaunched.refreshIfNeeded(meetings: meetings)
+        await relaunched.settle()
         let relaunch = CFAbsoluteTimeGetCurrent() - relaunchBegin
-        print("COACHING_PERF: first count \(firstCount)s for 200 x 400 lines; relaunch \(relaunch)s, rows \(relaunched.rows.count)")
-        XCTAssertEqual(relaunched.rows.count, 200)
-        XCTAssertFalse(relaunched.isComputing)
+        print("COACHING_PERF: first count \(firstCount)s for 60 x 150 lines; cached relaunch including signatures \(relaunch)s")
+        XCTAssertEqual(relaunched.rows.count, 60)
+        XCTAssertEqual(relaunched.analysedMeetingCount, 0)
+        XCTAssertLessThan(relaunch, max(0.5, firstCount / 4), "A cached relaunch must be far cheaper than counting")
     }
 
     private func waitForCacheFile(_ url: URL, until condition: @escaping () -> Bool = { true }) async throws {

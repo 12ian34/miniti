@@ -2841,6 +2841,21 @@ final class AppStateComputationTests: XCTestCase {
         XCTAssertTrue(HistoryPageView.sections(of: [], searching: true).isEmpty)
     }
 
+    @MainActor func testHomeStatsHideIsRememberedAndRestorable() {
+        let state = AppState()
+        let original = state.homeSetupState.statsHidden
+        defer { state.setHomeStatsHidden(original) }
+        let revision = state.homeSetupState.revision
+        state.setHomeStatsHidden(true)
+        XCTAssertTrue(state.homeSetupState.statsHidden)
+        XCTAssertGreaterThan(state.homeSetupState.revision, revision, "Home and Settings observe the change at once")
+        XCTAssertTrue(HomeSetupState().statsHidden, "The choice is remembered across launches")
+        state.setHomeStatsHidden(false)
+        XCTAssertFalse(HomeSetupState().statsHidden, "Settings, General restores the stats")
+        let item = SettingsSearchCatalog.items.first { $0.id == "general.homeStats" }
+        XCTAssertEqual(item?.destination, .general)
+    }
+
     @MainActor func testHomeStatsPanelRendersOnlyOnceAMeetingIsFinished() {
         let store = CoachingOverviewStore()
         let empty = NSHostingView(rootView: HomeStatsPanel(meetings: [], store: store).frame(width: 480))

@@ -581,7 +581,7 @@ struct ReadyStateView: View {
                         HomeSetupStateObserver(state: appState.homeSetupState) {
                             if !appState.isHomeSetupExpanded, !appState.homeSetupState.statsHidden {
                                 HomeStatsPanel(meetings: meetings, store: coachingStore) {
-                                    appState.homeSetupState.statsHidden = true
+                                    appState.setHomeStatsHidden(true)
                                 }
                             }
                         }
@@ -3845,8 +3845,9 @@ struct MarkdownExportIssueCard: View {
 }
 
 
-/// All-time stats on Home, in the Coaching stats style: meetings, time recorded, the most
-/// common top filler word and fillers per meeting. Hidden until a meeting is finished.
+/// All-time stats on Home, in the Coaching stats style: meetings, time recorded, top filler
+/// word, fillers per meeting, questions asked and longest meeting. Hidden until a meeting is
+/// finished, and hideable (restored in Settings, General).
 struct HomeStatsPanel: View {
     let meetings: [Meeting]
     @ObservedObject var store: CoachingOverviewStore
@@ -3871,6 +3872,12 @@ struct HomeStatsPanel: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Hide stats")
                     .help("Hide stats. Show them again in Settings, General.")
+                }
+                if store.isComputing && !store.rows.isEmpty {
+                    // First launch after an update counts history in the background.
+                    Text("still counting older meetings")
+                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.dim)
                 }
                 // Grid rows share one height so paired tiles line up.
                 Grid(horizontalSpacing: MinitiDesignSystem.Spacing.standard, verticalSpacing: MinitiDesignSystem.Spacing.standard) {

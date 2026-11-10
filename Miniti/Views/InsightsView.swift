@@ -2189,23 +2189,26 @@ enum CoachingRowCache {
         let signature: String
         let row: TrainingRow?
     }
-    private struct File: Codable { var version = 1; var entries: [String: Entry] }
+    private struct File: Codable { var version = 1; var build: String; var entries: [String: Entry] }
+
+    /// Any app update recomputes once, so analysis changes never leave stale rows behind.
+    static var currentBuild: String { Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0" }
 
     static var defaultURL: URL? {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
-            .appendingPathComponent("miniti", isDirectory: true)
-            .appendingPathComponent("coaching-rows-v1.json")
+        URL.applicationSupportDirectory.appendingPathComponent("Miniti/Coaching/rows-v1.json")
     }
 
-    static func load(from url: URL) -> [UUID: Entry]? {
+    static func load(from url: URL, build: String = currentBuild) -> [UUID: Entry]? {
         guard let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(File.self, from: data), file.version == 1 else { return nil }
-        return Dictionary(uniqueKeysWithValues: file.entries.compactMap { key, entry in UUID(uuidString: key).map { ($0, entry) } })
+              let file = try? JSONDecoder().decode(File.self, from: data),
+              file.version == 1, file.build == build else { return nil }
+        // A damaged file with duplicate keys must not trap at launch.
+        return Dictionary(file.entries.compactMap { key, entry in UUID(uuidString: key).map { ($0, entry) } },
+                          uniquingKeysWith: { first, _ in first })
     }
 
-    static func save(_ entries: [UUID: Entry], to url: URL) {
-        guard !Task.isCancelled else { return }
-        let file = File(entries: Dictionary(uniqueKeysWithValues: entries.map { ($0.key.uuidString, $0.value) }))
+    static func save(_ entries: [UUID: Entry], to url: URL, build: String = currentBuild) {
+        let file = File(build: build, entries: Dictionary(entries.map { ($0.key.uuidString, $0.value) }, uniquingKeysWith: { first, _ in first }))
         guard let data = try? JSONEncoder().encode(file) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? data.write(to: url, options: .atomic)
@@ -2239,15 +2242,22 @@ final class CoachingOverviewStore: ObservableObject {
     private let cacheURL: URL?
     private var cacheSaveTask: Task<Void, Never>?
 
-    init(cacheURL: URL? = AppState.isRunningUnderXCTest ? nil : CoachingRowCache.defaultURL) {
+    init(cacheURL: URL? = AppState.isRunningUnderXCTest || ScreenshotMode.isActive ? nil : CoachingRowCache.defaultURL) {
         self.cacheURL = cacheURL
         if let cacheURL, let cached = CoachingRowCache.load(from: cacheURL) {
             for (id, entry) in cached {
                 completedSignatures[id] = entry.signature
-                if let row = entry.row { rowsByMeetingID[id] = row }
+                // Date labels follow the current time zone, not the one at compute time.
+                if let row = entry.row { rowsByMeetingID[id] = row.withCurrentDateString() }
             }
         }
     }
+
+    /// Test hook: waits for the current refresh, including its signature pass, to finish.
+    func settle() async { await refreshTask?.value }
+
+    /// Meetings analysed since this store was created (tests use it to prove cache hits).
+    private(set) var analysedMeetingCount = 0
     private var metricsTask: Task<TrainingRow?, Never>?
     private var refreshTask: Task<Void, Never>?
     private var refreshGeneration = 0
@@ -2259,6 +2269,8 @@ final class CoachingOverviewStore: ObservableObject {
 
         let fillers = TrainingFillerPreferences.currentFillers(for: meeting.language)
             .joined(separator: "\u{1F}")
+        // Bump the version when TrainingMetrics, CoachingExampleExtractor or row fields
+        // change meaning. The on-disk cache is also discarded on every app build.
         return [
             "coaching-v3",
             meeting.id.uuidString,
@@ -2270,6 +2282,7 @@ final class CoachingOverviewStore: ObservableObject {
             meeting.language,
             meeting.speakerNamesJSON ?? "",
             meeting.selfSpeakerIDsJSON ?? "",
+            meeting.inferredEnvironmentRaw ?? "",
             fillers
         ].joined(separator: "\u{1E}")
     }
@@ -2322,7 +2335,9 @@ final class CoachingOverviewStore: ObservableObject {
 
     private func performRefresh(meetings: [Meeting], generation: Int) async {
         var pending: [(meeting: Meeting, signature: String)] = []
-        for meeting in meetings {
+        for (offset, meeting) in meetings.enumerated() {
+            // Signatures read each meeting's segment count from SwiftData: stay responsive.
+            if offset % 25 == 24 { await Task.yield() }
             guard generation == refreshGeneration, !Task.isCancelled else { return }
             guard let signature = Self.signature(for: meeting),
                   completedSignatures[meeting.id] != signature else { continue }
@@ -2340,11 +2355,16 @@ final class CoachingOverviewStore: ObservableObject {
             var inputs: [(UUID, String, CoachingMeetingInput?)] = []
             for item in batch {
                 inputs.append((item.meeting.id, item.signature, Self.input(from: item.meeting)))
+                await Task.yield()
+                guard generation == refreshGeneration, !Task.isCancelled else { return }
             }
+            analysedMeetingCount += inputs.count
             let computed = await withTaskGroup(of: (UUID, TrainingRow?).self) { group in
                 for (id, _, input) in inputs {
                     guard let input else { continue }
-                    group.addTask(priority: .userInitiated) { (id, Self.computeRow(from: input)) }
+                    // Background priority: a first-launch backfill must not compete with a
+                    // recording start or on-device transcription.
+                    group.addTask(priority: .utility) { (id, Self.computeRow(from: input)) }
                 }
                 var results: [UUID: TrainingRow?] = [:]
                 for await (id, row) in group { results[id] = row }
@@ -2372,8 +2392,10 @@ final class CoachingOverviewStore: ObservableObject {
         for (id, signature) in completedSignatures {
             entries[id] = CoachingRowCache.Entry(signature: signature, row: rowsByMeetingID[id])
         }
-        cacheSaveTask?.cancel()
+        // Saves run in order, so an older snapshot can never land after a newer one.
+        let previous = cacheSaveTask
         cacheSaveTask = Task.detached(priority: .utility) {
+            await previous?.value
             CoachingRowCache.save(entries, to: cacheURL)
         }
     }
@@ -2981,6 +3003,14 @@ struct HomeStats: Equatable {
         let h = hours == 0 ? "" : "\(hours) hour\(hours == 1 ? "" : "s")"
         let m = rest == 0 ? "" : "\(rest) minute\(rest == 1 ? "" : "s")"
         return [h, m].filter { !$0.isEmpty }.joined(separator: " ")
+    }
+}
+
+extension TrainingRow {
+    func withCurrentDateString() -> TrainingRow {
+        TrainingRow(id: id, date: date, dateString: TrainingRow.formatDate(date), title: title, fillers: fillers, pace: pace,
+                    clarity: clarity, questions: questions, durationMinutes: durationMinutes, talkRatio: talkRatio,
+                    longestMonologue: longestMonologue, topFiller: topFiller, examples: examples)
     }
 }
 
