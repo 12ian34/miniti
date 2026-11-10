@@ -1433,6 +1433,102 @@ final class AccountJourneys: XCTestCase {
         XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
     }
 
+    func testHistoryFilterInheritsInterfaceSize() {
+        openHistoryFilters(largeText: false, scale: 2)
+        let scope = app.buttons["ui-test.readingScope.historyFilters"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        captureAppScreen("History filters normal Large category probe")
+        XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
+    }
+
+    func testDebugLogInheritsInterfaceSize() {
+        openDebugLog(largeText: false, scale: 2)
+        let scope = app.buttons["ui-test.readingScope.debugLog"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        captureAppScreen("Debug Log normal Large category probe")
+        XCTAssertEqual(scope.label, "scale 2; reading normal; controls xxLarge")
+    }
+
+    func testHistoryFiltersAtNormalTextAcrossInterfaceScales() {
+        assertAuxiliarySheetAcrossInterfaceScales(debugLog: false, largeText: false)
+    }
+
+    func testHistoryFiltersAtLargestTextAcrossInterfaceScales() {
+        assertAuxiliarySheetAcrossInterfaceScales(debugLog: false, largeText: true)
+    }
+
+    func testDebugLogAtNormalTextAcrossInterfaceScales() {
+        assertAuxiliarySheetAcrossInterfaceScales(debugLog: true, largeText: false)
+    }
+
+    func testDebugLogAtLargestTextAcrossInterfaceScales() {
+        assertAuxiliarySheetAcrossInterfaceScales(debugLog: true, largeText: true)
+    }
+
+    private func assertAuxiliarySheetAcrossInterfaceScales(debugLog: Bool, largeText: Bool) {
+        for scale in 0...2 {
+            // History enrollment persists in the test-ID suite between launches.
+            if !debugLog && scale > 0 { resetAccountMatrixFixture() }
+            app?.terminate()
+            if debugLog { openDebugLog(largeText: largeText, scale: scale) }
+            else { openHistoryFilters(largeText: largeText, scale: scale) }
+            executionTimeAllowance = 360
+            let name = debugLog ? "debugLog" : "historyFilters"
+            let category = largeText ? "largest" : "normal"
+            let scope = app.buttons["ui-test.readingScope.\(name)"]
+            XCTAssertTrue(scope.waitForExistence(timeout: 5))
+            XCTAssertEqual(scope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+            scope.tap()
+            XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+            captureAppScreen("\(name) \(category) text, scale \(scale)")
+            let close = debugLog ? app.buttons["close"] : app.navigationBars["Filter"].buttons["Done"]
+            XCTAssertTrue(close.isHittable)
+            close.tap()
+            XCTAssertTrue(close.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(app.navigationBars[debugLog ? "About" : "History"].exists)
+            if !debugLog {
+                XCTAssertTrue(app.buttons["Filter meetings by person or date"].isHittable)
+            }
+        }
+    }
+
+    private func openHistoryFilters(largeText: Bool, scale: Int) {
+        executionTimeAllowance = 360
+        launch("first", largeText: largeText, interfaceScale: scale)
+        let guest = app.buttons["account.continueAnonymous"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 5))
+        for _ in 0..<8 where !guest.isHittable { app.scrollViews.firstMatch.swipeUp() }
+        guest.tap()
+        XCTAssertTrue(guest.waitForNonExistence(timeout: 5))
+        app.buttons["History"].firstMatch.tap()
+        let filter = app.buttons["Filter meetings by person or date"]
+        XCTAssertTrue(filter.waitForExistence(timeout: 5))
+        filter.tap()
+    }
+
+    private func openDebugLog(largeText: Bool, scale: Int) {
+        executionTimeAllowance = 360
+        launch("first", largeText: largeText, interfaceScale: scale)
+        app.buttons["Settings"].tap()
+        let settingsScope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
+        settingsScope.tap()
+        XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
+        let about = app.staticTexts["settings.title.about"]
+        let search = app.searchFields["Search settings"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        for _ in 0..<14 {
+            if about.isHittable && about.frame.maxY < search.frame.minY - 24 { break }
+            app.collectionViews.firstMatch.swipeUp()
+        }
+        XCTAssertTrue(about.isHittable)
+        XCTAssertLessThan(about.frame.maxY, search.frame.minY - 24)
+        about.tap()
+        let version = app.staticTexts["settings.about.version"]
+        XCTAssertTrue(version.waitForExistence(timeout: 5))
+        version.tap(withNumberOfTaps: 5, numberOfTouches: 1)
+    }
+
     func testPrivacyConsentInheritsResolvedInterfaceSize() {
         openPrivacyConsent(largeText: false, scale: 2)
         let scope = app.buttons["ui-test.readingScope.consent.sheet"]

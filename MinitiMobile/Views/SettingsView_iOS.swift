@@ -1013,6 +1013,7 @@ private struct SettingsDetailView_iOS: View {
                         Text("Version")
                         Spacer()
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
+                            .accessibilityIdentifier("settings.about.version")
                             .foregroundStyle(.secondary)
                             .onTapGesture {
                                 handleVersionTap()
@@ -1103,8 +1104,9 @@ private struct SettingsDetailView_iOS: View {
             .navigationBarTitleDisplayMode(.inline)
             .scrollContentBackground(.hidden)
             .background(ColorPalette.Background.primary)
-            .sheet(isPresented: $showDebugLog) {
+            .minitiSheet(isPresented: $showDebugLog) {
                 DebugLogView()
+                    .modifier(AccountUITestReadingScopeProbe(name: "debugLog", alignment: .topLeading))
             }
             .fileImporter(
                 isPresented: $isGranolaImporterPresented,

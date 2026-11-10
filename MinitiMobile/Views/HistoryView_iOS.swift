@@ -110,8 +110,9 @@ struct HistoryView_iOS: View {
                     .accessibilityLabel("Filter meetings by person or date")
                 }
             }
-            .sheet(isPresented: $isFilterSheetPresented) {
+            .minitiSheet(isPresented: $isFilterSheetPresented) {
                 MeetingSearchFilterSheet_iOS(meetings: Array(meetings), searchText: $searchText)
+                    .modifier(AccountUITestReadingScopeProbe(name: "historyFilters", alignment: .topLeading))
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
             }
