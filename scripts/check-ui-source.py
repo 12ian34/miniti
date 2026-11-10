@@ -147,7 +147,7 @@ def arguments(tokens):
                 depth += 1
             elif token.value in ')]}':
                 depth -= 1
-            elif depth == 0 and tokens[i + 1].value == ':':
+            elif depth == 0 and (i == 0 or tokens[i - 1].value == ',') and tokens[i + 1].value == ':':
                 result[token.value.strip('`')] = tokens[i + 2:]
     return result
 
@@ -168,7 +168,7 @@ def scan(path: str, source: str) -> list[Finding]:
             # are not evaluated; a small fixed font is a review cue, not a defect.
             if size and re.fullmatch(r'\d+(?:\.\d+)?', size[0].value) and (len(size) == 1 or size[1].value == ',') and float(size[0].value) < 13:
                 rule = 'small-fixed-font'
-        elif name in {'cornerRadius', 'RoundedRectangle', 'UnevenRoundedRectangle'}:
+        elif name in {'cornerRadius', 'RoundedRectangle'}:
             radius = args if name == 'cornerRadius' else labels.get('cornerRadius', [])
             if radius and re.fullmatch(r'\d+(?:\.\d+)?', radius[0].value):
                 rule = 'local-chrome'
@@ -264,7 +264,8 @@ def main(argv=None):
         for key, count in sorted(added.items()):
             path, rule, signature = key
             level = 'ERROR' if rule == 'raw-color' else 'REVIEW'
-            print(f'{level}: {path}:{locations[key][0]}: {rule}: +{count}: {signature}')
+            lines = ','.join(str(line) for line in locations[key])
+            print(f'{level}: {path}:{lines}: {rule}: +{count} (all matching lines): {signature}')
         for (path, rule, signature), count in sorted(stale.items()):
             print(f'STALE: {path}: {rule}: -{count}: {signature}')
         print(f'{len(files)} Swift files; {len(findings)} occurrences; {sum(hard.values())} new raw colours; '

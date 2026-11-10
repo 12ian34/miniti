@@ -106,6 +106,18 @@ class SwiftFixtures(unittest.TestCase):
         found = self.findings('.focusable(false).background(RoundedRectangle(cornerRadius: 6)).cornerRadius(4)')
         self.assertEqual([f.rule for f in found], ['focus-opt-out', 'local-chrome', 'local-chrome'])
 
+    def test_ternary_names_are_not_argument_labels(self):
+        for source in ['Color(flag ? red : blue)', 'Color(flag ? white : gray)',
+                       'Color(nsColor: flag ? red : blue)']:
+            self.assertEqual(self.findings(source), [], source)
+        self.assertEqual([f.rule for f in self.findings('Color(.sRGB, red: flag ? white : gray, green: 0, blue: 0)')], ['raw-color'])
+
+    def test_documented_uncovered_geometry_forms(self):
+        for source in ['UnevenRoundedRectangle(topLeadingRadius: 8)',
+                       'UnevenRoundedRectangle(cornerRadii: radii)',
+                       '.clipShape(.rect(cornerRadius: 8))', 'layer.cornerRadius = 6']:
+            self.assertEqual(self.findings(source), [], source)
+
     def test_unterminated_source_fails_closed(self):
         for source in ['/* unfinished', '"unfinished', 'Color(hex: "abc"', 'Text("abc") }']:
             with self.subTest(source=source), self.assertRaises(ValueError):
@@ -203,6 +215,35 @@ class BaselinePolicy(unittest.TestCase):
         (self.root / 'Miniti/Assets.xcassets').mkdir()
         (self.root / 'Miniti/Assets.xcassets/Contents.json').write_text('{"red": 1}')
         self.assertEqual(self.run_guard()[0], 0)
+
+    def test_growth_reports_every_matching_line(self):
+        self.source.write_text('Color(hex: "71717A")\n\n\n\nColor(hex: "71717A")')
+        code, output = self.run_guard()
+        self.assertEqual(code, 1)
+        self.assertIn('Example.swift:1,5: raw-color: +1 (all matching lines)', output)
+        self.source.write_text('.font(.system(size: 9))')
+        self.set_baseline()
+        self.source.write_text('.font(.system(size: 9))\n\n\n\n.font(.system(size: 9))')
+        code, output = self.run_guard()
+        self.assertEqual(code, 0)
+        self.assertIn('Example.swift:1,5: small-fixed-font: +1 (all matching lines)', output)
+
+    def test_reviewed_path_only_move_preserves_debt_count(self):
+        destination = self.root / 'MinitiMobile/Moved.swift'
+        self.source.rename(destination)
+        before = self.baseline.read_bytes()
+        self.assertEqual(self.run_guard('--prune-baseline')[0], 1)
+        self.assertEqual(self.baseline.read_bytes(), before)
+        data = json.loads(before)
+        data['entries'][0]['path'] = 'MinitiMobile/Moved.swift'
+        self.baseline.write_text(json.dumps(data))
+        self.assertEqual(self.run_guard()[0], 0)
+
+    def test_unknown_baseline_version_fails(self):
+        data = json.loads(self.baseline.read_text())
+        data['version'] = 2
+        self.baseline.write_text(json.dumps(data))
+        self.assertEqual(self.run_guard()[0], 2)
 
     def test_missing_source_root_is_not_a_clean_pass(self):
         (self.root / 'MinitiMobile').rmdir()
