@@ -39,6 +39,11 @@ enum MinitiDesignSystem {
         static let navigationIconWidth: CGFloat = 36
         static let navigationIconHeight: CGFloat = 34
         static let collapsedWidth: CGFloat = 52
+        /// Mac expanded sidebar: draggable between these bounds, double-click resets.
+        static let defaultExpandedWidth: CGFloat = 220
+        static let minimumExpandedWidth: CGFloat = 200
+        static let maximumExpandedWidth: CGFloat = 400
+        static let resizeHandleWidth: CGFloat = 8
         static let toggleSize: CGFloat = 26
         static let collapsedToggleSize: CGFloat = 28
         static let footerVerticalPadding: CGFloat = 14

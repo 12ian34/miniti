@@ -39,6 +39,7 @@ enum ScreenshotScene: String, CaseIterable {
     case coaching
     case coachingStats = "coaching-stats"
     case history
+    case historyPage = "history-page"
     case meeting
     /// Saved meeting detail with the coaching view selected.
     case meetingCoaching = "meeting-coaching"
@@ -76,6 +77,9 @@ enum ScreenshotScene: String, CaseIterable {
     var showsCoachingOverview: Bool {
         self == .coaching || self == .coachingStats
     }
+
+    /// The full-width History page (3.9.0), separate from the sidebar `history` scene.
+    var showsHistoryPage: Bool { self == .historyPage }
 
     /// Scenes that open the seeded saved meeting's detail screen.
     var opensSavedMeeting: Bool {

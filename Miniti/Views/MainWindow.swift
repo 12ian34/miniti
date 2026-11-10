@@ -30,6 +30,7 @@ struct Theme {
 enum MainNavigationDestination: Equatable {
     case home
     case coaching
+    case history
     case meeting(UUID)
 }
 
@@ -122,6 +123,8 @@ struct MainWindow: View {
     @State private var selectedMeetingID: UUID?
     @AppStorage("mainWindow.sidebarCollapsed") private var sidebarCollapsed = false
     @AppStorage("mainWindow.historyCollapsed") private var historyCollapsed = true
+    @AppStorage("mainWindow.sidebarWidth") private var storedSidebarWidth = Double(MinitiDesignSystem.Sidebar.defaultExpandedWidth)
+    @State private var sidebarDragStartWidth: CGFloat?
     @State private var didInitialize = false
     @State private var searchText = ""
     @State private var debouncedSearchText = ""
@@ -130,7 +133,9 @@ struct MainWindow: View {
     @State private var searchBlurRequest = 0
     @State private var isMeetingSearchFocused = false
     @State private var showTraining = false
+    @State private var showHistory = false
     @State private var coachingOriginMeetingID: UUID?
+    @State private var historyOriginMeetingID: UUID?
     @State private var searchDebounceTask: Task<Void, Never>?
     @State private var navigationHistory = MainNavigationHistory(current: .home)
     @State private var isApplyingNavigationHistory = false
@@ -147,6 +152,7 @@ struct MainWindow: View {
     private var currentNavigationDestination: MainNavigationDestination {
         if let selectedMeetingID { return .meeting(selectedMeetingID) }
         if showTraining { return .coaching }
+        if showHistory { return .history }
         return .home
     }
 
@@ -220,12 +226,13 @@ struct MainWindow: View {
                                 }
                             }
                         ),
-                        closesAfterNavigation: false
+                        closesAfterNavigation: false,
+                        expandedWidth: expandedSidebarWidth
                     )
-                    .frame(width: sidebarIsEffectivelyCollapsed ? MinitiDesignSystem.Sidebar.collapsedWidth : 220)
+                    .frame(width: sidebarIsEffectivelyCollapsed ? MinitiDesignSystem.Sidebar.collapsedWidth : expandedSidebarWidth)
                     .animation(.easeInOut(duration: 0.2), value: sidebarIsEffectivelyCollapsed)
 
-                    // Subtle gradient divider
+                    // Subtle gradient divider; draggable while the sidebar is expanded.
                     ZStack {
                         Rectangle()
                             .fill(Theme.border)
@@ -241,13 +248,21 @@ struct MainWindow: View {
                             )
                             .frame(width: 1)
                     }
+                    .overlay {
+                        if !sidebarIsEffectivelyCollapsed {
+                            sidebarResizeHandle
+                        }
+                    }
+                    .zIndex(1)
 
                     // Main content
                     if let meeting = selectedMeeting {
+                        let returnsToHistory = historyOriginMeetingID == meeting.id
                         MeetingDetailView(
                             meeting: meeting,
-                            showsBackToCoaching: coachingOriginMeetingID == meeting.id,
-                            onBackToCoaching: backToCoaching
+                            showsBackToCoaching: coachingOriginMeetingID == meeting.id || returnsToHistory,
+                            backLabel: returnsToHistory ? "history" : "coaching",
+                            onBackToCoaching: returnsToHistory ? backToHistory : backToCoaching
                         )
                         .id(meeting.id)
                     } else if showTraining {
@@ -255,6 +270,19 @@ struct MainWindow: View {
                             coachingOriginMeetingID = meetingID
                             selectedMeetingID = meetingID
                         }
+                    } else if showHistory {
+                        HistoryPageView(
+                            meetings: historicalMeetings,
+                            onOpen: { meetingID in
+                                historyOriginMeetingID = meetingID
+                                selectedMeetingID = meetingID
+                            },
+                            onTogglePin: { meeting in
+                                appState.commit(.pin, in: modelContext, mutate: { meeting.isPinned.toggle() }, revert: { meeting.isPinned.toggle() })
+                                refreshMeetings()
+                            },
+                            onDelete: { meeting in deleteMeeting(meeting) }
+                        )
                     } else {
                         MeetingView(meetings: meetings)
                     }
@@ -355,12 +383,16 @@ struct MainWindow: View {
             if ScreenshotMode.current?.showsCoachingOverview == true {
                 showTraining = true
             }
+            if ScreenshotMode.current?.showsHistoryPage == true {
+                showHistory = true
+            }
             debouncedSearchText = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         .onChange(of: appState.currentMeeting) { oldMeeting, newMeeting in
             // When starting a new meeting, deselect historical meeting
             if newMeeting != nil {
                 selectedMeetingID = nil
+                showHistory = false
             } else if oldMeeting != nil {
                 // Leaving a session (save, discard, or Home) restores full navigation.
                 sidebarCollapsed = false
@@ -392,9 +424,19 @@ struct MainWindow: View {
             if newValue != coachingOriginMeetingID {
                 coachingOriginMeetingID = nil
             }
+            if newValue != historyOriginMeetingID {
+                historyOriginMeetingID = nil
+            }
             recordNavigationDestinationChange()
         }
-        .onChange(of: showTraining) { _, _ in
+        .onChange(of: showTraining) { _, isShowing in
+            if isShowing { showHistory = false }
+            dismissMeetingSearchFocus()
+            isCompactSidebarPresented = false
+            recordNavigationDestinationChange()
+        }
+        .onChange(of: showHistory) { _, isShowing in
+            if isShowing { showTraining = false }
             dismissMeetingSearchFocus()
             isCompactSidebarPresented = false
             recordNavigationDestinationChange()
@@ -433,9 +475,53 @@ struct MainWindow: View {
         }
     }
 
+    private var expandedSidebarWidth: CGFloat {
+        min(max(CGFloat(storedSidebarWidth), MinitiDesignSystem.Sidebar.minimumExpandedWidth),
+            MinitiDesignSystem.Sidebar.maximumExpandedWidth)
+    }
+
+    private func setSidebarWidth(_ width: CGFloat) {
+        storedSidebarWidth = Double(min(max(width, MinitiDesignSystem.Sidebar.minimumExpandedWidth),
+                                        MinitiDesignSystem.Sidebar.maximumExpandedWidth).rounded())
+    }
+
+    /// A wider invisible target over the 1pt divider: drag to resize, double-click to reset.
+    private var sidebarResizeHandle: some View {
+        Color.clear
+            .frame(width: MinitiDesignSystem.Sidebar.resizeHandleWidth)
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        let start = sidebarDragStartWidth ?? expandedSidebarWidth
+                        if sidebarDragStartWidth == nil { sidebarDragStartWidth = start }
+                        setSidebarWidth(start + value.translation.width)
+                    }
+                    .onEnded { _ in sidebarDragStartWidth = nil }
+            )
+            .onTapGesture(count: 2) {
+                setSidebarWidth(MinitiDesignSystem.Sidebar.defaultExpandedWidth)
+            }
+            .accessibilityElement()
+            .accessibilityLabel("Sidebar width")
+            .accessibilityValue("\(Int(expandedSidebarWidth)) points")
+            .accessibilityAdjustableAction { direction in
+                switch direction {
+                case .increment: setSidebarWidth(expandedSidebarWidth + 20)
+                case .decrement: setSidebarWidth(expandedSidebarWidth - 20)
+                @unknown default: break
+                }
+            }
+            .help("Drag to resize the sidebar. Double-click to reset.")
+    }
+
     private func terminalSidebar(
         isCollapsed: Binding<Bool>,
-        closesAfterNavigation: Bool
+        closesAfterNavigation: Bool,
+        expandedWidth: CGFloat = MinitiDesignSystem.Sidebar.defaultExpandedWidth
     ) -> some View {
         TerminalSidebar(
             meetings: meetings,
@@ -458,6 +544,14 @@ struct MainWindow: View {
                 }
             ),
             historyCollapsed: $historyCollapsed,
+            showHistory: Binding(
+                get: { showHistory },
+                set: { newValue in
+                    showHistory = newValue
+                    if closesAfterNavigation { isCompactSidebarPresented = false }
+                }
+            ),
+            expandedWidth: expandedWidth,
             searchFocusRequest: searchFocusRequest,
             searchBlurRequest: searchBlurRequest,
             searchSnippets: searchSnippets,
@@ -491,6 +585,7 @@ struct MainWindow: View {
         keyboardService.onNewSession = { [self] in
             appState.createNewSession()
             showTraining = false
+            showHistory = false
             selectedMeetingID = nil
         }
 
@@ -605,13 +700,20 @@ struct MainWindow: View {
         isApplyingNavigationHistory = true
         coachingOriginMeetingID = nil
 
+        historyOriginMeetingID = nil
         switch destination {
         case .home:
             showTraining = false
+            showHistory = false
             selectedMeetingID = nil
         case .coaching:
             selectedMeetingID = nil
+            showHistory = false
             showTraining = true
+        case .history:
+            selectedMeetingID = nil
+            showTraining = false
+            showHistory = true
         case .meeting(let id):
             showTraining = false
             selectedMeetingID = id
@@ -620,6 +722,16 @@ struct MainWindow: View {
         DispatchQueue.main.async {
             isApplyingNavigationHistory = false
         }
+    }
+
+    private func backToHistory() {
+        if navigationHistory.backStack.last == .history {
+            navigateBack()
+            return
+        }
+        historyOriginMeetingID = nil
+        selectedMeetingID = nil
+        showHistory = true
     }
 
     private func backToCoaching() {
@@ -650,6 +762,7 @@ struct MainWindow: View {
         guard let pendingID = appState.pendingOpenSavedMeetingID else { return }
         guard let meeting = meetings.first(where: { $0.id == pendingID }) else { return }
         showTraining = false
+        showHistory = false
         selectedMeetingID = meeting.id
         appState.pendingOpenSavedMeetingID = nil
     }
@@ -909,6 +1022,8 @@ struct TerminalSidebar: View {
     @Binding var searchText: String
     @Binding var showTraining: Bool
     @Binding var historyCollapsed: Bool
+    @Binding var showHistory: Bool
+    var expandedWidth: CGFloat = MinitiDesignSystem.Sidebar.defaultExpandedWidth
     var searchFocusRequest: Int = 0
     var searchBlurRequest: Int = 0
     let searchSnippets: [UUID: String]
@@ -967,7 +1082,7 @@ struct TerminalSidebar: View {
     var body: some View {
         ZStack(alignment: .leading) {
             expandedSidebar
-                .frame(width: 220)
+                .frame(width: expandedWidth)
                 .opacity(isCollapsed ? 0 : 1)
 
             collapsedSidebar
@@ -992,9 +1107,10 @@ struct TerminalSidebar: View {
                 collapsedNavButton(
                     icon: appState.currentMeeting != nil ? "record.circle" : "house.fill",
                     color: appState.currentMeeting != nil ? (appState.isRecording ? Theme.accentRed : Theme.accentBlue) : Theme.accent,
-                    isSelected: selectedMeetingID == nil && !showTraining
+                    isSelected: selectedMeetingID == nil && !showTraining && !showHistory
                 ) {
                     showTraining = false
+                    showHistory = false
                     selectedMeetingID = nil
                 }
 
@@ -1005,18 +1121,20 @@ struct TerminalSidebar: View {
                     isSelected: showTraining && selectedMeetingID == nil
                 ) {
                     showTraining = true
+                    showHistory = false
                     selectedMeetingID = nil
                 }
 
-                // History
+                // History opens the full History page, like Home and Coaching.
                 if !historicalMeetings.isEmpty {
                     collapsedNavButton(
                         icon: "clock.fill",
                         color: Theme.textMuted,
-                        isSelected: selectedMeetingID != nil
+                        isSelected: showHistory || selectedMeetingID != nil
                     ) {
-                        historyCollapsed = false
-                        isCollapsed = false
+                        selectedMeetingID = nil
+                        showTraining = false
+                        showHistory = true
                     }
                 }
             }
@@ -1054,6 +1172,8 @@ struct TerminalSidebar: View {
             // Logo/Title
             HStack(spacing: 10) {
                 Button {
+                    showTraining = false
+                    showHistory = false
                     selectedMeetingID = nil
                 } label: {
                     HStack(spacing: 10) {
@@ -1084,19 +1204,21 @@ struct TerminalSidebar: View {
                         isPrivate: appState.privateModeEnabled,
                         title: meeting.displayTitle,
                         isRecording: appState.isRecording,
-                        isSelected: selectedMeetingID == nil && !showTraining
+                        isSelected: selectedMeetingID == nil && !showTraining && !showHistory
                     ) {
                         showTraining = false
+                        showHistory = false
                         selectedMeetingID = nil
                     }
                 } else {
                     SidebarIconItem(
                         systemIcon: "house.fill",
                         label: "home",
-                        isSelected: selectedMeetingID == nil && !showTraining,
+                        isSelected: selectedMeetingID == nil && !showTraining && !showHistory,
                         shortcut: "⌘N"
                     ) {
                         showTraining = false
+                        showHistory = false
                         selectedMeetingID = nil
                     }
                 }
@@ -1107,6 +1229,7 @@ struct TerminalSidebar: View {
                     isSelected: showTraining && selectedMeetingID == nil
                 ) {
                     showTraining = true
+                    showHistory = false
                     selectedMeetingID = nil
                 }
 
@@ -1114,32 +1237,48 @@ struct TerminalSidebar: View {
                     SidebarIconItem(
                         systemIcon: "clock.fill",
                         label: "history",
-                        isSelected: selectedMeetingID != nil,
+                        isSelected: showHistory || selectedMeetingID != nil,
                         trailing: {
                             AnyView(
-                                HStack(spacing: 4) {
-                                    Text("\(historicalMeetings.count)")
-                                        .font(.system(size: 10, weight: .medium, design: .default))
-                                        .foregroundStyle(Theme.textDim)
-
-                                    Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
-                                        .font(.system(size: 8, weight: .semibold))
-                                        .foregroundStyle(Theme.textDim.opacity(0.6))
-                                }
+                                Text("\(historicalMeetings.count)")
+                                    .font(.system(size: 10, weight: .medium, design: .default))
+                                    .foregroundStyle(Theme.textDim)
+                                    // Room for the separate list toggle laid over the row.
+                                    .padding(.trailing, 22)
                             )
                         }
                     ) {
-                        withAnimation(.easeInOut(duration: 0.16)) {
-                            historyCollapsed.toggle()
+                        // Charlie expected History to open a page like Home and Coaching.
+                        selectedMeetingID = nil
+                        showTraining = false
+                        showHistory = true
+                    }
+                    .overlay(alignment: .trailing) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.16)) {
+                                historyCollapsed.toggle()
+                            }
+                        } label: {
+                            Image(systemName: historyCollapsed ? "chevron.right" : "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(Theme.textDim)
+                                .frame(width: 28, height: 28)
+                                .contentShape(Rectangle())
                         }
+                        .buttonStyle(.plain)
+                        .focusable(false)
+                        .padding(.trailing, 4)
+                        .accessibilityLabel(historyCollapsed ? "Show recent meetings in the sidebar" : "Hide recent meetings in the sidebar")
+                        .help(historyCollapsed ? "Show recent meetings" : "Hide recent meetings")
                     }
                 }
             }
             .padding(.top, 10)
             .padding(.horizontal, 10)
 
-            // History list
-            if !historicalMeetings.isEmpty && !historyCollapsed {
+            // History list. The full History page already shows it, so the sidebar
+            // copy steps aside there unless sidebar search is in use.
+            if !historicalMeetings.isEmpty && !historyCollapsed && (!showHistory || isSearchActive) {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Spacer()
@@ -1742,6 +1881,7 @@ struct SidebarSessionItem: View {
 struct MeetingDetailView: View {
     @Bindable var meeting: Meeting
     var showsBackToCoaching = false
+    var backLabel = "coaching"
     var onBackToCoaching: () -> Void = {}
     @EnvironmentObject var appState: AppState
     @Environment(\.modelContext) private var modelContext
@@ -1933,13 +2073,13 @@ struct MeetingDetailView: View {
                         HStack(spacing: 6) {
                             Image(systemName: "chevron.left")
                                 .font(.system(size: 9, weight: .bold))
-                            Text("coaching")
+                            Text(backLabel)
                                 .font(.system(size: 11, weight: .semibold, design: .default))
                         }
                     }
                 }
                 .buttonStyle(.plain)
-                .help("Back to Coaching")
+                .help("Back to \(backLabel.capitalized)")
             }
 
             meetingTitleField
@@ -4338,5 +4478,257 @@ struct MeetingSearchFilterRow: View {
         }
         .padding(8)
         .frame(width: 220)
+    }
+}
+
+// MARK: - History page
+
+/// Full-width History, reached from the sidebar like Home and Coaching (Charlie's 3.8.0
+/// feedback). Reuses the sidebar's row, folder filter and search so both stay consistent.
+struct HistoryPageView: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    let meetings: [Meeting]
+    let onOpen: (UUID) -> Void
+    let onTogglePin: (Meeting) -> Void
+    let onDelete: (Meeting) -> Void
+    @State private var query = ""
+    @State private var debouncedQuery = ""
+    @State private var managingFolders = false
+    @FocusState private var searchFocused: Bool
+
+    private static let maximumWidth: CGFloat = 820
+
+    private var results: [MeetingSearchResult] {
+        guard !debouncedQuery.isEmpty else { return [] }
+        return MeetingSearchResult.search(query: debouncedQuery, in: meetings)
+    }
+
+    private var searching: Bool { !debouncedQuery.isEmpty }
+
+    private var visibleMeetings: [Meeting] {
+        let base = searching ? results.map(\.meeting) : meetings
+        return base.filter { appState.folderIncludes($0) }
+    }
+
+    private var unfiledCount: Int {
+        meetings.lazy.filter { appState.meetingFolders.folder($0.folderID) == nil && $0.endTime != nil }.count
+    }
+
+    private func count(in folder: MeetingFolder) -> Int {
+        meetings.lazy.filter { $0.folderID == folder.id }.count
+    }
+
+    private var sections: [(title: String, meetings: [Meeting])] {
+        let visible = visibleMeetings
+        if searching { return visible.isEmpty ? [] : [("results", visible)] }
+        let calendar = Calendar.current
+        let pinned = visible.filter(\.isPinned)
+        let unpinned = visible.filter { !$0.isPinned }
+        let today = unpinned.filter { calendar.isDateInToday($0.startTime) }
+        let yesterday = unpinned.filter { calendar.isDateInYesterday($0.startTime) }
+        let week = unpinned.filter {
+            !calendar.isDateInToday($0.startTime) && !calendar.isDateInYesterday($0.startTime) &&
+            calendar.isDate($0.startTime, equalTo: Date(), toGranularity: .weekOfYear)
+        }
+        let used = Set((today + yesterday + week).map(\.id))
+        let older = unpinned.filter { !used.contains($0.id) }
+        return [("pinned", pinned), ("today", today), ("yesterday", yesterday), ("this week", week), ("older", older)]
+            .filter { !$0.1.isEmpty }
+    }
+
+    private var selectedFilter: String {
+        if appState.showUnfiledMeetings || (appState.folderFilterID != nil && appState.meetingFolders.folder(appState.folderFilterID) == nil) {
+            return "unfiled"
+        }
+        return appState.folderFilterID?.uuidString ?? "all"
+    }
+
+    private func select(_ filter: String) {
+        appState.showUnfiledMeetings = filter == "unfiled"
+        appState.folderFilterID = UUID(uuidString: filter)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                header
+                searchField
+                folderChips
+                if appState.automaticFolderFiling, unfiledCount >= 3, !searching {
+                    organiseNudge
+                }
+                list
+            }
+            .padding(24)
+            .frame(maxWidth: Self.maximumWidth, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ColorPalette.Background.primary)
+        .task(id: query) {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { try? await Task.sleep(nanoseconds: 200_000_000) }
+            guard !Task.isCancelled else { return }
+            debouncedQuery = trimmed
+        }
+        .sheet(isPresented: $managingFolders) {
+            MeetingFolderManager(meetings: meetings)
+                .environmentObject(appState)
+                .dynamicTypeSize(dynamicTypeSize)
+        }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("history")
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(20), weight: .bold, design: .default))
+                .foregroundStyle(ColorPalette.Text.primary)
+            Text("\(meetings.count) meeting\(meetings.count == 1 ? "" : "s")")
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(12), weight: .medium, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(searchFocused ? Theme.accent : Theme.textDim)
+            TextField("search meetings, with: a name, on: a date", text: $query)
+                .font(.system(size: 13, weight: .medium, design: .default))
+                .foregroundStyle(Theme.text)
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .accessibilityLabel("Search meetings")
+            if !query.isEmpty {
+                Text("\(visibleMeetings.count)")
+                    .font(.system(size: 11, weight: .medium, design: .default))
+                    .foregroundStyle(Theme.textDim)
+                Button { query = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textDim)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Theme.bgSecondary)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(searchFocused ? Theme.accent.opacity(0.5) : Theme.border.opacity(0.6), lineWidth: 1)
+                )
+        )
+    }
+
+    private var folderChips: some View {
+        HStack(alignment: .center, spacing: 8) {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    chip("all meetings", count: meetings.count, id: "all")
+                    chip("unfiled", count: unfiledCount, id: "unfiled")
+                    ForEach(appState.meetingFolders.active) { folder in
+                        chip(folder.name, count: count(in: folder), id: folder.id.uuidString)
+                    }
+                }
+            }
+            Button { managingFolders = true } label: {
+                MinitiControlLabel(role: .secondary) {
+                    Label("folders", systemImage: "folder.badge.gearshape")
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Manage folders")
+            if !appState.folderUndo.isEmpty {
+                Button { appState.undoLastFolderChange() } label: {
+                    MinitiControlLabel(role: .secondary) { Text("undo") }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Undo folder changes")
+            }
+        }
+    }
+
+    private func chip(_ title: String, count: Int, id: String) -> some View {
+        let selected = selectedFilter == id
+        return Button { select(id) } label: {
+            MinitiControlLabel(role: selected ? .primary : .secondary, isEmphasized: selected) {
+                HStack(spacing: 6) {
+                    Text(title)
+                    Text("\(count)").foregroundStyle(selected ? ColorPalette.Text.primary : Theme.textDim)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(count) meeting\(count == 1 ? "" : "s")")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var organiseNudge: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(ColorPalette.Accent.amber)
+            Text("\(unfiledCount) meetings are unfiled. Preview how miniti would organise them, including recurring meetings and ones you moved by hand.")
+                .font(.system(size: 12, weight: .medium, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Button { managingFolders = true } label: {
+                MinitiControlLabel(role: .secondary) { Text("organise") }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.bgSecondary))
+    }
+
+    @ViewBuilder
+    private var list: some View {
+        if visibleMeetings.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(searching ? "no meetings match" : "no meetings here yet")
+                    .font(.system(size: 13, weight: .medium, design: .default))
+                    .foregroundStyle(ColorPalette.Text.muted)
+                if searching {
+                    Text("try fewer words, or with: a name and on: a date")
+                        .font(.system(size: 12, weight: .medium, design: .default))
+                        .foregroundStyle(ColorPalette.Text.dim)
+                }
+            }
+            .padding(.top, 12)
+        } else {
+            let snippets = Dictionary(results.compactMap { r in r.snippet.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let counts = Dictionary(results.map { ($0.meeting.id, $0.matchCount) }, uniquingKeysWith: { a, _ in a })
+            let contexts = Dictionary(results.compactMap { r in r.context.map { (r.meeting.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            LazyVStack(alignment: .leading, spacing: 4) {
+                ForEach(sections, id: \.title) { section in
+                    Text(section.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Theme.textDim)
+                        .textCase(.uppercase)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 10)
+                        .accessibilityAddTraits(.isHeader)
+                    ForEach(section.meetings) { meeting in
+                        SidebarHistoryItem(
+                            meeting: meeting,
+                            isSelected: false,
+                            searchQuery: searching ? debouncedQuery : nil,
+                            matchSnippet: snippets[meeting.id],
+                            matchCount: counts[meeting.id],
+                            matchContext: contexts[meeting.id],
+                            action: { onOpen(meeting.id) },
+                            onTogglePin: { onTogglePin(meeting) },
+                            onDelete: { onDelete(meeting) }
+                        )
+                    }
+                }
+            }
+        }
     }
 }
