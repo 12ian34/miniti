@@ -751,7 +751,7 @@ private struct RecordingIndicatorView: View {
                             role: .primary,
                             isEmphasized: true
                         ) {
-                            (NSApp.delegate as? AppDelegate)?.openOrRestoreMainWindow()
+                            AppDelegate.shared?.openOrRestoreMainWindow()
                         }
                         indicatorActionButton(
                             "end meeting",

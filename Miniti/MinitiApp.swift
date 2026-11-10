@@ -29,6 +29,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     }
     private var pendingPurchaseReturn: URL?
     var openMainWindow: (() -> Void)?
+
+    /// The live delegate. With `@NSApplicationDelegateAdaptor`, `NSApp.delegate` is
+    /// SwiftUI's forwarding object, so `NSApp.delegate as? AppDelegate` is always nil:
+    /// the floating panel's "open meeting" and the menu bar's "Open Miniti" did nothing
+    /// unless the main window was already in front.
+    private(set) static weak var shared: AppDelegate?
+
+    override init() {
+        super.init()
+        Self.shared = self
+    }
     private var isTerminationReplyPending = false
     private var terminationTimeoutTask: Task<Void, Never>?
 
@@ -943,7 +954,7 @@ struct MenuBarView: View {
             Divider()
             
             Button {
-                (NSApp.delegate as? AppDelegate)?.openOrRestoreMainWindow()
+                AppDelegate.shared?.openOrRestoreMainWindow()
             } label: {
                 Label("Open Miniti", systemImage: "macwindow")
             }

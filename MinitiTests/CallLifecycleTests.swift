@@ -840,6 +840,13 @@ final class CallLifecycleTests: XCTestCase {
     }
 
     @MainActor
+    func testFloatingPanelAndMenuReachTheLiveAppDelegate() {
+        // `NSApp.delegate as? AppDelegate` is nil under @NSApplicationDelegateAdaptor,
+        // which made "open meeting" a silent no-op whenever miniti was not in front.
+        XCTAssertNotNil(AppDelegate.shared, "Window actions must reach the adaptor's AppDelegate")
+    }
+
+    @MainActor
     func testPresentMainWindowDeminiaturizesOnlyWhenNeeded() {
         XCTAssertTrue(AppDelegate.shouldDeminiaturizeMainWindow(true))
         XCTAssertFalse(AppDelegate.shouldDeminiaturizeMainWindow(false))
