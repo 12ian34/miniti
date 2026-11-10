@@ -802,6 +802,76 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testAccountRecoveryRowAtNormalTextAcrossScales() {
+        for scale in 0...2 { assertAccountRecoveryRow(scale: scale, largest: false) }
+    }
+
+    func testAccountRecoveryRowAtLargestTextAcrossScales() {
+        for scale in 0...2 { assertAccountRecoveryRow(scale: scale, largest: true) }
+    }
+
+    private func assertAccountRecoveryRow(scale: Int, largest: Bool) {
+        executionTimeAllowance = 240
+        if app != nil { resetAccountMatrixFixture() }
+        launch("first", largeText: largest, interfaceScale: scale)
+        let guest = app.buttons["account.continueAnonymous"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            if guest.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        guest.tap()
+        XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.staticTexts["Account"].firstMatch.tap()
+        let form = app.collectionViews.firstMatch
+        let title = app.staticTexts["account.recovery.title"]
+        for _ in 0..<16 {
+            if title.exists && title.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(title.isHittable)
+        let status = app.staticTexts["account.recovery.status"]
+        XCTAssertTrue(status.exists)
+        // Reject the captured narrow columns; captures still own full wrapping proof.
+        XCTAssertGreaterThanOrEqual(title.frame.width, title.frame.height * 2)
+        XCTAssertGreaterThanOrEqual(status.frame.width, status.frame.height)
+        for identifier in ["account.recovery.show", "account.recovery.replace"] {
+            let button = app.buttons[identifier]
+            for _ in 0..<16 {
+                if button.exists && button.isHittable { break }
+                form.swipeUp(velocity: .slow)
+            }
+            XCTAssertTrue(button.isHittable)
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            let sibling = app.buttons[identifier == "account.recovery.show" ? "account.recovery.replace" : "account.recovery.show"]
+            XCTAssertFalse(button.frame.intersects(sibling.frame))
+            captureAppScreen("Recovery row \(largest ? "largest" : "normal") scale \(scale) \(identifier)")
+            button.tap()
+            let confirmation = app.buttons[identifier == "account.recovery.show" ? "Show key" : "Replace key"]
+            XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons[identifier == "account.recovery.show" ? "Replace key" : "Show key"].exists)
+            let cancel = app.buttons["Cancel"].firstMatch
+            if cancel.exists {
+                cancel.tap()
+            } else {
+                // iOS 27 presents this native confirmation as a popover, with
+                // a dismissal region rather than a visible Cancel action.
+                let backdrop = app.otherElements["PopoverDismissRegion"]
+                XCTAssertTrue(backdrop.waitForExistence(timeout: 5))
+                let point = CGPoint(x: backdrop.frame.minX + backdrop.frame.width * 0.02,
+                                    y: backdrop.frame.midY)
+                XCTAssertFalse(app.popovers.firstMatch.frame.contains(point))
+                backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
+            }
+            XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+        }
+    }
+
     func testFallbackEmailRestoreKeepsFailureVisible() {
         assertFallbackRestore(recovery: false, succeeds: false)
     }

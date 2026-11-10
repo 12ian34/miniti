@@ -1556,19 +1556,7 @@ struct ManagedAccountSettingsSection: View {
 
             // Recovery key
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Recovery key")
-                    Spacer()
-                    Text(model.recoveryKeyLine)
-                        .foregroundStyle(.secondary)
-                    if revealedKey != nil {
-                        Button("Hide") { revealedKey = nil; copied = false }
-                    } else {
-                        ForEach(model.recoveryKeyActions, id: \.self) { action in
-                            actionButton(action)
-                        }
-                    }
-                }
+                recoveryKeySummary
                 .id("account.recoveryKey")
                 if let note = model.recoveryKeyNote {
                     Text(note)
@@ -1605,6 +1593,64 @@ struct ManagedAccountSettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var recoveryKeyTitle: some View {
+        Text("Recovery key")
+            .accessibilityIdentifier("account.recovery.title")
+    }
+
+    private var recoveryKeyStatus: some View {
+        Text(model.recoveryKeyLine)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier("account.recovery.status")
+    }
+
+    @ViewBuilder
+    private var recoveryKeyActions: some View {
+        if revealedKey != nil {
+            Button { revealedKey = nil; copied = false } label: { recoveryActionLabel("Hide") }
+        } else {
+            ForEach(model.recoveryKeyActions, id: \.self) { action in actionButton(action) }
+        }
+    }
+
+    private var recoveryKeySummary: some View {
+        #if os(iOS)
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                recoveryKeyTitle.fixedSize()
+                Spacer()
+                recoveryKeyStatus.fixedSize()
+                recoveryKeyActions.fixedSize()
+            }
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control) {
+                recoveryKeyTitle
+                recoveryKeyStatus
+                recoveryKeyActions
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .buttonStyle(.borderless)
+        #else
+        HStack {
+            recoveryKeyTitle
+            Spacer()
+            recoveryKeyStatus
+            recoveryKeyActions
+        }
+        #endif
+    }
+
+    @ViewBuilder
+    private func recoveryActionLabel(_ title: String) -> some View {
+        #if os(iOS)
+        Text(title)
+            .fixedSize(horizontal: false, vertical: true)
+            .minitiMinimumControlTarget()
+        #else
+        Text(title)
+        #endif
     }
 
     // MARK: Devices
@@ -1670,9 +1716,13 @@ struct ManagedAccountSettingsSection: View {
         case .retryEmail:
             Button("Retry") { Task { await appState.refreshAccountEmail(reason: "retry", force: true) } }
         case .showKey:
-            Button("Show recovery key") { isConfirmingReveal = true }.disabled(isBusy)
+            Button { isConfirmingReveal = true } label: { recoveryActionLabel("Show recovery key") }
+                .disabled(isBusy)
+                .accessibilityIdentifier("account.recovery.show")
         case .replaceKey:
-            Button("Replace recovery key") { isConfirmingReplace = true }.disabled(disabled)
+            Button { isConfirmingReplace = true } label: { recoveryActionLabel("Replace recovery key") }
+                .disabled(disabled)
+                .accessibilityIdentifier("account.recovery.replace")
         case .switchAccount:
             Menu("Switch account…") {
                 Button("With email…") { isPresentingEmailJoin = true }
