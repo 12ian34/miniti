@@ -3103,35 +3103,23 @@ private struct CoachingExampleView: View {
             style: .inset,
             contentPadding: MinitiDesignSystem.Spacing.comfortable
         ) {
-            HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.standard) {
-                VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
-                    HStack(spacing: MinitiDesignSystem.Spacing.small) {
-                        Image(systemName: "quote.opening")
-                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold))
-                        Text(example.label)
-                            .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold, design: .default))
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .foregroundStyle(accent)
-
-                    Text("“\(example.excerpt)”")
-                        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .regular, design: .default))
-                        .foregroundStyle(ColorPalette.Text.muted)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                VStack(alignment: .trailing, spacing: MinitiDesignSystem.Spacing.hairline) {
-                    Text(example.meetingTitle)
-                        .fontWeight(.semibold)
-                        .multilineTextAlignment(.trailing)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text(example.meetingDate, format: .dateTime.day().month(.abbreviated).year())
-                }
-                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
-                .foregroundStyle(ColorPalette.Text.meta)
-                .layoutPriority(1)
+            #if os(iOS)
+            // Phone widths cannot fit a side column: a long meeting title took
+            // its full line width first and left the quote a few letters wide.
+            VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+                quoteColumn
+                sourceColumn
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
+            #else
+            HStack(alignment: .top, spacing: MinitiDesignSystem.Spacing.standard) {
+                quoteColumn
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                // Cap the source so long titles wrap instead of squeezing the quote.
+                sourceColumn
+                    .frame(maxWidth: Self.sourceColumnMaxWidth, alignment: .trailing)
+            }
+            #endif
         }
         .fixedSize(horizontal: false, vertical: true)
         .overlay {
@@ -3152,6 +3140,40 @@ private struct CoachingExampleView: View {
             radius: 10,
             y: 3
         )
+    }
+
+    #if !os(iOS)
+    private static let sourceColumnMaxWidth: CGFloat = 200
+    #endif
+
+    private var quoteColumn: some View {
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.small) {
+            HStack(spacing: MinitiDesignSystem.Spacing.small) {
+                Image(systemName: "quote.opening")
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold))
+                Text(example.label)
+                    .font(.system(size: MinitiDesignSystem.CoachingTypography.size(9), weight: .bold, design: .default))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(accent)
+
+            Text("“\(example.excerpt)”")
+                .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .regular, design: .default))
+                .foregroundStyle(ColorPalette.Text.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var sourceColumn: some View {
+        VStack(alignment: .trailing, spacing: MinitiDesignSystem.Spacing.hairline) {
+            Text(example.meetingTitle)
+                .fontWeight(.semibold)
+                .multilineTextAlignment(.trailing)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(example.meetingDate, format: .dateTime.day().month(.abbreviated).year())
+        }
+        .font(.system(size: MinitiDesignSystem.CoachingTypography.size(10), weight: .medium, design: .default))
+        .foregroundStyle(ColorPalette.Text.meta)
     }
 }
 
