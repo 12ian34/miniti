@@ -822,6 +822,144 @@ final class AccountJourneys: XCTestCase {
         }
     }
 
+    func testMacSettingsEmailRestoreInputAndCancel() {
+        assertMacSettingsSignIn(move: false, recovery: false)
+    }
+
+    func testMacSettingsKeyRestoreInputAndCancel() {
+        assertMacSettingsSignIn(move: false, recovery: true)
+    }
+
+    func testMacSettingsEmailSwitchInputAndCancel() {
+        assertMacSettingsSignIn(move: true, recovery: false)
+    }
+
+    func testMacSettingsKeySwitchInputAndCancel() {
+        assertMacSettingsSignIn(move: true, recovery: true)
+    }
+
+    private func openMacAccountSettings(scale: Int, usableKey: Bool = true) -> XCUIElement {
+        if app != nil { resetAccountMatrixFixture() }
+        app?.terminate()
+        launch(usableKey ? "first" : "accountKeyUnavailable", interfaceScale: scale)
+        app.activate()
+        if usableKey {
+            let guest = app.buttons["account.continueAnonymous"]
+            XCTAssertTrue(guest.waitForExistence(timeout: 5)); guest.click()
+            XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+        }
+        app.typeKey(",", modifierFlags: .command)
+        let window = app.windows.containing(.textField, identifier: "Search settings").firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 5), app.debugDescription)
+        let account = window.staticTexts["Account"].firstMatch
+        XCTAssertTrue(account.waitForExistence(timeout: 5)); account.click()
+        return window
+    }
+
+    private func revealMacAccountControl(_ element: XCUIElement, in window: XCUIElement) {
+        // The rightmost scroll view is Settings detail; leave the sidebar still.
+        guard let detail = window.scrollViews.allElementsBoundByIndex.max(by: { $0.frame.minX < $1.frame.minX }) else {
+            XCTFail("Settings detail scroll view is missing"); return
+        }
+        XCTAssertTrue(element.waitForExistence(timeout: 5), window.debugDescription)
+        for _ in 0..<20 {
+            if element.isHittable && detail.frame.contains(element.frame) { break }
+            // Large swipes can skip a compact row. Reverse if it is above the viewport.
+            let delta: CGFloat = element.frame.midY < detail.frame.minY ? 140 : -140
+            detail.scroll(byDeltaX: 0, deltaY: delta)
+        }
+        XCTAssertTrue(element.isHittable, window.debugDescription)
+        XCTAssertTrue(detail.frame.contains(element.frame))
+    }
+
+    private func assertMacSettingsSignIn(move: Bool, recovery: Bool) {
+        executionTimeAllowance = 240
+        for scale in [0, 2] {
+            let window = openMacAccountSettings(scale: scale, usableKey: move)
+            let menu = window.menuButtons[move ? "Switch account…" : "Sign in again…"]
+            revealMacAccountControl(menu, in: window)
+            menu.click()
+            let method = app.menuItems[recovery ? "With recovery key…" : "With email…"]
+            XCTAssertTrue(method.waitForExistence(timeout: 5)); method.click()
+            let route = "account" + (recovery ? "Key" : "Email") + (move ? "Move" : "Restore")
+            let probe = app.buttons["ui-test.readingScope.\(route)"]
+            XCTAssertTrue(probe.waitForExistence(timeout: 5), window.debugDescription)
+            XCTAssertTrue(probe.label.contains("scale \(scale);"))
+            probe.click(); XCTAssertTrue(probe.waitForNonExistence(timeout: 5))
+            let prefix = recovery ? "account.restore" : "account.emailSignIn"
+            let heading = window.staticTexts["\(prefix).heading"]
+            let input = window.textFields[recovery ? "account.restore.key" : "account.emailSignIn.field"]
+            let submit = recovery ? window.buttons["account.restore.submit"] : window.buttons["Send link"]
+            let cancel = recovery ? window.buttons["account.restore.cancel"] : window.buttons.matching(identifier: "Cancel").element
+            XCTAssertTrue(input.waitForExistence(timeout: 5)); XCTAssertTrue(input.isHittable)
+            XCTAssertFalse(submit.isEnabled)
+            let draft = recovery ? "M1-000G-40R4-0M30-E209-185G-R38E-1WET-S870" : "layout@example.invalid"
+            input.click(); input.typeText(draft)
+            let typed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", draft), object: input)
+            XCTAssertEqual(XCTWaiter.wait(for: [typed], timeout: 5), .completed)
+            XCTAssertTrue(submit.isEnabled); XCTAssertTrue(cancel.isHittable)
+            for element in [heading, input, cancel, submit] {
+                XCTAssertTrue(window.frame.contains(element.frame))
+            }
+            XCTAssertTrue(cancel.frame.intersection(submit.frame).isEmpty)
+            XCTAssertLessThanOrEqual(input.frame.maxY, min(cancel.frame.minY, submit.frame.minY))
+            let frames = XCTAttachment(string: "scale=\(scale); input=\(input.frame); cancel=\(cancel.frame); submit=\(submit.frame)")
+            frames.name = "Mac Settings \(route) frames"; frames.lifetime = .keepAlways; add(frames)
+            let capture = XCTAttachment(screenshot: window.screenshot())
+            capture.name = "Mac Settings \(route) typed scale \(scale)"; capture.lifetime = .keepAlways; add(capture)
+            cancel.click(); XCTAssertTrue(heading.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(menu.exists)
+        }
+    }
+
+    func testMacAccountEmailAndDeviceDraftsCancelWithoutSaving() {
+        executionTimeAllowance = 240
+        for scale in [0, 2] {
+            let window = openMacAccountSettings(scale: scale)
+            let addEmail = window.buttons["account.email.add"]
+            revealMacAccountControl(addEmail, in: window); addEmail.click()
+            let input = window.textFields["account.email.draft"]
+            XCTAssertTrue(input.waitForExistence(timeout: 5))
+            let send = window.buttons["account.email.send"]
+            let cancel = window.buttons["account.email.cancel"]
+            XCTAssertFalse(send.isEnabled)
+            input.click(); input.typeText("layout@example.invalid")
+            XCTAssertEqual(input.value as? String, "layout@example.invalid")
+            XCTAssertTrue(send.isEnabled)
+            revealMacAccountControl(cancel, in: window)
+            for element in [input, send, cancel] { XCTAssertTrue(window.frame.contains(element.frame)) }
+            XCTAssertTrue(input.frame.intersection(send.frame).isEmpty)
+            XCTAssertTrue(send.frame.intersection(cancel.frame).isEmpty)
+            let emailCapture = XCTAttachment(screenshot: window.screenshot())
+            emailCapture.name = "Mac Account email draft scale \(scale)"; emailCapture.lifetime = .keepAlways; add(emailCapture)
+            cancel.click(); XCTAssertTrue(input.waitForNonExistence(timeout: 5))
+            addEmail.click(); XCTAssertTrue(input.waitForExistence(timeout: 5))
+            XCTAssertEqual(input.value as? String, "")
+            XCTAssertFalse(send.isEnabled); cancel.click()
+            let id = "550e8400-e29b-41d4-a716-446655440000"
+            let rename = window.buttons["account.rename.\(id)"]
+            revealMacAccountControl(rename, in: window)
+            let title = window.staticTexts["account.device.title.\(id)"]
+            let original = title.value as? String ?? title.label
+            XCTAssertTrue(original.contains("Studio device"))
+            rename.click()
+            let name = app.textFields["Device name"]
+            XCTAssertTrue(name.waitForExistence(timeout: 5))
+            name.click(); name.typeKey("a", modifierFlags: .command)
+            name.typeText("Synthetic renamed device")
+            XCTAssertEqual(name.value as? String, "Synthetic renamed device")
+            app.activate()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+            // NSAlert also publishes a Touch Bar Cancel outside the sheet.
+            let cancelName = window.sheets.buttons.matching(NSPredicate(format: "label == %@", "Cancel")).element
+            let nameCapture = XCTAttachment(screenshot: window.screenshot())
+            nameCapture.name = "Mac Account device draft scale \(scale)"; nameCapture.lifetime = .keepAlways; add(nameCapture)
+            XCTAssertTrue(cancelName.isHittable, app.debugDescription)
+            cancelName.click(); XCTAssertTrue(name.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(title.value as? String ?? title.label, original)
+        }
+    }
+
     func testMacRecoveryKeySaveAtInterfaceScales() {
         executionTimeAllowance = 180
         var compactHeight: CGFloat = 0
