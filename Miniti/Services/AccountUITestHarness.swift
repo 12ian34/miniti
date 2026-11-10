@@ -241,6 +241,7 @@ struct AccountUITestReadingScopeProbe: ViewModifier {
     @Environment(\.interfaceScale) private var scale
     @Environment(\.systemReadingSize) private var readingSize
     @Environment(\.dynamicTypeSize) private var controlSize
+    @State private var probeHidden = false
     private var readingCategory: String {
         guard let readingSize else { return "missing" }
         if readingSize == .large { return "normal" }
@@ -252,14 +253,17 @@ struct AccountUITestReadingScopeProbe: ViewModifier {
     func body(content: Content) -> some View {
         #if MINITI_TEST_HOST
         content.overlay(alignment: .bottomLeading) {
-            if AccountUITestHarness.isActive,
+            if AccountUITestHarness.isActive, !probeHidden,
                ProcessInfo.processInfo.environment["MINITI_UI_TEST_READING_MATRIX"] == "1" {
-                Text("scale \(scale.rawValue); reading \(readingCategory); controls \(controlSize.isAccessibilitySize ? "accessibility" : "standard")")
+                Button { probeHidden = true } label: {
+                    Text("scale \(scale.rawValue); reading \(readingCategory); controls \(String(describing: controlSize))")
+                }
+                    .buttonStyle(.plain)
                     .font(.caption2)
                     .foregroundStyle(ColorPalette.Text.muted)
                     .dynamicTypeSize(.large)
                     .accessibilityIdentifier("ui-test.readingScope.\(name)")
-                    .allowsHitTesting(false)
+                    .padding(.horizontal, 24)
             }
         }
         #else

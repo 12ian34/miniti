@@ -1427,10 +1427,47 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(root.waitForExistence(timeout: 5))
         XCTAssertEqual(root.label, "Reading scale 2, text largest")
         app.buttons["Settings"].tap()
-        let scope = app.staticTexts["ui-test.readingScope.settings"]
+        let scope = app.buttons["ui-test.readingScope.settings"]
         XCTAssertTrue(scope.waitForExistence(timeout: 5))
         captureAppScreen("Settings inherited control-size probe")
-        XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility")
+        XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
+    }
+
+    func testSettingsLabelsAtLargestText() {
+        launch("first", largeText: true, interfaceScale: 2)
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5))
+        XCTAssertEqual(scope.label, "scale 2; reading largest; controls accessibility5")
+        scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        let icon = app.images["settings.icon.general"]
+        let title = app.staticTexts["settings.title.general"]
+        let subtitle = app.staticTexts["settings.subtitle.general"]
+        XCTAssertTrue(icon.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(title.exists)
+        XCTAssertTrue(subtitle.exists)
+        captureAppScreen("Settings labels at largest text without probe")
+        XCTAssertFalse(icon.frame.intersects(title.frame))
+        XCTAssertFalse(icon.frame.intersects(subtitle.frame))
+        title.tap()
+        let slider = app.sliders["Interface scale"]
+        for _ in 0..<8 where !slider.isHittable { app.collectionViews.firstMatch.swipeUp() }
+        XCTAssertTrue(slider.isHittable)
+        let heading = app.staticTexts["settings.scale.title"]
+        let value = app.staticTexts["settings.scale.value"]
+        XCTAssertTrue(heading.exists)
+        XCTAssertTrue(value.exists)
+        // Two whole words may use two lines; the old three-line Inter-/face/scale must fail.
+        XCTAssertLessThanOrEqual(heading.frame.height, value.frame.height * 2 + 1)
+        let captions = (0...2).map { app.staticTexts["settings.scale.caption.\($0)"] }
+        for caption in captions {
+            for _ in 0..<6 where !caption.isHittable { app.collectionViews.firstMatch.swipeUp() }
+            XCTAssertTrue(caption.isHittable)
+        }
+        let oneLine = captions[2].frame.height
+        for caption in captions { XCTAssertLessThanOrEqual(caption.frame.height, oneLine + 1) }
+        captureAppScreen("Interface scale captions at largest text without probe")
     }
 
     func testHomeAndGeneralSettingsAtNormalTextAcrossInterfaceScales() {
@@ -1473,12 +1510,14 @@ final class AccountJourneys: XCTestCase {
             settings.tap()
             let general = app.staticTexts["General"].firstMatch
             XCTAssertTrue(general.waitForExistence(timeout: 5))
-            for _ in 0..<4 where !general.isHittable { app.swipeDown() }
+            for _ in 0..<4 where !general.isHittable { app.collectionViews.firstMatch.swipeDown() }
             XCTAssertTrue(general.isHittable)
-            captureAppScreen("Settings list \(category) text, interface scale \(scale)")
-            let settingsScope = app.staticTexts["ui-test.readingScope.settings"]
+            let settingsScope = app.buttons["ui-test.readingScope.settings"]
             XCTAssertTrue(settingsScope.waitForExistence(timeout: 5))
-            XCTAssertEqual(settingsScope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility" : "standard")")
+            XCTAssertEqual(settingsScope.label, "scale \(scale); reading \(category); controls \(largeText ? "accessibility5" : ["large", "xLarge", "xxLarge"][scale])")
+            settingsScope.tap()
+            XCTAssertTrue(settingsScope.waitForNonExistence(timeout: 5))
+            captureAppScreen("Settings list \(category) text, interface scale \(scale)")
             general.tap()
             XCTAssertTrue(app.navigationBars["General"].waitForExistence(timeout: 5))
             let slider = app.sliders["Interface scale"]
@@ -1486,7 +1525,7 @@ final class AccountJourneys: XCTestCase {
             XCTAssertTrue(slider.isHittable)
             XCTAssertEqual(slider.value as? String, ["Compact", "Standard", "Large"][scale])
             captureAppScreen("General Settings \(category) text, interface scale \(scale)")
-            app.navigationBars["General"].buttons.element(boundBy: 0).tap()
+            app.navigationBars["General"].buttons["Settings"].tap()
             let done = app.buttons["Done"]
             XCTAssertTrue(done.waitForExistence(timeout: 5))
             XCTAssertTrue(done.isHittable)

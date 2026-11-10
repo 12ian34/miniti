@@ -7,6 +7,7 @@ struct SettingsView_iOS: View {
     @EnvironmentObject private var appState: AppState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var searchText = ""
     @State private var selectedDestination: SettingsDestination? = .general
     /// Compact iPhone: the pushed detail, value based so a request can replace it (F4).
@@ -181,14 +182,20 @@ struct SettingsView_iOS: View {
     }
 
     private func destinationLabel(_ destination: SettingsDestination) -> some View {
-        HStack(spacing: 12) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
+            : AnyLayout(HStackLayout(spacing: 12))
+        return layout {
             Image(systemName: destination.systemImage)
                 .font(.title3)
                 .foregroundStyle(.secondary)
-                .frame(width: 30)
+                .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 30)
+                .accessibilityIdentifier("settings.icon.\(destination.rawValue)")
             VStack(alignment: .leading, spacing: 3) {
                 Text(destination.title).font(.headline)
+                    .accessibilityIdentifier("settings.title.\(destination.rawValue)")
                 Text(destination.subtitle)
+                    .accessibilityIdentifier("settings.subtitle.\(destination.rawValue)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

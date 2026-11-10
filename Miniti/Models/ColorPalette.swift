@@ -240,7 +240,22 @@ extension View {
 }
 
 struct InterfaceScaleSlider: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @AppStorage(InterfaceScale.storageKey) private var rawScale = InterfaceScale.standard.rawValue
+
+    private var usesVerticalLabels: Bool {
+        #if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
+    private var labelLayout: AnyLayout {
+        usesVerticalLabels
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout())
+    }
 
     private var selectedScale: InterfaceScale {
         InterfaceScale(rawValue: rawScale) ?? .standard
@@ -255,10 +270,12 @@ struct InterfaceScaleSlider: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack {
+            labelLayout {
                 Text("Interface scale")
-                Spacer()
+                    .accessibilityIdentifier("settings.scale.title")
+                if !usesVerticalLabels { Spacer() }
                 Text(selectedScale.title)
+                    .accessibilityIdentifier("settings.scale.value")
                     .foregroundStyle(.secondary)
             }
 
@@ -266,12 +283,13 @@ struct InterfaceScaleSlider: View {
                 .accessibilityLabel("Interface scale")
                 .accessibilityValue(selectedScale.title)
 
-            HStack {
+            labelLayout {
                 ForEach(InterfaceScale.allCases) { scale in
                     Text(scale.title)
+                        .accessibilityIdentifier("settings.scale.caption.\(scale.rawValue)")
                         .font(.caption)
                         .foregroundStyle(scale == selectedScale ? .primary : .secondary)
-                    if scale != InterfaceScale.allCases.last {
+                    if !usesVerticalLabels && scale != InterfaceScale.allCases.last {
                         Spacer()
                     }
                 }
