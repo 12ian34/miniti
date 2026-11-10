@@ -145,7 +145,8 @@ extension AppState {
         let title = meeting.calendarEventTitle ?? meeting.title
         let precedent = seriesPrecedent(for: meeting, title: title, in: precedents)
         // A hand-chosen folder for the same series is the strongest signal there is.
-        if let precedent, precedent.manual { return precedent.folder }
+        // Never used against a meeting that was itself filed by hand (regrouping included).
+        if let precedent, precedent.manual, meeting.folderManual != true { return precedent.folder }
         switch prepared.resolve(title: title, summary: meeting.summaryText) {
         case .folder(let id):
             return custom.first { $0.id == id }

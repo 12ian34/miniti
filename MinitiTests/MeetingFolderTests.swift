@@ -317,6 +317,21 @@ final class MeetingFolderTests: XCTestCase {
         XCTAssertEqual(next.folderID, archive.id, "Moving a series out of a matching folder by hand sticks")
     }
 
+    func testRegroupingNeverSwapsHandFiledMeetingsWithinASeries() throws {
+        let container = try TestSupport.makeInMemoryContainer()
+        let state = AppState(); state.modelContext = container.mainContext; state.automaticFolderCreation = false
+        let x = MeetingFolder(id: UUID(), name: "Xylo"), y = MeetingFolder(id: UUID(), name: "Yonder")
+        XCTAssertTrue(state.meetingFolders.edit(x)); XCTAssertTrue(state.meetingFolders.edit(y))
+        let a = Meeting(title: "Ian / Charlie 3 Nov", startTime: Date().addingTimeInterval(-86400), endTime: Date())
+        let b = Meeting(title: "Ian / Charlie 10 Nov", endTime: Date())
+        [a, b].forEach { container.mainContext.insert($0) }; try container.mainContext.save()
+        _ = state.moveMeeting(a, to: x); _ = state.moveMeeting(b, to: y)
+        let proposals = state.folderProposals(meetings: [a, b], regroupManual: true)
+        XCTAssertTrue(proposals.isEmpty, "Hand-filed meetings must not teach each other into a swap")
+        XCTAssertTrue(FolderMatcher.seriesKeys(calendarEventID: nil, title: "Zoom Meeting").isEmpty)
+        XCTAssertTrue(FolderMatcher.seriesKeys(calendarEventID: nil, title: "Microsoft Teams meeting").isEmpty)
+    }
+
     func testSeriesFiledMeetingIsNotMovedAgainOnALaterPass() throws {
         let container = try TestSupport.makeInMemoryContainer()
         let state = AppState(); state.modelContext = container.mainContext

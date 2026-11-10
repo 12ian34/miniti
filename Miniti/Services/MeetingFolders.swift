@@ -365,7 +365,8 @@ enum FolderMatcher {
             .filter { token in !token.allSatisfy(\.isNumber) && !months.contains(token) }
         let generic: Set<String> = ["meeting", "meetings", "call", "untitled", "new", "recording", "notes", "chat", "watch",
                                     "intro", "demo", "catch", "interview", "weekly", "monthly", "daily", "sync", "standup",
-                                    "check", "quick", "follow", "the", "and", "with", "team", "review", "update", "discussion"]
+                                    "check", "quick", "follow", "the", "and", "with", "team", "review", "update", "discussion",
+                                    "zoom", "teams", "microsoft", "google", "meet", "webex", "huddle", "slack", "facetime", "personal", "room"]
         if tokens.contains(where: { $0.count >= 3 && !generic.contains($0) }) {
             keys.append("title:" + tokens.joined(separator: " "))
         }
