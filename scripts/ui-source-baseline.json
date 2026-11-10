@@ -847,7 +847,7 @@
       "path": "Miniti/Views/MeetingView.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"3F3F46\" )",
-      "count": 7
+      "count": 5
     },
     {
       "path": "Miniti/Views/MeetingView.swift",
@@ -860,12 +860,6 @@
       "rule": "raw-color",
       "signature": "Color ( hex : \"484F58\" )",
       "count": 4
-    },
-    {
-      "path": "Miniti/Views/MeetingView.swift",
-      "rule": "raw-color",
-      "signature": "Color ( hex : \"52525B\" )",
-      "count": 1
     },
     {
       "path": "Miniti/Views/MeetingView.swift",
@@ -1765,12 +1759,6 @@
       "path": "MinitiMobile/Views/MeetingView_iOS.swift",
       "rule": "raw-color",
       "signature": "Color ( hex : \"3FB950\" )",
-      "count": 2
-    },
-    {
-      "path": "MinitiMobile/Views/MeetingView_iOS.swift",
-      "rule": "raw-color",
-      "signature": "Color ( hex : \"52525B\" )",
       "count": 2
     },
     {

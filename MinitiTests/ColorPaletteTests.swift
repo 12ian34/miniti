@@ -372,6 +372,120 @@ final class ColorPaletteTests: XCTestCase {
     }
 
     @MainActor
+    func testCheckingPlanTextUsesReadableRole() throws {
+        let state = AppState()
+        let originalMode = state.appModeRaw
+        defer { state.appModeRaw = originalMode }
+        state.appModeRaw = AppMode.managed.rawValue
+        state.usageInfo = nil
+        state.isLoadingUsage = true
+        #if os(iOS)
+        state.hasActiveAppStoreSubscription = false
+        let view = AnyView(ManagedStatusInline_iOS().environmentObject(state))
+        #else
+        let view = AnyView(ManagedStatusInline().environmentObject(state))
+        #endif
+        XCTAssertTrue(state.shouldShowManagedSubscriptionPlaceholder)
+        let renderer = ImageRenderer(content: view.fixedSize().background(ColorPalette.Background.primary))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        addRenderAttachment(raster, name: "Checking plan")
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10)
+    }
+
+    #if os(iOS)
+    @MainActor
+    func testManagedTierLabelUsesReadableRoleForFreeAndPro() throws {
+        let state = AppState()
+        let originalMode = state.appModeRaw
+        defer { state.appModeRaw = originalMode }
+        state.appModeRaw = AppMode.managed.rawValue
+        state.hasActiveAppStoreSubscription = false
+        for tier in ["free", "pro"] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "minutes_used": 100, "minutes_limit": tier == "pro" ? 5000 : 500, "tier": tier,
+                "resets_at": "2026-12-01T00:00:00Z"
+            ])
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            state.usageInfo = try decoder.decode(MinitiAPIService.UsageInfo.self, from: data)
+            XCTAssertEqual(state.isPro, tier == "pro")
+            let renderer = ImageRenderer(content: ManagedStatusInline_iOS()
+                .environmentObject(state).fixedSize().background(ColorPalette.Background.primary))
+            renderer.scale = 2
+            let raster = try XCTUnwrap(renderer.cgImage)
+            addRenderAttachment(raster, name: "Managed tier: \(tier)")
+            // Usage remains green/purple; only the tier label uses neutral dim.
+            XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10, tier)
+        }
+    }
+    #endif
+
+    #if os(macOS)
+    @MainActor
+    func testLowMinutesCountUsesReadableStatusColour() throws {
+        let state = AppState()
+        let originalMode = state.appModeRaw
+        defer { state.appModeRaw = originalMode }
+        state.appModeRaw = AppMode.managed.rawValue
+        let data = Data(#"{"minutes_used":490,"minutes_limit":500,"tier":"free","resets_at":"2026-12-01T00:00:00Z"}"#.utf8)
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        state.usageInfo = try decoder.decode(MinitiAPIService.UsageInfo.self, from: data)
+        let renderer = ImageRenderer(content: ManagedStatusInline()
+            .environmentObject(state).fixedSize().background(ColorPalette.Background.primary))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        addRenderAttachment(raster, name: "Low minutes")
+        // The trailing count is separate from the existing full-red dot at left.
+        // Exclude the outer 10pt right padding; the resting border is neutral.
+        let count = try XCTUnwrap(raster.cropping(to: CGRect(
+            x: raster.width - 100, y: 0, width: 80, height: raster.height)))
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Status.error, in: count), 10)
+        XCTAssertGreaterThanOrEqual(contrast(ColorPalette.Status.error, ColorPalette.Background.card), 4.5)
+    }
+
+    @MainActor
+    func testNotesShortcutUsesReadableTextWithoutCopyChrome() throws {
+        let renderer = ImageRenderer(content: SectionHeader(
+            title: "notes", icon: "✎", shortcut: "⌘⇧N", onCopy: nil).frame(width: 420))
+        renderer.scale = 2
+        let raster = try XCTUnwrap(renderer.cgImage)
+        addRenderAttachment(raster, name: "Notes shortcut")
+        // No Copy control; the title is meta and the icon is decorative.
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.dim, in: raster), 10)
+    }
+
+    @MainActor
+    func testEmptyNotesPlaceholderUsesReadableTextInNativeHost() async throws {
+        let state = AppState()
+        state.liveNotes = ""
+        let host = NSHostingView(rootView: NotesEditor().environmentObject(state)
+            .minitiInterfaceScale(.compact))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 140),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.orderFront(nil)
+        defer { window.orderOut(nil); window.close() }
+        func editor(in view: NSView) -> NSTextView? {
+            if let text = view as? NSTextView { return text }
+            return view.subviews.lazy.compactMap { editor(in: $0) }.first
+        }
+        try await TestSupport.waitUntil { editor(in: host) != nil }
+        XCTAssertEqual(editor(in: host)?.string, "")
+        // Do not make the window key or focus the editor: this is its empty,
+        // unfocused placeholder. AppKit caching includes the native text view.
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let raster = try XCTUnwrap(bitmap.cgImage)
+        addRenderAttachment(raster, name: "Native notes placeholder")
+        XCTAssertGreaterThan(try pixelCount(ColorPalette.Text.placeholder, in: raster), 10)
+    }
+    #endif
+
+    @MainActor
     func testCoachingSupportingTextUsesReadableRoles() throws {
         let speaker = TrainingMetrics.SpeakerStats(
             speakerLabel: "You", isLocalMic: true, wordCount: 100, segmentCount: 2,
@@ -423,7 +537,8 @@ final class ColorPaletteTests: XCTestCase {
                 target = try XCTUnwrap(raster.cropping(to: CGRect(x: 0, y: 0, width: raster.width, height: 24)))
             } else if !label.isEmpty {
                 // 12pt padding + 6pt indicator + 6pt gap puts the fixed API label
-                // at x=24pt. The next hint starts beyond this 20pt crop.
+                // at x=24pt. The crop starts at 22pt and is 20pt wide;
+                // the next hint starts beyond its right edge.
                 target = try XCTUnwrap(raster.cropping(to: CGRect(x: 44, y: 0, width: 40, height: raster.height)))
             } else {
                 target = raster // Empty heading isolates "click to add".

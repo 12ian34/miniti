@@ -139,3 +139,5 @@ Transcript speaker guidance (3.9.0 local): legend heading/detection/count text a
 Insight waiting guidance uses readable neutral text for the shared Coaching title/explanation, Mac live listening/start instructions and no-insights record/generate instructions. Decorative symbols retain their existing appearance. Recording, generation, private-mode and missing-key branches are unchanged.
 
 Live Mac Coaching count/unit details and clarity explanations use readable neutral text. API setup edit/disconnected/add instructions also use readable text at full opacity; key storage, focus, connection state, native buttons and editing behavior are unchanged. The retained legacy clarity card is covered as retained code, not a new shipping surface.
+
+Checking-plan and iPhone tier labels use readable neutral text. The Mac empty, unfocused notes placeholder and section shortcut hint also use readable roles. Mac usage counts also retain full status-colour opacity at rest. These foreground changes do not alter loading/entitlement policy, the iOS local StoreKit fallback, notes editing/focus or keyboard commands.

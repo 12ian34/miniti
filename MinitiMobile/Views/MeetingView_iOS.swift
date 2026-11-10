@@ -1376,7 +1376,7 @@ struct ManagedStatusPill: View {
     }
 }
 
-private struct ManagedStatusInline_iOS: View {
+struct ManagedStatusInline_iOS: View {
     @EnvironmentObject var appState: AppState
 
     private var accent: Color {
@@ -1392,12 +1392,12 @@ private struct ManagedStatusInline_iOS: View {
         if appState.shouldShowManagedSubscriptionPlaceholder {
             Text("checking plan...")
                 .font(.system(size: 10, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
         } else if let usage = appState.usageInfo {
             HStack(spacing: 6) {
                 Text(appState.isPro ? "miniti pro" : "miniti free")
                     .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "52525B"))
+                    .foregroundStyle(ColorPalette.Text.dim)
                 Text("\(Int(usage.minutesUsed.rounded()))/\(Int(appState.displayMinutesLimit)) min")
                     .font(.system(size: 10, weight: .medium, design: .default))
                     .foregroundStyle(accent)

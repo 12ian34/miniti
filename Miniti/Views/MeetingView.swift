@@ -1719,7 +1719,7 @@ struct SectionHeader: View {
             if let shortcut = shortcut {
                 Text(shortcut)
                     .font(.system(size: 10, weight: .medium, design: .default))
-                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .foregroundStyle(ColorPalette.Text.dim)
             }
         }
         .padding(.horizontal, 16)
@@ -1820,7 +1820,7 @@ struct NotesEditor: View {
             if appState.liveNotes.isEmpty && !isFocused {
                 Text("relax and take notes...")
                     .font(.system(size: readingMetrics.notesBodySize, weight: .regular, design: .default))
-                    .foregroundStyle(Color(hex: "3F3F46"))
+                    .foregroundStyle(ColorPalette.Text.placeholder)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 12)
             }
@@ -3099,7 +3099,7 @@ struct AudioSourcePanel: View {
 
 // MARK: - Managed Status Inline (home screen top bar)
 
-private struct ManagedStatusInline: View {
+struct ManagedStatusInline: View {
     @EnvironmentObject var appState: AppState
     @Environment(\.openSettings) private var openSettings
     @State private var isHovered = false
@@ -3117,7 +3117,7 @@ private struct ManagedStatusInline: View {
         if appState.shouldShowManagedSubscriptionPlaceholder {
             Text("checking plan...")
                 .font(.system(size: 10, weight: .medium, design: .default))
-                .foregroundStyle(Color(hex: "52525B"))
+                .foregroundStyle(ColorPalette.Text.dim)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
         } else if let usage = appState.usageInfo {
@@ -3135,7 +3135,7 @@ private struct ManagedStatusInline: View {
                         .lineLimit(1)
                     Text("\(Int(usage.minutesUsed.rounded()))/\(Int(usage.minutesLimit))")
                         .font(.system(size: 10, weight: .semibold, design: .default))
-                        .foregroundStyle(isHovered ? accent : accent.opacity(0.8))
+                        .foregroundStyle(accent)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(
