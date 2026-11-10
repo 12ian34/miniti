@@ -9,7 +9,7 @@
 - improvement: (iOS) sign-in buttons and the email field follow your interface text size during setup and in Account
 - improvement: (iOS) Debug Log controls fit smaller screens and larger text
 - improvement: (iOS) History folder controls stay readable with larger text
-- improvement: (iOS) recovery key controls stay readable with larger text and have larger tap areas
+- improvement: (iOS) email editing and recovery key controls stay readable with larger text and have larger tap areas
 - improvement: (macOS and iOS) Deepgram and OpenAI permission text follows your text size
 - improvement: (macOS and iOS) saved discussion and actions use selectable lists, along with decisions on iOS
 - improvement: (macOS and iOS) consistent spacing and wrapped text in insight lists

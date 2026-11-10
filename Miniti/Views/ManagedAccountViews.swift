@@ -1366,6 +1366,7 @@ struct ManagedAccountSettingsSection: View {
     // Reuse the parser across row redraws, including recording timer updates.
     private static let lastSeenDateParser = ISO8601DateFormatter()
     @EnvironmentObject var appState: AppState
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var revealedKey: String?
     @State private var copied = false
     @State private var isPresentingRestore = false
@@ -1516,28 +1517,9 @@ struct ManagedAccountSettingsSection: View {
 
             // Email
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Text("Email")
-                    Spacer()
-                    ForEach(model.emailActions, id: \.self) { action in
-                        actionButton(action)
-                    }
-                }
+                emailActionSummary
                 if isEditingEmail {
-                    HStack {
-                        TextField("name@example.com", text: $emailDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .focused($emailFieldFocused)
-                            #if os(iOS)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            #endif
-                            .onSubmit { submitEmail() }
-                        Button("Send link") { submitEmail() }
-                            .disabled(isBusy || !emailDraft.contains("@"))
-                        Button("Cancel") { isEditingEmail = false; emailDraft = ""; emailNotice = nil }
-                    }
+                    emailEditor
                     Text("A confirmation link goes to this address. It becomes a way to sign in once you open the link. This does not turn on cloud sync.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1595,6 +1577,72 @@ struct ManagedAccountSettingsSection: View {
         }
     }
 
+    private var stacksEmailActions: Bool {
+        #if os(iOS)
+        dynamicTypeSize.isAccessibilitySize
+        #else
+        false
+        #endif
+    }
+
+    private var emailActionLayout: AnyLayout {
+        stacksEmailActions
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control))
+            : AnyLayout(HStackLayout())
+    }
+
+    private var emailActionSummary: some View {
+        emailActionLayout {
+            Text("Email")
+            if !stacksEmailActions { Spacer() }
+            ForEach(model.emailActions, id: \.self) { action in actionButton(action) }
+        }
+        #if os(iOS)
+        .buttonStyle(.borderless)
+        #endif
+    }
+
+    private var emailEditor: some View {
+        #if os(iOS)
+        VStack(alignment: .leading, spacing: MinitiDesignSystem.Spacing.control) {
+            emailEditorContents
+        }
+        .buttonStyle(.borderless)
+        #else
+        HStack { emailEditorContents }
+        #endif
+    }
+
+    @ViewBuilder
+    private var emailEditorContents: some View {
+        TextField("name@example.com", text: $emailDraft)
+            .accessibilityIdentifier("account.email.draft")
+            .textFieldStyle(.roundedBorder)
+            .focused($emailFieldFocused)
+            #if os(iOS)
+            .keyboardType(.emailAddress)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            #endif
+            .onSubmit { submitEmail() }
+        #if os(iOS)
+        emailActionLayout { emailEditorActions }
+        #else
+        emailEditorActions
+        #endif
+    }
+
+    @ViewBuilder
+    private var emailEditorActions: some View {
+        Button { submitEmail() } label: { accountActionLabel("Send link") }
+            .accessibilityIdentifier("account.email.send")
+            .disabled(isBusy || !emailDraft.contains("@"))
+        Button { isEditingEmail = false; emailDraft = ""; emailNotice = nil } label: {
+            accountActionLabel("Cancel")
+        }
+        .accessibilityIdentifier("account.email.cancel")
+    }
+
     private var recoveryKeyTitle: some View {
         Text("Recovery key")
             .accessibilityIdentifier("account.recovery.title")
@@ -1609,7 +1657,7 @@ struct ManagedAccountSettingsSection: View {
     @ViewBuilder
     private var recoveryKeyActions: some View {
         if revealedKey != nil {
-            Button { revealedKey = nil; copied = false } label: { recoveryActionLabel("Hide") }
+            Button { revealedKey = nil; copied = false } label: { accountActionLabel("Hide") }
         } else {
             ForEach(model.recoveryKeyActions, id: \.self) { action in actionButton(action) }
         }
@@ -1643,9 +1691,10 @@ struct ManagedAccountSettingsSection: View {
     }
 
     @ViewBuilder
-    private func recoveryActionLabel(_ title: String) -> some View {
+    private func accountActionLabel(_ title: String) -> some View {
         #if os(iOS)
         Text(title)
+            .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
             .minitiMinimumControlTarget()
         #else
@@ -1706,9 +1755,12 @@ struct ManagedAccountSettingsSection: View {
         let disabled = isBusy || (model.signedActionsDisabled && AccountSectionModel.needsSignature(action))
         switch action {
         case .addEmail:
-            Button("Add email") { isEditingEmail = true; emailFieldFocused = true }.disabled(disabled)
+            Button { isEditingEmail = true; emailFieldFocused = true } label: { accountActionLabel("Add email") }
+                .disabled(disabled)
+                .accessibilityIdentifier("account.email.add")
         case .changeEmail:
-            Button("Change") { isEditingEmail = true; emailFieldFocused = true }.disabled(disabled)
+            Button { isEditingEmail = true; emailFieldFocused = true } label: { accountActionLabel("Change") }
+                .disabled(disabled)
         case .resendEmail:
             Button("Resend") { resendEmail() }.disabled(disabled)
         case .removeEmail:
@@ -1716,11 +1768,11 @@ struct ManagedAccountSettingsSection: View {
         case .retryEmail:
             Button("Retry") { Task { await appState.refreshAccountEmail(reason: "retry", force: true) } }
         case .showKey:
-            Button { isConfirmingReveal = true } label: { recoveryActionLabel("Show recovery key") }
+            Button { isConfirmingReveal = true } label: { accountActionLabel("Show recovery key") }
                 .disabled(isBusy)
                 .accessibilityIdentifier("account.recovery.show")
         case .replaceKey:
-            Button { isConfirmingReplace = true } label: { recoveryActionLabel("Replace recovery key") }
+            Button { isConfirmingReplace = true } label: { accountActionLabel("Replace recovery key") }
                 .disabled(disabled)
                 .accessibilityIdentifier("account.recovery.replace")
         case .switchAccount:

@@ -802,6 +802,86 @@ final class AccountJourneys: XCTestCase {
         XCTAssertTrue(help.exists)
     }
 
+    func testAccountEmailEditorAtNormalTextAcrossScales() {
+        for scale in 0...2 { assertAccountEmailEditor(scale: scale, largest: false) }
+    }
+
+    func testAccountEmailEditorAtLargestTextAcrossScales() {
+        for scale in 0...2 { assertAccountEmailEditor(scale: scale, largest: true) }
+    }
+
+    private func assertAccountEmailEditor(scale: Int, largest: Bool) {
+        executionTimeAllowance = 300
+        if app != nil { resetAccountMatrixFixture() }
+        launch("first", largeText: largest, interfaceScale: scale)
+        let guest = app.buttons["account.continueAnonymous"]
+        XCTAssertTrue(guest.waitForExistence(timeout: 5))
+        for _ in 0..<8 {
+            if guest.isHittable { break }
+            app.swipeUp(velocity: .slow)
+        }
+        guest.tap()
+        XCTAssertTrue(guest.waitForNonExistence(timeout: 10))
+        app.buttons["Settings"].tap()
+        let scope = app.buttons["ui-test.readingScope.settings"]
+        XCTAssertTrue(scope.waitForExistence(timeout: 5)); scope.tap()
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 5))
+        app.staticTexts["Account"].firstMatch.tap()
+        let form = app.collectionViews.firstMatch
+        let addEmail = app.buttons["account.email.add"]
+        for _ in 0..<16 {
+            if addEmail.exists && addEmail.isHittable { break }
+            form.swipeUp(velocity: .slow)
+        }
+        XCTAssertTrue(addEmail.isHittable)
+        captureAppScreen("Account email entry \(largest ? "largest" : "normal") scale \(scale)")
+        addEmail.tap()
+        let field = app.textFields["account.email.draft"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        // An address needs a usable editing width on this 393pt iPhone fixture.
+        XCTAssertGreaterThanOrEqual(field.frame.width, 280)
+        let send = app.buttons["account.email.send"]
+        let cancel = app.buttons["account.email.cancel"]
+        XCTAssertFalse(send.isEnabled)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        field.tap()
+        field.typeText("layout@example.invalid")
+        XCTAssertTrue(NSPredicate(format: "value == %@", "layout@example.invalid").evaluate(with: field))
+        XCTAssertTrue(send.isEnabled)
+        var frameEvidence = "field=\(field.frame); keyboard=\(app.keyboards.firstMatch.frame); cancel=\(cancel.frame)\n"
+        for _ in 0..<16 {
+            let keyboardTop = app.keyboards.firstMatch.exists ? app.keyboards.firstMatch.frame.minY : form.frame.maxY
+            let top = max(form.frame.minY, app.navigationBars["Account"].frame.maxY) + 12
+            let bottom = min(form.frame.maxY, keyboardTop) - 12
+            if cancel.isHittable && cancel.frame.minY >= top && cancel.frame.maxY <= bottom { break }
+            XCTAssertGreaterThan(bottom - top, 100)
+            let lower = bottom - (bottom - top) * 0.15
+            let upper = top + (bottom - top) * 0.2
+            let needsDown = cancel.frame.maxY < top
+            let x = form.frame.minX + form.frame.width * 0.05
+            let start = CGPoint(x: x, y: needsDown ? upper : lower)
+            let end = CGPoint(x: x, y: needsDown ? lower : upper)
+            frameEvidence += "drag=\(start)->\(end); cancel=\(cancel.frame)\n"
+            app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: start.x, dy: start.y))
+                .press(forDuration: 0.05, thenDragTo: app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: end.x, dy: end.y)))
+        }
+        frameEvidence += "final field=\(field.frame); send=\(send.frame); cancel=\(cancel.frame); keyboard=\(app.keyboards.firstMatch.frame)"
+        let frames = XCTAttachment(string: frameEvidence)
+        frames.name = "Account email editor frames \(largest ? "largest" : "normal") scale \(scale)"
+        frames.lifetime = .keepAlways; add(frames)
+        XCTAssertTrue(cancel.isHittable)
+        for button in [send, cancel] {
+            XCTAssertGreaterThanOrEqual(button.frame.width, 44 - 0.001)
+            XCTAssertGreaterThanOrEqual(button.frame.height, 44 - 0.001)
+            XCTAssertFalse(button.frame.intersects(field.frame))
+        }
+        XCTAssertFalse(send.frame.intersects(cancel.frame))
+        captureAppScreen("Account email editing \(largest ? "largest" : "normal") scale \(scale)")
+        cancel.tap()
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+    }
+
     func testAccountRecoveryRowAtNormalTextAcrossScales() {
         for scale in 0...2 { assertAccountRecoveryRow(scale: scale, largest: false) }
     }
@@ -869,6 +949,7 @@ final class AccountJourneys: XCTestCase {
                 backdrop.coordinate(withNormalizedOffset: CGVector(dx: 0.02, dy: 0.5)).tap()
             }
             XCTAssertTrue(confirmation.waitForNonExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["Hide"].exists)
         }
     }
 
